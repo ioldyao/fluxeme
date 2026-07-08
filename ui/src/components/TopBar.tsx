@@ -14,6 +14,7 @@ import {
   Languages,
   Moon,
   Sun,
+  Monitor,
   LogOut,
   User,
 } from 'lucide-react';
@@ -22,13 +23,15 @@ export function TopBar() {
   const { t } = useTranslation();
   const { userName, clear } = useAuth();
   const { lang, setLang } = useLang();
-  const { theme, toggle } = useTheme();
+  const { mode, resolved, setMode } = useTheme();
   const navigate = useNavigate();
 
   const handleLogout = () => {
     clear();
     navigate('/login');
   };
+
+  const ThemeIcon = resolved === 'dark' ? Moon : Sun;
 
   return (
     <header className="h-14 border-b bg-background flex items-center justify-between px-6 sticky top-0 z-20">
@@ -38,9 +41,25 @@ export function TopBar() {
           <Languages className="h-4 w-4 mr-1" />
           {lang === 'zh' ? 'EN' : '中文'}
         </Button>
-        <Button variant="ghost" size="sm" onClick={toggle}>
-          {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-transparent px-3 py-1.5 text-sm font-medium text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground outline-none">
+            <ThemeIcon className="h-4 w-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => setMode('light')}>
+              <Sun className="h-4 w-4 mr-2" />
+              浅色{mode === 'light' && ' ✓'}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setMode('dark')}>
+              <Moon className="h-4 w-4 mr-2" />
+              深色{mode === 'dark' && ' ✓'}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setMode('system')}>
+              <Monitor className="h-4 w-4 mr-2" />
+              跟随系统{mode === 'system' && ' ✓'}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <DropdownMenu>
           <DropdownMenuTrigger className="inline-flex shrink-0 items-center justify-center gap-2 rounded-md border border-input bg-transparent px-3 py-1.5 text-sm font-medium text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground outline-none">
             <User className="h-4 w-4" />
