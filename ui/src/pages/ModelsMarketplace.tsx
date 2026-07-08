@@ -70,10 +70,6 @@ export default function ModelsMarketplace() {
                       <span>Completion 价格</span>
                       <span className="font-mono">${model.pricing.completion_price}/1K</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>渠道数</span>
-                      <span className="font-mono">{model.channels.length}</span>
-                    </div>
                   </div>
                   <Button
                     variant={isSubscribed ? "outline" : "default"}
