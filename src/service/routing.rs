@@ -1,0 +1,187 @@
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+
+use crate::config::types::EndpointConfig;
+use crate::domain::channel::Channel;
+use crate::domain::model::Model;
+use crate::domain::routing::RoutingRule;
+use crate::db::Database;
+
+/// In-memory route cache, rebuilt from DB on startup and after admin changes.
+pub struct RoutingService {
+    db: Arc<Database>,
+    channels: RwLock<HashMap<String, Channel>>,
+    models: RwLock<Vec<Model>>,
+    rules: RwLock<Vec<RoutingRule>>,
+}
+
+impl RoutingService {
+    pub fn new(db: Arc<Database>) -> Self {
+        let svc = Self {
+            db,
+            channels: RwLock::new(HashMap::new()),
+            models: RwLock::new(Vec::new()),
+            rules: RwLock::new(Vec::new()),
+        };
+        svc.reload();
+        svc
+    }
+
+    pub fn reload(&self) {
+        match self.db.list_channels() {
+            Ok(chs) => {
+                let map: HashMap<_, _> = chs.into_iter().map(|c| (c.id.clone(), c)).collect();
+                *self.channels.write().unwrap() = map;
+            }
+            Err(e) => tracing::error!("Failed to load channels: {}", e),
+        }
+        match self.db.list_models() {
+            Ok(ms) => *self.models.write().unwrap() = ms,
+            Err(e) => tracing::error!("Failed to load models: {}", e),
+        }
+        match self.db.list_rules() {
+            Ok(rs) => *self.rules.write().unwrap() = rs,
+            Err(e) => tracing::error!("Failed to load routing rules: {}", e),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn get_channel(&self, id: &str) -> Option<Channel> {
+        self.channels.read().unwrap().get(id).cloned()
+    }
+
+    #[allow(dead_code)]
+    pub fn get_enabled_channel(&self, id: &str) -> Option<Channel> {
+        self.channels
+            .read()
+            .unwrap()
+            .get(id)
+            .filter(|c| c.enabled)
+            .cloned()
+    }
+
+    /// Resolve a channel_id to its provider adapter name and endpoint configs.
+    pub fn resolve_channel(&self, channel_id: &str) -> Option<(String, Vec<EndpointConfig>)> {
+        let ch = self.channels.read().unwrap().get(channel_id)?.clone();
+        if !ch.enabled {
+            return None;
+        }
+        let endpoints: Vec<EndpointConfig> = ch
+            .endpoints
+            .iter()
+            .map(|ep| EndpointConfig {
+                url: ep.url.clone(),
+                api_key: ep.api_key.clone(),
+                weight: ep.weight,
+                timeout_secs: ep.timeout_secs,
+            })
+            .collect();
+        Some((ch.provider, endpoints))
+    }
+
+    /// Route a model to a channel ID for the given user.
+    /// Return models in a format suitable for the /v1/models endpoint.
+    pub fn list_display_models(&self) -> Vec<serde_json::Value> {
+        let models = self.models.read().unwrap();
+        models
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "id": m.id,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": "gateway",
+                    "name": m.name,
+                    "model_pattern": m.model_pattern,
+                })
+            })
+            .collect()
+    }
+
+    pub fn route(&self, user_id: &str, model: &str) -> Result<String, RouteError> {
+        // 1. Try model-based routing
+        {
+            let models = self.models.read().unwrap();
+            for model_cfg in models.iter() {
+                if match_pattern(model, &model_cfg.model_pattern) {
+                    let mut bindings: Vec<&crate::domain::model::ModelChannel> =
+                        model_cfg.channels.iter().collect();
+                    bindings.sort_by_key(|b| b.priority);
+
+                    for binding in &bindings {
+                        if let Some(ch) = self.channels.read().unwrap().get(&binding.channel_id) {
+                            if ch.enabled {
+                                return Ok(ch.id.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Fall back to routing_rules
+        {
+            let rules = self.rules.read().unwrap();
+            let mut matched: Vec<(i32, String)> = Vec::new();
+
+            for rule in rules.iter() {
+                let user_match = rule.user_id == "*" || rule.user_id == user_id;
+                let model_match = match_pattern(model, &rule.model_pattern);
+
+                if user_match && model_match {
+                    if let Some(ch) = self.channels.read().unwrap().get(&rule.channel_id) {
+                        if ch.enabled {
+                            matched.push((ch.priority, ch.id.clone()));
+                        }
+                    }
+                }
+            }
+
+            matched.sort_by_key(|(p, _)| *p);
+
+            if let Some((_, id)) = matched.first() {
+                return Ok(id.clone());
+            }
+        }
+
+        Err(RouteError(format!(
+            "No route found for user '{}' model '{}'",
+            user_id, model
+        )))
+    }
+}
+
+fn match_pattern(text: &str, pattern: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    if !pattern.contains('*') {
+        return text == pattern;
+    }
+
+    let parts: Vec<&str> = pattern.split('*').collect();
+    match parts.len() {
+        2 => {
+            let prefix = parts[0];
+            let suffix = parts[1];
+            (prefix.is_empty() || text.starts_with(prefix))
+                && (suffix.is_empty() || text.ends_with(suffix))
+        }
+        3 => {
+            let prefix = parts[0];
+            let middle = parts[1];
+            let suffix = parts[2];
+            text.starts_with(prefix) && text.contains(middle) && text.ends_with(suffix)
+        }
+        _ => pattern == text,
+    }
+}
+
+#[derive(Debug)]
+pub struct RouteError(pub String);
+
+impl std::fmt::Display for RouteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Route error: {}", self.0)
+    }
+}

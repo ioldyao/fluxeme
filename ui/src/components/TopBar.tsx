@@ -1,0 +1,61 @@
+import { useTranslation } from 'react-i18next';
+import { useAuth } from '@/store/auth';
+import { useLang } from '@/store/lang';
+import { useTheme } from '@/store/theme';
+import { useNavigate } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Languages,
+  Moon,
+  Sun,
+  LogOut,
+  User,
+} from 'lucide-react';
+
+export function TopBar() {
+  const { t } = useTranslation();
+  const { userName, clear } = useAuth();
+  const { lang, setLang } = useLang();
+  const { theme, toggle } = useTheme();
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    clear();
+    navigate('/login');
+  };
+
+  return (
+    <header className="h-14 border-b bg-background flex items-center justify-between px-6 sticky top-0 z-20">
+      <div />
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" size="sm" onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}>
+          <Languages className="h-4 w-4 mr-1" />
+          {lang === 'zh' ? 'EN' : '中文'}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={toggle}>
+          {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger>
+            <Button variant="ghost" size="sm" className="gap-2">
+              <User className="h-4 w-4" />
+              <span className="text-sm">{userName}</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={handleLogout}>
+              <LogOut className="h-4 w-4 mr-2" />
+              {t('nav.logout')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </header>
+  );
+}

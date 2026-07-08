@@ -1,0 +1,93 @@
+use std::sync::Arc;
+use std::time::Instant;
+
+use dashmap::DashMap;
+
+const WINDOW_SECS: u64 = 60;
+
+#[derive(Clone)]
+pub struct RateLimiter {
+    rpm_counters: Arc<DashMap<String, Vec<Instant>>>,
+    tpm_counters: Arc<DashMap<String, Vec<Instant>>>,
+}
+
+impl RateLimiter {
+    pub fn new() -> Self {
+        Self {
+            rpm_counters: Arc::new(DashMap::new()),
+            tpm_counters: Arc::new(DashMap::new()),
+        }
+    }
+
+    pub fn check_rpm(&self, key: &str, limit: u64) -> Result<(), RateLimitError> {
+        if limit == u64::MAX {
+            return Ok(());
+        }
+        self.check_window(&self.rpm_counters, key, limit, WINDOW_SECS)
+    }
+
+    pub fn check_tpm(&self, key: &str, limit: u64, estimated_tokens: u64) -> Result<(), RateLimitError> {
+        if limit == u64::MAX {
+            return Ok(());
+        }
+        self.check_window_tokens(&self.tpm_counters, key, limit, WINDOW_SECS, estimated_tokens)
+    }
+
+    fn check_window(
+        &self,
+        counters: &DashMap<String, Vec<Instant>>,
+        key: &str,
+        limit: u64,
+        window_secs: u64,
+    ) -> Result<(), RateLimitError> {
+        let now = Instant::now();
+        let mut entry = counters.entry(key.to_string()).or_default();
+
+        entry.retain(|t| now.duration_since(*t).as_secs() < window_secs);
+
+        if entry.len() as u64 >= limit {
+            return Err(RateLimitError(format!(
+                "Rate limit exceeded: {} requests per {}s window",
+                limit, window_secs
+            )));
+        }
+
+        entry.push(now);
+        Ok(())
+    }
+
+    fn check_window_tokens(
+        &self,
+        counters: &DashMap<String, Vec<Instant>>,
+        key: &str,
+        limit: u64,
+        window_secs: u64,
+        estimated_tokens: u64,
+    ) -> Result<(), RateLimitError> {
+        let now = Instant::now();
+        let mut entry = counters.entry(key.to_string()).or_default();
+
+        entry.retain(|t| now.duration_since(*t).as_secs() < window_secs);
+
+        let current_tokens: u64 = entry.len() as u64 * estimated_tokens;
+
+        if current_tokens + estimated_tokens > limit {
+            return Err(RateLimitError(format!(
+                "Token rate limit exceeded: {} tokens per {}s window",
+                limit, window_secs
+            )));
+        }
+
+        entry.push(now);
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct RateLimitError(pub String);
+
+impl std::fmt::Display for RateLimitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Rate limited: {}", self.0)
+    }
+}

@@ -1,0 +1,118 @@
+export type UserRole = 'admin' | 'user';
+
+export interface RateLimit {
+  rpm: number | null;
+  tpm: number | null;
+}
+
+export interface User {
+  id: string;
+  name: string;
+  rate_limits?: RateLimit | null;
+}
+
+export interface UserDetail extends User {
+  keys: ApiKey[];
+}
+
+export interface ApiKey {
+  key: string;
+  user_id: string;
+  name: string;
+  enabled: boolean;
+  expires_at?: string | null;
+}
+
+export interface Endpoint {
+  url: string;
+  api_key: string;
+  weight: number;
+  timeout_secs?: number | null;
+}
+
+export type Provider = 'openai' | 'anthropic' | 'vllm' | 'azure' | 'ollama' | string;
+
+export interface Channel {
+  id: string;
+  provider: Provider;
+  priority: number;
+  enabled: boolean;
+  endpoints: Endpoint[];
+}
+
+export interface Pricing {
+  prompt_price: number;
+  completion_price: number;
+}
+
+export interface ModelChannel {
+  channel_id: string;
+  priority: number;
+}
+
+export interface Model {
+  id: string;
+  name: string;
+  model_pattern: string;
+  pricing: Pricing;
+  channels: ModelChannel[];
+}
+
+export interface RoutingRule {
+  name: string;
+  user_id: string;
+  model_pattern: string;
+  channel_id: string;
+}
+
+export interface UsageRecord {
+  timestamp: string;
+  request_id: string;
+  user_id: string;
+  user_name: string;
+  channel_id: string;
+  model: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  latency_ms: number;
+  status_code: number;
+  success: boolean;
+}
+
+export interface DashboardStats {
+  users: number;
+  channels: number;
+  models: number;
+  rules: number;
+  api_keys: number;
+  endpoints: number;
+  total_requests: number;
+}
+
+export interface LoginResponse {
+  token: string;
+  role: UserRole;
+  user_id: string;
+  user_name: string;
+}
+
+export interface CreateUserReq {
+  id: string;
+  name: string;
+  password?: string | null;
+  rate_limits?: RateLimit | null;
+}
+
+export interface UpdateUserReq {
+  name?: string | null;
+  password?: string | null;
+  rate_limits?: RateLimit | null;
+}
+
+export interface CreateKeyReq {
+  name?: string | null;
+  enabled?: boolean | null;
+}
+
+export type CreateMyKeyReq = CreateKeyReq;
