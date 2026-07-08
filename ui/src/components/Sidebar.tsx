@@ -12,11 +12,11 @@ import {
   Cog,
 } from 'lucide-react';
 
-const navItems = [
-  { to: '/', label: 'nav.dashboard', icon: LayoutDashboard, adminOnly: false },
+const navItems: { to: string; label: string; icon: React.ComponentType<{ className?: string }>; adminOnly: boolean; end?: boolean }[] = [
+  { to: '/', label: 'nav.dashboard', icon: LayoutDashboard, adminOnly: false, end: true },
   { to: '/users', label: 'nav.users', icon: Users, adminOnly: true },
   { to: '/channels', label: 'nav.channels', icon: Radio, adminOnly: true },
-  { to: '/models', label: 'nav.models', icon: Braces, adminOnly: true },
+  { to: '/models', label: 'nav.models', icon: Braces, adminOnly: true, end: true },
   { to: '/models/marketplace', label: '模型广场', icon: Braces, adminOnly: false },
   { to: '/models/mine', label: '我的模型', icon: Braces, adminOnly: false },
   { to: '/api-keys', label: 'nav.apiKeys', icon: Key, adminOnly: false },
@@ -41,7 +41,7 @@ export function Sidebar() {
             <NavLink
               key={item.to}
               to={item.to}
-              end={item.to === '/'}
+              end={item.end}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
                   isActive

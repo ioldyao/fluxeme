@@ -823,11 +823,11 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         // Models
         .route("/admin/api/models", axum::routing::get(list_models).post(create_model))
         .route("/admin/api/models/public", axum::routing::get(list_public_models))
+        .route("/admin/api/models/{id}/publish", axum::routing::post(toggle_publish_model))
         .route(
             "/admin/api/models/{id}",
             axum::routing::put(update_model).delete(delete_model),
         )
-        .route("/admin/api/models/{id}/publish", axum::routing::post(toggle_publish_model))
 
         // Subscriptions
         .route("/admin/api/me/subscriptions", axum::routing::get(list_my_subscriptions))
