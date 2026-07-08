@@ -1,5 +1,7 @@
 import { useTranslation } from 'react-i18next';
+import { useAuth } from '@/store/auth';
 import { useDashboard } from '@/api/dashboard';
+import { useSubscriptions } from '@/api/models';
 import { useUsage } from '@/api/usage';
 import { StatCard } from '@/components/StatCard';
 import { EmptyState } from '@/components/EmptyState';
@@ -11,16 +13,26 @@ import {
 
 export default function Dashboard() {
   const { t } = useTranslation();
+  const role = useAuth((s) => s.role);
   const { data: stats, isLoading } = useDashboard();
+  const { data: subscriptions } = useSubscriptions();
   const { data: usage } = useUsage({ limit: 10 });
 
-  const adminStats = [
-    { title: t('dash.users'), value: stats?.users ?? 0, icon: <Users className="h-5 w-5" /> },
-    { title: t('dash.channels'), value: stats?.channels ?? 0, icon: <Radio className="h-5 w-5" /> },
-    { title: t('dash.models'), value: stats?.models ?? 0, icon: <Braces className="h-5 w-5" /> },
-    { title: t('dash.apiKeys'), value: stats?.api_keys ?? 0, icon: <Key className="h-5 w-5" /> },
-    { title: t('dash.requests'), value: stats?.total_requests ?? 0, icon: <Activity className="h-5 w-5" /> },
-  ];
+  const isAdmin = role === 'admin';
+
+  const cards = isAdmin
+    ? [
+        { title: t('dash.users'), value: stats?.users ?? 0, icon: <Users className="h-5 w-5" /> },
+        { title: t('dash.channels'), value: stats?.channels ?? 0, icon: <Radio className="h-5 w-5" /> },
+        { title: t('dash.models'), value: stats?.models ?? 0, icon: <Braces className="h-5 w-5" /> },
+        { title: t('dash.apiKeys'), value: stats?.api_keys ?? 0, icon: <Key className="h-5 w-5" /> },
+        { title: t('dash.requests'), value: stats?.total_requests ?? 0, icon: <Activity className="h-5 w-5" /> },
+      ]
+    : [
+        { title: t('dash.models'), value: subscriptions?.length ?? 0, icon: <Braces className="h-5 w-5" /> },
+        { title: t('dash.apiKeys'), value: stats?.api_keys ?? 0, icon: <Key className="h-5 w-5" /> },
+        { title: t('dash.requests'), value: stats?.total_requests ?? 0, icon: <Activity className="h-5 w-5" /> },
+      ];
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -29,8 +41,8 @@ export default function Dashboard() {
         <p className="text-sm text-muted-foreground">{t('dash.subtitle')}</p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
-        {adminStats.map((stat) => (
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        {cards.map((stat) => (
           <StatCard key={stat.title} {...stat} loading={isLoading} />
         ))}
       </div>
