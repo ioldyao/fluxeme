@@ -135,6 +135,28 @@ fn resolve_route(state: &AppState, channel_id: &str) -> Result<RouteTarget, Gate
 
 // ── Streaming ─────────────────────────────────────────────────────
 
+/// Parse token usage from accumulated SSE data.
+/// Many providers send a final chunk with `"usage"` before `[DONE]`.
+fn parse_sse_usage(data: &str) -> (u64, u64) {
+    for line in data.lines().rev() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed == "data: [DONE]" {
+            continue;
+        }
+        let json_str = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
+        if let Ok(val) = serde_json::from_str::<Value>(json_str) {
+            if let Some(usage) = val.get("usage") {
+                let p = usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                let c = usage.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                if p > 0 || c > 0 {
+                    return (p, c);
+                }
+            }
+        }
+    }
+    (0, 0)
+}
+
 async fn handle_streaming(
     state: &AppState,
     adapter: Arc<dyn crate::provider::ProviderAdapter>,
@@ -165,6 +187,9 @@ async fn handle_streaming(
                 }
                 drop(tx_for_usage);
 
+                // Try to extract token usage from SSE stream
+                let (p_tokens, c_tokens) = parse_sse_usage(&resp_buf);
+
                 let latency_ms = start.elapsed().as_millis() as u64;
                 usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
@@ -173,9 +198,9 @@ async fn handle_streaming(
                     user_name,
                     channel_id,
                     model,
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    total_tokens: 0,
+                    prompt_tokens: p_tokens,
+                    completion_tokens: c_tokens,
+                    total_tokens: p_tokens + c_tokens,
                     latency_ms,
                     status_code: 200,
                     success: true,
