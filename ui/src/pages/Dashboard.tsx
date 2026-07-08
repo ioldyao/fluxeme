@@ -5,7 +5,7 @@ import { StatCard } from '@/components/StatCard';
 import { EmptyState } from '@/components/EmptyState';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
-  Users, Radio, Braces, Key, Route, Network, Activity,
+  Users, Radio, Braces, Key, Activity,
   CheckCircle2, XCircle,
 } from 'lucide-react';
 
@@ -19,8 +19,6 @@ export default function Dashboard() {
     { title: t('dash.channels'), value: stats?.channels ?? 0, icon: <Radio className="h-5 w-5" /> },
     { title: t('dash.models'), value: stats?.models ?? 0, icon: <Braces className="h-5 w-5" /> },
     { title: t('dash.apiKeys'), value: stats?.api_keys ?? 0, icon: <Key className="h-5 w-5" /> },
-    { title: t('dash.rules'), value: stats?.rules ?? 0, icon: <Route className="h-5 w-5" /> },
-    { title: t('dash.endpoints'), value: stats?.endpoints ?? 0, icon: <Network className="h-5 w-5" /> },
     { title: t('dash.requests'), value: stats?.total_requests ?? 0, icon: <Activity className="h-5 w-5" /> },
   ];
 
