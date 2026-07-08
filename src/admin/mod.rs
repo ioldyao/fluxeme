@@ -264,6 +264,57 @@ async fn admin_dashboard(
 
 // ── Current User ("Me") ───────────────────────────────────────────
 
+#[derive(Deserialize)]
+struct ChangePasswordReq {
+    current_password: String,
+    new_password: String,
+}
+
+async fn change_my_password(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ChangePasswordReq>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+
+    if req.new_password.is_empty() {
+        return Err(AdminError::bad_request("New password cannot be empty"));
+    }
+    if req.new_password.len() < 6 {
+        return Err(AdminError::bad_request("Password must be at least 6 characters"));
+    }
+
+    // Verify current password
+    let user = state.db.get_user_with_password(&session.user_id)
+        .map_err(|e| AdminError::internal(e.0))?;
+
+    if let Some(u) = user {
+        if let Some(ref hash) = u.password_hash {
+            if !hash.is_empty() && !bcrypt::verify(&req.current_password, hash).unwrap_or(false) {
+                return Err(AdminError::bad_request("Current password is incorrect"));
+            }
+        } else {
+            return Err(AdminError::bad_request("Cannot change password for this account"));
+        }
+    } else {
+        return Err(AdminError::not_found("User not found"));
+    }
+
+    let new_hash = bcrypt::hash(&req.new_password, 10)
+        .map_err(|e| AdminError::internal(e.to_string()))?;
+
+    let updated = User {
+        id: session.user_id.clone(),
+        name: session.user_name.clone(),
+        password_hash: Some(new_hash),
+        rate_limits: None,
+    };
+    state.db.update_user(&updated)
+        .map_err(|e| AdminError::internal(e.0))?;
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 async fn my_keys(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -800,6 +851,7 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route("/admin/api/dashboard", axum::routing::get(admin_dashboard))
 
         // Current user
+        .route("/admin/api/me/password", axum::routing::post(change_my_password))
         .route("/admin/api/me/keys", axum::routing::get(my_keys).post(create_my_key))
         .route("/admin/api/me/keys/{key_val}", axum::routing::delete(delete_my_key))
 

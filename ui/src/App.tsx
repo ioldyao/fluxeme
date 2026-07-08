@@ -13,6 +13,7 @@ import MyModels from '@/pages/MyModels';
 import ApiKeys from '@/pages/ApiKeys';
 import Rules from '@/pages/Rules';
 import Usage from '@/pages/Usage';
+import Profile from '@/pages/Profile';
 import NotFound from '@/pages/NotFound';
 
 export default function App() {
@@ -33,6 +34,7 @@ export default function App() {
           <Route path="/models/mine" element={<MyModels />} />
           <Route path="/api-keys" element={<ApiKeys />} />
           <Route path="/usage" element={<Usage />} />
+          <Route path="/profile" element={<Profile />} />
         </Route>
       </Route>
       <Route path="*" element={<NotFound />} />
