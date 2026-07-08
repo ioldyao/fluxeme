@@ -119,12 +119,17 @@ impl Database {
                 total_tokens INTEGER NOT NULL,
                 latency_ms INTEGER NOT NULL,
                 status_code INTEGER NOT NULL,
-                success INTEGER NOT NULL
+                success INTEGER NOT NULL,
+                request_body TEXT,
+                response_body TEXT
             );
             ",
         )?;
         // Backward compat: add password_hash column to existing users table
         let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT '';");
+// Backward compat: add request_body/response_body columns
+        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN request_body TEXT;");
+        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN response_body TEXT;");
         Ok(())
     }
 
@@ -174,8 +179,8 @@ impl Database {
     pub fn insert_usage(&self, record: &crate::domain::usage::UsageRecord) -> Result<(), DbError> {
         let conn = self.conn()?;
         conn.execute(
-            "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             rusqlite::params![
                 record.timestamp,
                 record.request_id,
@@ -189,6 +194,8 @@ impl Database {
                 record.latency_ms,
                 record.status_code,
                 record.success as i32,
+                record.request_body,
+                record.response_body,
             ],
         )?;
         Ok(())
@@ -212,7 +219,7 @@ impl Database {
 
         if let Some(uid) = user_id {
             let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body
                  FROM usage_logs WHERE user_id = ?1 ORDER BY id DESC LIMIT ?2",
             )?;
             let mut rows = stmt.query(rusqlite::params![uid, limit as i64])?;
@@ -230,11 +237,13 @@ impl Database {
                     latency_ms: row.get(9)?,
                     status_code: row.get(10)?,
                     success: row.get::<_, i32>(11)? != 0,
+                    request_body: row.get(12)?,
+                    response_body: row.get(13)?,
                 });
             }
         } else {
             let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body
                  FROM usage_logs ORDER BY id DESC LIMIT ?1",
             )?;
             let mut rows = stmt.query(rusqlite::params![limit as i64])?;
@@ -252,10 +261,41 @@ impl Database {
                     latency_ms: row.get(9)?,
                     status_code: row.get(10)?,
                     success: row.get::<_, i32>(11)? != 0,
+                    request_body: row.get(12)?,
+                    response_body: row.get(13)?,
                 });
             }
         }
         Ok(records)
+    }
+
+    pub fn get_usage_detail(&self, request_id: &str) -> Result<Option<crate::domain::usage::UsageRecord>, DbError> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body
+             FROM usage_logs WHERE request_id = ?1",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![request_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(crate::domain::usage::UsageRecord {
+                timestamp: row.get(0)?,
+                request_id: row.get(1)?,
+                user_id: row.get(2)?,
+                user_name: row.get(3)?,
+                channel_id: row.get(4)?,
+                model: row.get(5)?,
+                prompt_tokens: row.get(6)?,
+                completion_tokens: row.get(7)?,
+                total_tokens: row.get(8)?,
+                latency_ms: row.get(9)?,
+                status_code: row.get(10)?,
+                success: row.get::<_, i32>(11)? != 0,
+                request_body: row.get(12)?,
+                response_body: row.get(13)?,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     // Channels

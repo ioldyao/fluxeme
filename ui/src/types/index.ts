@@ -78,6 +78,8 @@ export interface UsageRecord {
   latency_ms: number;
   status_code: number;
   success: boolean;
+  request_body?: string | null;
+  response_body?: string | null;
 }
 
 export interface DashboardStats {

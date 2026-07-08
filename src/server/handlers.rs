@@ -147,6 +147,7 @@ async fn handle_streaming(
     model: String,
     start: Instant,
 ) -> Result<Response, GatewayError> {
+    let req_body = serde_json::to_string(&body).ok();
     let stream_result = adapter.chat_complete_stream(&endpoint, body).await;
 
     match stream_result {
@@ -157,7 +158,9 @@ async fn handle_streaming(
 
             tokio::spawn(async move {
                 let mut stream = Box::pin(stream);
+                let mut resp_buf = String::new();
                 while let Some(data) = stream.next().await {
+                    resp_buf.push_str(&data);
                     let _ = tx_for_usage.send(data);
                 }
                 drop(tx_for_usage);
@@ -176,6 +179,8 @@ async fn handle_streaming(
                     latency_ms,
                     status_code: 200,
                     success: true,
+                    request_body: req_body.clone(),
+                    response_body: Some(resp_buf),
                 });
             });
 
@@ -207,6 +212,8 @@ async fn handle_streaming(
                 latency_ms,
                 status_code: 502,
                 success: false,
+                request_body: req_body,
+                response_body: None,
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -227,6 +234,7 @@ async fn handle_non_streaming(
     model: String,
     start: Instant,
 ) -> Result<Response, GatewayError> {
+    let req_body = serde_json::to_string(&body).ok();
     let result = adapter.chat_complete(&endpoint, body).await;
     let latency_ms = start.elapsed().as_millis() as u64;
 
@@ -248,6 +256,8 @@ async fn handle_non_streaming(
                 latency_ms,
                 status_code: 200,
                 success: true,
+                request_body: req_body,
+                response_body: serde_json::to_string(&resp).ok(),
             });
 
             Ok(Json(resp).into_response())
@@ -266,6 +276,8 @@ async fn handle_non_streaming(
                 latency_ms,
                 status_code: 502,
                 success: false,
+                request_body: req_body,
+                response_body: None,
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -367,6 +379,7 @@ async fn relay_to_upstream(
     let channel_id = state.routing.route(&user.user_id, &model)?;
     let route = resolve_route(&state, &channel_id)?;
     let latency_ms = start.elapsed().as_millis() as u64;
+    let req_body = serde_json::to_string(&body).ok();
 
     match route.adapter.relay(&route.endpoint, upstream_path, body).await {
         Ok(resp) => {
@@ -386,6 +399,8 @@ async fn relay_to_upstream(
                 latency_ms,
                 status_code: 200,
                 success: true,
+                request_body: req_body,
+                response_body: serde_json::to_string(&resp).ok(),
             });
 
             Ok(Json(resp).into_response())
@@ -404,6 +419,8 @@ async fn relay_to_upstream(
                 latency_ms,
                 status_code: 502,
                 success: false,
+                request_body: req_body,
+                response_body: None,
             });
 
             Err(GatewayError::from(e))

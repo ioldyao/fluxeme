@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel {
+    #[serde(default)]
     pub id: String,
     pub provider: String,
     #[serde(default = "default_priority")]

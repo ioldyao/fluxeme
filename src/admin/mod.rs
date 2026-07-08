@@ -718,6 +718,20 @@ async fn get_usage(
     Ok(Json(records))
 }
 
+async fn get_usage_detail(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+) -> Result<Json<crate::domain::usage::UsageRecord>, AdminError> {
+    let _session = require_session(&state.admin, &headers)?;
+
+    let record = state.usage.get_detail(&request_id)
+        .map_err(|e| AdminError::internal(format!("DB query failed: {}", e)))?
+        .ok_or_else(|| AdminError::not_found("Usage record not found"))?;
+
+    Ok(Json(record))
+}
+
 // ── Router ────────────────────────────────────────────────────────
 
 pub fn admin_routes() -> Router<Arc<AppState>> {
@@ -762,4 +776,5 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
 
         // Usage
         .route("/admin/api/usage", axum::routing::get(get_usage))
+        .route("/admin/api/usage/{request_id}", axum::routing::get(get_usage_detail))
 }

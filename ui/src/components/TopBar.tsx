@@ -42,11 +42,9 @@ export function TopBar() {
           {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </Button>
         <DropdownMenu>
-          <DropdownMenuTrigger>
-            <Button variant="ghost" size="sm" className="gap-2">
-              <User className="h-4 w-4" />
-              <span className="text-sm">{userName}</span>
-            </Button>
+          <DropdownMenuTrigger className="inline-flex shrink-0 items-center justify-center gap-2 rounded-md border border-input bg-transparent px-3 py-1.5 text-sm font-medium text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground outline-none">
+            <User className="h-4 w-4" />
+            <span className="text-sm">{userName}</span>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={handleLogout}>

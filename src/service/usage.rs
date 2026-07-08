@@ -37,6 +37,10 @@ impl UsageService {
     pub fn count_by_user(&self, user_id: &str) -> Result<usize, String> {
         self.db.count_usage_by_user(user_id).map_err(|e| e.0)
     }
+
+    pub fn get_detail(&self, request_id: &str) -> Result<Option<crate::domain::usage::UsageRecord>, String> {
+        self.db.get_usage_detail(request_id).map_err(|e| e.0)
+    }
 }
 
 async fn background_writer(db: Arc<Database>, mut rx: UnboundedReceiver<UsageRecord>) {

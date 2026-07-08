@@ -14,4 +14,6 @@ pub struct UsageRecord {
     pub latency_ms: u64,
     pub status_code: u16,
     pub success: bool,
+    pub request_body: Option<String>,
+    pub response_body: Option<String>,
 }

@@ -18,3 +18,11 @@ export function useUsage(params: UsageParams = {}) {
     queryFn: () => api<UsageRecord[]>(`/usage${qs ? `?${qs}` : ''}`),
   });
 }
+
+export function useUsageDetail(requestId: string | null) {
+  return useQuery({
+    queryKey: ['usage', requestId],
+    queryFn: () => api<UsageRecord>(`/usage/${requestId}`),
+    enabled: !!requestId,
+  });
+}

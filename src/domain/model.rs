@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Model {
+    #[serde(default)]
     pub id: String,
     pub name: String,
     pub model_pattern: String,

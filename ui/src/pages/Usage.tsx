@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
 import { useUsage } from '@/api/usage';
+import { UsageLogDetail } from '@/components/UsageLogDetail';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,6 +16,7 @@ export default function Usage() {
   const { role } = useAuth();
   const [limit, setLimit] = useState(50);
   const [userFilter, setUserFilter] = useState('');
+  const [detailId, setDetailId] = useState<string | null>(null);
   const params = role === 'admin' && userFilter ? { limit, user_id: userFilter } : { limit };
   const { data: usage, isLoading, refetch } = useUsage(params);
   const [chartTab, setChartTab] = useState('list');
@@ -89,7 +91,7 @@ export default function Usage() {
                     </thead>
                     <tbody>
                       {usage.map((r) => (
-                        <tr key={r.request_id} className="border-b last:border-0 hover:bg-muted/50">
+                        <tr key={r.request_id} className="border-b last:border-0 hover:bg-muted/50 cursor-pointer" onClick={() => setDetailId(r.request_id)}>
                           <td className="py-3 px-4 text-muted-foreground whitespace-nowrap text-xs">
                             {new Date(r.timestamp).toLocaleString()}
                           </td>
@@ -130,6 +132,12 @@ export default function Usage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <UsageLogDetail
+        requestId={detailId}
+        open={!!detailId}
+        onOpenChange={(open) => { if (!open) setDetailId(null); }}
+      />
     </div>
   );
 }
