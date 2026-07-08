@@ -9,6 +9,47 @@ export function useModels() {
   });
 }
 
+export function usePublicModels() {
+  return useQuery({
+    queryKey: ['models', 'public'],
+    queryFn: () => api<Model[]>('/models/public'),
+  });
+}
+
+export function usePublishModel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api<{ id: string; published: boolean }>(`/models/${encodeURIComponent(id)}/publish`, { method: 'POST' }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['models'] }); qc.invalidateQueries({ queryKey: ['models', 'public'] }); },
+  });
+}
+
+export function useSubscriptions() {
+  return useQuery({
+    queryKey: ['me', 'subscriptions'],
+    queryFn: () => api<Model[]>('/me/subscriptions'),
+  });
+}
+
+export function useSubscribeModel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (modelId: string) =>
+      api<{ subscribed: string }>(`/me/subscriptions/${encodeURIComponent(modelId)}`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me', 'subscriptions'] }),
+  });
+}
+
+export function useUnsubscribeModel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (modelId: string) =>
+      api<{ unsubscribed: string }>(`/me/subscriptions/${encodeURIComponent(modelId)}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me', 'subscriptions'] }),
+  });
+}
+
 export function useCreateModel() {
   const qc = useQueryClient();
   return useMutation({

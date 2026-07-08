@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { useUsageDetail } from '@/api/usage';
-import { useModels } from '@/api/models';
+import { usePublicModels } from '@/api/models';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { CheckCircle2, XCircle, Radio, RadioIcon } from 'lucide-react';
 import type { Model, Pricing } from '@/types';
@@ -14,7 +14,7 @@ interface Props {
 export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
   const { t } = useTranslation();
   const { data: record, isLoading, error } = useUsageDetail(requestId);
-  const { data: models } = useModels();
+  const { data: models } = usePublicModels();
 
   const isStreaming = (record: { request_body?: string | null }) => {
     if (!record.request_body) return false;

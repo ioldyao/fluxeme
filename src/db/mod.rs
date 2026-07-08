@@ -5,10 +5,10 @@ mod users;
 
 use std::path::Path;
 
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 
 use crate::domain::channel::Channel;
-use crate::domain::model::Model;
+use crate::domain::model::{Model, Pricing};
 use crate::domain::routing::RoutingRule;
 use crate::domain::user::{ApiKey, User};
 
@@ -130,6 +130,17 @@ impl Database {
 // Backward compat: add request_body/response_body columns
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN request_body TEXT;");
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN response_body TEXT;");
+        // Backward compat: add published column to models
+        let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN published INTEGER NOT NULL DEFAULT 0;");
+        // User model subscriptions
+        let _ = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS user_subscriptions (
+                user_id TEXT NOT NULL,
+                model_id TEXT NOT NULL REFERENCES models(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, model_id)
+            );"
+        );
         Ok(())
     }
 
@@ -346,5 +357,88 @@ impl Database {
     }
     pub fn delete_rule(&self, name: &str) -> Result<(), DbError> {
         rules::delete(&self.conn()?, name)
+    }
+
+    // Subscriptions
+    pub fn list_published_models(&self) -> Result<Vec<Model>, DbError> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare("SELECT id, name, model_pattern, prompt_price, completion_price, published FROM models WHERE published = 1 ORDER BY id")?;
+        let models: Vec<Model> = stmt
+            .query_map([], |row| {
+                Ok(Model {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    model_pattern: row.get(2)?,
+                    pricing: Pricing {
+                        prompt_price: row.get(3)?,
+                        completion_price: row.get(4)?,
+                    },
+                    channels: Vec::new(),
+                    published: true,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut result = Vec::new();
+        for mut m in models {
+            m.channels = models::list_bindings(&conn, &m.id)?;
+            result.push(m);
+        }
+        Ok(result)
+    }
+
+    pub fn set_model_published(&self, id: &str, published: bool) -> Result<(), DbError> {
+        let conn = self.conn()?;
+        conn.execute("UPDATE models SET published = ?1 WHERE id = ?2", params![published as i32, id])?;
+        Ok(())
+    }
+
+    pub fn subscribe_user(&self, user_id: &str, model_id: &str) -> Result<(), DbError> {
+        let conn = self.conn()?;
+        conn.execute(
+            "INSERT OR IGNORE INTO user_subscriptions (user_id, model_id, created_at) VALUES (?1, ?2, ?3)",
+            params![user_id, model_id, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn unsubscribe_user(&self, user_id: &str, model_id: &str) -> Result<(), DbError> {
+        let conn = self.conn()?;
+        conn.execute(
+            "DELETE FROM user_subscriptions WHERE user_id = ?1 AND model_id = ?2",
+            params![user_id, model_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_subscriptions(&self, user_id: &str) -> Result<Vec<Model>, DbError> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT m.id, m.name, m.model_pattern, m.prompt_price, m.completion_price, m.published
+             FROM models m INNER JOIN user_subscriptions s ON m.id = s.model_id
+             WHERE s.user_id = ?1 ORDER BY m.id",
+        )?;
+        let models: Vec<Model> = stmt
+            .query_map(params![user_id], |row| {
+                Ok(Model {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    model_pattern: row.get(2)?,
+                    pricing: Pricing {
+                        prompt_price: row.get(3)?,
+                        completion_price: row.get(4)?,
+                    },
+                    channels: Vec::new(),
+                    published: row.get::<_, i32>(5)? != 0,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut result = Vec::new();
+        for mut m in models {
+            m.channels = models::list_bindings(&conn, &m.id)?;
+            result.push(m);
+        }
+        Ok(result)
     }
 }

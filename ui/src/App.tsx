@@ -8,6 +8,8 @@ import Dashboard from '@/pages/Dashboard';
 import Users from '@/pages/Users';
 import Channels from '@/pages/Channels';
 import Models from '@/pages/Models';
+import ModelsMarketplace from '@/pages/ModelsMarketplace';
+import MyModels from '@/pages/MyModels';
 import ApiKeys from '@/pages/ApiKeys';
 import Rules from '@/pages/Rules';
 import Usage from '@/pages/Usage';
@@ -27,6 +29,8 @@ export default function App() {
             <Route path="/models" element={<Models />} />
             <Route path="/rules" element={<Rules />} />
           </Route>
+          <Route path="/models/marketplace" element={<ModelsMarketplace />} />
+          <Route path="/models/mine" element={<MyModels />} />
           <Route path="/api-keys" element={<ApiKeys />} />
           <Route path="/usage" element={<Usage />} />
         </Route>

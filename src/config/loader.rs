@@ -288,6 +288,7 @@ pub fn seed_from_config(config_path: &str, db: &Database, admin_username: &str) 
                         priority: mc.priority,
                     })
                     .collect(),
+                published: false,
             };
             if let Err(e) = db.create_model(&model) {
                 tracing::warn!("Seed model {}: {}", m.id, e);

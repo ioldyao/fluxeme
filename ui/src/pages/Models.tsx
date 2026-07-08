@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useModels, useDeleteModel } from '@/api/models';
+import { useModels, useDeleteModel, usePublishModel } from '@/api/models';
 import { ModelForm } from '@/forms/ModelForm';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EmptyState } from '@/components/EmptyState';
@@ -14,6 +14,7 @@ export default function Models() {
   const { t } = useTranslation();
   const { data: models, isLoading, refetch } = useModels();
   const deleteModel = useDeleteModel();
+  const publishModel = usePublishModel();
   const [editModel, setEditModel] = useState<Model | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Model | null>(null);
@@ -56,6 +57,7 @@ export default function Models() {
                     <th className="text-left py-3 px-4">{t('table.modelPattern')}</th>
                     <th className="text-right py-3 px-4">{t('table.bindings')}</th>
                     <th className="text-right py-3 px-4">{t('table.price')}</th>
+                    <th className="text-center py-3 px-4">发布</th>
                     <th className="text-right py-3 px-4">{t('table.actions')}</th>
                   </tr>
                 </thead>
@@ -68,6 +70,17 @@ export default function Models() {
                       <td className="py-3 px-4 text-right">{m.channels.length}</td>
                       <td className="py-3 px-4 text-right text-xs">
                         P:{m.pricing.prompt_price} / C:{m.pricing.completion_price}
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <Button
+                          variant={m.published ? "outline" : "secondary"}
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => publishModel.mutate(m.id, { onError: (err) => toast.error(err.message) })}
+                          disabled={publishModel.isPending}
+                        >
+                          {m.published ? '已发布' : '发布'}
+                        </Button>
                       </td>
                       <td className="py-3 px-4 text-right">
                         <Button variant="ghost" size="sm" onClick={() => setEditModel(m)}>

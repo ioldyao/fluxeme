@@ -632,6 +632,66 @@ async fn delete_model(
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
 
+// ── Public Models (any authenticated user) ────────────────────────
+
+async fn list_public_models(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<Model>>, AdminError> {
+    require_session(&state.admin, &headers)?;
+    let models = state.db.list_published_models().map_err(|e| AdminError::internal(e.0))?;
+    Ok(Json(models))
+}
+
+async fn toggle_publish_model(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, AdminError> {
+    require_admin(&state.admin, &headers)?;
+    let models = state.db.list_models().map_err(|e| AdminError::internal(e.0))?;
+    let model = models.iter().find(|m| m.id == id)
+        .ok_or_else(|| AdminError::not_found(format!("Model '{}' not found", id)))?;
+    let new_status = !model.published;
+    state.db.set_model_published(&id, new_status).map_err(|e| AdminError::internal(e.0))?;
+    state.routing.reload();
+    Ok(Json(serde_json::json!({ "id": id, "published": new_status })))
+}
+
+// ── User Subscriptions ────────────────────────────────────────────
+
+async fn list_my_subscriptions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<Model>>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+    let models = state.db.list_subscriptions(&session.user_id)
+        .map_err(|e| AdminError::internal(e.0))?;
+    Ok(Json(models))
+}
+
+async fn subscribe_model(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(model_id): Path<String>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+    state.db.subscribe_user(&session.user_id, &model_id)
+        .map_err(|e| AdminError::internal(e.0))?;
+    Ok(Json(serde_json::json!({ "subscribed": model_id })))
+}
+
+async fn unsubscribe_model(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(model_id): Path<String>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+    state.db.unsubscribe_user(&session.user_id, &model_id)
+        .map_err(|e| AdminError::internal(e.0))?;
+    Ok(Json(serde_json::json!({ "unsubscribed": model_id })))
+}
+
 // ── Routing Rule CRUD ─────────────────────────────────────────────
 
 async fn list_rules(
@@ -762,10 +822,16 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
 
         // Models
         .route("/admin/api/models", axum::routing::get(list_models).post(create_model))
+        .route("/admin/api/models/public", axum::routing::get(list_public_models))
         .route(
             "/admin/api/models/{id}",
             axum::routing::put(update_model).delete(delete_model),
         )
+        .route("/admin/api/models/{id}/publish", axum::routing::post(toggle_publish_model))
+
+        // Subscriptions
+        .route("/admin/api/me/subscriptions", axum::routing::get(list_my_subscriptions))
+        .route("/admin/api/me/subscriptions/{model_id}", axum::routing::post(subscribe_model).delete(unsubscribe_model))
 
         // Routing rules
         .route("/admin/api/rules", axum::routing::get(list_rules).post(create_rule))

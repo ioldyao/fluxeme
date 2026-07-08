@@ -4,7 +4,7 @@ use rusqlite::{params, Connection};
 use crate::domain::model::{Model, ModelChannel, Pricing};
 
 pub fn list(conn: &Connection) -> Result<Vec<Model>, crate::db::DbError> {
-    let mut stmt = conn.prepare("SELECT id, name, model_pattern, prompt_price, completion_price FROM models ORDER BY id")?;
+    let mut stmt = conn.prepare("SELECT id, name, model_pattern, prompt_price, completion_price, published FROM models ORDER BY id")?;
     let models: Vec<Model> = stmt
         .query_map([], |row| {
             Ok(Model {
@@ -16,6 +16,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Model>, crate::db::DbError> {
                     completion_price: row.get(4)?,
                 },
                 channels: Vec::new(),
+                published: row.get::<_, i32>(5)? != 0,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -30,7 +31,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Model>, crate::db::DbError> {
 
 pub fn get(conn: &Connection, id: &str) -> Result<Option<Model>, crate::db::DbError> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, model_pattern, prompt_price, completion_price FROM models WHERE id = ?1",
+        "SELECT id, name, model_pattern, prompt_price, completion_price, published FROM models WHERE id = ?1",
     )?;
     let mut rows = stmt.query_map(params![id], |row| {
         Ok(Model {
@@ -42,6 +43,7 @@ pub fn get(conn: &Connection, id: &str) -> Result<Option<Model>, crate::db::DbEr
                 completion_price: row.get(4)?,
             },
             channels: Vec::new(),
+            published: row.get::<_, i32>(5)? != 0,
         })
     })?;
     match rows.next() {
@@ -55,8 +57,8 @@ pub fn get(conn: &Connection, id: &str) -> Result<Option<Model>, crate::db::DbEr
 
 pub fn create(conn: &Connection, m: &Model) -> Result<(), crate::db::DbError> {
     conn.execute(
-        "INSERT INTO models (id, name, model_pattern, prompt_price, completion_price) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![m.id, m.name, m.model_pattern, m.pricing.prompt_price, m.pricing.completion_price],
+        "INSERT INTO models (id, name, model_pattern, prompt_price, completion_price, published) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![m.id, m.name, m.model_pattern, m.pricing.prompt_price, m.pricing.completion_price, m.published as i32],
     )?;
     for binding in &m.channels {
         create_binding(conn, &m.id, binding)?;
@@ -66,8 +68,8 @@ pub fn create(conn: &Connection, m: &Model) -> Result<(), crate::db::DbError> {
 
 pub fn update(conn: &Connection, m: &Model) -> Result<(), crate::db::DbError> {
     conn.execute(
-        "UPDATE models SET name = ?1, model_pattern = ?2, prompt_price = ?3, completion_price = ?4 WHERE id = ?5",
-        params![m.name, m.model_pattern, m.pricing.prompt_price, m.pricing.completion_price, m.id],
+        "UPDATE models SET name = ?1, model_pattern = ?2, prompt_price = ?3, completion_price = ?4, published = ?5 WHERE id = ?6",
+        params![m.name, m.model_pattern, m.pricing.prompt_price, m.pricing.completion_price, m.published as i32, m.id],
     )?;
     conn.execute("DELETE FROM model_channels WHERE model_id = ?1", params![m.id])?;
     for binding in &m.channels {
@@ -81,7 +83,7 @@ pub fn delete(conn: &Connection, id: &str) -> Result<(), crate::db::DbError> {
     Ok(())
 }
 
-fn list_bindings(conn: &Connection, model_id: &str) -> Result<Vec<ModelChannel>, crate::db::DbError> {
+pub(super) fn list_bindings(conn: &Connection, model_id: &str) -> Result<Vec<ModelChannel>, crate::db::DbError> {
     let mut stmt = conn.prepare(
         "SELECT model_id, channel_id, priority FROM model_channels WHERE model_id = ?1 ORDER BY priority",
     )?;

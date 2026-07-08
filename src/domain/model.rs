@@ -10,6 +10,8 @@ pub struct Model {
     pub pricing: Pricing,
     #[serde(default)]
     pub channels: Vec<ModelChannel>,
+    #[serde(default)]
+    pub published: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -56,6 +56,7 @@ export interface Model {
   model_pattern: string;
   pricing: Pricing;
   channels: ModelChannel[];
+  published?: boolean;
 }
 
 export interface RoutingRule {
