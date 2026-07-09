@@ -203,7 +203,7 @@ export default function Models() {
                         <Button
                           variant={m.published ? "outline" : "secondary"}
                           size="sm"
-                          className="h-7 text-xs"
+                          className={cn('h-7 text-xs', m.published ? 'text-green-600 border-green-300' : 'text-muted-foreground')}
                           onClick={() => publishModel.mutate(m.id, { onError: (err) => toast.error(err.message) })}
                           disabled={publishModel.isPending}
                         >

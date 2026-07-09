@@ -1,19 +1,22 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useQueryClient, useMutation } from '@tanstack/react-query';
 import { useChannels, useCreateChannel, useUpdateChannel, useDeleteChannel } from '@/api/channels';
+import { api } from '@/api/client';
 import { ChannelForm } from '@/forms/ChannelForm';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Pencil, Trash2, Plus, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 import type { Channel } from '@/types';
 
 export default function Channels() {
   const { t } = useTranslation();
+  const qc = useQueryClient();
   const { data: channels, isLoading, refetch } = useChannels();
   const createChannel = useCreateChannel();
   const deleteChannel = useDeleteChannel();
@@ -21,6 +24,16 @@ export default function Channels() {
   const updateChannel = useUpdateChannel(editChannel?.id ?? '');
   const [showAdd, setShowAdd] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Channel | null>(null);
+
+  const toggleEnabled = useMutation({
+    mutationFn: (ch: Channel) =>
+      api<Channel>(`/channels/${encodeURIComponent(ch.id)}`, {
+        method: 'PUT',
+        body: { ...ch, enabled: !ch.enabled },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['channels'] }),
+    onError: (err) => toast.error(err.message),
+  });
 
   const handleDelete = () => {
     if (!deleteTarget) return;
@@ -73,9 +86,15 @@ export default function Channels() {
                       <td className="py-3 px-4 text-center">{ch.priority}</td>
                       <td className="py-3 px-4 text-center">{ch.endpoints.length}</td>
                       <td className="py-3 px-4 text-center">
-                        <Badge variant={ch.enabled ? 'default' : 'secondary'}>
+                        <Button
+                          variant={ch.enabled ? 'outline' : 'secondary'}
+                          size="sm"
+                          className={cn('h-7 text-xs', ch.enabled ? 'text-green-600 border-green-300' : 'text-muted-foreground')}
+                          onClick={() => toggleEnabled.mutate(ch)}
+                          disabled={toggleEnabled.isPending}
+                        >
                           {ch.enabled ? t('common.active') : t('common.disabled')}
-                        </Badge>
+                        </Button>
                       </td>
                       <td className="py-3 px-4 text-right">
                         <Button variant="ghost" size="sm" onClick={() => setEditChannel(ch)}>
