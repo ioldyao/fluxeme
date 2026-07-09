@@ -12,6 +12,8 @@ pub struct Model {
     pub channels: Vec<ModelChannel>,
     #[serde(default)]
     pub published: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_length: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

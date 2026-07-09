@@ -18,7 +18,7 @@ use crate::db::Database;
 use crate::provider::ProviderRegistry;
 use crate::ratelimit::RateLimiter;
 use crate::server::{build_router, AppState};
-use crate::service::{AuthService, RoutingService, UsageService};
+use crate::service::{AuthService, HealthService, RoutingService, UsageService};
 
 #[tokio::main]
 async fn main() {
@@ -67,6 +67,7 @@ async fn main() {
     let (usage, usage_handle) = UsageService::new(db.clone());
     let providers = Arc::new(ProviderRegistry::new());
     let rate_limiter = Arc::new(RateLimiter::new());
+    let health = Arc::new(HealthService::new(db.clone()));
     let admin = Arc::new(AdminModule::new(&jwt_secret));
 
     let state = Arc::new(AppState {
@@ -78,6 +79,7 @@ async fn main() {
         usage,
         db,
         admin,
+        health,
     });
 
     let app = build_router(state);

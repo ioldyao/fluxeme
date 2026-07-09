@@ -5,14 +5,15 @@ use crate::domain::channel::{Channel, Endpoint};
 
 #[allow(dead_code)]
 pub fn list(conn: &Connection) -> Result<Vec<Channel>, crate::db::DbError> {
-    let mut stmt = conn.prepare("SELECT id, provider, priority, enabled FROM channels ORDER BY priority, id")?;
+    let mut stmt = conn.prepare("SELECT id, name, provider, priority, enabled FROM channels ORDER BY priority, id")?;
     let channels: Vec<Channel> = stmt
         .query_map([], |row| {
             Ok(Channel {
                 id: row.get(0)?,
-                provider: row.get(1)?,
-                priority: row.get(2)?,
-                enabled: row.get::<_, i32>(3)? != 0,
+                name: row.get(1)?,
+                provider: row.get(2)?,
+                priority: row.get(3)?,
+                enabled: row.get::<_, i32>(4)? != 0,
                 endpoints: Vec::new(),
             })
         })?
@@ -27,13 +28,14 @@ pub fn list(conn: &Connection) -> Result<Vec<Channel>, crate::db::DbError> {
 }
 
 pub fn get(conn: &Connection, id: &str) -> Result<Option<Channel>, crate::db::DbError> {
-    let mut stmt = conn.prepare("SELECT id, provider, priority, enabled FROM channels WHERE id = ?1")?;
+    let mut stmt = conn.prepare("SELECT id, name, provider, priority, enabled FROM channels WHERE id = ?1")?;
     let mut rows = stmt.query_map(params![id], |row| {
         Ok(Channel {
             id: row.get(0)?,
-            provider: row.get(1)?,
-            priority: row.get(2)?,
-            enabled: row.get::<_, i32>(3)? != 0,
+            name: row.get(1)?,
+            provider: row.get(2)?,
+            priority: row.get(3)?,
+            enabled: row.get::<_, i32>(4)? != 0,
             endpoints: Vec::new(),
         })
     })?;
@@ -48,8 +50,8 @@ pub fn get(conn: &Connection, id: &str) -> Result<Option<Channel>, crate::db::Db
 
 pub fn create(conn: &Connection, ch: &Channel) -> Result<(), crate::db::DbError> {
     conn.execute(
-        "INSERT INTO channels (id, provider, priority, enabled) VALUES (?1, ?2, ?3, ?4)",
-        params![ch.id, ch.provider, ch.priority, ch.enabled as i32],
+        "INSERT INTO channels (id, name, provider, priority, enabled) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![ch.id, ch.name, ch.provider, ch.priority, ch.enabled as i32],
     )?;
     for ep in &ch.endpoints {
         create_endpoint(conn, &ch.id, ep)?;
@@ -59,8 +61,8 @@ pub fn create(conn: &Connection, ch: &Channel) -> Result<(), crate::db::DbError>
 
 pub fn update(conn: &Connection, ch: &Channel) -> Result<(), crate::db::DbError> {
     conn.execute(
-        "UPDATE channels SET provider = ?1, priority = ?2, enabled = ?3 WHERE id = ?4",
-        params![ch.provider, ch.priority, ch.enabled as i32, ch.id],
+        "UPDATE channels SET name = ?1, provider = ?2, priority = ?3, enabled = ?4 WHERE id = ?5",
+        params![ch.name, ch.provider, ch.priority, ch.enabled as i32, ch.id],
     )?;
     // Replace endpoints: delete old, insert new
     conn.execute("DELETE FROM endpoints WHERE channel_id = ?1", params![ch.id])?;

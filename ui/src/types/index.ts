@@ -34,6 +34,7 @@ export type Provider = 'openai' | 'anthropic' | 'vllm' | 'azure' | 'ollama' | st
 
 export interface Channel {
   id: string;
+  name: string;
   provider: Provider;
   priority: number;
   enabled: boolean;
@@ -57,6 +58,7 @@ export interface Model {
   pricing: Pricing;
   channels: ModelChannel[];
   published?: boolean;
+  context_length?: number | null;
 }
 
 export interface RoutingRule {

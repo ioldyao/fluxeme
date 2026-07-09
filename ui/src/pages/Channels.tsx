@@ -56,6 +56,7 @@ export default function Channels() {
                 <thead>
                   <tr className="border-b text-muted-foreground">
                     <th className="text-left py-3 px-4">{t('table.id')}</th>
+                    <th className="text-left py-3 px-4">{t('table.name')}</th>
                     <th className="text-left py-3 px-4">{t('table.provider')}</th>
                     <th className="text-center py-3 px-4">{t('table.priority')}</th>
                     <th className="text-center py-3 px-4">{t('table.endpoints')}</th>
@@ -67,6 +68,7 @@ export default function Channels() {
                   {channels.map((ch) => (
                     <tr key={ch.id} className="border-b last:border-0 hover:bg-muted/50">
                       <td className="py-3 px-4 font-mono text-xs">{ch.id}</td>
+                      <td className="py-3 px-4">{ch.name || ch.id}</td>
                       <td className="py-3 px-4 capitalize">{ch.provider}</td>
                       <td className="py-3 px-4 text-center">{ch.priority}</td>
                       <td className="py-3 px-4 text-center">{ch.endpoints.length}</td>

@@ -1,19 +1,24 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useModels, useCreateModel, useUpdateModel, useDeleteModel, usePublishModel } from '@/api/models';
+import { useChannels } from '@/api/channels';
 import { ModelForm } from '@/forms/ModelForm';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Pencil, Trash2, Plus, RefreshCw } from 'lucide-react';
+import { Pencil, Trash2, Plus, RefreshCw, Activity } from 'lucide-react';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
+import { api } from '@/api/client';
 import type { Model } from '@/types';
 
 export default function Models() {
   const { t } = useTranslation();
   const { data: models, isLoading, refetch } = useModels();
+  const { data: channels } = useChannels();
+  const channelName = (id: string) => channels?.find((c) => c.id === id)?.name || id;
   const createModel = useCreateModel();
   const deleteModel = useDeleteModel();
   const publishModel = usePublishModel();
@@ -21,6 +26,7 @@ export default function Models() {
   const updateModel = useUpdateModel(editModel?.id ?? '');
   const [showAdd, setShowAdd] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Model | null>(null);
+  const [hcLoading, setHcLoading] = useState(false);
 
   const handleDelete = () => {
     if (!deleteTarget) return;
@@ -30,6 +36,26 @@ export default function Models() {
     });
   };
 
+  const formatCtx = (v: number | null | undefined) => {
+    if (!v) return '-';
+    if (v >= 1_000_000) return `${(v / 10_000).toFixed(0)}万`;
+    if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
+    return v.toLocaleString();
+  };
+
+  const handleHealthCheck = async () => {
+    setHcLoading(true);
+    try {
+      const res = await api<{ models_updated: number; channels_checked: number }>('/health-check/models', { method: 'POST' });
+      toast.success(`${res.channels_checked} 个渠道检查完成, ${res.models_updated} 个模型已更新`);
+      refetch();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setHcLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-4 animate-fade-in">
       <PageHeader
@@ -37,6 +63,9 @@ export default function Models() {
         description={t('model.subtitle')}
         actions={
           <>
+            <Button variant="outline" size="sm" onClick={handleHealthCheck} disabled={hcLoading}>
+              <Activity className={cn('size-4 mr-1', hcLoading && 'animate-pulse')} />健康检查
+            </Button>
             <Button variant="outline" size="sm" onClick={() => refetch()}>
               <RefreshCw className="size-4 mr-1" />{t('common.refresh')}
             </Button>
@@ -59,6 +88,7 @@ export default function Models() {
                     <th className="text-left py-3 px-4">{t('table.name')}</th>
                     <th className="text-left py-3 px-4">{t('table.modelPattern')}</th>
                     <th className="text-right py-3 px-4">{t('table.bindings')}</th>
+                    <th className="text-right py-3 px-4">上下文</th>
                     <th className="text-right py-3 px-4">{t('table.price')}</th>
                     <th className="text-center py-3 px-4">发布</th>
                     <th className="text-right py-3 px-4">{t('table.actions')}</th>
@@ -70,7 +100,12 @@ export default function Models() {
                       <td className="py-3 px-4 font-mono text-xs">{m.id}</td>
                       <td className="py-3 px-4">{m.name}</td>
                       <td className="py-3 px-4 text-xs text-muted-foreground font-mono">{m.model_pattern}</td>
-                      <td className="py-3 px-4 text-right">{m.channels.length}</td>
+                      <td className="py-3 px-4 text-right text-xs">
+                        {m.channels.length > 0
+                          ? m.channels.map((b) => channelName(b.channel_id)).join(', ')
+                          : '-'}
+                      </td>
+                      <td className="py-3 px-4 text-right text-xs font-mono">{formatCtx(m.context_length)}</td>
                       <td className="py-3 px-4 text-right text-xs">
                         P:{m.pricing.prompt_price} / C:{m.pricing.completion_price}
                       </td>

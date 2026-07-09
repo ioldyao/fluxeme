@@ -25,6 +25,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
   const [modelPattern, setModelPattern] = useState('');
   const [promptPrice, setPromptPrice] = useState('0');
   const [completionPrice, setCompletionPrice] = useState('0');
+  const [contextLength, setContextLength] = useState('');
   const [bindings, setBindings] = useState<{ channel_id: string; priority: number }[]>([]);
 
   useEffect(() => {
@@ -34,9 +35,10 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
       setModelPattern(model.model_pattern);
       setPromptPrice(String(model.pricing.prompt_price));
       setCompletionPrice(String(model.pricing.completion_price));
+      setContextLength(model.context_length ? String(model.context_length) : '');
       setBindings(model.channels);
     } else {
-      setId(''); setName(''); setModelPattern(''); setPromptPrice('0'); setCompletionPrice('0'); setBindings([]);
+      setId(''); setName(''); setModelPattern(''); setPromptPrice('0'); setCompletionPrice('0'); setContextLength(''); setBindings([]);
     }
   }, [model, open]);
 
@@ -53,6 +55,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
     const data = {
       id, name, model_pattern: modelPattern,
       pricing: { prompt_price: Number(promptPrice), completion_price: Number(completionPrice) },
+      context_length: contextLength ? Number(contextLength) : null,
       channels: bindings.map((b) => ({ channel_id: b.channel_id, priority: Number(b.priority) })),
     };
     onSubmit(data);
@@ -91,6 +94,10 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
             </div>
           </div>
           <div className="space-y-2">
+            <Label>上下文长度</Label>
+            <Input type="number" step="1" min="0" value={contextLength} onChange={(e) => setContextLength(e.target.value)} placeholder="例如: 131072" />
+          </div>
+          <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label>{t('form.bindChannels')}</Label>
               <Button type="button" variant="ghost" size="sm" onClick={addBinding} disabled={!channels?.length}>
@@ -102,10 +109,13 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
               <div key={i} className="flex gap-2 items-center border p-2 rounded-md">
                 <div className="flex-1">
                   <Select value={b.channel_id} onValueChange={(v) => updateBinding(i, 'channel_id', v ?? '')}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger>
+                      <span>{channels?.find((ch) => ch.id === b.channel_id)?.name || b.channel_id}</span>
+                      <SelectValue className="sr-only" />
+                    </SelectTrigger>
                     <SelectContent>
                       {channels?.map((ch) => (
-                        <SelectItem key={ch.id} value={ch.id}>{ch.id} ({ch.provider})</SelectItem>
+                        <SelectItem key={ch.id} value={ch.id}>{ch.name || ch.id} ({ch.provider})</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 pub struct Channel {
     #[serde(default)]
     pub id: String,
+    #[serde(default)]
+    pub name: String,
     pub provider: String,
     #[serde(default = "default_priority")]
     pub priority: i32,

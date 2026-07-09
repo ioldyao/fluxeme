@@ -9,7 +9,7 @@ use tower_http::trace::TraceLayer;
 use crate::config::types::AppConfig;
 use crate::provider::ProviderRegistry;
 use crate::ratelimit::RateLimiter;
-use crate::service::{AuthService, RoutingService, UsageService};
+use crate::service::{AuthService, HealthService, RoutingService, UsageService};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -21,6 +21,7 @@ pub struct AppState {
     pub usage: UsageService,
     pub db: Arc<crate::db::Database>,
     pub admin: Arc<crate::admin::AdminModule>,
+    pub health: Arc<HealthService>,
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {

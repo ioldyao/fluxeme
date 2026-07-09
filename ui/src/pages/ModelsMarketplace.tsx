@@ -19,7 +19,7 @@ function inferProvider(pattern: string): string {
   if (/^llama-/.test(p)) return 'Meta';
   if (/^deepseek-/.test(p)) return 'DeepSeek';
   if (/^mistral-/.test(p)) return 'Mistral';
-  if (/^qwen-/.test(p)) return 'Alibaba';
+  if (/^qwen/.test(p)) return 'Alibaba';
   if (/^yi-/.test(p)) return '01.AI';
   if (/^command-/.test(p)) return 'Cohere';
   if (/^flux-/.test(p)) return 'Black Forest';
@@ -84,7 +84,7 @@ export default function ModelsMarketplace() {
   const handleToggle = (modelId: string, isSubscribed: boolean) => {
     const opts = {
       onSuccess: () => {
-        toast.success(isSubscribed ? '已取消订阅' : '订阅成功');
+        toast.success(isSubscribed ? t('marketplace.unsubSuccess') : t('marketplace.subSuccess'));
         refetch();
       },
       onError: (err: Error) => toast.error(err.message),
@@ -101,8 +101,8 @@ export default function ModelsMarketplace() {
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
-        title="模型广场"
-        description="浏览并订阅已发布的模型"
+        title={t('marketplace.title')}
+        description={t('marketplace.subtitle')}
         actions={
           <Button variant="outline" size="sm" onClick={() => refetch()}>
             <RefreshCw className="size-4 mr-1" />{t('common.refresh')}
@@ -124,7 +124,7 @@ export default function ModelsMarketplace() {
                   : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground',
               )}
             >
-              {k === 'all' ? '全部' : CATEGORY_LABELS[k]}
+              {k === 'all' ? t('marketplace.all') : CATEGORY_LABELS[k]}
             </button>
           ))}
         </div>
@@ -133,7 +133,7 @@ export default function ModelsMarketplace() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索模型名称或厂商…"
+            placeholder={t('marketplace.search')}
             className="h-9 w-full rounded-lg border border-input bg-background pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
           />
         </div>
@@ -158,10 +158,22 @@ export default function ModelsMarketplace() {
           })}
         </div>
       ) : (
-        <EmptyState message={query ? '没有找到匹配的模型' : '暂无已发布的模型'} />
+        <EmptyState message={query ? t('marketplace.noMatch') : t('marketplace.noModels')} />
       )}
     </div>
   );
+}
+
+function formatPrice(price: number): string {
+  if (!price || price === 0) return '-';
+  return `$${price}`;
+}
+
+function formatContextLength(len: number | null | undefined): string {
+  if (!len) return '-';
+  if (len >= 1_000_000) return `${(len / 10_000).toFixed(0)} 万`;
+  if (len >= 1_000) return `${(len / 1_000).toFixed(0)}K`;
+  return len.toLocaleString();
 }
 
 function ModelCard({
@@ -175,6 +187,8 @@ function ModelCard({
   pending: boolean;
   onToggle: (id: string, subscribed: boolean) => void;
 }) {
+  const { t } = useTranslation();
+
   return (
     <Card className="group flex flex-col transition-colors hover:border-primary/40">
       <CardContent className="flex flex-1 flex-col gap-4 p-5">
@@ -187,10 +201,10 @@ function ModelCard({
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h3 className="font-semibold leading-none truncate">{model.name}</h3>
-                {isSubscribed && <Badge variant="default" className="shrink-0">已订阅</Badge>}
+                {isSubscribed && <Badge variant="default" className="shrink-0">{t('marketplace.subscribed')}</Badge>}
               </div>
               <div className="flex items-center gap-2 mt-1">
-                <p className="text-xs text-muted-foreground">{model._provider || '未分类'}</p>
+                <p className="text-xs text-muted-foreground">{model._provider || t('marketplace.provider')}</p>
                 {model._category && (
                   <Badge variant={CATEGORY_COLORS[model._category] as any} className="text-[10px] px-1.5 py-0">
                     {CATEGORY_LABELS[model._category]}
@@ -201,27 +215,35 @@ function ModelCard({
           </div>
         </div>
 
-        {/* Pattern */}
-        <p className="text-xs font-mono text-muted-foreground bg-muted/50 rounded px-2 py-1">
-          {model.model_pattern}
-        </p>
+        {/* Pattern + Context Length */}
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-mono text-muted-foreground bg-muted/50 rounded px-2 py-1 flex-1 truncate">
+            {model.model_pattern}
+          </p>
+          {model.context_length != null && model.context_length > 0 && (
+            <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0.5 gap-1">
+              <span className="text-muted-foreground">{t('marketplace.contextLength')}</span>
+              <span className="font-mono">{formatContextLength(model.context_length)}</span>
+            </Badge>
+          )}
+        </div>
 
         {/* Pricing */}
         <div className="grid grid-cols-2 gap-2 border-t border-border pt-4 text-center">
           <div>
-            <p className="text-xs text-muted-foreground">Prompt / 1K</p>
-            <p className="mt-0.5 text-sm font-medium">${model.pricing.prompt_price}</p>
+            <p className="text-xs text-muted-foreground">{t('marketplace.prompt')}</p>
+            <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.prompt_price)}</p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">Completion / 1K</p>
-            <p className="mt-0.5 text-sm font-medium">${model.pricing.completion_price}</p>
+            <p className="text-xs text-muted-foreground">{t('marketplace.completion')}</p>
+            <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.completion_price)}</p>
           </div>
         </div>
 
         {/* Channels info */}
         {model.channels.length > 0 && (
           <p className="text-xs text-muted-foreground text-center">
-            {model.channels.length} 个渠道绑定
+            {t('marketplace.channels', { count: model.channels.length })}
           </p>
         )}
 
@@ -235,10 +257,8 @@ function ModelCard({
         >
           {isSubscribed ? (
             pending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4 mr-1" />
-          ) : (
-            '订阅'
-          )}
-          {isSubscribed ? '已订阅' : ''}
+          ) : null}
+          {isSubscribed ? t('marketplace.subscribed') : t('marketplace.subscribe')}
         </Button>
       </CardContent>
     </Card>

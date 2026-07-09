@@ -25,6 +25,7 @@ function emptyEp(): Endpoint {
 
 export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }: Props) {
   const { t } = useTranslation();
+  const [name, setName] = useState('');
   const [provider, setProvider] = useState('');
   const [priority, setPriority] = useState('0');
   const [enabled, setEnabled] = useState(true);
@@ -32,12 +33,13 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
 
   useEffect(() => {
     if (channel) {
+      setName(channel.name);
       setProvider(channel.provider);
       setPriority(String(channel.priority));
       setEnabled(channel.enabled);
       setEndpoints(channel.endpoints.length ? channel.endpoints : [emptyEp()]);
     } else {
-      setProvider(''); setPriority('0'); setEnabled(true); setEndpoints([emptyEp()]);
+      setName(''); setProvider(''); setPriority('0'); setEnabled(true); setEndpoints([emptyEp()]);
     }
   }, [channel, open]);
 
@@ -46,13 +48,18 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
   const addEp = () => setEndpoints([...endpoints, emptyEp()]);
   const removeEp = (i: number) => endpoints.length > 1 && setEndpoints(endpoints.filter((_, idx) => idx !== i));
 
+  function randomId() {
+    return Math.random().toString(36).substring(2, 10);
+  }
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const data = {
+      name,
       provider,
       priority: Number(priority),
       enabled,
-      ...(channel ? {} : { id: provider }),
+      ...(channel ? {} : { id: randomId() }),
       endpoints: endpoints.map((ep) => ({
         ...ep,
         weight: Number(ep.weight),
@@ -67,6 +74,10 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>{channel ? t('channel.edit') : t('channel.add')}</DialogTitle></DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label>{t('form.name')}</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('form.channelName')} />
+          </div>
           <div className="space-y-2">
             <Label>{t('form.provider')}</Label>
             <Select value={provider} onValueChange={(v) => setProvider(v ?? '')} required>

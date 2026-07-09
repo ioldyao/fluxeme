@@ -758,7 +758,10 @@ async fn create_channel(
         return Err(AdminError::bad_request("Provider is required"));
     }
 
-    state.db.create_channel(&ch).map_err(|e| AdminError::internal(e.0))?;
+    state.db.create_channel(&ch).map_err(|e| {
+        tracing::error!("create_channel error: {:?}", e);
+        AdminError::internal(e.0)
+    })?;
     state.routing.reload();
 
     Ok(Json(ch))
@@ -1035,6 +1038,35 @@ async fn daily_usage(
     Ok(Json(records.into_iter().map(|(date, count)| DailyUsage { date, count }).collect()))
 }
 
+// ── Health Check ──────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct HealthCheckResult {
+    models_updated: usize,
+    channels_checked: usize,
+}
+
+async fn health_check_models(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<HealthCheckResult>, AdminError> {
+    require_admin(&state.admin, &headers)?;
+    let (models_updated, channels_checked) = state.health.check_all_channels().await
+        .map_err(|e| AdminError::internal(e))?;
+    Ok(Json(HealthCheckResult { models_updated, channels_checked }))
+}
+
+async fn health_check_channel(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<crate::service::health::ChannelHealthResult>, AdminError> {
+    require_admin(&state.admin, &headers)?;
+    let result = state.health.check_channel(&id).await
+        .map_err(|e| AdminError::internal(e))?;
+    Ok(Json(result))
+}
+
 // ── Router ────────────────────────────────────────────────────────
 
 pub fn admin_routes() -> Router<Arc<AppState>> {
@@ -1089,4 +1121,8 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route("/admin/api/usage", axum::routing::get(get_usage))
         .route("/admin/api/usage/daily", axum::routing::get(daily_usage))
         .route("/admin/api/usage/{request_id}", axum::routing::get(get_usage_detail))
+
+        // Health check
+        .route("/admin/api/health-check/models", axum::routing::post(health_check_models))
+        .route("/admin/api/health-check/channels/{id}", axum::routing::post(health_check_channel))
 }

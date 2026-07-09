@@ -82,6 +82,8 @@ pub fn seed_from_config(config_path: &str, db: &Database, admin_username: &str) 
     #[derive(Deserialize)]
     struct OldChannel {
         id: String,
+        #[serde(default)]
+        name: String,
         provider: String,
         #[serde(default = "default_one_i32")]
         priority: i32,
@@ -247,6 +249,7 @@ pub fn seed_from_config(config_path: &str, db: &Database, admin_username: &str) 
         for c in chs {
             let channel = Channel {
                 id: c.id.clone(),
+                name: c.name.clone(),
                 provider: c.provider.clone(),
                 priority: c.priority,
                 enabled: c.enabled,
@@ -289,6 +292,7 @@ pub fn seed_from_config(config_path: &str, db: &Database, admin_username: &str) 
                     })
                     .collect(),
                 published: false,
+                context_length: None,
             };
             if let Err(e) = db.create_model(&model) {
                 tracing::warn!("Seed model {}: {}", m.id, e);

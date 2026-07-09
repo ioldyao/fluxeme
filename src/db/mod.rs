@@ -70,6 +70,7 @@ impl Database {
 
             CREATE TABLE IF NOT EXISTS channels (
                 id TEXT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
                 provider TEXT NOT NULL,
                 priority INTEGER NOT NULL DEFAULT 1,
                 enabled INTEGER NOT NULL DEFAULT 1
@@ -132,6 +133,10 @@ impl Database {
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN response_body TEXT;");
         // Backward compat: add published column to models
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN published INTEGER NOT NULL DEFAULT 0;");
+        // Backward compat: add context_length column to models
+        let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN context_length INTEGER;");
+        // Backward compat: add name column to channels
+        let _ = conn.execute_batch("ALTER TABLE channels ADD COLUMN name TEXT NOT NULL DEFAULT '';");
         // User model subscriptions
         let _ = conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS user_subscriptions (
@@ -429,7 +434,7 @@ impl Database {
     // Subscriptions
     pub fn list_published_models(&self) -> Result<Vec<Model>, DbError> {
         let conn = self.conn()?;
-        let mut stmt = conn.prepare("SELECT id, name, model_pattern, prompt_price, completion_price, published FROM models WHERE published = 1 ORDER BY id")?;
+        let mut stmt = conn.prepare("SELECT id, name, model_pattern, prompt_price, completion_price, published, context_length FROM models WHERE published = 1 ORDER BY id")?;
         let models: Vec<Model> = stmt
             .query_map([], |row| {
                 Ok(Model {
@@ -442,6 +447,7 @@ impl Database {
                     },
                     channels: Vec::new(),
                     published: true,
+                    context_length: row.get(6)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -457,6 +463,12 @@ impl Database {
     pub fn set_model_published(&self, id: &str, published: bool) -> Result<(), DbError> {
         let conn = self.conn()?;
         conn.execute("UPDATE models SET published = ?1 WHERE id = ?2", params![published as i32, id])?;
+        Ok(())
+    }
+
+    pub fn set_model_context_length(&self, id: &str, context_length: i64) -> Result<(), DbError> {
+        let conn = self.conn()?;
+        conn.execute("UPDATE models SET context_length = ?1 WHERE id = ?2", params![context_length, id])?;
         Ok(())
     }
 
@@ -481,7 +493,7 @@ impl Database {
     pub fn list_subscriptions(&self, user_id: &str) -> Result<Vec<Model>, DbError> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(
-            "SELECT m.id, m.name, m.model_pattern, m.prompt_price, m.completion_price, m.published
+            "SELECT m.id, m.name, m.model_pattern, m.prompt_price, m.completion_price, m.published, m.context_length
              FROM models m INNER JOIN user_subscriptions s ON m.id = s.model_id
              WHERE s.user_id = ?1 ORDER BY m.id",
         )?;
@@ -497,6 +509,7 @@ impl Database {
                     },
                     channels: Vec::new(),
                     published: row.get::<_, i32>(5)? != 0,
+                    context_length: row.get(6)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
