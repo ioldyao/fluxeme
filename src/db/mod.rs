@@ -223,6 +223,47 @@ impl Database {
             |row| row.get(0),
         )?)
     }
+    pub fn query_usage_since(&self, since: &str, user_id: Option<&str>) -> Result<Vec<crate::domain::usage::UsageRecord>, DbError> {
+        use crate::domain::usage::UsageRecord;
+        let conn = self.conn()?;
+        let mut records = Vec::new();
+        if let Some(uid) = user_id {
+            let mut stmt = conn.prepare(
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body
+                 FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2 ORDER BY id ASC",
+            )?;
+            let mut rows = stmt.query(rusqlite::params![uid, since])?;
+            while let Some(row) = rows.next()? {
+                records.push(UsageRecord {
+                    timestamp: row.get(0)?, request_id: row.get(1)?,
+                    user_id: row.get(2)?, user_name: row.get(3)?,
+                    channel_id: row.get(4)?, model: row.get(5)?,
+                    prompt_tokens: row.get(6)?, completion_tokens: row.get(7)?,
+                    total_tokens: row.get(8)?, latency_ms: row.get(9)?,
+                    status_code: row.get(10)?, success: row.get::<_, i32>(11)? != 0,
+                    request_body: row.get(12)?, response_body: row.get(13)?,
+                });
+            }
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body
+                 FROM usage_logs WHERE timestamp >= ?1 ORDER BY id ASC",
+            )?;
+            let mut rows = stmt.query(rusqlite::params![since])?;
+            while let Some(row) = rows.next()? {
+                records.push(UsageRecord {
+                    timestamp: row.get(0)?, request_id: row.get(1)?,
+                    user_id: row.get(2)?, user_name: row.get(3)?,
+                    channel_id: row.get(4)?, model: row.get(5)?,
+                    prompt_tokens: row.get(6)?, completion_tokens: row.get(7)?,
+                    total_tokens: row.get(8)?, latency_ms: row.get(9)?,
+                    status_code: row.get(10)?, success: row.get::<_, i32>(11)? != 0,
+                    request_body: row.get(12)?, response_body: row.get(13)?,
+                });
+            }
+        }
+        Ok(records)
+    }
     pub fn query_usage(&self, limit: usize, user_id: Option<&str>) -> Result<Vec<crate::domain::usage::UsageRecord>, DbError> {
         use crate::domain::usage::UsageRecord;
         let conn = self.conn()?;

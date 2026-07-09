@@ -223,7 +223,6 @@ async fn admin_dashboard(
     let session = require_session(&state.admin, &headers)?;
 
     if session.role == "admin" {
-        // Admin: global stats
         let users = state.db.list_users().map_err(|e| AdminError::internal(e.0))?;
         let channels = state.db.list_channels().map_err(|e| AdminError::internal(e.0))?;
         let models = state.db.list_models().map_err(|e| AdminError::internal(e.0))?;
@@ -245,7 +244,6 @@ async fn admin_dashboard(
             total_requests,
         }))
     } else {
-        // Regular user: their own stats
         let api_keys = state.db.list_api_keys(&session.user_id)
             .map_err(|e| AdminError::internal(e.0))?;
         let user_requests = state.usage.count_by_user(&session.user_id).unwrap_or(0);
@@ -260,6 +258,118 @@ async fn admin_dashboard(
             total_requests: user_requests,
         }))
     }
+}
+
+#[derive(Serialize)]
+struct TopModel {
+    model: String,
+    count: u64,
+    percentage: f64,
+}
+
+#[derive(Serialize)]
+struct DashboardAggregations {
+    total_requests: u64,
+    total_cost: f64,
+    requests_24h: u64,
+    cost_24h: f64,
+    success_rate_24h: f64,
+    avg_latency_ms_24h: f64,
+    total_tokens_24h: u64,
+    top_models_24h: Vec<TopModel>,
+}
+
+async fn dashboard_aggregations(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<DashboardAggregations>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+    let since_24h = (chrono::Utc::now() - chrono::Duration::hours(24))
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
+
+    let user_filter: Option<&str> = if session.role == "admin" { None } else { Some(&session.user_id) };
+
+    // Load model pricing map
+    let models = state.db.list_models().unwrap_or_default();
+    let mut pricing: std::collections::HashMap<String, (f64, f64)> = std::collections::HashMap::new();
+    for m in &models {
+        pricing.insert(m.model_pattern.clone(), (m.pricing.prompt_price, m.pricing.completion_price));
+    }
+
+    // All-time totals
+    let total_requests = match user_filter {
+        Some(uid) => state.usage.count_by_user(uid).unwrap_or(0),
+        None => state.usage.count().unwrap_or(0),
+    } as u64;
+
+    // 24h records
+    let records = state.db.query_usage_since(&since_24h, user_filter)
+        .map_err(|e| AdminError::internal(e.0))?;
+    let requests_24h = records.len() as u64;
+    if requests_24h == 0 {
+        return Ok(Json(DashboardAggregations {
+            total_requests,
+            total_cost: 0.0,
+            requests_24h: 0,
+            cost_24h: 0.0,
+            success_rate_24h: 0.0,
+            avg_latency_ms_24h: 0.0,
+            total_tokens_24h: 0,
+            top_models_24h: vec![],
+        }));
+    }
+
+    let mut total_cost_24h = 0.0_f64;
+    let mut total_cost = 0.0_f64;
+    let mut success_count = 0_u64;
+    let mut total_latency = 0_u64;
+    let mut total_tokens_24h = 0_u64;
+    let mut model_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+
+    for r in &records {
+        let price = pricing.get(&r.model).copied().unwrap_or((0.0, 0.0));
+        let cost = (r.prompt_tokens as f64 / 1000.0 * price.0)
+                  + (r.completion_tokens as f64 / 1000.0 * price.1);
+        total_cost_24h += cost;
+        if r.success { success_count += 1; }
+        total_latency += r.latency_ms as u64;
+        total_tokens_24h += r.total_tokens as u64;
+        *model_counts.entry(r.model.clone()).or_default() += 1;
+    }
+
+    // All-time cost
+    let all_records = state.db.query_usage_since("1970-01-01T00:00:00", user_filter)
+        .map_err(|e| AdminError::internal(e.0))?;
+    for r in &all_records {
+        let price = pricing.get(&r.model).copied().unwrap_or((0.0, 0.0));
+        total_cost += (r.prompt_tokens as f64 / 1000.0 * price.0)
+                    + (r.completion_tokens as f64 / 1000.0 * price.1);
+    }
+
+    let success_rate = if requests_24h > 0 { success_count as f64 / requests_24h as f64 * 100.0 } else { 0.0 };
+    let avg_latency = if requests_24h > 0 { total_latency as f64 / requests_24h as f64 } else { 0.0 };
+
+    let mut top_models: Vec<TopModel> = model_counts.into_iter()
+        .map(|(model, count)| TopModel {
+            percentage: (count as f64 / requests_24h as f64 * 100.0 * 100.0).round() / 100.0,
+            count,
+            model,
+        })
+        .collect();
+    top_models.sort_by(|a, b| b.count.cmp(&a.count));
+    top_models.truncate(10);
+
+    Ok(Json(DashboardAggregations {
+        total_requests,
+        total_cost: (total_cost * 100.0).round() / 100.0,
+        requests_24h,
+        cost_24h: (total_cost_24h * 100.0).round() / 100.0,
+        success_rate_24h: (success_rate * 100.0).round() / 100.0,
+        avg_latency_ms_24h: (avg_latency * 100.0).round() / 100.0,
+        total_tokens_24h,
+        top_models_24h: top_models,
+    }))
 }
 
 // ── Current User ("Me") ───────────────────────────────────────────
@@ -849,6 +959,7 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/admin/api/login", axum::routing::post(admin_login))
         .route("/admin/api/dashboard", axum::routing::get(admin_dashboard))
+        .route("/admin/api/dashboard/aggregations", axum::routing::get(dashboard_aggregations))
 
         // Current user
         .route("/admin/api/me/password", axum::routing::post(change_my_password))

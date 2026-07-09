@@ -93,6 +93,23 @@ export interface DashboardStats {
   total_requests: number;
 }
 
+export interface TopModel {
+  model: string;
+  count: number;
+  percentage: number;
+}
+
+export interface DashboardAggregations {
+  total_requests: number;
+  total_cost: number;
+  requests_24h: number;
+  cost_24h: number;
+  success_rate_24h: number;
+  avg_latency_ms_24h: number;
+  total_tokens_24h: number;
+  top_models_24h: TopModel[];
+}
+
 export interface LoginResponse {
   token: string;
   role: UserRole;
