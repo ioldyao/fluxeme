@@ -500,12 +500,21 @@ pub async fn health() -> Json<Value> {
 
 pub async fn list_models(
     State(state): State<Arc<AppState>>,
-) -> Json<Value> {
-    let models = state.routing.list_display_models();
-    Json(serde_json::json!({
+    headers: HeaderMap,
+) -> Result<Json<Value>, GatewayError> {
+    let user = state.auth.authenticate(&headers)?;
+    let subs = state.db.list_subscriptions(&user.user_id).unwrap_or_default();
+    let subscribed: std::collections::HashSet<String> = subs.iter().map(|m| m.id.clone()).collect();
+
+    let models: Vec<Value> = state.routing.list_display_models()
+        .into_iter()
+        .filter(|m| subscribed.contains(m["id"].as_str().unwrap_or("")))
+        .collect();
+
+    Ok(Json(serde_json::json!({
         "object": "list",
         "data": models,
-    }))
+    })))
 }
 
 // ── Token estimators ──────────────────────────────────────────────

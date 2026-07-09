@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
 import { useCurrency } from '@/store/currency';
 import { useUsage } from '@/api/usage';
-import { useModels } from '@/api/models';
 import { api } from '@/api/client';
 import { UsageLogDetail } from '@/components/UsageLogDetail';
 import { PageHeader } from '@/components/PageHeader';
@@ -14,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Search, RefreshCw, CheckCircle2, XCircle, BarChart3, List } from 'lucide-react';
 import { toast } from 'sonner';
+import { useQuery } from '@tanstack/react-query';
 
 export default function Usage() {
   const { t } = useTranslation();
@@ -23,7 +23,12 @@ export default function Usage() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const params = role === 'admin' && userFilter ? { limit, user_id: userFilter } : { limit };
   const { data: usage, isLoading, refetch } = useUsage(params);
-  const { data: models } = useModels();
+  const { data: models } = useQuery({
+    queryKey: ['models'],
+    queryFn: () => api<import('@/types').Model[]>('/models'),
+    enabled: role === 'admin',
+    retry: false,
+  });
   const { currency, rate } = useCurrency();
   const [chartTab, setChartTab] = useState('list');
 
@@ -108,7 +113,7 @@ export default function Usage() {
                         <th className="text-right py-3 px-4">{t('table.prompt')}</th>
                         <th className="text-right py-3 px-4">{t('table.completion')}</th>
                         <th className="text-right py-3 px-4">{t('table.total')}</th>
-                        <th className="text-right py-3 px-4">{t('table.cost')}</th>
+                        {role === 'admin' && <th className="text-right py-3 px-4">{t('table.cost')}</th>}
                         <th className="text-right py-3 px-4">{t('table.latency')}</th>
                         <th className="text-center py-3 px-4">{t('table.status')}</th>
                       </tr>
@@ -125,7 +130,7 @@ export default function Usage() {
                           <td className="py-3 px-4 text-right">{r.prompt_tokens}</td>
                           <td className="py-3 px-4 text-right">{r.completion_tokens}</td>
                           <td className="py-3 px-4 text-right font-medium">{r.total_tokens}</td>
-                          <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, r.model)}</td>
+                          {role === 'admin' && <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, r.model)}</td>}
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>
                           <td className="py-3 px-4 text-center">
                             {r.success ? (
