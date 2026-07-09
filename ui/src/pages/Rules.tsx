@@ -13,7 +13,7 @@ import type { RoutingRule } from '@/types';
 
 export default function Rules() {
   const { t } = useTranslation();
-  const { data: rules, isLoading, refetch } = useRules();
+  const { data: rules, isLoading, isError, refetch } = useRules();
   const createRule = useCreateRule();
   const deleteRule = useDeleteRule();
   const [editRule, setEditRule] = useState<RoutingRule | null>(null);
@@ -49,6 +49,13 @@ export default function Rules() {
         <CardContent className="p-0">
           {isLoading ? (
             <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>
+          ) : isError ? (
+            <div className="flex items-center justify-center p-8">
+              <div className="text-center">
+                <p className="text-destructive mb-2">{t('err.loadFailed')}</p>
+                <Button variant="outline" onClick={() => refetch()}>{t('common.refresh')}</Button>
+              </div>
+            </div>
           ) : rules && rules.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

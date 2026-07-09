@@ -48,20 +48,20 @@ impl LoadBalancer {
                 Some(&endpoints[idx])
             }
             Strategy::WeightedRoundRobin { weights, total } => {
-                let mut idx = self.counter.fetch_add(1, Ordering::Relaxed);
-                let pos = idx % *total as usize;
+                let counter_val = self.counter.fetch_add(1, Ordering::Relaxed);
+                let pos = counter_val % *total as usize;
 
                 let mut cumulative = 0u32;
+                let mut selected = 0;
                 for (i, w) in weights.iter().enumerate() {
                     cumulative += w;
                     if pos < cumulative as usize {
-                        idx = i;
+                        selected = i;
                         break;
                     }
                 }
 
-                self.counter.store(idx, Ordering::Relaxed);
-                Some(&endpoints[idx.min(endpoints.len() - 1)])
+                Some(&endpoints[selected])
             }
         }
     }

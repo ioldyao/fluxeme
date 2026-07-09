@@ -3,7 +3,9 @@ use rusqlite::{params, Connection};
 use crate::domain::routing::RoutingRule;
 
 pub fn list(conn: &Connection) -> Result<Vec<RoutingRule>, crate::db::DbError> {
-    let mut stmt = conn.prepare("SELECT name, user_id, model_pattern, channel_id FROM routing_rules ORDER BY name")?;
+    let mut stmt = conn.prepare(
+        "SELECT name, user_id, model_pattern, channel_id FROM routing_rules ORDER BY name",
+    )?;
     let rows = stmt.query_map([], |row| {
         Ok(RoutingRule {
             name: row.get(0)?,

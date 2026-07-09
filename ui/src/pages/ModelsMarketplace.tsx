@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useQueryClient } from '@tanstack/react-query';
 import { usePublicModels, useSubscriptions, useSubscribeModel, useUnsubscribeModel } from '@/api/models';
 import { PageHeader } from '@/components/PageHeader';
 import { EmptyState } from '@/components/EmptyState';
@@ -56,7 +57,8 @@ type CategoryKey = (typeof CATEGORY_KEYS)[number];
 
 export default function ModelsMarketplace() {
   const { t } = useTranslation();
-  const { data: models, isLoading, refetch } = usePublicModels();
+  const queryClient = useQueryClient();
+  const { data: models, isLoading, isError, refetch } = usePublicModels();
   const { data: subscriptions } = useSubscriptions();
   const subscribe = useSubscribeModel();
   const unsubscribe = useUnsubscribeModel();
@@ -86,6 +88,7 @@ export default function ModelsMarketplace() {
       onSuccess: () => {
         toast.success(isSubscribed ? t('marketplace.unsubSuccess') : t('marketplace.subSuccess'));
         refetch();
+        queryClient.invalidateQueries({ queryKey: ['me', 'subscriptions'] });
       },
       onError: (err: Error) => toast.error(err.message),
     };
@@ -142,6 +145,13 @@ export default function ModelsMarketplace() {
       {/* Content */}
       {isLoading ? (
         <div className="p-12 text-center text-muted-foreground">{t('common.loading')}</div>
+      ) : isError ? (
+        <div className="flex items-center justify-center p-8">
+          <div className="text-center">
+            <p className="text-destructive mb-2">{t('err.loadFailed')}</p>
+            <Button variant="outline" onClick={() => refetch()}>{t('common.refresh')}</Button>
+          </div>
+        </div>
       ) : enriched.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {enriched.map((model) => {

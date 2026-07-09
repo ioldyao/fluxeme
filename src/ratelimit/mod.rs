@@ -26,11 +26,22 @@ impl RateLimiter {
         self.check_window(&self.rpm_counters, key, limit, WINDOW_SECS)
     }
 
-    pub fn check_tpm(&self, key: &str, limit: u64, estimated_tokens: u64) -> Result<(), RateLimitError> {
+    pub fn check_tpm(
+        &self,
+        key: &str,
+        limit: u64,
+        estimated_tokens: u64,
+    ) -> Result<(), RateLimitError> {
         if limit == u64::MAX {
             return Ok(());
         }
-        self.check_window_tokens(&self.tpm_counters, key, limit, WINDOW_SECS, estimated_tokens)
+        self.check_window_tokens(
+            &self.tpm_counters,
+            key,
+            limit,
+            WINDOW_SECS,
+            estimated_tokens,
+        )
     }
 
     fn check_window(

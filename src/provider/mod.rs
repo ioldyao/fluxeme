@@ -4,6 +4,7 @@ pub mod vllm;
 
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use futures::stream::Stream;
 use serde_json::Value;
@@ -37,8 +38,6 @@ pub trait ProviderAdapter: Send + Sync {
         body: Value,
     ) -> Result<StreamResult, ProviderError>;
 
-    /// Relay a request to a provider-specific endpoint (e.g. /v1/completions, /tokenize).
-    /// Each provider implements only the paths it supports.
     async fn relay(
         &self,
         _endpoint: &EndpointConfig,
@@ -50,6 +49,20 @@ pub trait ProviderAdapter: Send + Sync {
             path
         )))
     }
+}
+
+fn shared_client() -> Arc<reqwest::Client> {
+    static CLIENT: OnceLock<Arc<reqwest::Client>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            Arc::new(
+                reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(60))
+                    .build()
+                    .expect("Failed to build reqwest client"),
+            )
+        })
+        .clone()
 }
 
 pub struct ProviderRegistry {

@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use super::{ProviderAdapter, ProviderError, StreamResult};
 use crate::config::types::EndpointConfig;
+use crate::provider::shared_client;
 
 pub struct VllmAdapter;
 
@@ -16,10 +17,7 @@ impl VllmAdapter {
         path: &str,
         body: Value,
     ) -> Result<Value, ProviderError> {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(endpoint.timeout_secs.unwrap_or(300)))
-            .build()
-            .map_err(|e| ProviderError(format!("Failed to create client: {}", e)))?;
+        let client = shared_client();
 
         let base = endpoint.url.trim_end_matches('/');
         let url = if base.ends_with("/v1") && path.starts_with("/v1") {
@@ -82,10 +80,7 @@ impl ProviderAdapter for VllmAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<StreamResult, ProviderError> {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(endpoint.timeout_secs.unwrap_or(600)))
-            .build()
-            .map_err(|e| ProviderError(format!("Failed to create client: {}", e)))?;
+        let client = shared_client();
 
         let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
         let url = format!("{}/v1/chat/completions", base);
@@ -122,7 +117,9 @@ impl ProviderAdapter for VllmAdapter {
 
         let byte_stream = response.bytes_stream();
         let mapped = byte_stream.map(|chunk| match chunk {
-            Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+            Ok(bytes) => String::from_utf8(bytes.to_vec()).unwrap_or_else(|e| {
+                String::from_utf8_lossy(e.as_bytes()).to_string()
+            }),
             Err(e) => format!("data: {{\"error\":\"{}\"}}\n\n", e),
         });
 

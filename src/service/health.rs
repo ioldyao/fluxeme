@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::db::Database;
+use crate::service::routing::match_pattern;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UpstreamModelInfo {
@@ -45,12 +46,12 @@ pub struct HealthService {
 }
 
 impl HealthService {
-    pub fn new(db: std::sync::Arc<Database>) -> Self {
+    pub fn new(db: std::sync::Arc<Database>) -> Result<Self, String> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()
-            .expect("Failed to create HTTP client");
-        Self { db, client }
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+        Ok(Self { db, client })
     }
 
     /// Check a single channel by ID. Returns per-endpoint health results.
@@ -189,29 +190,3 @@ impl HealthService {
     }
 }
 
-/// Simple glob pattern matching (copied from routing.rs).
-fn match_pattern(text: &str, pattern: &str) -> bool {
-    if pattern == "*" {
-        return true;
-    }
-    if !pattern.contains('*') {
-        return text == pattern;
-    }
-
-    let parts: Vec<&str> = pattern.split('*').collect();
-    match parts.len() {
-        2 => {
-            let prefix = parts[0];
-            let suffix = parts[1];
-            (prefix.is_empty() || text.starts_with(prefix))
-                && (suffix.is_empty() || text.ends_with(suffix))
-        }
-        3 => {
-            let prefix = parts[0];
-            let middle = parts[1];
-            let suffix = parts[2];
-            text.starts_with(prefix) && text.contains(middle) && text.ends_with(suffix)
-        }
-        _ => pattern == text,
-    }
-}

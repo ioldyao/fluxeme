@@ -46,11 +46,15 @@ impl Database {
                 .unwrap_or_else(|e| panic!("Failed to run initial migration: {}", e));
             tracing::info!("Database created at {}", path);
         }
-        Self { conn: Mutex::new(conn) }
+        Self {
+            conn: Mutex::new(conn),
+        }
     }
 
     pub fn conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, DbError> {
-        self.conn.lock().map_err(|_| DbError("Database mutex poisoned".into()))
+        self.conn
+            .lock()
+            .map_err(|_| DbError("Database mutex poisoned".into()))
     }
 
     fn migrate_inner(conn: &Connection) -> Result<(), DbError> {
@@ -136,22 +140,35 @@ impl Database {
             ",
         )?;
         // Backward compat: add password_hash column to existing users table
-        let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT '';");
-// Backward compat: add request_body/response_body columns
+        let _ = conn
+            .execute_batch("ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT '';");
+        // Backward compat: add request_body/response_body columns
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN request_body TEXT;");
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN response_body TEXT;");
         // Backward compat: add published column to models
-        let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN published INTEGER NOT NULL DEFAULT 0;");
+        let _ = conn
+            .execute_batch("ALTER TABLE models ADD COLUMN published INTEGER NOT NULL DEFAULT 0;");
         // Backward compat: add context_length column to models
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN context_length INTEGER;");
         // Backward compat: add pricing columns to models
-        let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN cache_read_price REAL NOT NULL DEFAULT 0.0;");
-        let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN cache_write_price REAL NOT NULL DEFAULT 0.0;");
-        let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN image_input_price REAL NOT NULL DEFAULT 0.0;");
-        let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN audio_input_price REAL NOT NULL DEFAULT 0.0;");
-        let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN audio_output_price REAL NOT NULL DEFAULT 0.0;");
+        let _ = conn.execute_batch(
+            "ALTER TABLE models ADD COLUMN cache_read_price REAL NOT NULL DEFAULT 0.0;",
+        );
+        let _ = conn.execute_batch(
+            "ALTER TABLE models ADD COLUMN cache_write_price REAL NOT NULL DEFAULT 0.0;",
+        );
+        let _ = conn.execute_batch(
+            "ALTER TABLE models ADD COLUMN image_input_price REAL NOT NULL DEFAULT 0.0;",
+        );
+        let _ = conn.execute_batch(
+            "ALTER TABLE models ADD COLUMN audio_input_price REAL NOT NULL DEFAULT 0.0;",
+        );
+        let _ = conn.execute_batch(
+            "ALTER TABLE models ADD COLUMN audio_output_price REAL NOT NULL DEFAULT 0.0;",
+        );
         // Backward compat: add name column to channels
-        let _ = conn.execute_batch("ALTER TABLE channels ADD COLUMN name TEXT NOT NULL DEFAULT '';");
+        let _ =
+            conn.execute_batch("ALTER TABLE channels ADD COLUMN name TEXT NOT NULL DEFAULT '';");
         // Backward compat: add spend_limit/allowed_models columns to api_keys
         let _ = conn.execute_batch("ALTER TABLE api_keys ADD COLUMN spend_limit REAL;");
         let _ = conn.execute_batch("ALTER TABLE api_keys ADD COLUMN allowed_models TEXT;");
@@ -162,12 +179,17 @@ impl Database {
                 model_id TEXT NOT NULL REFERENCES models(id) ON DELETE CASCADE,
                 created_at TEXT NOT NULL,
                 PRIMARY KEY (user_id, model_id)
-            );"
+            );",
         );
         // Performance indexes
-        let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_usage_user_id ON usage_logs(user_id)");
-        let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_logs(timestamp)");
-        let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_usage_user_timestamp ON usage_logs(user_id, timestamp)");
+        let _ = conn
+            .execute_batch("CREATE INDEX IF NOT EXISTS idx_usage_user_id ON usage_logs(user_id)");
+        let _ = conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_logs(timestamp)",
+        );
+        let _ = conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_usage_user_timestamp ON usage_logs(user_id, timestamp)",
+        );
         Ok(())
     }
 
@@ -252,7 +274,11 @@ impl Database {
             |row| row.get(0),
         )?)
     }
-    pub fn query_usage_since(&self, since: &str, user_id: Option<&str>) -> Result<Vec<crate::domain::usage::UsageRecord>, DbError> {
+    pub fn query_usage_since(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<Vec<crate::domain::usage::UsageRecord>, DbError> {
         use crate::domain::usage::UsageRecord;
         let conn = self.conn()?;
         let mut records = Vec::new();
@@ -264,13 +290,20 @@ impl Database {
             let mut rows = stmt.query(rusqlite::params![uid, since])?;
             while let Some(row) = rows.next()? {
                 records.push(UsageRecord {
-                    timestamp: row.get(0)?, request_id: row.get(1)?,
-                    user_id: row.get(2)?, user_name: row.get(3)?,
-                    channel_id: row.get(4)?, model: row.get(5)?,
-                    prompt_tokens: row.get(6)?, completion_tokens: row.get(7)?,
-                    total_tokens: row.get(8)?, latency_ms: row.get(9)?,
-                    status_code: row.get(10)?, success: row.get::<_, i32>(11)? != 0,
-                    request_body: None, response_body: None,
+                    timestamp: row.get(0)?,
+                    request_id: row.get(1)?,
+                    user_id: row.get(2)?,
+                    user_name: row.get(3)?,
+                    channel_id: row.get(4)?,
+                    model: row.get(5)?,
+                    prompt_tokens: row.get(6)?,
+                    completion_tokens: row.get(7)?,
+                    total_tokens: row.get(8)?,
+                    latency_ms: row.get(9)?,
+                    status_code: row.get(10)?,
+                    success: row.get::<_, i32>(11)? != 0,
+                    request_body: None,
+                    response_body: None,
                 });
             }
         } else {
@@ -281,19 +314,30 @@ impl Database {
             let mut rows = stmt.query(rusqlite::params![since])?;
             while let Some(row) = rows.next()? {
                 records.push(UsageRecord {
-                    timestamp: row.get(0)?, request_id: row.get(1)?,
-                    user_id: row.get(2)?, user_name: row.get(3)?,
-                    channel_id: row.get(4)?, model: row.get(5)?,
-                    prompt_tokens: row.get(6)?, completion_tokens: row.get(7)?,
-                    total_tokens: row.get(8)?, latency_ms: row.get(9)?,
-                    status_code: row.get(10)?, success: row.get::<_, i32>(11)? != 0,
-                    request_body: None, response_body: None,
+                    timestamp: row.get(0)?,
+                    request_id: row.get(1)?,
+                    user_id: row.get(2)?,
+                    user_name: row.get(3)?,
+                    channel_id: row.get(4)?,
+                    model: row.get(5)?,
+                    prompt_tokens: row.get(6)?,
+                    completion_tokens: row.get(7)?,
+                    total_tokens: row.get(8)?,
+                    latency_ms: row.get(9)?,
+                    status_code: row.get(10)?,
+                    success: row.get::<_, i32>(11)? != 0,
+                    request_body: None,
+                    response_body: None,
                 });
             }
         }
         Ok(records)
     }
-    pub fn daily_usage_counts(&self, since: &str, user_id: Option<&str>) -> Result<Vec<(String, i64)>, DbError> {
+    pub fn daily_usage_counts(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, i64)>, DbError> {
         let conn = self.conn()?;
         let mut records = Vec::new();
         if let Some(uid) = user_id {
@@ -316,7 +360,11 @@ impl Database {
         Ok(records)
     }
 
-    pub fn query_usage(&self, limit: usize, user_id: Option<&str>) -> Result<Vec<crate::domain::usage::UsageRecord>, DbError> {
+    pub fn query_usage(
+        &self,
+        limit: usize,
+        user_id: Option<&str>,
+    ) -> Result<Vec<crate::domain::usage::UsageRecord>, DbError> {
         use crate::domain::usage::UsageRecord;
         let conn = self.conn()?;
         let mut records = Vec::new();
@@ -373,7 +421,10 @@ impl Database {
         Ok(records)
     }
 
-    pub fn get_usage_detail(&self, request_id: &str) -> Result<Option<crate::domain::usage::UsageRecord>, DbError> {
+    pub fn get_usage_detail(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<crate::domain::usage::UsageRecord>, DbError> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(
             "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body
@@ -488,7 +539,10 @@ impl Database {
 
     pub fn set_model_published(&self, id: &str, published: bool) -> Result<(), DbError> {
         let conn = self.conn()?;
-        conn.execute("UPDATE models SET published = ?1 WHERE id = ?2", params![published as i32, id])?;
+        conn.execute(
+            "UPDATE models SET published = ?1 WHERE id = ?2",
+            params![published as i32, id],
+        )?;
         Ok(())
     }
 
@@ -498,7 +552,10 @@ impl Database {
 
     pub fn set_model_context_length(&self, id: &str, context_length: i64) -> Result<(), DbError> {
         let conn = self.conn()?;
-        conn.execute("UPDATE models SET context_length = ?1 WHERE id = ?2", params![context_length, id])?;
+        conn.execute(
+            "UPDATE models SET context_length = ?1 WHERE id = ?2",
+            params![context_length, id],
+        )?;
         Ok(())
     }
 
@@ -522,15 +579,17 @@ impl Database {
 
     pub fn delete_subscriptions_by_model(&self, model_id: &str) -> Result<(), DbError> {
         let conn = self.conn()?;
-        conn.execute("DELETE FROM user_subscriptions WHERE model_id = ?1", params![model_id])?;
+        conn.execute(
+            "DELETE FROM user_subscriptions WHERE model_id = ?1",
+            params![model_id],
+        )?;
         Ok(())
     }
 
     pub fn list_subscribed_model_ids(&self, user_id: &str) -> Result<Vec<String>, DbError> {
         let conn = self.conn()?;
-        let mut stmt = conn.prepare(
-            "SELECT model_id FROM user_subscriptions WHERE user_id = ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT model_id FROM user_subscriptions WHERE user_id = ?1")?;
         let ids = stmt
             .query_map(params![user_id], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
@@ -574,9 +633,14 @@ impl Database {
         Ok(result)
     }
 
-    pub fn usage_stats_since(&self, since: &str, user_id: Option<&str>) -> Result<(u64, u64, u64, u64), DbError> {
+    pub fn usage_stats_since(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<(u64, u64, u64, u64), DbError> {
         let conn = self.conn()?;
-        let (total, success, latency, total_tok): (u64, u64, u64, u64) = if let Some(uid) = user_id {
+        let (total, success, latency, total_tok): (u64, u64, u64, u64) = if let Some(uid) = user_id
+        {
             conn.query_row(
                 "SELECT COUNT(*), COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END),0), COALESCE(SUM(latency_ms),0), COALESCE(SUM(total_tokens),0)
                  FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2",
@@ -594,7 +658,11 @@ impl Database {
         Ok((total, success, latency, total_tok))
     }
 
-    pub fn usage_cost_rows_since(&self, since: &str, user_id: Option<&str>) -> Result<Vec<UsageRecord>, DbError> {
+    pub fn usage_cost_rows_since(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<Vec<UsageRecord>, DbError> {
         let conn = self.conn()?;
         let mut records = Vec::new();
         if let Some(uid) = user_id {
@@ -605,13 +673,20 @@ impl Database {
             let mut rows = stmt.query(params![uid, since])?;
             while let Some(row) = rows.next()? {
                 records.push(UsageRecord {
-                    timestamp: row.get(0)?, request_id: row.get(1)?,
-                    user_id: row.get(2)?, user_name: row.get(3)?,
-                    channel_id: row.get(4)?, model: row.get(5)?,
-                    prompt_tokens: row.get(6)?, completion_tokens: row.get(7)?,
-                    total_tokens: row.get(8)?, latency_ms: row.get(9)?,
-                    status_code: row.get(10)?, success: row.get::<_, i32>(11)? != 0,
-                    request_body: None, response_body: None,
+                    timestamp: row.get(0)?,
+                    request_id: row.get(1)?,
+                    user_id: row.get(2)?,
+                    user_name: row.get(3)?,
+                    channel_id: row.get(4)?,
+                    model: row.get(5)?,
+                    prompt_tokens: row.get(6)?,
+                    completion_tokens: row.get(7)?,
+                    total_tokens: row.get(8)?,
+                    latency_ms: row.get(9)?,
+                    status_code: row.get(10)?,
+                    success: row.get::<_, i32>(11)? != 0,
+                    request_body: None,
+                    response_body: None,
                 });
             }
         } else {
@@ -622,13 +697,20 @@ impl Database {
             let mut rows = stmt.query(params![since])?;
             while let Some(row) = rows.next()? {
                 records.push(UsageRecord {
-                    timestamp: row.get(0)?, request_id: row.get(1)?,
-                    user_id: row.get(2)?, user_name: row.get(3)?,
-                    channel_id: row.get(4)?, model: row.get(5)?,
-                    prompt_tokens: row.get(6)?, completion_tokens: row.get(7)?,
-                    total_tokens: row.get(8)?, latency_ms: row.get(9)?,
-                    status_code: row.get(10)?, success: row.get::<_, i32>(11)? != 0,
-                    request_body: None, response_body: None,
+                    timestamp: row.get(0)?,
+                    request_id: row.get(1)?,
+                    user_id: row.get(2)?,
+                    user_name: row.get(3)?,
+                    channel_id: row.get(4)?,
+                    model: row.get(5)?,
+                    prompt_tokens: row.get(6)?,
+                    completion_tokens: row.get(7)?,
+                    total_tokens: row.get(8)?,
+                    latency_ms: row.get(9)?,
+                    status_code: row.get(10)?,
+                    success: row.get::<_, i32>(11)? != 0,
+                    request_body: None,
+                    response_body: None,
                 });
             }
         }

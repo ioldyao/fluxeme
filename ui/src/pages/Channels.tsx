@@ -17,7 +17,7 @@ import type { Channel } from '@/types';
 export default function Channels() {
   const { t } = useTranslation();
   const qc = useQueryClient();
-  const { data: channels, isLoading, refetch } = useChannels();
+  const { data: channels, isLoading, isError, refetch } = useChannels();
   const createChannel = useCreateChannel();
   const deleteChannel = useDeleteChannel();
   const [editChannel, setEditChannel] = useState<Channel | null>(null);
@@ -63,6 +63,13 @@ export default function Channels() {
         <CardContent className="p-0">
           {isLoading ? (
             <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>
+          ) : isError ? (
+            <div className="flex items-center justify-center p-8">
+              <div className="text-center">
+                <p className="text-destructive mb-2">{t('err.loadFailed')}</p>
+                <Button variant="outline" onClick={() => refetch()}>{t('common.refresh')}</Button>
+              </div>
+            </div>
           ) : channels && channels.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

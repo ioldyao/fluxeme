@@ -11,7 +11,6 @@ use futures::stream::StreamExt;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::balancer::LoadBalancer;
 use crate::config::types::EndpointConfig;
 use crate::domain::usage::UsageRecord;
 use crate::server::AppState;
@@ -111,17 +110,17 @@ struct RouteTarget {
 }
 
 fn resolve_route(state: &AppState, channel_id: &str) -> Result<RouteTarget, GatewayError> {
-    let (provider_name, endpoints) = state
+    let (provider_name, balancer, endpoints) = state
         .routing
-        .resolve_channel(channel_id)
-        .ok_or_else(|| GatewayError::Internal(format!("Channel '{}' not found or disabled", channel_id)))?;
+        .get_route(channel_id)
+        .ok_or_else(|| GatewayError::Internal("Channel route unavailable".into()))?;
 
     let adapter = state
         .providers
-        .get(&provider_name.as_str())
-        .ok_or_else(|| GatewayError::Internal(format!("Unknown provider: {}", provider_name)))?;
+        .get(provider_name.as_str())
+        .ok_or_else(|| GatewayError::Internal("Provider not available".into()))?;
 
-    let endpoint = LoadBalancer::new(&endpoints)
+    let endpoint = balancer
         .select(&endpoints)
         .ok_or_else(|| GatewayError::Internal("No available endpoints".into()))?
         .clone();
@@ -224,7 +223,7 @@ async fn handle_streaming(
                 .header("connection", "keep-alive")
                 .header("access-control-allow-origin", "*")
                 .body(Body::from_stream(body_stream))
-                .unwrap())
+                .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
         }
         Err(e) => {
             let latency_ms = start.elapsed().as_millis() as u64;
@@ -327,6 +326,12 @@ pub async fn chat_completions(
     let user = state.auth.authenticate(&headers)?;
     let model = trim_model(&mut body)?;
 
+    if let Some(ref allowed) = user.allowed_models {
+        if !allowed.contains(&model) {
+            return Err(GatewayError::Auth(format!("Model '{}' not allowed for this API key", model)));
+        }
+    }
+
     if let Some((rpm, tpm)) = user.rate_limits {
         state.rate_limiter.check_rpm(&user.user_id, rpm)?;
         state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens(&body))?;
@@ -362,6 +367,12 @@ pub async fn messages(
 
     let user = state.auth.authenticate(&headers)?;
     let model = trim_model(&mut body)?;
+
+    if let Some(ref allowed) = user.allowed_models {
+        if !allowed.contains(&model) {
+            return Err(GatewayError::Auth(format!("Model '{}' not allowed for this API key", model)));
+        }
+    }
 
     if let Some((rpm, tpm)) = user.rate_limits {
         state.rate_limiter.check_rpm(&user.user_id, rpm)?;
@@ -400,13 +411,19 @@ async fn relay_to_upstream(
     let user = state.auth.authenticate(headers)?;
     let model = trim_model(&mut body)?;
 
+    if let Some(ref allowed) = user.allowed_models {
+        if !allowed.contains(&model) {
+            return Err(GatewayError::Auth(format!("Model '{}' not allowed for this API key", model)));
+        }
+    }
+
     if let Some((rpm, tpm)) = user.rate_limits {
         state.rate_limiter.check_rpm(&user.user_id, rpm)?;
         state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens(&body))?;
     }
 
     let channel_id = state.routing.route(&user.user_id, &model)?;
-    let route = resolve_route(&state, &channel_id)?;
+    let route = resolve_route(state, &channel_id)?;
     let latency_ms = start.elapsed().as_millis() as u64;
     let req_body = serde_json::to_string(&body).ok();
 

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
 
 use crate::db::Database;
@@ -8,20 +8,22 @@ use crate::domain::usage::UsageRecord;
 
 #[derive(Clone)]
 pub struct UsageService {
-    sender: UnboundedSender<UsageRecord>,
+    sender: Sender<UsageRecord>,
     db: Arc<Database>,
 }
 
 impl UsageService {
     pub fn new(db: Arc<Database>) -> (Self, JoinHandle<()>) {
-        let (tx, rx) = mpsc::unbounded_channel::<UsageRecord>();
+        let (tx, rx) = mpsc::channel::<UsageRecord>(4096);
         let handle = tokio::spawn(background_writer(db.clone(), rx));
 
         (Self { sender: tx, db }, handle)
     }
 
     pub fn record(&self, record: UsageRecord) {
-        let _ = self.sender.send(record);
+        if let Err(e) = self.sender.try_send(record) {
+            tracing::warn!("Usage channel full, dropping record: {:?}", e.into_inner());
+        }
     }
 
     pub fn query(&self, limit: usize, user_id: Option<&str>) -> Result<Vec<UsageRecord>, String> {
@@ -55,10 +57,9 @@ impl UsageService {
     }
 }
 
-async fn background_writer(db: Arc<Database>, mut rx: UnboundedReceiver<UsageRecord>) {
+async fn background_writer(db: Arc<Database>, mut rx: Receiver<UsageRecord>) {
     while let Some(record) = rx.recv().await {
         let mut batch = vec![record];
-        // Drain additional pending records (up to 100)
         while batch.len() < 100 {
             match rx.try_recv() {
                 Ok(r) => batch.push(r),

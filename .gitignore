@@ -1,3 +1,5 @@
 /target
 gateway.db
 node_modules/
+config/config.yaml
+config.local.yaml

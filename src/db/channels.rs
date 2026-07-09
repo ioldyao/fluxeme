@@ -5,7 +5,9 @@ use crate::domain::channel::{Channel, Endpoint};
 
 #[allow(dead_code)]
 pub fn list(conn: &Connection) -> Result<Vec<Channel>, crate::db::DbError> {
-    let mut stmt = conn.prepare("SELECT id, name, provider, priority, enabled FROM channels ORDER BY priority, id")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, name, provider, priority, enabled FROM channels ORDER BY priority, id",
+    )?;
     let mut channels: Vec<Channel> = stmt
         .query_map([], |row| {
             Ok(Channel {
@@ -54,7 +56,8 @@ pub fn list(conn: &Connection) -> Result<Vec<Channel>, crate::db::DbError> {
 }
 
 pub fn get(conn: &Connection, id: &str) -> Result<Option<Channel>, crate::db::DbError> {
-    let mut stmt = conn.prepare("SELECT id, name, provider, priority, enabled FROM channels WHERE id = ?1")?;
+    let mut stmt =
+        conn.prepare("SELECT id, name, provider, priority, enabled FROM channels WHERE id = ?1")?;
     let mut rows = stmt.query_map(params![id], |row| {
         Ok(Channel {
             id: row.get(0)?,
@@ -91,7 +94,10 @@ pub fn update(conn: &Connection, ch: &Channel) -> Result<(), crate::db::DbError>
         params![ch.name, ch.provider, ch.priority, ch.enabled as i32, ch.id],
     )?;
     // Replace endpoints: delete old, insert new
-    conn.execute("DELETE FROM endpoints WHERE channel_id = ?1", params![ch.id])?;
+    conn.execute(
+        "DELETE FROM endpoints WHERE channel_id = ?1",
+        params![ch.id],
+    )?;
     for ep in &ch.endpoints {
         create_endpoint(conn, &ch.id, ep)?;
     }
@@ -105,7 +111,10 @@ pub fn delete(conn: &Connection, id: &str) -> Result<(), crate::db::DbError> {
 
 // ── Endpoints ─────────────────────────────────────────────────────
 
-fn list_endpoints(conn: &Connection, channel_id: &str) -> Result<Vec<Endpoint>, crate::db::DbError> {
+fn list_endpoints(
+    conn: &Connection,
+    channel_id: &str,
+) -> Result<Vec<Endpoint>, crate::db::DbError> {
     let mut stmt = conn.prepare(
         "SELECT id, channel_id, url, api_key, weight, timeout_secs FROM endpoints WHERE channel_id = ?1",
     )?;
@@ -126,7 +135,11 @@ fn list_endpoints(conn: &Connection, channel_id: &str) -> Result<Vec<Endpoint>, 
     Ok(eps)
 }
 
-fn create_endpoint(conn: &Connection, channel_id: &str, ep: &Endpoint) -> Result<(), crate::db::DbError> {
+fn create_endpoint(
+    conn: &Connection,
+    channel_id: &str,
+    ep: &Endpoint,
+) -> Result<(), crate::db::DbError> {
     conn.execute(
         "INSERT INTO endpoints (channel_id, url, api_key, weight, timeout_secs) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![channel_id, ep.url, ep.api_key, ep.weight, ep.timeout_secs],

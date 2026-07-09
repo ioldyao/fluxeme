@@ -13,7 +13,6 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Search, RefreshCw, CheckCircle2, XCircle, BarChart3, List } from 'lucide-react';
-import { toast } from 'sonner';
 import { useQuery } from '@tanstack/react-query';
 
 export default function Usage() {
@@ -23,7 +22,7 @@ export default function Usage() {
   const [userFilter, setUserFilter] = useState('');
   const [detailId, setDetailId] = useState<string | null>(null);
   const params = role === 'admin' && userFilter ? { limit, user_id: userFilter } : { limit };
-  const { data: usage, isLoading, refetch } = useUsage(params);
+  const { data: usage, isLoading, isError, refetch } = useUsage(params);
   const { data: models } = useQuery({
     queryKey: ['models'],
     queryFn: () => api<import('@/types').Model[]>('/models'),
@@ -43,12 +42,6 @@ export default function Usage() {
   }, [models]);
 
   const handleChartTab = (tab: string) => {
-    if (tab === 'chart') {
-      api('/usage/aggregations')
-        .then(() => setChartTab(tab))
-        .catch(() => toast.error(t('usage.chartNotAvailable')));
-      return;
-    }
     setChartTab(tab);
   };
 
@@ -93,6 +86,13 @@ export default function Usage() {
             <CardContent className="p-0">
               {isLoading ? (
                 <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>
+              ) : isError ? (
+                <div className="flex items-center justify-center p-8">
+                  <div className="text-center">
+                    <p className="text-destructive mb-2">{t('err.loadFailed')}</p>
+                    <Button variant="outline" onClick={() => refetch()}>{t('common.refresh')}</Button>
+                  </div>
+                </div>
               ) : usage && usage.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">

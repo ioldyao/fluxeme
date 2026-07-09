@@ -14,8 +14,8 @@ pub fn load_config(path: &str) -> Result<AppConfig, String> {
     let content = fs::read_to_string(Path::new(path))
         .map_err(|e| format!("Failed to read config file: {}", e))?;
 
-    let config: AppConfig = serde_yaml::from_str(&content)
-        .map_err(|e| format!("Failed to parse config: {}", e))?;
+    let config: AppConfig =
+        serde_yaml::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
 
     // Validate
     if config.server.host.is_empty() {
@@ -40,8 +40,30 @@ pub fn load_config(path: &str) -> Result<AppConfig, String> {
     Ok(config)
 }
 
+/// Resolve the JWT secret from config or environment variable.
+/// Panics if neither source provides a value.
+pub fn resolve_jwt_secret(cfg: &AppConfig) -> String {
+    let secret = cfg
+        .jwt_secret
+        .clone()
+        .or_else(|| std::env::var("GATEWAY_JWT_SECRET").ok())
+        .unwrap_or_else(|| {
+            panic!("GATEWAY_JWT_SECRET must be set via config or environment variable");
+        });
+
+    if secret == "ai-gateway-jwt-secret-change-me" {
+        tracing::warn!("CRITICAL: Using default JWT secret! Set GATEWAY_JWT_SECRET env var or configure jwt_secret.");
+    }
+
+    secret
+}
+
 /// Seed database from config YAML if database is empty.
-pub fn seed_from_config(config_path: &str, db: &Database, admin_username: &str) -> Result<(), String> {
+pub fn seed_from_config(
+    config_path: &str,
+    db: &Database,
+    admin_username: &str,
+) -> Result<(), String> {
     let content = fs::read_to_string(Path::new(config_path))
         .map_err(|e| format!("Failed to read config file: {}", e))?;
 
@@ -216,14 +238,15 @@ pub fn seed_from_config(config_path: &str, db: &Database, admin_username: &str) 
     }
 
     let tenants = seed.users.or(seed.tenants).unwrap_or_default();
-    tracing::info!("Seed: {} tenants, {} channels, {} models",
+    tracing::info!(
+        "Seed: {} tenants, {} channels, {} models",
         tenants.len(),
         seed.channels.as_ref().map_or(0, |c| c.len()),
         seed.models.as_ref().map_or(0, |m| m.len()),
     );
     if tenants.is_empty()
-        && seed.channels.as_ref().map_or(true, |c| c.is_empty())
-        && seed.models.as_ref().map_or(true, |m| m.is_empty())
+        && seed.channels.as_ref().is_none_or(|c| c.is_empty())
+        && seed.models.as_ref().is_none_or(|m| m.is_empty())
     {
         return Ok(()); // Nothing else to seed
     }

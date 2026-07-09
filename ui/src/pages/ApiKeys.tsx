@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useApiKeys, useCreateApiKey, useUpdateApiKey, useDeleteApiKey, useSaveApiKey } from '@/api/apiKeys';
+import { useCurrency, CURRENCY_SYMBOL } from '@/store/currency';
 import { ApiKeyForm } from '@/forms/ApiKeyForm';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -15,7 +16,9 @@ import type { ApiKey, CreateKeyReq } from '@/types';
 
 export default function ApiKeys() {
   const { t } = useTranslation();
-  const { data: keys, isLoading, refetch } = useApiKeys();
+  const { currency } = useCurrency();
+  const sym = CURRENCY_SYMBOL[currency];
+  const { data: keys, isLoading, isError, refetch } = useApiKeys();
   const createKey = useCreateApiKey();
   const deleteKey = useDeleteApiKey();
   const updateKey = useUpdateApiKey();
@@ -64,6 +67,13 @@ export default function ApiKeys() {
         <CardContent className="p-0">
           {isLoading ? (
             <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>
+          ) : isError ? (
+            <div className="flex items-center justify-center p-8">
+              <div className="text-center">
+                <p className="text-destructive mb-2">{t('err.loadFailed')}</p>
+                <Button variant="outline" onClick={() => refetch()}>{t('common.refresh')}</Button>
+              </div>
+            </div>
           ) : keys && keys.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -103,7 +113,7 @@ export default function ApiKeys() {
                         {k.expires_at ? new Date(k.expires_at).toLocaleDateString() : t('apikey.never')}
                       </td>
                       <td className="py-3 px-4 text-right text-xs">
-                        {k.spend_limit != null ? `¥${k.spend_limit}` : '-'}
+                        {k.spend_limit != null ? `${sym}${k.spend_limit}` : '-'}
                       </td>
                       <td className="py-3 px-4 text-xs text-muted-foreground max-w-[150px] truncate">
                         {k.allowed_models && k.allowed_models.length > 0 ? k.allowed_models.join(', ') : '-'}

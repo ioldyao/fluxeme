@@ -21,7 +21,7 @@ import type { Model, UpstreamModel } from '@/types';
 
 export default function Models() {
   const { t } = useTranslation();
-  const { data: models, isLoading, refetch } = useModels();
+  const { data: models, isLoading, isError, refetch } = useModels();
   const { data: channels } = useChannels();
   const channelName = (id: string) => channels?.find((c) => c.id === id)?.name || id;
   const createModel = useCreateModel();
@@ -116,10 +116,9 @@ export default function Models() {
   const handleAddSelected = async () => {
     if (selectedIds.size === 0) return;
     setAdding(true);
-    let added = 0, errors = 0;
-    for (const modelId of selectedIds) {
-      const upstream = upstreamModels.find((m) => m.id === modelId);
-      try {
+    const results = await Promise.allSettled(
+      Array.from(selectedIds).map(async (modelId) => {
+        const upstream = upstreamModels.find((m) => m.id === modelId);
         await api('/models', {
           method: 'POST',
           body: {
@@ -130,15 +129,15 @@ export default function Models() {
             published: false,
           },
         });
-        added++;
-      } catch { errors++; }
-    }
+      })
+    );
+    const failures = results.filter(r => r.status === 'rejected');
     qc.invalidateQueries({ queryKey: ['models'] });
     setAdding(false);
-    if (errors > 0) {
-      toast.success(`成功添加 ${added} 个模型，${errors} 个失败`);
+    if (failures.length > 0) {
+      toast.success(`成功添加 ${results.length - failures.length} 个模型，${failures.length} 个失败`);
     } else {
-      toast.success(`成功添加 ${added} 个模型`);
+      toast.success(`成功添加 ${results.length} 个模型`);
     }
     setSyncOpen(false);
   };
@@ -169,6 +168,13 @@ export default function Models() {
         <CardContent className="p-0">
           {isLoading ? (
             <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>
+          ) : isError ? (
+            <div className="flex items-center justify-center p-8">
+              <div className="text-center">
+                <p className="text-destructive mb-2">{t('err.loadFailed')}</p>
+                <Button variant="outline" onClick={() => refetch()}>{t('common.refresh')}</Button>
+              </div>
+            </div>
           ) : models && models.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

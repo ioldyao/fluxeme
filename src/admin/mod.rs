@@ -52,8 +52,7 @@ impl AdminModule {
             sub: info.user_id.clone(),
             name: info.user_name.clone(),
             role: info.role.clone(),
-            exp: (Utc::now() + Duration::seconds(SESSION_TTL_SECS))
-                .timestamp() as usize,
+            exp: (Utc::now() + Duration::seconds(SESSION_TTL_SECS)).timestamp() as usize,
             iat: Utc::now().timestamp() as usize,
         };
         encode(
@@ -70,7 +69,10 @@ impl AdminModule {
             &DecodingKey::from_secret(self.secret.as_bytes()),
             &Validation::default(),
         )
-        .map_err(|e| AdminError::unauthorized(format!("Invalid token: {}", e)))?;
+        .map_err(|e| {
+            tracing::error!("JWT decode error: {}", e);
+            AdminError::unauthorized("Invalid or expired session")
+        })?;
         Ok(SessionInfo {
             user_id: data.claims.sub,
             user_name: data.claims.name,
@@ -115,36 +117,58 @@ fn require_admin(admin: &AdminModule, headers: &HeaderMap) -> Result<SessionInfo
 
 // ── Error type ────────────────────────────────────────────────────
 
-pub struct AdminError {
-    status: StatusCode,
-    message: String,
+#[derive(Debug)]
+pub enum AdminError {
+    Unauthorized(String),
+    Forbidden(String),
+    NotFound(String),
+    Internal(String),
+    BadRequest(String),
+    TooManyRequests(String),
 }
 
 impl AdminError {
     fn unauthorized(msg: impl Into<String>) -> Self {
-        Self { status: StatusCode::UNAUTHORIZED, message: msg.into() }
+        AdminError::Unauthorized(msg.into())
     }
     fn forbidden(msg: impl Into<String>) -> Self {
-        Self { status: StatusCode::FORBIDDEN, message: msg.into() }
+        AdminError::Forbidden(msg.into())
     }
     fn not_found(msg: impl Into<String>) -> Self {
-        Self { status: StatusCode::NOT_FOUND, message: msg.into() }
+        AdminError::NotFound(msg.into())
     }
     fn bad_request(msg: impl Into<String>) -> Self {
-        Self { status: StatusCode::BAD_REQUEST, message: msg.into() }
+        AdminError::BadRequest(msg.into())
     }
     fn internal(msg: impl Into<String>) -> Self {
-        Self { status: StatusCode::INTERNAL_SERVER_ERROR, message: msg.into() }
+        AdminError::Internal(msg.into())
+    }
+    fn too_many_requests(msg: impl Into<String>) -> Self {
+        AdminError::TooManyRequests(msg.into())
     }
 }
 
 impl IntoResponse for AdminError {
     fn into_response(self) -> axum::response::Response {
+        let (status, message) = match self {
+            AdminError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
+            AdminError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
+            AdminError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
+            AdminError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            AdminError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+            AdminError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, msg),
+        };
         let body = serde_json::json!({
-            "error": self.message,
+            "error": message,
         });
-        (self.status, Json(body)).into_response()
+        (status, Json(body)).into_response()
     }
+}
+
+/// Wrap a DB error: log the detail server-side and return a generic message.
+fn db_err(e: crate::db::DbError) -> AdminError {
+    tracing::error!("[admin] DB error: {}", e.0);
+    AdminError::internal("Internal server error")
 }
 
 // ── Login ─────────────────────────────────────────────────────────
@@ -157,8 +181,20 @@ struct LoginReq {
 
 async fn admin_login(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(req): Json<LoginReq>,
 ) -> Result<Json<Value>, AdminError> {
+    // Rate limit login attempts by IP
+    let client_ip = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| headers.get("x-real-ip").and_then(|v| v.to_str().ok()))
+        .unwrap_or("unknown");
+    state
+        .rate_limiter
+        .check_rpm(&format!("login:{}", client_ip), 10)
+        .map_err(|_| AdminError::too_many_requests("Too many login attempts. Try again later."))?;
+
     // First check: admin credentials from config (super admin)
     {
         let cfg = state.config.read().unwrap();
@@ -179,24 +215,35 @@ async fn admin_login(
     }
 
     // Second check: regular user from database
-    let user = state.db.get_user_with_password(&req.username)
-        .map_err(|e| AdminError::internal(e.0))?;
+    let user = state
+        .db
+        .get_user_with_password(&req.username)
+        .map_err(db_err)?;
 
     if let Some(u) = user {
         if let Some(ref hash) = u.password_hash {
-            if !hash.is_empty() && bcrypt::verify(&req.password, hash).unwrap_or(false) {
-                let info = SessionInfo {
-                    user_id: u.id.clone(),
-                    user_name: u.name.clone(),
-                    role: "user".to_string(),
-                };
-                let token = state.admin.encode_token(&info)?;
-                return Ok(Json(serde_json::json!({
-                    "token": token,
-                    "role": "user",
-                    "user_id": u.id,
-                    "user_name": u.name,
-                })));
+            if !hash.is_empty() {
+                match bcrypt::verify(&req.password, hash) {
+                    Ok(true) => {
+                        let info = SessionInfo {
+                            user_id: u.id.clone(),
+                            user_name: u.name.clone(),
+                            role: "user".to_string(),
+                        };
+                        let token = state.admin.encode_token(&info)?;
+                        return Ok(Json(serde_json::json!({
+                            "token": token,
+                            "role": "user",
+                            "user_id": u.id,
+                            "user_name": u.name,
+                        })));
+                    }
+                    Ok(false) => { /* wrong password - fall through */ }
+                    Err(e) => {
+                        tracing::error!("bcrypt verify error for user {}: {}", u.id, e);
+                        return Err(AdminError::internal("Authentication error"));
+                    }
+                }
             }
         }
     }
@@ -224,10 +271,10 @@ async fn admin_dashboard(
     let session = require_session(&state.admin, &headers)?;
 
     if session.role == "admin" {
-        let users = state.db.list_users().map_err(|e| AdminError::internal(e.0))?;
-        let channels = state.db.list_channels().map_err(|e| AdminError::internal(e.0))?;
-        let models = state.db.list_models().map_err(|e| AdminError::internal(e.0))?;
-        let rules = state.db.list_rules().map_err(|e| AdminError::internal(e.0))?;
+        let users = state.db.list_users().map_err(db_err)?;
+        let channels = state.db.list_channels().map_err(db_err)?;
+        let models = state.db.list_models().map_err(db_err)?;
+        let rules = state.db.list_rules().map_err(db_err)?;
 
         let endpoint_count: usize = channels.iter().map(|c| c.endpoints.len()).sum();
         let total_requests = state.usage.count().unwrap_or(0);
@@ -243,8 +290,7 @@ async fn admin_dashboard(
             total_requests,
         }))
     } else {
-        let api_keys = state.db.list_api_keys(&session.user_id)
-            .map_err(|e| AdminError::internal(e.0))?;
+        let api_keys = state.db.list_api_keys(&session.user_id).map_err(db_err)?;
         let user_requests = state.usage.count_by_user(&session.user_id).unwrap_or(0);
 
         Ok(Json(DashboardResp {
@@ -287,23 +333,39 @@ async fn dashboard_aggregations(
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string();
 
-    let user_filter: Option<&str> = if session.role == "admin" { None } else { Some(&session.user_id) };
+    let user_filter: Option<&str> = if session.role == "admin" {
+        None
+    } else {
+        Some(&session.user_id)
+    };
 
     // Load model pricing map once
     let models = state.db.list_models().unwrap_or_default();
-    let mut pricing: std::collections::HashMap<String, (f64, f64)> = std::collections::HashMap::new();
+    let mut pricing: std::collections::HashMap<String, (f64, f64)> =
+        std::collections::HashMap::new();
     for m in &models {
-        pricing.insert(m.name.clone(), (m.pricing.prompt_price, m.pricing.completion_price));
-        pricing.insert(m.model_pattern.clone(), (m.pricing.prompt_price, m.pricing.completion_price));
+        pricing.insert(
+            m.name.clone(),
+            (m.pricing.prompt_price, m.pricing.completion_price),
+        );
+        pricing.insert(
+            m.model_pattern.clone(),
+            (m.pricing.prompt_price, m.pricing.completion_price),
+        );
     }
 
     // Build sorted prefix list for glob pattern matching (O(log n) per lookup)
-    let mut prefix_prices: Vec<(&str, (f64, f64))> = pricing.iter()
+    let mut prefix_prices: Vec<(&str, (f64, f64))> = pricing
+        .iter()
         .filter_map(|(k, v)| k.strip_suffix('*').map(|p| (p, *v)))
         .collect();
-    prefix_prices.sort_by(|a, b| b.0.len().cmp(&a.0.len())); // most specific first
+    prefix_prices.sort_by_key(|b| std::cmp::Reverse(b.0.len())); // most specific first
 
-    fn lookup_price<'a>(model_name: &str, pricing: &'a std::collections::HashMap<String, (f64, f64)>, prefix_prices: &'a [(&str, (f64, f64))]) -> (f64, f64) {
+    fn lookup_price<'a>(
+        model_name: &str,
+        pricing: &'a std::collections::HashMap<String, (f64, f64)>,
+        prefix_prices: &'a [(&str, (f64, f64))],
+    ) -> (f64, f64) {
         if let Some(price) = pricing.get(model_name) {
             return *price;
         }
@@ -322,9 +384,10 @@ async fn dashboard_aggregations(
     } as u64;
 
     // 24h stats: use SQL aggregates
-    let (requests_24h, success_count, total_latency, total_tokens_24h) = state.usage.stats_since(&since_24h, user_filter)
+    let (requests_24h, success_count, total_latency, total_tokens_24h) = state
+        .usage
+        .stats_since(&since_24h, user_filter)
         .unwrap_or((0, 0, 0, 0));
-    let requests_24h = requests_24h as u64;
 
     if requests_24h == 0 {
         return Ok(Json(DashboardAggregations {
@@ -340,31 +403,47 @@ async fn dashboard_aggregations(
     }
 
     // Compute cost from 24h records (loads only token + model columns)
-    let records = state.usage.cost_rows_since(&since_24h, user_filter)
-        .map_err(|e| AdminError::internal(e))?;
+    let records = state
+        .usage
+        .cost_rows_since(&since_24h, user_filter)
+        .map_err(AdminError::internal)?;
     let mut total_cost_24h = 0.0_f64;
     let mut model_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for r in &records {
         let price = lookup_price(&r.model, &pricing, &prefix_prices);
         let cost = (r.prompt_tokens as f64 / 1000.0 * price.0)
-                  + (r.completion_tokens as f64 / 1000.0 * price.1);
+            + (r.completion_tokens as f64 / 1000.0 * price.1);
         total_cost_24h += cost;
         *model_counts.entry(r.model.clone()).or_default() += 1;
     }
 
     // All-time cost: load only token + model columns from aggregated query
-    let all_records = state.usage.cost_rows_since("1970-01-01T00:00:00", user_filter)
-        .map_err(|e| AdminError::internal(e))?;
-    let total_cost: f64 = all_records.iter().map(|r| {
-        let price = lookup_price(&r.model, &pricing, &prefix_prices);
-        (r.prompt_tokens as f64 / 1000.0 * price.0)
-        + (r.completion_tokens as f64 / 1000.0 * price.1)
-    }).sum();
+    let all_records = state
+        .usage
+        .cost_rows_since("1970-01-01T00:00:00", user_filter)
+        .map_err(AdminError::internal)?;
+    let total_cost: f64 = all_records
+        .iter()
+        .map(|r| {
+            let price = lookup_price(&r.model, &pricing, &prefix_prices);
+            (r.prompt_tokens as f64 / 1000.0 * price.0)
+                + (r.completion_tokens as f64 / 1000.0 * price.1)
+        })
+        .sum();
 
-    let success_rate = if requests_24h > 0 { success_count as f64 / requests_24h as f64 * 100.0 } else { 0.0 };
-    let avg_latency = if requests_24h > 0 { total_latency as f64 / requests_24h as f64 } else { 0.0 };
+    let success_rate = if requests_24h > 0 {
+        success_count as f64 / requests_24h as f64 * 100.0
+    } else {
+        0.0
+    };
+    let avg_latency = if requests_24h > 0 {
+        total_latency as f64 / requests_24h as f64
+    } else {
+        0.0
+    };
 
-    let mut top_models: Vec<TopModel> = model_counts.into_iter()
+    let mut top_models: Vec<TopModel> = model_counts
+        .into_iter()
         .map(|(model, count)| TopModel {
             percentage: (count as f64 / requests_24h as f64 * 100.0 * 100.0).round() / 100.0,
             count,
@@ -405,27 +484,46 @@ async fn change_my_password(
         return Err(AdminError::bad_request("New password cannot be empty"));
     }
     if req.new_password.len() < 6 {
-        return Err(AdminError::bad_request("Password must be at least 6 characters"));
+        return Err(AdminError::bad_request(
+            "Password must be at least 6 characters",
+        ));
     }
 
     // Verify current password
-    let user = state.db.get_user_with_password(&session.user_id)
-        .map_err(|e| AdminError::internal(e.0))?;
+    let user = state
+        .db
+        .get_user_with_password(&session.user_id)
+        .map_err(db_err)?;
 
     if let Some(u) = user {
         if let Some(ref hash) = u.password_hash {
-            if !hash.is_empty() && !bcrypt::verify(&req.current_password, hash).unwrap_or(false) {
-                return Err(AdminError::bad_request("Current password is incorrect"));
+            if !hash.is_empty() {
+                match bcrypt::verify(&req.current_password, hash) {
+                    Ok(true) => { /* correct password - continue */ }
+                    Ok(false) => {
+                        return Err(AdminError::bad_request("Current password is incorrect"));
+                    }
+                    Err(e) => {
+                        tracing::error!("bcrypt verify error for user {}: {}", session.user_id, e);
+                        return Err(AdminError::internal("Authentication error"));
+                    }
+                }
+            } else {
+                return Err(AdminError::bad_request(
+                    "Cannot change password for this account",
+                ));
             }
         } else {
-            return Err(AdminError::bad_request("Cannot change password for this account"));
+            return Err(AdminError::bad_request(
+                "Cannot change password for this account",
+            ));
         }
     } else {
         return Err(AdminError::not_found("User not found"));
     }
 
-    let new_hash = bcrypt::hash(&req.new_password, 10)
-        .map_err(|e| AdminError::internal(e.to_string()))?;
+    let new_hash =
+        bcrypt::hash(&req.new_password, 10).map_err(|e| AdminError::internal(e.to_string()))?;
 
     let updated = User {
         id: session.user_id.clone(),
@@ -433,8 +531,7 @@ async fn change_my_password(
         password_hash: Some(new_hash),
         rate_limits: None,
     };
-    state.db.update_user(&updated)
-        .map_err(|e| AdminError::internal(e.0))?;
+    state.db.update_user(&updated).map_err(db_err)?;
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -444,8 +541,7 @@ async fn my_keys(
     headers: HeaderMap,
 ) -> Result<Json<Vec<ApiKey>>, AdminError> {
     let session = require_session(&state.admin, &headers)?;
-    let keys = state.db.list_api_keys(&session.user_id)
-        .map_err(|e| AdminError::internal(e.0))?;
+    let keys = state.db.list_api_keys(&session.user_id).map_err(db_err)?;
     Ok(Json(keys))
 }
 
@@ -478,7 +574,7 @@ async fn create_my_key(
         allowed_models: req.allowed_models,
     };
 
-    state.db.create_api_key(&ak).map_err(|e| AdminError::internal(e.0))?;
+    state.db.create_api_key(&ak).map_err(db_err)?;
     state.auth.reload();
 
     Ok(Json(serde_json::json!({
@@ -508,9 +604,10 @@ async fn update_my_key(
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers)?;
 
-    let keys = state.db.list_api_keys(&session.user_id)
-        .map_err(|e| AdminError::internal(e.0))?;
-    let existing = keys.iter().find(|k| k.key == key_val)
+    let keys = state.db.list_api_keys(&session.user_id).map_err(db_err)?;
+    let existing = keys
+        .iter()
+        .find(|k| k.key == key_val)
         .ok_or_else(|| AdminError::not_found("Key not found"))?;
 
     let ak = ApiKey {
@@ -523,7 +620,7 @@ async fn update_my_key(
         allowed_models: req.allowed_models.or(existing.allowed_models.clone()),
     };
 
-    state.db.update_api_key(&ak).map_err(|e| AdminError::internal(e.0))?;
+    state.db.update_api_key(&ak).map_err(db_err)?;
     state.auth.reload();
 
     Ok(Json(serde_json::json!({ "key": key_val, "updated": true })))
@@ -537,13 +634,12 @@ async fn delete_my_key(
     let session = require_session(&state.admin, &headers)?;
 
     // Verify the key belongs to the current user
-    let keys = state.db.list_api_keys(&session.user_id)
-        .map_err(|e| AdminError::internal(e.0))?;
+    let keys = state.db.list_api_keys(&session.user_id).map_err(db_err)?;
     if !keys.iter().any(|k| k.key == key_val) {
         return Err(AdminError::not_found("Key not found"));
     }
 
-    state.db.delete_api_key(&key_val).map_err(|e| AdminError::internal(e.0))?;
+    state.db.delete_api_key(&key_val).map_err(db_err)?;
     state.auth.reload();
 
     Ok(Json(serde_json::json!({ "deleted": key_val })))
@@ -562,8 +658,7 @@ async fn toggle_my_key(
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers)?;
 
-    let keys = state.db.list_api_keys(&session.user_id)
-        .map_err(|e| AdminError::internal(e.0))?;
+    let keys = state.db.list_api_keys(&session.user_id).map_err(db_err)?;
     if !keys.iter().any(|k| k.key == key_val) {
         return Err(AdminError::not_found("Key not found"));
     }
@@ -577,10 +672,12 @@ async fn toggle_my_key(
         spend_limit: None,
         allowed_models: None,
     };
-    state.db.update_api_key(&ak).map_err(|e| AdminError::internal(e.0))?;
+    state.db.update_api_key(&ak).map_err(db_err)?;
     state.auth.reload();
 
-    Ok(Json(serde_json::json!({ "key": key_val, "enabled": req.enabled })))
+    Ok(Json(
+        serde_json::json!({ "key": key_val, "enabled": req.enabled }),
+    ))
 }
 
 async fn toggle_user_key(
@@ -591,16 +688,19 @@ async fn toggle_user_key(
 ) -> Result<Json<Value>, AdminError> {
     require_admin(&state.admin, &headers)?;
 
-    let keys = state.db.list_api_keys(&user_id)
-        .map_err(|e| AdminError::internal(e.0))?;
-    let existing = keys.iter().find(|k| k.key == key_val)
+    let keys = state.db.list_api_keys(&user_id).map_err(db_err)?;
+    let existing = keys
+        .iter()
+        .find(|k| k.key == key_val)
         .ok_or_else(|| AdminError::not_found("Key not found"))?;
     let mut ak = existing.clone();
     ak.enabled = req.enabled;
-    state.db.update_api_key(&ak).map_err(|e| AdminError::internal(e.0))?;
+    state.db.update_api_key(&ak).map_err(db_err)?;
     state.auth.reload();
 
-    Ok(Json(serde_json::json!({ "key": key_val, "enabled": req.enabled })))
+    Ok(Json(
+        serde_json::json!({ "key": key_val, "enabled": req.enabled }),
+    ))
 }
 
 // ── User CRUD ─────────────────────────────────────────────────────
@@ -610,7 +710,7 @@ async fn list_users(
     headers: HeaderMap,
 ) -> Result<Json<Vec<User>>, AdminError> {
     require_admin(&state.admin, &headers)?;
-    let users = state.db.list_users().map_err(|e| AdminError::internal(e.0))?;
+    let users = state.db.list_users().map_err(db_err)?;
     Ok(Json(users))
 }
 
@@ -627,9 +727,12 @@ async fn get_user_detail(
     Path(id): Path<String>,
 ) -> Result<Json<UserDetail>, AdminError> {
     require_admin(&state.admin, &headers)?;
-    let user = state.db.get_user(&id).map_err(|e| AdminError::internal(e.0))?
-        .ok_or_else(|| AdminError::not_found(format!("User '{}' not found", id)))?;
-    let keys = state.db.list_api_keys(&id).map_err(|e| AdminError::internal(e.0))?;
+    let user = state
+        .db
+        .get_user(&id)
+        .map_err(db_err)?
+        .ok_or_else(|| AdminError::not_found("User not found"))?;
+    let keys = state.db.list_api_keys(&id).map_err(db_err)?;
     Ok(Json(UserDetail { user, keys }))
 }
 
@@ -646,7 +749,7 @@ async fn create_user(
     headers: HeaderMap,
     Json(req): Json<CreateUserReq>,
 ) -> Result<Json<User>, AdminError> {
-    require_admin(&state.admin, &headers)?;
+    let session = require_admin(&state.admin, &headers)?;
 
     if req.id.is_empty() {
         return Err(AdminError::bad_request("User ID is required"));
@@ -669,8 +772,14 @@ async fn create_user(
         rate_limits: req.rate_limits,
     };
 
-    state.db.create_user(&user).map_err(|e| AdminError::internal(e.0))?;
+    state.db.create_user(&user).map_err(db_err)?;
     state.auth.reload();
+
+    tracing::info!(
+        "admin={} action=create_user target={}",
+        session.user_id,
+        user.id
+    );
 
     Ok(Json(User {
         password_hash: None,
@@ -693,12 +802,16 @@ async fn update_user(
 ) -> Result<Json<User>, AdminError> {
     require_admin(&state.admin, &headers)?;
 
-    let existing = state.db.get_user(&id).map_err(|e| AdminError::internal(e.0))?
-        .ok_or_else(|| AdminError::not_found(format!("User '{}' not found", id)))?;
+    let existing = state
+        .db
+        .get_user(&id)
+        .map_err(db_err)?
+        .ok_or_else(|| AdminError::not_found("User not found"))?;
 
     let user = User {
         id: id.clone(),
-        name: req.name.unwrap_or(existing.name.clone()),        password_hash: if let Some(pw) = req.password {
+        name: req.name.unwrap_or(existing.name.clone()),
+        password_hash: if let Some(pw) = req.password {
             if pw.is_empty() {
                 None // keep existing
             } else {
@@ -710,7 +823,7 @@ async fn update_user(
         rate_limits: req.rate_limits.or(existing.rate_limits),
     };
 
-    state.db.update_user(&user).map_err(|e| AdminError::internal(e.0))?;
+    state.db.update_user(&user).map_err(db_err)?;
     state.auth.reload();
 
     Ok(Json(User {
@@ -724,10 +837,12 @@ async fn delete_user(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
-    require_admin(&state.admin, &headers)?;
+    let session = require_admin(&state.admin, &headers)?;
 
-    state.db.delete_user(&id).map_err(|e| AdminError::internal(e.0))?;
+    state.db.delete_user(&id).map_err(db_err)?;
     state.auth.reload();
+
+    tracing::info!("admin={} action=delete_user target={}", session.user_id, id);
 
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
@@ -740,7 +855,7 @@ async fn list_user_keys(
     Path(user_id): Path<String>,
 ) -> Result<Json<Vec<ApiKey>>, AdminError> {
     require_admin(&state.admin, &headers)?;
-    let keys = state.db.list_api_keys(&user_id).map_err(|e| AdminError::internal(e.0))?;
+    let keys = state.db.list_api_keys(&user_id).map_err(db_err)?;
     Ok(Json(keys))
 }
 
@@ -761,7 +876,7 @@ async fn create_user_key(
     Path(user_id): Path<String>,
     Json(req): Json<CreateKeyReq>,
 ) -> Result<Json<Value>, AdminError> {
-    require_admin(&state.admin, &headers)?;
+    let session = require_admin(&state.admin, &headers)?;
 
     let key_value = format!("sk-{}", uuid::Uuid::new_v4());
     let ak = ApiKey {
@@ -774,8 +889,15 @@ async fn create_user_key(
         allowed_models: req.allowed_models,
     };
 
-    state.db.create_api_key(&ak).map_err(|e| AdminError::internal(e.0))?;
+    state.db.create_api_key(&ak).map_err(db_err)?;
     state.auth.reload();
+
+    tracing::info!(
+        "admin={} action=create_api_key target={} user={}",
+        session.user_id,
+        ak.key,
+        user_id
+    );
 
     Ok(Json(serde_json::json!({
         "key": ak.key,
@@ -791,11 +913,12 @@ async fn update_user_key(
     Path((user_id, key_val)): Path<(String, String)>,
     Json(req): Json<CreateKeyReq>,
 ) -> Result<Json<Value>, AdminError> {
-    require_admin(&state.admin, &headers)?;
+    let session = require_admin(&state.admin, &headers)?;
 
-    let keys = state.db.list_api_keys(&user_id)
-        .map_err(|e| AdminError::internal(e.0))?;
-    let existing = keys.iter().find(|k| k.key == key_val)
+    let keys = state.db.list_api_keys(&user_id).map_err(db_err)?;
+    let existing = keys
+        .iter()
+        .find(|k| k.key == key_val)
         .ok_or_else(|| AdminError::not_found("Key not found"))?;
 
     let ak = ApiKey {
@@ -808,8 +931,15 @@ async fn update_user_key(
         allowed_models: req.allowed_models.or(existing.allowed_models.clone()),
     };
 
-    state.db.update_api_key(&ak).map_err(|e| AdminError::internal(e.0))?;
+    state.db.update_api_key(&ak).map_err(db_err)?;
     state.auth.reload();
+
+    tracing::info!(
+        "admin={} action=update_api_key target={} user={}",
+        session.user_id,
+        key_val,
+        user_id
+    );
 
     Ok(Json(serde_json::json!({ "key": key_val, "updated": true })))
 }
@@ -819,10 +949,16 @@ async fn delete_user_key(
     headers: HeaderMap,
     Path((_user_id, key_val)): Path<(String, String)>,
 ) -> Result<Json<Value>, AdminError> {
-    require_admin(&state.admin, &headers)?;
+    let session = require_admin(&state.admin, &headers)?;
 
-    state.db.delete_api_key(&key_val).map_err(|e| AdminError::internal(e.0))?;
+    state.db.delete_api_key(&key_val).map_err(db_err)?;
     state.auth.reload();
+
+    tracing::info!(
+        "admin={} action=delete_api_key target={}",
+        session.user_id,
+        key_val
+    );
 
     Ok(Json(serde_json::json!({ "deleted": key_val })))
 }
@@ -834,7 +970,7 @@ async fn list_channels(
     headers: HeaderMap,
 ) -> Result<Json<Vec<Channel>>, AdminError> {
     require_admin(&state.admin, &headers)?;
-    let channels = state.db.list_channels().map_err(|e| AdminError::internal(e.0))?;
+    let channels = state.db.list_channels().map_err(db_err)?;
     Ok(Json(channels))
 }
 
@@ -843,7 +979,7 @@ async fn create_channel(
     headers: HeaderMap,
     Json(ch): Json<Channel>,
 ) -> Result<Json<Channel>, AdminError> {
-    require_admin(&state.admin, &headers)?;
+    let session = require_admin(&state.admin, &headers)?;
 
     if ch.id.is_empty() {
         return Err(AdminError::bad_request("Channel ID is required"));
@@ -854,9 +990,15 @@ async fn create_channel(
 
     state.db.create_channel(&ch).map_err(|e| {
         tracing::error!("create_channel error: {:?}", e);
-        AdminError::internal(e.0)
+        AdminError::internal("Internal server error")
     })?;
     state.routing.reload();
+
+    tracing::info!(
+        "admin={} action=create_channel target={}",
+        session.user_id,
+        ch.id
+    );
 
     Ok(Json(ch))
 }
@@ -867,11 +1009,17 @@ async fn update_channel(
     Path(id): Path<String>,
     Json(mut ch): Json<Channel>,
 ) -> Result<Json<Channel>, AdminError> {
-    require_admin(&state.admin, &headers)?;
+    let session = require_admin(&state.admin, &headers)?;
 
-    ch.id = id;
-    state.db.update_channel(&ch).map_err(|e| AdminError::internal(e.0))?;
+    ch.id = id.clone();
+    state.db.update_channel(&ch).map_err(db_err)?;
     state.routing.reload();
+
+    tracing::info!(
+        "admin={} action=update_channel target={}",
+        session.user_id,
+        id
+    );
 
     Ok(Json(ch))
 }
@@ -881,10 +1029,16 @@ async fn delete_channel(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
-    require_admin(&state.admin, &headers)?;
+    let session = require_admin(&state.admin, &headers)?;
 
-    state.db.delete_channel(&id).map_err(|e| AdminError::internal(e.0))?;
+    state.db.delete_channel(&id).map_err(db_err)?;
     state.routing.reload();
+
+    tracing::info!(
+        "admin={} action=delete_channel target={}",
+        session.user_id,
+        id
+    );
 
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
@@ -896,7 +1050,7 @@ async fn list_models(
     headers: HeaderMap,
 ) -> Result<Json<Vec<Model>>, AdminError> {
     require_admin(&state.admin, &headers)?;
-    let models = state.db.list_models().map_err(|e| AdminError::internal(e.0))?;
+    let models = state.db.list_models().map_err(db_err)?;
     Ok(Json(models))
 }
 
@@ -905,15 +1059,21 @@ async fn create_model(
     headers: HeaderMap,
     Json(mut model): Json<Model>,
 ) -> Result<Json<Model>, AdminError> {
-    require_admin(&state.admin, &headers)?;
+    let session = require_admin(&state.admin, &headers)?;
 
     model.id = model.id.trim().to_string();
     if model.id.is_empty() {
         return Err(AdminError::bad_request("Model ID is required"));
     }
 
-    state.db.create_model(&model).map_err(|e| AdminError::internal(e.0))?;
+    state.db.create_model(&model).map_err(db_err)?;
     state.routing.reload();
+
+    tracing::info!(
+        "admin={} action=create_model target={}",
+        session.user_id,
+        model.id
+    );
 
     Ok(Json(model))
 }
@@ -924,11 +1084,17 @@ async fn update_model(
     Path(id): Path<String>,
     Json(mut model): Json<Model>,
 ) -> Result<Json<Model>, AdminError> {
-    require_admin(&state.admin, &headers)?;
+    let session = require_admin(&state.admin, &headers)?;
 
-    model.id = id;
-    state.db.update_model(&model).map_err(|e| AdminError::internal(e.0))?;
+    model.id = id.clone();
+    state.db.update_model(&model).map_err(db_err)?;
     state.routing.reload();
+
+    tracing::info!(
+        "admin={} action=update_model target={}",
+        session.user_id,
+        id
+    );
 
     Ok(Json(model))
 }
@@ -938,10 +1104,16 @@ async fn delete_model(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
-    require_admin(&state.admin, &headers)?;
+    let session = require_admin(&state.admin, &headers)?;
 
-    state.db.delete_model(&id).map_err(|e| AdminError::internal(e.0))?;
+    state.db.delete_model(&id).map_err(db_err)?;
     state.routing.reload();
+
+    tracing::info!(
+        "admin={} action=delete_model target={}",
+        session.user_id,
+        id
+    );
 
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
@@ -953,7 +1125,7 @@ async fn list_public_models(
     headers: HeaderMap,
 ) -> Result<Json<Vec<Model>>, AdminError> {
     require_session(&state.admin, &headers)?;
-    let models = state.db.list_published_models().map_err(|e| AdminError::internal(e.0))?;
+    let models = state.db.list_published_models().map_err(db_err)?;
     Ok(Json(models))
 }
 
@@ -962,17 +1134,32 @@ async fn toggle_publish_model(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
-    require_admin(&state.admin, &headers)?;
-    let models = state.db.list_models().map_err(|e| AdminError::internal(e.0))?;
-    let model = models.iter().find(|m| m.id == id)
-        .ok_or_else(|| AdminError::not_found(format!("Model '{}' not found", id)))?;
+    let session = require_admin(&state.admin, &headers)?;
+    let models = state.db.list_models().map_err(db_err)?;
+    let model = models
+        .iter()
+        .find(|m| m.id == id)
+        .ok_or_else(|| AdminError::not_found("Model not found"))?;
     let new_status = !model.published;
-    state.db.set_model_published(&id, new_status).map_err(|e| AdminError::internal(e.0))?;
+    state
+        .db
+        .set_model_published(&id, new_status)
+        .map_err(db_err)?;
     if !new_status {
         let _ = state.db.delete_subscriptions_by_model(&id);
     }
     state.routing.reload();
-    Ok(Json(serde_json::json!({ "id": id, "published": new_status })))
+
+    tracing::info!(
+        "admin={} action=toggle_publish_model target={} published={}",
+        session.user_id,
+        id,
+        new_status
+    );
+
+    Ok(Json(
+        serde_json::json!({ "id": id, "published": new_status }),
+    ))
 }
 
 async fn update_model_pricing(
@@ -981,8 +1168,15 @@ async fn update_model_pricing(
     Path(id): Path<String>,
     Json(pricing): Json<Pricing>,
 ) -> Result<Json<Value>, AdminError> {
-    require_admin(&state.admin, &headers)?;
-    state.db.set_model_pricing(&id, &pricing).map_err(|e| AdminError::internal(e.0))?;
+    let session = require_admin(&state.admin, &headers)?;
+    state.db.set_model_pricing(&id, &pricing).map_err(db_err)?;
+
+    tracing::info!(
+        "admin={} action=update_model_pricing target={}",
+        session.user_id,
+        id
+    );
+
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -993,8 +1187,10 @@ async fn list_my_subscriptions(
     headers: HeaderMap,
 ) -> Result<Json<Vec<Model>>, AdminError> {
     let session = require_session(&state.admin, &headers)?;
-    let models = state.db.list_subscriptions(&session.user_id)
-        .map_err(|e| AdminError::internal(e.0))?;
+    let models = state
+        .db
+        .list_subscriptions(&session.user_id)
+        .map_err(db_err)?;
     Ok(Json(models))
 }
 
@@ -1004,8 +1200,10 @@ async fn subscribe_model(
     Path(model_id): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers)?;
-    state.db.subscribe_user(&session.user_id, &model_id)
-        .map_err(|e| AdminError::internal(e.0))?;
+    state
+        .db
+        .subscribe_user(&session.user_id, &model_id)
+        .map_err(db_err)?;
     Ok(Json(serde_json::json!({ "subscribed": model_id })))
 }
 
@@ -1015,8 +1213,10 @@ async fn unsubscribe_model(
     Path(model_id): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers)?;
-    state.db.unsubscribe_user(&session.user_id, &model_id)
-        .map_err(|e| AdminError::internal(e.0))?;
+    state
+        .db
+        .unsubscribe_user(&session.user_id, &model_id)
+        .map_err(db_err)?;
     Ok(Json(serde_json::json!({ "unsubscribed": model_id })))
 }
 
@@ -1027,7 +1227,7 @@ async fn list_rules(
     headers: HeaderMap,
 ) -> Result<Json<Vec<RoutingRule>>, AdminError> {
     require_admin(&state.admin, &headers)?;
-    let rules = state.db.list_rules().map_err(|e| AdminError::internal(e.0))?;
+    let rules = state.db.list_rules().map_err(db_err)?;
     Ok(Json(rules))
 }
 
@@ -1036,14 +1236,20 @@ async fn create_rule(
     headers: HeaderMap,
     Json(rule): Json<RoutingRule>,
 ) -> Result<Json<RoutingRule>, AdminError> {
-    require_admin(&state.admin, &headers)?;
+    let session = require_admin(&state.admin, &headers)?;
 
     if rule.name.is_empty() {
         return Err(AdminError::bad_request("Rule name is required"));
     }
 
-    state.db.create_rule(&rule).map_err(|e| AdminError::internal(e.0))?;
+    state.db.create_rule(&rule).map_err(db_err)?;
     state.routing.reload();
+
+    tracing::info!(
+        "admin={} action=create_rule target={}",
+        session.user_id,
+        rule.name
+    );
 
     Ok(Json(rule))
 }
@@ -1057,7 +1263,7 @@ async fn update_rule(
     require_admin(&state.admin, &headers)?;
 
     rule.name = name;
-    state.db.update_rule(&rule).map_err(|e| AdminError::internal(e.0))?;
+    state.db.update_rule(&rule).map_err(db_err)?;
     state.routing.reload();
 
     Ok(Json(rule))
@@ -1068,10 +1274,16 @@ async fn delete_rule(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
-    require_admin(&state.admin, &headers)?;
+    let session = require_admin(&state.admin, &headers)?;
 
-    state.db.delete_rule(&name).map_err(|e| AdminError::internal(e.0))?;
+    state.db.delete_rule(&name).map_err(db_err)?;
     state.routing.reload();
+
+    tracing::info!(
+        "admin={} action=delete_rule target={}",
+        session.user_id,
+        name
+    );
 
     Ok(Json(serde_json::json!({ "deleted": name })))
 }
@@ -1100,8 +1312,13 @@ async fn get_usage(
         q.user_id
     };
 
-    let records = state.usage.query(limit, user_filter.as_deref())
-        .map_err(|e| AdminError::internal(format!("DB query failed: {}", e)))?;
+    let records = state
+        .usage
+        .query(limit, user_filter.as_deref())
+        .map_err(|e| {
+            tracing::error!("Usage query failed: {}", e);
+            AdminError::internal("Internal server error")
+        })?;
 
     Ok(Json(records))
 }
@@ -1113,8 +1330,13 @@ async fn get_usage_detail(
 ) -> Result<Json<crate::domain::usage::UsageRecord>, AdminError> {
     let _session = require_session(&state.admin, &headers)?;
 
-    let record = state.usage.get_detail(&request_id)
-        .map_err(|e| AdminError::internal(format!("DB query failed: {}", e)))?
+    let record = state
+        .usage
+        .get_detail(&request_id)
+        .map_err(|e| {
+            tracing::error!("Usage detail query failed: {}", e);
+            AdminError::internal("Internal server error")
+        })?
         .ok_or_else(|| AdminError::not_found("Usage record not found"))?;
 
     Ok(Json(record))
@@ -1138,12 +1360,23 @@ async fn daily_usage(
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string();
 
-    let user_filter: Option<&str> = if session.role == "admin" { None } else { Some(&session.user_id) };
+    let user_filter: Option<&str> = if session.role == "admin" {
+        None
+    } else {
+        Some(&session.user_id)
+    };
 
-    let records = state.usage.daily_counts(&since, user_filter)
-        .map_err(|e| AdminError::internal(e))?;
+    let records = state
+        .usage
+        .daily_counts(&since, user_filter)
+        .map_err(AdminError::internal)?;
 
-    Ok(Json(records.into_iter().map(|(date, count)| DailyUsage { date, count }).collect()))
+    Ok(Json(
+        records
+            .into_iter()
+            .map(|(date, count)| DailyUsage { date, count })
+            .collect(),
+    ))
 }
 
 // ── Health Check ──────────────────────────────────────────────────
@@ -1159,9 +1392,15 @@ async fn health_check_models(
     headers: HeaderMap,
 ) -> Result<Json<HealthCheckResult>, AdminError> {
     require_admin(&state.admin, &headers)?;
-    let (models_updated, channels_checked) = state.health.check_all_channels().await
-        .map_err(|e| AdminError::internal(e))?;
-    Ok(Json(HealthCheckResult { models_updated, channels_checked }))
+    let (models_updated, channels_checked) = state
+        .health
+        .check_all_channels()
+        .await
+        .map_err(AdminError::internal)?;
+    Ok(Json(HealthCheckResult {
+        models_updated,
+        channels_checked,
+    }))
 }
 
 async fn health_check_channel(
@@ -1170,8 +1409,11 @@ async fn health_check_channel(
     Path(id): Path<String>,
 ) -> Result<Json<crate::service::health::ChannelHealthResult>, AdminError> {
     require_admin(&state.admin, &headers)?;
-    let result = state.health.check_channel(&id).await
-        .map_err(|e| AdminError::internal(e))?;
+    let result = state
+        .health
+        .check_channel(&id)
+        .await
+        .map_err(AdminError::internal)?;
     Ok(Json(result))
 }
 
@@ -1181,8 +1423,11 @@ async fn list_upstream_models(
     Path(id): Path<String>,
 ) -> Result<Json<Vec<crate::service::health::UpstreamModelInfo>>, AdminError> {
     require_admin(&state.admin, &headers)?;
-    let models = state.health.list_upstream_models(&id).await
-        .map_err(|e| AdminError::internal(e))?;
+    let models = state
+        .health
+        .list_upstream_models(&id)
+        .await
+        .map_err(AdminError::internal)?;
     Ok(Json(models))
 }
 
@@ -1192,60 +1437,114 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/admin/api/login", axum::routing::post(admin_login))
         .route("/admin/api/dashboard", axum::routing::get(admin_dashboard))
-        .route("/admin/api/dashboard/aggregations", axum::routing::get(dashboard_aggregations))
-
+        .route(
+            "/admin/api/dashboard/aggregations",
+            axum::routing::get(dashboard_aggregations),
+        )
         // Current user
-        .route("/admin/api/me/password", axum::routing::post(change_my_password))
-        .route("/admin/api/me/keys", axum::routing::get(my_keys).post(create_my_key))
-        .route("/admin/api/me/keys/{key_val}", axum::routing::delete(delete_my_key).patch(toggle_my_key).put(update_my_key))
-
+        .route(
+            "/admin/api/me/password",
+            axum::routing::post(change_my_password),
+        )
+        .route(
+            "/admin/api/me/keys",
+            axum::routing::get(my_keys).post(create_my_key),
+        )
+        .route(
+            "/admin/api/me/keys/{key_val}",
+            axum::routing::delete(delete_my_key)
+                .patch(toggle_my_key)
+                .put(update_my_key),
+        )
         // Users
-        .route("/admin/api/users", axum::routing::get(list_users).post(create_user))
+        .route(
+            "/admin/api/users",
+            axum::routing::get(list_users).post(create_user),
+        )
         .route(
             "/admin/api/users/{id}",
-            axum::routing::get(get_user_detail).put(update_user).delete(delete_user),
+            axum::routing::get(get_user_detail)
+                .put(update_user)
+                .delete(delete_user),
         )
         // User API keys (admin)
-        .route("/admin/api/users/{user_id}/keys", axum::routing::get(list_user_keys).post(create_user_key))
-        .route("/admin/api/users/{user_id}/keys/{key_val}", axum::routing::delete(delete_user_key).patch(toggle_user_key).put(update_user_key))
-
+        .route(
+            "/admin/api/users/{user_id}/keys",
+            axum::routing::get(list_user_keys).post(create_user_key),
+        )
+        .route(
+            "/admin/api/users/{user_id}/keys/{key_val}",
+            axum::routing::delete(delete_user_key)
+                .patch(toggle_user_key)
+                .put(update_user_key),
+        )
         // Channels
-        .route("/admin/api/channels", axum::routing::get(list_channels).post(create_channel))
+        .route(
+            "/admin/api/channels",
+            axum::routing::get(list_channels).post(create_channel),
+        )
         .route(
             "/admin/api/channels/{id}",
             axum::routing::put(update_channel).delete(delete_channel),
         )
-
         // Models
-        .route("/admin/api/models", axum::routing::get(list_models).post(create_model))
-        .route("/admin/api/models/public", axum::routing::get(list_public_models))
-        .route("/admin/api/models/{id}/publish", axum::routing::post(toggle_publish_model))
-        .route("/admin/api/models/{id}/pricing", axum::routing::patch(update_model_pricing))
+        .route(
+            "/admin/api/models",
+            axum::routing::get(list_models).post(create_model),
+        )
+        .route(
+            "/admin/api/models/public",
+            axum::routing::get(list_public_models),
+        )
+        .route(
+            "/admin/api/models/{id}/publish",
+            axum::routing::post(toggle_publish_model),
+        )
+        .route(
+            "/admin/api/models/{id}/pricing",
+            axum::routing::patch(update_model_pricing),
+        )
         .route(
             "/admin/api/models/{id}",
             axum::routing::put(update_model).delete(delete_model),
         )
-
         // Subscriptions
-        .route("/admin/api/me/subscriptions", axum::routing::get(list_my_subscriptions))
-        .route("/admin/api/me/subscriptions/{model_id}", axum::routing::post(subscribe_model).delete(unsubscribe_model))
-
+        .route(
+            "/admin/api/me/subscriptions",
+            axum::routing::get(list_my_subscriptions),
+        )
+        .route(
+            "/admin/api/me/subscriptions/{model_id}",
+            axum::routing::post(subscribe_model).delete(unsubscribe_model),
+        )
         // Routing rules
-        .route("/admin/api/rules", axum::routing::get(list_rules).post(create_rule))
+        .route(
+            "/admin/api/rules",
+            axum::routing::get(list_rules).post(create_rule),
+        )
         .route(
             "/admin/api/rules/{name}",
             axum::routing::put(update_rule).delete(delete_rule),
         )
-
         // Usage
         .route("/admin/api/usage", axum::routing::get(get_usage))
         .route("/admin/api/usage/daily", axum::routing::get(daily_usage))
-        .route("/admin/api/usage/{request_id}", axum::routing::get(get_usage_detail))
-
+        .route(
+            "/admin/api/usage/{request_id}",
+            axum::routing::get(get_usage_detail),
+        )
         // Health check
-        .route("/admin/api/health-check/models", axum::routing::post(health_check_models))
-        .route("/admin/api/health-check/channels/{id}", axum::routing::post(health_check_channel))
-
+        .route(
+            "/admin/api/health-check/models",
+            axum::routing::post(health_check_models),
+        )
+        .route(
+            "/admin/api/health-check/channels/{id}",
+            axum::routing::post(health_check_channel),
+        )
         // Upstream model sync
-        .route("/admin/api/channels/{id}/upstream-models", axum::routing::get(list_upstream_models))
+        .route(
+            "/admin/api/channels/{id}/upstream-models",
+            axum::routing::get(list_upstream_models),
+        )
 }

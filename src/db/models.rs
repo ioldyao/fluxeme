@@ -106,7 +106,10 @@ pub fn update(conn: &Connection, m: &Model) -> Result<(), crate::db::DbError> {
         "UPDATE models SET name = ?1, model_pattern = ?2, prompt_price = ?3, completion_price = ?4, cache_read_price = ?5, cache_write_price = ?6, image_input_price = ?7, audio_input_price = ?8, audio_output_price = ?9, published = ?10, context_length = ?11 WHERE id = ?12",
         params![m.name, m.model_pattern, m.pricing.prompt_price, m.pricing.completion_price, m.pricing.cache_read_price, m.pricing.cache_write_price, m.pricing.image_input_price, m.pricing.audio_input_price, m.pricing.audio_output_price, m.published as i32, m.context_length, m.id],
     )?;
-    conn.execute("DELETE FROM model_channels WHERE model_id = ?1", params![m.id])?;
+    conn.execute(
+        "DELETE FROM model_channels WHERE model_id = ?1",
+        params![m.id],
+    )?;
     for binding in &m.channels {
         create_binding(conn, &m.id, binding)?;
     }
@@ -118,7 +121,10 @@ pub fn delete(conn: &Connection, id: &str) -> Result<(), crate::db::DbError> {
     Ok(())
 }
 
-pub(super) fn list_bindings(conn: &Connection, model_id: &str) -> Result<Vec<ModelChannel>, crate::db::DbError> {
+pub(super) fn list_bindings(
+    conn: &Connection,
+    model_id: &str,
+) -> Result<Vec<ModelChannel>, crate::db::DbError> {
     let mut stmt = conn.prepare(
         "SELECT model_id, channel_id, priority FROM model_channels WHERE model_id = ?1 ORDER BY priority",
     )?;
@@ -144,7 +150,11 @@ pub fn update_pricing(conn: &Connection, id: &str, p: &Pricing) -> Result<(), cr
     Ok(())
 }
 
-fn create_binding(conn: &Connection, model_id: &str, binding: &ModelChannel) -> Result<(), crate::db::DbError> {
+fn create_binding(
+    conn: &Connection,
+    model_id: &str,
+    binding: &ModelChannel,
+) -> Result<(), crate::db::DbError> {
     conn.execute(
         "INSERT INTO model_channels (model_id, channel_id, priority) VALUES (?1, ?2, ?3)",
         params![model_id, binding.channel_id, binding.priority],

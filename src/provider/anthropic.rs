@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use super::{ProviderAdapter, ProviderError, StreamResult};
 use crate::config::types::EndpointConfig;
+use crate::provider::shared_client;
 
 pub struct AnthropicAdapter;
 
@@ -16,10 +17,7 @@ impl ProviderAdapter for AnthropicAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<Value, ProviderError> {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(endpoint.timeout_secs.unwrap_or(120)))
-            .build()
-            .map_err(|e| ProviderError(format!("Failed to create client: {}", e)))?;
+        let client = shared_client();
 
         let url = format!("{}/messages", endpoint.url.trim_end_matches('/'));
         let anthropic_body = openai_to_anthropic(&body);
@@ -66,10 +64,7 @@ impl ProviderAdapter for AnthropicAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<StreamResult, ProviderError> {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(endpoint.timeout_secs.unwrap_or(300)))
-            .build()
-            .map_err(|e| ProviderError(format!("Failed to create client: {}", e)))?;
+        let client = shared_client();
 
         let url = format!("{}/messages", endpoint.url.trim_end_matches('/'));
         let anthropic_body = openai_to_anthropic(&body);
@@ -100,14 +95,13 @@ impl ProviderAdapter for AnthropicAdapter {
             return Err(ProviderError(format!("Upstream returned {}: {}", status, text)));
         }
 
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let (tx, rx) = tokio::sync::mpsc::channel::<String>(1024);
         let mut byte_stream = response.bytes_stream();
 
         tokio::spawn(async move {
             let mut buffer = String::new();
             let mut current_event = String::new();
             let mut current_data = String::new();
-            let mut has_content = false;
 
             while let Some(chunk) = byte_stream.next().await {
                 match chunk {
@@ -125,23 +119,29 @@ impl ProviderAdapter for AnthropicAdapter {
                             } else if line.is_empty() && !current_data.is_empty() {
                                 let event = std::mem::take(&mut current_event);
                                 let data = std::mem::take(&mut current_data);
-                                if let Some(openai_sse) = anthropic_sse_to_openai(&event, &data, &mut has_content) {
-                                    let _ = tx.send(openai_sse);
+                                if let Some(openai_sse) = anthropic_sse_to_openai(&event, &data) {
+                                    if let Err(e) = tx.send(openai_sse).await {
+                                        tracing::warn!("Failed to send SSE event: {:?}", e);
+                                    }
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        let _ = tx.send(format!("data: {{\"error\":\"{}\"}}\n\n", e));
+                        if let Err(e) = tx.send(format!("data: {{\"error\":\"{}\"}}\n\n", e)).await {
+                            tracing::warn!("Failed to send error SSE: {:?}", e);
+                        }
                         break;
                     }
                 }
             }
 
-            let _ = tx.send("data: [DONE]\n\n".to_string());
+            if let Err(e) = tx.send("data: [DONE]\n\n".to_string()).await {
+                tracing::warn!("Failed to send DONE event: {:?}", e);
+            }
         });
 
-        let stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
         Ok(Pin::from(Box::new(stream)))
     }
 }
@@ -214,16 +214,17 @@ fn anthropic_to_openai(body: &Value) -> Value {
     })
 }
 
-fn anthropic_sse_to_openai(
-    event: &str,
-    data: &str,
-    has_content: &mut bool,
-) -> Option<String> {
+fn anthropic_sse_to_openai(event: &str, data: &str) -> Option<String> {
     match event {
         "message_start" => {
             if let Ok(parsed) = serde_json::from_str::<Value>(data) {
                 if let Some(msg) = parsed.get("message") {
                     let model = msg["model"].as_str().unwrap_or("claude");
+                    let input_tokens = msg
+                        .get("usage")
+                        .and_then(|u| u.get("input_tokens"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
                     let openai_chunk = serde_json::json!({
                         "id": msg["id"],
                         "object": "chat.completion.chunk",
@@ -232,7 +233,11 @@ fn anthropic_sse_to_openai(
                             "index": 0,
                             "delta": {"role": "assistant", "content": ""},
                             "finish_reason": null
-                        }]
+                        }],
+                        "usage": {
+                            "prompt_tokens": input_tokens,
+                            "completion_tokens": 0,
+                        }
                     });
                     return Some(format!("data: {}\n\n", openai_chunk));
                 }
@@ -245,7 +250,6 @@ fn anthropic_sse_to_openai(
                     if block["type"] == "text" {
                         let text = block["text"].as_str().unwrap_or("");
                         if !text.is_empty() {
-                            *has_content = true;
                             let openai_chunk = serde_json::json!({
                                 "object": "chat.completion.chunk",
                                 "choices": [{
@@ -267,7 +271,6 @@ fn anthropic_sse_to_openai(
                     if delta["type"] == "text_delta" {
                         let text = delta["text"].as_str().unwrap_or("");
                         if !text.is_empty() {
-                            *has_content = true;
                             let openai_chunk = serde_json::json!({
                                 "object": "chat.completion.chunk",
                                 "choices": [{
@@ -302,6 +305,7 @@ fn anthropic_sse_to_openai(
                         "finish_reason": finish
                     }],
                     "usage": {
+                        "prompt_tokens": 0,
                         "completion_tokens": output_tokens
                     }
                 });
@@ -310,7 +314,7 @@ fn anthropic_sse_to_openai(
             None
         }
         "message_stop" => {
-            return None; // [DONE] is sent after the loop
+            return None;
         }
         "ping" => None,
         _ => None,

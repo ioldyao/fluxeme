@@ -3,6 +3,7 @@ import {
   Area, AreaChart, Pie, PieChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid,
 } from 'recharts';
 import { PageHeader } from '@/components/PageHeader';
+import { Button } from '@/components/ui/button';
 import { useAuth } from '@/store/auth';
 import { useCurrency, CURRENCY_SYMBOL, CURRENCY_CODE } from '@/store/currency';
 import { useDashboard, useDashboardAggregations, useDailyUsage } from '@/api/dashboard';
@@ -35,7 +36,7 @@ const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var
 export default function Dashboard() {
   const { t } = useTranslation();
   const role = useAuth((s) => s.role);
-  const { data: stats, isLoading } = useDashboard();
+  const { data: stats, isLoading, isError, refetch } = useDashboard();
   const { data: agg } = useDashboardAggregations();
   const { data: dailyData } = useDailyUsage(14);
   const { data: subscriptions } = useSubscriptions();
@@ -65,20 +66,29 @@ export default function Dashboard() {
     <div className="space-y-6 animate-fade-in">
       <PageHeader title={t('dash.title')} description={t('dash.subtitle')} />
 
-      {/* Stats cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        {cards.map((stat) => (
-          <Card key={stat.title}>
-            <CardContent className="flex items-center gap-3 p-5">
-              <div className="p-2 rounded-lg bg-brand/10 text-brand shrink-0">{stat.icon}</div>
-              <div className="min-w-0">
-                <p className="text-xs text-muted-foreground truncate">{stat.title}</p>
-                <p className="text-xl font-semibold mt-0.5">{isLoading ? '...' : stat.value.toLocaleString()}</p>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      {isError ? (
+        <div className="flex items-center justify-center p-8">
+          <div className="text-center">
+            <p className="text-destructive mb-2">{t('err.loadFailed')}</p>
+            <Button variant="outline" onClick={() => refetch()}>{t('common.refresh')}</Button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Stats cards */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+            {cards.map((stat) => (
+              <Card key={stat.title}>
+                <CardContent className="flex items-center gap-3 p-5">
+                  <div className="p-2 rounded-lg bg-brand/10 text-brand shrink-0">{stat.icon}</div>
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground truncate">{stat.title}</p>
+                    <p className="text-xl font-semibold mt-0.5">{isLoading ? '...' : stat.value.toLocaleString()}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
 
       {agg && (
         <>
@@ -302,6 +312,8 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+        </>
+      )}
     </div>
   );
 }

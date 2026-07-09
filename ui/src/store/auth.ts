@@ -33,6 +33,8 @@ export const useAuth = create<AuthState>()(
           userName: null,
         }),
     }),
+    // WARNING: JWT token stored in localStorage — accessible to any JS in same origin.
+    // For production, migrate to httpOnly cookies.
     { name: 'auth' },
   ),
 );

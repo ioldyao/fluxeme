@@ -3,7 +3,9 @@ pub mod handlers;
 use std::sync::{Arc, RwLock};
 
 use axum::Router;
+use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::config::types::AppConfig;
@@ -25,13 +27,40 @@ pub struct AppState {
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(tower_http::cors::Any)
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PUT,
+            axum::http::Method::PATCH,
+            axum::http::Method::DELETE,
+        ])
+        .allow_headers([
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::CONTENT_TYPE,
+        ]);
+
+    let security_headers = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            axum::http::HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_FRAME_OPTIONS,
+            axum::http::HeaderValue::from_static("DENY"),
+        ));
+
     Router::new()
         .route(
             "/v1/chat/completions",
             axum::routing::post(handlers::chat_completions),
         )
         .route("/v1/messages", axum::routing::post(handlers::messages))
-        .route("/v1/completions", axum::routing::post(handlers::completions))
+        .route(
+            "/v1/completions",
+            axum::routing::post(handlers::completions),
+        )
         .route("/v1/embeddings", axum::routing::post(handlers::embeddings))
         .route("/tokenize", axum::routing::post(handlers::tokenize))
         .route("/detokenize", axum::routing::post(handlers::detokenize))
@@ -45,6 +74,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .fallback(tower_http::services::ServeFile::new("web/index.html")),
         )
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive())
+        .layer(cors)
+        .layer(security_headers)
         .with_state(state)
 }

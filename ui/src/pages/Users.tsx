@@ -14,7 +14,7 @@ import type { User } from '@/types';
 
 export default function Users() {
   const { t } = useTranslation();
-  const { data: users, isLoading, refetch } = useUsers();
+  const { data: users, isLoading, isError, refetch } = useUsers();
   const createUser = useCreateUser();
   const deleteUser = useDeleteUser();
   const [search, setSearch] = useState('');
@@ -28,7 +28,7 @@ export default function Users() {
   const handleDelete = () => {
     if (!deleteTarget) return;
     deleteUser.mutate(deleteTarget.id, {
-      onSuccess: () => { toast.success(t('toast.deleted')); setDeleteTarget(null); },
+      onSuccess: () => { toast.success(t('toast.deleted')); setDeleteTarget(null); refetch(); },
       onError: (err) => toast.error(err.message),
     });
   };
@@ -57,6 +57,13 @@ export default function Users() {
         <CardContent className="p-0">
           {isLoading ? (
             <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>
+          ) : isError ? (
+            <div className="flex items-center justify-center p-8">
+              <div className="text-center">
+                <p className="text-destructive mb-2">{t('err.loadFailed')}</p>
+                <Button variant="outline" onClick={() => refetch()}>{t('common.refresh')}</Button>
+              </div>
+            </div>
           ) : filtered && filtered.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

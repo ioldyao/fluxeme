@@ -55,7 +55,8 @@ pub fn get(conn: &Connection, id: &str) -> Result<Option<User>, crate::db::DbErr
 
 /// Get user with password_hash for login verification
 pub fn get_with_password(conn: &Connection, id: &str) -> Result<Option<User>, crate::db::DbError> {
-    let mut stmt = conn.prepare("SELECT id, name, password_hash, rpm, tpm FROM users WHERE id = ?1")?;
+    let mut stmt =
+        conn.prepare("SELECT id, name, password_hash, rpm, tpm FROM users WHERE id = ?1")?;
     let mut rows = stmt.query_map(params![id], |row| {
         Ok(User {
             id: row.get(0)?,
@@ -174,7 +175,10 @@ pub fn delete_api_key(conn: &Connection, key: &str) -> Result<(), crate::db::DbE
     Ok(())
 }
 
-pub fn lookup_key(conn: &Connection, key: &str) -> Result<Option<(User, ApiKey)>, crate::db::DbError> {
+pub fn lookup_key(
+    conn: &Connection,
+    key: &str,
+) -> Result<Option<(User, ApiKey)>, crate::db::DbError> {
     let mut stmt = conn.prepare(
         "SELECT u.id, u.name, u.rpm, u.tpm, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
          FROM api_keys a JOIN users u ON u.id = a.user_id WHERE a.key = ?1",

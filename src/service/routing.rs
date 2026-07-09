@@ -1,7 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
+use crate::balancer::LoadBalancer;
 use crate::config::types::EndpointConfig;
+
+type RouteCacheEntry = (String, Arc<LoadBalancer>, Vec<EndpointConfig>);
+type RouteCache = RwLock<HashMap<String, RouteCacheEntry>>;
 use crate::domain::channel::Channel;
 use crate::domain::model::Model;
 use crate::domain::routing::RoutingRule;
@@ -13,6 +17,7 @@ pub struct RoutingService {
     channels: RwLock<HashMap<String, Arc<Channel>>>,
     models: RwLock<Vec<Model>>,
     rules: RwLock<Vec<RoutingRule>>,
+    cache: RouteCache,
 }
 
 impl RoutingService {
@@ -22,6 +27,7 @@ impl RoutingService {
             channels: RwLock::new(HashMap::new()),
             models: RwLock::new(Vec::new()),
             rules: RwLock::new(Vec::new()),
+            cache: RwLock::new(HashMap::new()),
         };
         svc.reload();
         svc
@@ -31,35 +37,50 @@ impl RoutingService {
         match self.db.list_channels() {
             Ok(chs) => {
                 let map: HashMap<_, _> = chs.into_iter().map(|c| (c.id.clone(), Arc::new(c))).collect();
-                *self.channels.write().unwrap() = map;
+                *self.channels.write().unwrap_or_else(|e| e.into_inner()) = map;
             }
             Err(e) => tracing::error!("Failed to load channels: {}", e),
         }
+        {
+            let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
+            let mut cache_map = HashMap::new();
+            for (id, ch) in chs.iter() {
+                let endpoints: Vec<EndpointConfig> = ch.endpoints.iter()
+                    .map(|ep| EndpointConfig {
+                        url: ep.url.clone(),
+                        api_key: ep.api_key.clone(),
+                        weight: ep.weight,
+                        timeout_secs: ep.timeout_secs,
+                    })
+                    .collect();
+                cache_map.insert(id.clone(), (ch.provider.clone(), Arc::new(LoadBalancer::new(&endpoints)), endpoints));
+            }
+            *self.cache.write().unwrap_or_else(|e| e.into_inner()) = cache_map;
+        }
         match self.db.list_models() {
-            Ok(ms) => *self.models.write().unwrap() = ms,
+            Ok(ms) => *self.models.write().unwrap_or_else(|e| e.into_inner()) = ms,
             Err(e) => tracing::error!("Failed to load models: {}", e),
         }
         match self.db.list_rules() {
-            Ok(rs) => *self.rules.write().unwrap() = rs,
+            Ok(rs) => *self.rules.write().unwrap_or_else(|e| e.into_inner()) = rs,
             Err(e) => tracing::error!("Failed to load routing rules: {}", e),
         }
     }
 
-    #[allow(dead_code)]
     pub fn get_channel(&self, id: &str) -> Option<Channel> {
-        self.channels.read().unwrap().get(id).map(|c| c.as_ref().clone())
+        self.channels.read().unwrap_or_else(|e| e.into_inner()).get(id).map(|c| c.as_ref().clone())
     }
 
     #[allow(dead_code)]
     pub fn get_enabled_channel(&self, id: &str) -> Option<Channel> {
-        self.channels.read().unwrap().get(id)
+        self.channels.read().unwrap_or_else(|e| e.into_inner()).get(id)
             .filter(|c| c.enabled)
             .map(|c| c.as_ref().clone())
     }
 
     /// Resolve a channel_id to its provider adapter name and endpoint configs.
     pub fn resolve_channel(&self, channel_id: &str) -> Option<(String, Vec<EndpointConfig>)> {
-        let ch = self.channels.read().unwrap().get(channel_id)?.clone(); // Arc clone, cheap
+        let ch = self.channels.read().unwrap_or_else(|e| e.into_inner()).get(channel_id)?.clone(); // Arc clone, cheap
         if !ch.enabled {
             return None;
         }
@@ -76,10 +97,14 @@ impl RoutingService {
         Some((ch.provider.clone(), endpoints))
     }
 
+    pub fn get_route(&self, channel_id: &str) -> Option<RouteCacheEntry> {
+        self.cache.read().ok()?.get(channel_id).cloned()
+    }
+
     /// Route a model to a channel ID for the given user.
     /// Return models in a format suitable for the /v1/models endpoint.
     pub fn list_display_models(&self) -> Vec<serde_json::Value> {
-        let models = self.models.read().unwrap();
+        let models = self.models.read().unwrap_or_else(|e| e.into_inner());
         models
             .iter()
             .map(|m| {
@@ -104,7 +129,7 @@ impl RoutingService {
 
         // 1. Try model-based routing
         {
-            let models = self.models.read().unwrap();
+            let models = self.models.read().unwrap_or_else(|e| e.into_inner());
             for model_cfg in models.iter() {
                 if !subscribed.contains(&model_cfg.id) {
                     continue; // skip models the user isn't subscribed to
@@ -115,7 +140,7 @@ impl RoutingService {
                     bindings.sort_by_key(|b| b.priority);
 
                     for binding in &bindings {
-                        if let Some(ch) = self.channels.read().unwrap().get(&binding.channel_id) {
+                        if let Some(ch) = self.channels.read().unwrap_or_else(|e| e.into_inner()).get(&binding.channel_id) {
                             if ch.enabled {
                                 return Ok(ch.id.clone());
                             }
@@ -127,7 +152,7 @@ impl RoutingService {
 
         // 2. Fall back to routing_rules
         {
-            let rules = self.rules.read().unwrap();
+            let rules = self.rules.read().unwrap_or_else(|e| e.into_inner());
             let mut matched: Vec<(i32, String)> = Vec::new();
 
             for rule in rules.iter() {
@@ -135,7 +160,7 @@ impl RoutingService {
                 let model_match = match_pattern(model, &rule.model_pattern);
 
                 if user_match && model_match {
-                    if let Some(ch) = self.channels.read().unwrap().get(&rule.channel_id) {
+                    if let Some(ch) = self.channels.read().unwrap_or_else(|e| e.into_inner()).get(&rule.channel_id) {
                         if ch.enabled {
                             matched.push((ch.priority, ch.id.clone()));
                         }
@@ -157,7 +182,7 @@ impl RoutingService {
     }
 }
 
-fn match_pattern(text: &str, pattern: &str) -> bool {
+pub fn match_pattern(text: &str, pattern: &str) -> bool {
     if pattern == "*" {
         return true;
     }

@@ -10,12 +10,12 @@ import { toast } from 'sonner';
 
 export default function MyModels() {
   const { t } = useTranslation();
-  const { data: models, isLoading, refetch } = useSubscriptions();
+  const { data: models, isLoading, isError, refetch } = useSubscriptions();
   const unsubscribe = useUnsubscribeModel();
 
   const handleUnsubscribe = (modelId: string) => {
     unsubscribe.mutate(modelId, {
-      onSuccess: () => toast.success('已取消订阅'),
+      onSuccess: () => { toast.success('已取消订阅'); refetch(); },
       onError: (err) => toast.error(err.message),
     });
   };
@@ -34,6 +34,13 @@ export default function MyModels() {
 
       {isLoading ? (
         <div className="p-12 text-center text-muted-foreground">{t('common.loading')}</div>
+      ) : isError ? (
+        <div className="flex items-center justify-center p-8">
+          <div className="text-center">
+            <p className="text-destructive mb-2">{t('err.loadFailed')}</p>
+            <Button variant="outline" onClick={() => refetch()}>{t('common.refresh')}</Button>
+          </div>
+        </div>
       ) : models && models.length > 0 ? (
         <div className="grid grid-cols-1 gap-3">
           {models.map((model) => (
