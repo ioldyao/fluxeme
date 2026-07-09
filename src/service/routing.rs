@@ -10,7 +10,7 @@ use crate::db::Database;
 /// In-memory route cache, rebuilt from DB on startup and after admin changes.
 pub struct RoutingService {
     db: Arc<Database>,
-    channels: RwLock<HashMap<String, Channel>>,
+    channels: RwLock<HashMap<String, Arc<Channel>>>,
     models: RwLock<Vec<Model>>,
     rules: RwLock<Vec<RoutingRule>>,
 }
@@ -30,7 +30,7 @@ impl RoutingService {
     pub fn reload(&self) {
         match self.db.list_channels() {
             Ok(chs) => {
-                let map: HashMap<_, _> = chs.into_iter().map(|c| (c.id.clone(), c)).collect();
+                let map: HashMap<_, _> = chs.into_iter().map(|c| (c.id.clone(), Arc::new(c))).collect();
                 *self.channels.write().unwrap() = map;
             }
             Err(e) => tracing::error!("Failed to load channels: {}", e),
@@ -47,22 +47,19 @@ impl RoutingService {
 
     #[allow(dead_code)]
     pub fn get_channel(&self, id: &str) -> Option<Channel> {
-        self.channels.read().unwrap().get(id).cloned()
+        self.channels.read().unwrap().get(id).map(|c| c.as_ref().clone())
     }
 
     #[allow(dead_code)]
     pub fn get_enabled_channel(&self, id: &str) -> Option<Channel> {
-        self.channels
-            .read()
-            .unwrap()
-            .get(id)
+        self.channels.read().unwrap().get(id)
             .filter(|c| c.enabled)
-            .cloned()
+            .map(|c| c.as_ref().clone())
     }
 
     /// Resolve a channel_id to its provider adapter name and endpoint configs.
     pub fn resolve_channel(&self, channel_id: &str) -> Option<(String, Vec<EndpointConfig>)> {
-        let ch = self.channels.read().unwrap().get(channel_id)?.clone();
+        let ch = self.channels.read().unwrap().get(channel_id)?.clone(); // Arc clone, cheap
         if !ch.enabled {
             return None;
         }
@@ -76,7 +73,7 @@ impl RoutingService {
                 timeout_secs: ep.timeout_secs,
             })
             .collect();
-        Some((ch.provider, endpoints))
+        Some((ch.provider.clone(), endpoints))
     }
 
     /// Route a model to a channel ID for the given user.

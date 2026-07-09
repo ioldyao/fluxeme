@@ -13,8 +13,11 @@ export function useUsage(params: UsageParams = {}) {
   if (params.user_id) searchParams.set('user_id', params.user_id);
   const qs = searchParams.toString();
 
+  // Serialize to prevent object-reference instability causing infinite refetch
+  const stableKey = JSON.stringify(params);
+
   return useQuery({
-    queryKey: ['usage', params],
+    queryKey: ['usage', stableKey],
     queryFn: () => api<UsageRecord[]>(`/usage${qs ? `?${qs}` : ''}`),
   });
 }

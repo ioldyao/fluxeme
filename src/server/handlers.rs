@@ -205,7 +205,11 @@ async fn handle_streaming(
                     status_code: 200,
                     success: true,
                     request_body: req_body.clone(),
-                    response_body: Some(resp_buf),
+                    response_body: Some(if resp_buf.len() > 10240 {
+                        resp_buf.chars().take(10240).collect()
+                    } else {
+                        resp_buf
+                    }),
                 });
             });
 
@@ -520,36 +524,33 @@ pub async fn list_models(
 // ── Token estimators ──────────────────────────────────────────────
 
 fn estimate_tokens(body: &Value) -> u64 {
-    let text = body["messages"]
+    let total_chars: usize = body["messages"]
         .as_array()
         .map(|msgs| {
             msgs.iter()
                 .filter_map(|m| m["content"].as_str())
-                .collect::<Vec<_>>()
-                .join(" ")
+                .map(|s| s.len())
+                .sum()
         })
-        .unwrap_or_default();
-    (text.len() / 4) as u64
+        .unwrap_or(0);
+    (total_chars / 4) as u64
 }
 
 fn estimate_tokens_anthropic(body: &Value) -> u64 {
-    let text = body["messages"]
+    let total_chars: usize = body["messages"]
         .as_array()
         .map(|msgs| {
             msgs.iter()
-                .filter_map(|m| match &m["content"] {
-                    Value::String(s) => Some(s.clone()),
-                    Value::Array(arr) => Some(
-                        arr.iter()
-                            .filter_map(|c| c["text"].as_str())
-                            .collect::<Vec<_>>()
-                            .join(" "),
-                    ),
-                    _ => None,
+                .map(|m| match &m["content"] {
+                    Value::String(s) => s.len(),
+                    Value::Array(arr) => arr.iter()
+                        .filter_map(|c| c["text"].as_str())
+                        .map(|s| s.len())
+                        .sum(),
+                    _ => 0,
                 })
-                .collect::<Vec<_>>()
-                .join(" ")
+                .sum()
         })
-        .unwrap_or_default();
-    (text.len() / 4) as u64
+        .unwrap_or(0);
+    (total_chars / 4) as u64
 }

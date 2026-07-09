@@ -8,7 +8,7 @@ const WINDOW_SECS: u64 = 60;
 #[derive(Clone)]
 pub struct RateLimiter {
     rpm_counters: Arc<DashMap<String, Vec<Instant>>>,
-    tpm_counters: Arc<DashMap<String, Vec<Instant>>>,
+    tpm_counters: Arc<DashMap<String, Vec<(Instant, u64)>>>,
 }
 
 impl RateLimiter {
@@ -58,7 +58,7 @@ impl RateLimiter {
 
     fn check_window_tokens(
         &self,
-        counters: &DashMap<String, Vec<Instant>>,
+        counters: &DashMap<String, Vec<(Instant, u64)>>,
         key: &str,
         limit: u64,
         window_secs: u64,
@@ -67,9 +67,9 @@ impl RateLimiter {
         let now = Instant::now();
         let mut entry = counters.entry(key.to_string()).or_default();
 
-        entry.retain(|t| now.duration_since(*t).as_secs() < window_secs);
+        entry.retain(|(t, _)| now.duration_since(*t).as_secs() < window_secs);
 
-        let current_tokens: u64 = entry.len() as u64 * estimated_tokens;
+        let current_tokens: u64 = entry.iter().map(|(_, t)| t).sum();
 
         if current_tokens + estimated_tokens > limit {
             return Err(RateLimitError(format!(
@@ -78,7 +78,7 @@ impl RateLimiter {
             )));
         }
 
-        entry.push(now);
+        entry.push((now, estimated_tokens));
         Ok(())
     }
 }

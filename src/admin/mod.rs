@@ -230,9 +230,7 @@ async fn admin_dashboard(
 
         let endpoint_count: usize = channels.iter().map(|c| c.endpoints.len()).sum();
         let total_requests = state.usage.count().unwrap_or(0);
-        let api_key_count: usize = users.iter().map(|u| {
-            state.db.list_api_keys(&u.id).map(|k| k.len()).unwrap_or(0)
-        }).sum();
+        let api_key_count = state.db.all_api_keys().map(|k| k.len()).unwrap_or(0);
 
         Ok(Json(DashboardResp {
             users: users.len(),
@@ -290,7 +288,7 @@ async fn dashboard_aggregations(
 
     let user_filter: Option<&str> = if session.role == "admin" { None } else { Some(&session.user_id) };
 
-    // Load model pricing map
+    // Load model pricing map once
     let models = state.db.list_models().unwrap_or_default();
     let mut pricing: std::collections::HashMap<String, (f64, f64)> = std::collections::HashMap::new();
     for m in &models {
@@ -298,30 +296,35 @@ async fn dashboard_aggregations(
         pricing.insert(m.model_pattern.clone(), (m.pricing.prompt_price, m.pricing.completion_price));
     }
 
-    fn lookup_price<'a>(model_name: &str, pricing: &'a std::collections::HashMap<String, (f64, f64)>) -> &'a (f64, f64) {
+    // Build sorted prefix list for glob pattern matching (O(log n) per lookup)
+    let mut prefix_prices: Vec<(&str, (f64, f64))> = pricing.iter()
+        .filter_map(|(k, v)| k.strip_suffix('*').map(|p| (p, *v)))
+        .collect();
+    prefix_prices.sort_by(|a, b| b.0.len().cmp(&a.0.len())); // most specific first
+
+    fn lookup_price<'a>(model_name: &str, pricing: &'a std::collections::HashMap<String, (f64, f64)>, prefix_prices: &'a [(&str, (f64, f64))]) -> (f64, f64) {
         if let Some(price) = pricing.get(model_name) {
-            return price;
+            return *price;
         }
-        for (pattern, price) in pricing {
-            if let Some(prefix) = pattern.strip_suffix('*') {
-                if model_name.starts_with(prefix) {
-                    return price;
-                }
+        for (prefix, price) in prefix_prices {
+            if model_name.starts_with(prefix) {
+                return *price;
             }
         }
-        pricing.get("").unwrap_or(&(0.0, 0.0))
+        (0.0, 0.0)
     }
 
-    // All-time totals
+    // All-time totals: use COUNT SQL aggregate instead of loading all rows
     let total_requests = match user_filter {
         Some(uid) => state.usage.count_by_user(uid).unwrap_or(0),
         None => state.usage.count().unwrap_or(0),
     } as u64;
 
-    // 24h records
-    let records = state.db.query_usage_since(&since_24h, user_filter)
-        .map_err(|e| AdminError::internal(e.0))?;
-    let requests_24h = records.len() as u64;
+    // 24h stats: use SQL aggregates
+    let (requests_24h, success_count, total_latency, total_tokens_24h) = state.usage.stats_since(&since_24h, user_filter)
+        .unwrap_or((0, 0, 0, 0));
+    let requests_24h = requests_24h as u64;
+
     if requests_24h == 0 {
         return Ok(Json(DashboardAggregations {
             total_requests,
@@ -335,32 +338,27 @@ async fn dashboard_aggregations(
         }));
     }
 
+    // Compute cost from 24h records (loads only token + model columns)
+    let records = state.usage.cost_rows_since(&since_24h, user_filter)
+        .map_err(|e| AdminError::internal(e))?;
     let mut total_cost_24h = 0.0_f64;
-    let mut total_cost = 0.0_f64;
-    let mut success_count = 0_u64;
-    let mut total_latency = 0_u64;
-    let mut total_tokens_24h = 0_u64;
     let mut model_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-
     for r in &records {
-        let price = *lookup_price(&r.model, &pricing);
+        let price = lookup_price(&r.model, &pricing, &prefix_prices);
         let cost = (r.prompt_tokens as f64 / 1000.0 * price.0)
                   + (r.completion_tokens as f64 / 1000.0 * price.1);
         total_cost_24h += cost;
-        if r.success { success_count += 1; }
-        total_latency += r.latency_ms as u64;
-        total_tokens_24h += r.total_tokens as u64;
         *model_counts.entry(r.model.clone()).or_default() += 1;
     }
 
-    // All-time cost
-    let all_records = state.db.query_usage_since("1970-01-01T00:00:00", user_filter)
-        .map_err(|e| AdminError::internal(e.0))?;
-    for r in &all_records {
-        let price = *lookup_price(&r.model, &pricing);
-        total_cost += (r.prompt_tokens as f64 / 1000.0 * price.0)
-                    + (r.completion_tokens as f64 / 1000.0 * price.1);
-    }
+    // All-time cost: load only token + model columns from aggregated query
+    let all_records = state.usage.cost_rows_since("1970-01-01T00:00:00", user_filter)
+        .map_err(|e| AdminError::internal(e))?;
+    let total_cost: f64 = all_records.iter().map(|r| {
+        let price = lookup_price(&r.model, &pricing, &prefix_prices);
+        (r.prompt_tokens as f64 / 1000.0 * price.0)
+        + (r.completion_tokens as f64 / 1000.0 * price.1)
+    }).sum();
 
     let success_rate = if requests_24h > 0 { success_count as f64 / requests_24h as f64 * 100.0 } else { 0.0 };
     let avg_latency = if requests_24h > 0 { total_latency as f64 / requests_24h as f64 } else { 0.0 };

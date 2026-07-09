@@ -4,12 +4,14 @@ mod rules;
 mod users;
 
 use std::path::Path;
+use std::sync::Mutex;
 
 use rusqlite::{params, Connection};
 
 use crate::domain::channel::Channel;
 use crate::domain::model::{Model, Pricing};
 use crate::domain::routing::RoutingRule;
+use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
 
 #[derive(Debug)]
@@ -28,28 +30,30 @@ impl From<rusqlite::Error> for DbError {
 }
 
 pub struct Database {
-    path: String,
+    conn: Mutex<Connection>,
 }
 
 impl Database {
     pub fn new(path: &str) -> Self {
-        Self {
-            path: path.to_string(),
-        }
-    }
-
-    pub fn conn(&self) -> Result<Connection, DbError> {
-        let exists = Path::new(&self.path).exists();
-        let conn = Connection::open(&self.path)?;
+        let path = path.to_string();
+        let exists = Path::new(&path).exists();
+        let conn = Connection::open(&path)
+            .unwrap_or_else(|e| panic!("Failed to open database at {}: {}", path, e));
         if !exists {
-            conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-            self.migrate_inner(&conn)?;
-            tracing::info!("Database created at {}", self.path);
+            conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+                .unwrap_or_else(|e| panic!("Failed to set pragmas: {}", e));
+            Self::migrate_inner(&conn)
+                .unwrap_or_else(|e| panic!("Failed to run initial migration: {}", e));
+            tracing::info!("Database created at {}", path);
         }
-        Ok(conn)
+        Self { conn: Mutex::new(conn) }
     }
 
-    fn migrate_inner(&self, conn: &Connection) -> Result<(), DbError> {
+    pub fn conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, DbError> {
+        self.conn.lock().map_err(|_| DbError("Database mutex poisoned".into()))
+    }
+
+    fn migrate_inner(conn: &Connection) -> Result<(), DbError> {
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS users (
@@ -149,52 +153,55 @@ impl Database {
                 PRIMARY KEY (user_id, model_id)
             );"
         );
+        // Performance indexes
+        let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_usage_user_id ON usage_logs(user_id)");
+        let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_logs(timestamp)");
+        let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_usage_user_timestamp ON usage_logs(user_id, timestamp)");
         Ok(())
     }
 
     pub fn migrate(&self) -> Result<(), DbError> {
-        let conn = self.conn()?;
-        self.migrate_inner(&conn)
+        Self::migrate_inner(&*self.conn()?)
     }
 
     // ── Delegating helpers ──────────────────────────────────────────
 
     pub fn list_users(&self) -> Result<Vec<User>, DbError> {
-        users::list(&self.conn()?)
+        users::list(&*self.conn()?)
     }
     pub fn get_user(&self, id: &str) -> Result<Option<User>, DbError> {
-        users::get(&self.conn()?, id)
+        users::get(&*self.conn()?, id)
     }
     pub fn get_user_with_password(&self, id: &str) -> Result<Option<User>, DbError> {
-        users::get_with_password(&self.conn()?, id)
+        users::get_with_password(&*self.conn()?, id)
     }
     pub fn create_user(&self, user: &User) -> Result<(), DbError> {
-        users::create(&self.conn()?, user)
+        users::create(&*self.conn()?, user)
     }
     pub fn update_user(&self, user: &User) -> Result<(), DbError> {
-        users::update(&self.conn()?, user)
+        users::update(&*self.conn()?, user)
     }
     pub fn delete_user(&self, id: &str) -> Result<(), DbError> {
-        users::delete(&self.conn()?, id)
+        users::delete(&*self.conn()?, id)
     }
     pub fn list_api_keys(&self, user_id: &str) -> Result<Vec<ApiKey>, DbError> {
-        users::list_api_keys(&self.conn()?, user_id)
+        users::list_api_keys(&*self.conn()?, user_id)
     }
     pub fn create_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
-        users::create_api_key(&self.conn()?, key)
+        users::create_api_key(&*self.conn()?, key)
     }
     pub fn delete_api_key(&self, key: &str) -> Result<(), DbError> {
-        users::delete_api_key(&self.conn()?, key)
+        users::delete_api_key(&*self.conn()?, key)
     }
     pub fn update_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
-        users::update_api_key(&self.conn()?, key)
+        users::update_api_key(&*self.conn()?, key)
     }
     #[allow(dead_code)]
     pub fn lookup_key(&self, key: &str) -> Result<Option<(User, ApiKey)>, DbError> {
-        users::lookup_key(&self.conn()?, key)
+        users::lookup_key(&*self.conn()?, key)
     }
     pub fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError> {
-        users::all_api_keys(&self.conn()?)
+        users::all_api_keys(&*self.conn()?)
     }
 
     // ── Unused helpers (available for future use) ────────────────
@@ -240,7 +247,7 @@ impl Database {
         let mut records = Vec::new();
         if let Some(uid) = user_id {
             let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success
                  FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2 ORDER BY id ASC",
             )?;
             let mut rows = stmt.query(rusqlite::params![uid, since])?;
@@ -252,12 +259,12 @@ impl Database {
                     prompt_tokens: row.get(6)?, completion_tokens: row.get(7)?,
                     total_tokens: row.get(8)?, latency_ms: row.get(9)?,
                     status_code: row.get(10)?, success: row.get::<_, i32>(11)? != 0,
-                    request_body: row.get(12)?, response_body: row.get(13)?,
+                    request_body: None, response_body: None,
                 });
             }
         } else {
             let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success
                  FROM usage_logs WHERE timestamp >= ?1 ORDER BY id ASC",
             )?;
             let mut rows = stmt.query(rusqlite::params![since])?;
@@ -269,7 +276,7 @@ impl Database {
                     prompt_tokens: row.get(6)?, completion_tokens: row.get(7)?,
                     total_tokens: row.get(8)?, latency_ms: row.get(9)?,
                     status_code: row.get(10)?, success: row.get::<_, i32>(11)? != 0,
-                    request_body: row.get(12)?, response_body: row.get(13)?,
+                    request_body: None, response_body: None,
                 });
             }
         }
@@ -305,7 +312,7 @@ impl Database {
 
         if let Some(uid) = user_id {
             let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success
                  FROM usage_logs WHERE user_id = ?1 ORDER BY id DESC LIMIT ?2",
             )?;
             let mut rows = stmt.query(rusqlite::params![uid, limit as i64])?;
@@ -323,13 +330,13 @@ impl Database {
                     latency_ms: row.get(9)?,
                     status_code: row.get(10)?,
                     success: row.get::<_, i32>(11)? != 0,
-                    request_body: row.get(12)?,
-                    response_body: row.get(13)?,
+                    request_body: None,
+                    response_body: None,
                 });
             }
         } else {
             let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success
                  FROM usage_logs ORDER BY id DESC LIMIT ?1",
             )?;
             let mut rows = stmt.query(rusqlite::params![limit as i64])?;
@@ -347,8 +354,8 @@ impl Database {
                     latency_ms: row.get(9)?,
                     status_code: row.get(10)?,
                     success: row.get::<_, i32>(11)? != 0,
-                    request_body: row.get(12)?,
-                    response_body: row.get(13)?,
+                    request_body: None,
+                    response_body: None,
                 });
             }
         }
@@ -386,52 +393,52 @@ impl Database {
 
     // Channels
     pub fn list_channels(&self) -> Result<Vec<Channel>, DbError> {
-        channels::list(&self.conn()?)
+        channels::list(&*self.conn()?)
     }
     #[allow(dead_code)]
     pub fn get_channel(&self, id: &str) -> Result<Option<Channel>, DbError> {
-        channels::get(&self.conn()?, id)
+        channels::get(&*self.conn()?, id)
     }
     pub fn create_channel(&self, ch: &Channel) -> Result<(), DbError> {
-        channels::create(&self.conn()?, ch)
+        channels::create(&*self.conn()?, ch)
     }
     pub fn update_channel(&self, ch: &Channel) -> Result<(), DbError> {
-        channels::update(&self.conn()?, ch)
+        channels::update(&*self.conn()?, ch)
     }
     pub fn delete_channel(&self, id: &str) -> Result<(), DbError> {
-        channels::delete(&self.conn()?, id)
+        channels::delete(&*self.conn()?, id)
     }
 
     // Models
     pub fn list_models(&self) -> Result<Vec<Model>, DbError> {
-        models::list(&self.conn()?)
+        models::list(&*self.conn()?)
     }
     #[allow(dead_code)]
     pub fn get_model(&self, id: &str) -> Result<Option<Model>, DbError> {
-        models::get(&self.conn()?, id)
+        models::get(&*self.conn()?, id)
     }
     pub fn create_model(&self, m: &Model) -> Result<(), DbError> {
-        models::create(&self.conn()?, m)
+        models::create(&*self.conn()?, m)
     }
     pub fn update_model(&self, m: &Model) -> Result<(), DbError> {
-        models::update(&self.conn()?, m)
+        models::update(&*self.conn()?, m)
     }
     pub fn delete_model(&self, id: &str) -> Result<(), DbError> {
-        models::delete(&self.conn()?, id)
+        models::delete(&*self.conn()?, id)
     }
 
     // Routing rules
     pub fn list_rules(&self) -> Result<Vec<RoutingRule>, DbError> {
-        rules::list(&self.conn()?)
+        rules::list(&*self.conn()?)
     }
     pub fn create_rule(&self, r: &RoutingRule) -> Result<(), DbError> {
-        rules::create(&self.conn()?, r)
+        rules::create(&*self.conn()?, r)
     }
     pub fn update_rule(&self, r: &RoutingRule) -> Result<(), DbError> {
-        rules::update(&self.conn()?, r)
+        rules::update(&*self.conn()?, r)
     }
     pub fn delete_rule(&self, name: &str) -> Result<(), DbError> {
-        rules::delete(&self.conn()?, name)
+        rules::delete(&*self.conn()?, name)
     }
 
     // Subscriptions
@@ -524,4 +531,89 @@ impl Database {
         }
         Ok(result)
     }
+
+    pub fn usage_stats_since(&self, since: &str, user_id: Option<&str>) -> Result<(u64, u64, u64, u64), DbError> {
+        let conn = self.conn()?;
+        let (total, success, latency, total_tok): (u64, u64, u64, u64) = if let Some(uid) = user_id {
+            conn.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END),0), COALESCE(SUM(latency_ms),0), COALESCE(SUM(total_tokens),0)
+                 FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2",
+                params![uid, since],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?
+        } else {
+            conn.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END),0), COALESCE(SUM(latency_ms),0), COALESCE(SUM(total_tokens),0)
+                 FROM usage_logs WHERE timestamp >= ?1",
+                params![since],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?
+        };
+        Ok((total, success, latency, total_tok))
+    }
+
+    pub fn usage_cost_rows_since(&self, since: &str, user_id: Option<&str>) -> Result<Vec<UsageRecord>, DbError> {
+        let conn = self.conn()?;
+        let mut records = Vec::new();
+        if let Some(uid) = user_id {
+            let mut stmt = conn.prepare(
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success
+                 FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2 ORDER BY id ASC",
+            )?;
+            let mut rows = stmt.query(params![uid, since])?;
+            while let Some(row) = rows.next()? {
+                records.push(UsageRecord {
+                    timestamp: row.get(0)?, request_id: row.get(1)?,
+                    user_id: row.get(2)?, user_name: row.get(3)?,
+                    channel_id: row.get(4)?, model: row.get(5)?,
+                    prompt_tokens: row.get(6)?, completion_tokens: row.get(7)?,
+                    total_tokens: row.get(8)?, latency_ms: row.get(9)?,
+                    status_code: row.get(10)?, success: row.get::<_, i32>(11)? != 0,
+                    request_body: None, response_body: None,
+                });
+            }
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success
+                 FROM usage_logs WHERE timestamp >= ?1 ORDER BY id ASC",
+            )?;
+            let mut rows = stmt.query(params![since])?;
+            while let Some(row) = rows.next()? {
+                records.push(UsageRecord {
+                    timestamp: row.get(0)?, request_id: row.get(1)?,
+                    user_id: row.get(2)?, user_name: row.get(3)?,
+                    channel_id: row.get(4)?, model: row.get(5)?,
+                    prompt_tokens: row.get(6)?, completion_tokens: row.get(7)?,
+                    total_tokens: row.get(8)?, latency_ms: row.get(9)?,
+                    status_code: row.get(10)?, success: row.get::<_, i32>(11)? != 0,
+                    request_body: None, response_body: None,
+                });
+            }
+        }
+        Ok(records)
+    }
+}
+
+pub fn insert_usage_row(conn: &Connection, record: &UsageRecord) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        params![
+            record.timestamp,
+            record.request_id,
+            record.user_id,
+            record.user_name,
+            record.channel_id,
+            record.model,
+            record.prompt_tokens,
+            record.completion_tokens,
+            record.total_tokens,
+            record.latency_ms,
+            record.status_code,
+            record.success as i32,
+            record.request_body,
+            record.response_body,
+        ],
+    )?;
+    Ok(())
 }

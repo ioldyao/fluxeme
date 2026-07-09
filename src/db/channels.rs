@@ -6,7 +6,7 @@ use crate::domain::channel::{Channel, Endpoint};
 #[allow(dead_code)]
 pub fn list(conn: &Connection) -> Result<Vec<Channel>, crate::db::DbError> {
     let mut stmt = conn.prepare("SELECT id, name, provider, priority, enabled FROM channels ORDER BY priority, id")?;
-    let channels: Vec<Channel> = stmt
+    let mut channels: Vec<Channel> = stmt
         .query_map([], |row| {
             Ok(Channel {
                 id: row.get(0)?,
@@ -19,12 +19,38 @@ pub fn list(conn: &Connection) -> Result<Vec<Channel>, crate::db::DbError> {
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut result = Vec::new();
-    for mut ch in channels {
-        ch.endpoints = list_endpoints(conn, &ch.id)?;
-        result.push(ch);
+    // Single batch query for all endpoints
+    let mut estmt = conn.prepare(
+        "SELECT id, channel_id, url, api_key, weight, timeout_secs FROM endpoints ORDER BY channel_id",
+    )?;
+    let endpoint_rows = estmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                Endpoint {
+                    id: Some(row.get(0)?),
+                    channel_id: row.get(1)?,
+                    url: row.get(2)?,
+                    api_key: row.get(3)?,
+                    weight: row.get(4)?,
+                    timeout_secs: row.get(5)?,
+                },
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut eps_by_channel: std::collections::HashMap<String, Vec<Endpoint>> =
+        std::collections::HashMap::new();
+    for (ch_id, ep) in endpoint_rows {
+        eps_by_channel.entry(ch_id).or_default().push(ep);
     }
-    Ok(result)
+
+    for ch in &mut channels {
+        if let Some(eps) = eps_by_channel.remove(&ch.id) {
+            ch.endpoints = eps;
+        }
+    }
+    Ok(channels)
 }
 
 pub fn get(conn: &Connection, id: &str) -> Result<Option<Channel>, crate::db::DbError> {

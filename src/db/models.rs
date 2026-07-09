@@ -5,7 +5,7 @@ use crate::domain::model::{Model, ModelChannel, Pricing};
 
 pub fn list(conn: &Connection) -> Result<Vec<Model>, crate::db::DbError> {
     let mut stmt = conn.prepare("SELECT id, name, model_pattern, prompt_price, completion_price, published, context_length FROM models ORDER BY id")?;
-    let models: Vec<Model> = stmt
+    let mut models: Vec<Model> = stmt
         .query_map([], |row| {
             Ok(Model {
                 id: row.get(0)?,
@@ -22,12 +22,35 @@ pub fn list(conn: &Connection) -> Result<Vec<Model>, crate::db::DbError> {
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut result = Vec::new();
-    for mut m in models {
-        m.channels = list_bindings(conn, &m.id)?;
-        result.push(m);
+    // Single batch query for all bindings
+    let mut bstmt = conn.prepare(
+        "SELECT model_id, channel_id, priority FROM model_channels ORDER BY model_id, priority",
+    )?;
+    let binding_rows = bstmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                ModelChannel {
+                    model_id: row.get(0)?,
+                    channel_id: row.get(1)?,
+                    priority: row.get(2)?,
+                },
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut bindings_by_model: std::collections::HashMap<String, Vec<ModelChannel>> =
+        std::collections::HashMap::new();
+    for (model_id, binding) in binding_rows {
+        bindings_by_model.entry(model_id).or_default().push(binding);
     }
-    Ok(result)
+
+    for m in &mut models {
+        if let Some(bindings) = bindings_by_model.remove(&m.id) {
+            m.channels = bindings;
+        }
+    }
+    Ok(models)
 }
 
 pub fn get(conn: &Connection, id: &str) -> Result<Option<Model>, crate::db::DbError> {
