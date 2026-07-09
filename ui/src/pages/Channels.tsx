@@ -9,9 +9,9 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Switch } from '@/components/ui/switch';
 import { Pencil, Trash2, Plus, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
 import type { Channel } from '@/types';
 
 export default function Channels() {
@@ -86,15 +86,11 @@ export default function Channels() {
                       <td className="py-3 px-4 text-center">{ch.priority}</td>
                       <td className="py-3 px-4 text-center">{ch.endpoints.length}</td>
                       <td className="py-3 px-4 text-center">
-                        <Button
-                          variant={ch.enabled ? 'outline' : 'secondary'}
-                          size="sm"
-                          className={cn('h-7 text-xs', ch.enabled ? 'text-green-600 border-green-300' : 'text-muted-foreground')}
-                          onClick={() => toggleEnabled.mutate(ch)}
+                        <Switch
+                          checked={ch.enabled}
+                          onCheckedChange={() => toggleEnabled.mutate(ch)}
                           disabled={toggleEnabled.isPending}
-                        >
-                          {ch.enabled ? t('common.active') : t('common.disabled')}
-                        </Button>
+                        />
                       </td>
                       <td className="py-3 px-4 text-right">
                         <Button variant="ghost" size="sm" onClick={() => setEditChannel(ch)}>
