@@ -67,7 +67,7 @@ export function ApiKeyForm({ open, onOpenChange, onSubmit, createdKey, editKey, 
 
   return (
     <Dialog open={open} onOpenChange={(open) => { if (!open) handleClose(); }}>
-      <DialogContent>
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{createdKey ? t('apikey.generatedTitle') : isEdit ? '编辑 API Key' : t('apikey.add')}</DialogTitle>
           {createdKey && <DialogDescription>{t('apikey.generatedHint')}</DialogDescription>}

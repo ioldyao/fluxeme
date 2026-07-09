@@ -56,7 +56,7 @@ export function UserForm({ user, open, onOpenChange, onSubmit, isPending }: Prop
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>{user ? t('user.edit') : t('user.add')}</DialogTitle></DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           {!user && (
