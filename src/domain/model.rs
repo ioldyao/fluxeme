@@ -22,6 +22,16 @@ pub struct Pricing {
     pub prompt_price: f64,
     #[serde(default)]
     pub completion_price: f64,
+    #[serde(default)]
+    pub cache_read_price: f64,
+    #[serde(default)]
+    pub cache_write_price: f64,
+    #[serde(default)]
+    pub image_input_price: f64,
+    #[serde(default)]
+    pub audio_input_price: f64,
+    #[serde(default)]
+    pub audio_output_price: f64,
 }
 
 impl Default for Pricing {
@@ -29,6 +39,11 @@ impl Default for Pricing {
         Self {
             prompt_price: 0.0,
             completion_price: 0.0,
+            cache_read_price: 0.0,
+            cache_write_price: 0.0,
+            image_input_price: 0.0,
+            audio_input_price: 0.0,
+            audio_output_price: 0.0,
         }
     }
 }

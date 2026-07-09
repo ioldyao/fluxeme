@@ -94,7 +94,12 @@ impl Database {
                 name TEXT NOT NULL,
                 model_pattern TEXT NOT NULL,
                 prompt_price REAL NOT NULL DEFAULT 0.0,
-                completion_price REAL NOT NULL DEFAULT 0.0
+                completion_price REAL NOT NULL DEFAULT 0.0,
+                cache_read_price REAL NOT NULL DEFAULT 0.0,
+                cache_write_price REAL NOT NULL DEFAULT 0.0,
+                image_input_price REAL NOT NULL DEFAULT 0.0,
+                audio_input_price REAL NOT NULL DEFAULT 0.0,
+                audio_output_price REAL NOT NULL DEFAULT 0.0
             );
 
             CREATE TABLE IF NOT EXISTS model_channels (
@@ -139,6 +144,12 @@ impl Database {
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN published INTEGER NOT NULL DEFAULT 0;");
         // Backward compat: add context_length column to models
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN context_length INTEGER;");
+        // Backward compat: add pricing columns to models
+        let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN cache_read_price REAL NOT NULL DEFAULT 0.0;");
+        let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN cache_write_price REAL NOT NULL DEFAULT 0.0;");
+        let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN image_input_price REAL NOT NULL DEFAULT 0.0;");
+        let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN audio_input_price REAL NOT NULL DEFAULT 0.0;");
+        let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN audio_output_price REAL NOT NULL DEFAULT 0.0;");
         // Backward compat: add name column to channels
         let _ = conn.execute_batch("ALTER TABLE channels ADD COLUMN name TEXT NOT NULL DEFAULT '';");
         // Backward compat: add spend_limit/allowed_models columns to api_keys
@@ -444,7 +455,7 @@ impl Database {
     // Subscriptions
     pub fn list_published_models(&self) -> Result<Vec<Model>, DbError> {
         let conn = self.conn()?;
-        let mut stmt = conn.prepare("SELECT id, name, model_pattern, prompt_price, completion_price, published, context_length FROM models WHERE published = 1 ORDER BY id")?;
+        let mut stmt = conn.prepare("SELECT id, name, model_pattern, prompt_price, completion_price, cache_read_price, cache_write_price, image_input_price, audio_input_price, audio_output_price, published, context_length FROM models WHERE published = 1 ORDER BY id")?;
         let models: Vec<Model> = stmt
             .query_map([], |row| {
                 Ok(Model {
@@ -454,10 +465,15 @@ impl Database {
                     pricing: Pricing {
                         prompt_price: row.get(3)?,
                         completion_price: row.get(4)?,
+                        cache_read_price: row.get(5)?,
+                        cache_write_price: row.get(6)?,
+                        image_input_price: row.get(7)?,
+                        audio_input_price: row.get(8)?,
+                        audio_output_price: row.get(9)?,
                     },
                     channels: Vec::new(),
                     published: true,
-                    context_length: row.get(6)?,
+                    context_length: row.get(11)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -474,6 +490,10 @@ impl Database {
         let conn = self.conn()?;
         conn.execute("UPDATE models SET published = ?1 WHERE id = ?2", params![published as i32, id])?;
         Ok(())
+    }
+
+    pub fn set_model_pricing(&self, id: &str, pricing: &Pricing) -> Result<(), DbError> {
+        models::update_pricing(&*self.conn()?, id, pricing)
     }
 
     pub fn set_model_context_length(&self, id: &str, context_length: i64) -> Result<(), DbError> {
@@ -500,10 +520,27 @@ impl Database {
         Ok(())
     }
 
+    pub fn delete_subscriptions_by_model(&self, model_id: &str) -> Result<(), DbError> {
+        let conn = self.conn()?;
+        conn.execute("DELETE FROM user_subscriptions WHERE model_id = ?1", params![model_id])?;
+        Ok(())
+    }
+
+    pub fn list_subscribed_model_ids(&self, user_id: &str) -> Result<Vec<String>, DbError> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT model_id FROM user_subscriptions WHERE user_id = ?1",
+        )?;
+        let ids = stmt
+            .query_map(params![user_id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ids)
+    }
+
     pub fn list_subscriptions(&self, user_id: &str) -> Result<Vec<Model>, DbError> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(
-            "SELECT m.id, m.name, m.model_pattern, m.prompt_price, m.completion_price, m.published, m.context_length
+            "SELECT m.id, m.name, m.model_pattern, m.prompt_price, m.completion_price, m.cache_read_price, m.cache_write_price, m.image_input_price, m.audio_input_price, m.audio_output_price, m.published, m.context_length
              FROM models m INNER JOIN user_subscriptions s ON m.id = s.model_id
              WHERE s.user_id = ?1 ORDER BY m.id",
         )?;
@@ -516,10 +553,15 @@ impl Database {
                     pricing: Pricing {
                         prompt_price: row.get(3)?,
                         completion_price: row.get(4)?,
+                        cache_read_price: row.get(5)?,
+                        cache_write_price: row.get(6)?,
+                        image_input_price: row.get(7)?,
+                        audio_input_price: row.get(8)?,
+                        audio_output_price: row.get(9)?,
                     },
                     channels: Vec::new(),
-                    published: row.get::<_, i32>(5)? != 0,
-                    context_length: row.get(6)?,
+                    published: row.get::<_, i32>(10)? != 0,
+                    context_length: row.get(11)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

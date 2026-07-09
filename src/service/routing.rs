@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
 use crate::config::types::EndpointConfig;
@@ -96,10 +96,19 @@ impl RoutingService {
     }
 
     pub fn route(&self, user_id: &str, model: &str) -> Result<String, RouteError> {
+        // Load subscribed model IDs for this user
+        let subscribed: HashSet<String> = self.db.list_subscribed_model_ids(user_id)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+
         // 1. Try model-based routing
         {
             let models = self.models.read().unwrap();
             for model_cfg in models.iter() {
+                if !subscribed.contains(&model_cfg.id) {
+                    continue; // skip models the user isn't subscribed to
+                }
                 if match_pattern(model, &model_cfg.model_pattern) {
                     let mut bindings: Vec<&crate::domain::model::ModelChannel> =
                         model_cfg.channels.iter().collect();

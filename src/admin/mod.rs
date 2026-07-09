@@ -11,6 +11,7 @@ use serde_json::Value;
 
 use crate::domain::channel::Channel;
 use crate::domain::model::Model;
+use crate::domain::model::Pricing;
 use crate::domain::routing::RoutingRule;
 use crate::domain::user::{ApiKey, SessionInfo, User};
 use crate::server::AppState;
@@ -967,8 +968,22 @@ async fn toggle_publish_model(
         .ok_or_else(|| AdminError::not_found(format!("Model '{}' not found", id)))?;
     let new_status = !model.published;
     state.db.set_model_published(&id, new_status).map_err(|e| AdminError::internal(e.0))?;
+    if !new_status {
+        let _ = state.db.delete_subscriptions_by_model(&id);
+    }
     state.routing.reload();
     Ok(Json(serde_json::json!({ "id": id, "published": new_status })))
+}
+
+async fn update_model_pricing(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(pricing): Json<Pricing>,
+) -> Result<Json<Value>, AdminError> {
+    require_admin(&state.admin, &headers)?;
+    state.db.set_model_pricing(&id, &pricing).map_err(|e| AdminError::internal(e.0))?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 // ── User Subscriptions ────────────────────────────────────────────
@@ -1205,6 +1220,7 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route("/admin/api/models", axum::routing::get(list_models).post(create_model))
         .route("/admin/api/models/public", axum::routing::get(list_public_models))
         .route("/admin/api/models/{id}/publish", axum::routing::post(toggle_publish_model))
+        .route("/admin/api/models/{id}/pricing", axum::routing::patch(update_model_pricing))
         .route(
             "/admin/api/models/{id}",
             axum::routing::put(update_model).delete(delete_model),

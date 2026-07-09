@@ -46,6 +46,11 @@ export interface Channel {
 export interface Pricing {
   prompt_price: number;
   completion_price: number;
+  cache_read_price: number;
+  cache_write_price: number;
+  image_input_price: number;
+  audio_input_price: number;
+  audio_output_price: number;
 }
 
 export interface ModelChannel {

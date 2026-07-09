@@ -106,6 +106,16 @@ pub fn seed_from_config(config_path: &str, db: &Database, admin_username: &str) 
         prompt_price: f64,
         #[serde(default)]
         completion_price: f64,
+        #[serde(default)]
+        cache_read_price: f64,
+        #[serde(default)]
+        cache_write_price: f64,
+        #[serde(default)]
+        image_input_price: f64,
+        #[serde(default)]
+        audio_input_price: f64,
+        #[serde(default)]
+        audio_output_price: f64,
     }
 
     #[derive(Deserialize)]
@@ -285,6 +295,11 @@ pub fn seed_from_config(config_path: &str, db: &Database, admin_username: &str) 
                 pricing: Pricing {
                     prompt_price: m.pricing.prompt_price,
                     completion_price: m.pricing.completion_price,
+                    cache_read_price: m.pricing.cache_read_price,
+                    cache_write_price: m.pricing.cache_write_price,
+                    image_input_price: m.pricing.image_input_price,
+                    audio_input_price: m.pricing.audio_input_price,
+                    audio_output_price: m.pricing.audio_output_price,
                 },
                 channels: m
                     .channels
