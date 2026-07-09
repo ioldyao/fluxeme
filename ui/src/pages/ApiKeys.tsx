@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useApiKeys, useCreateApiKey, useUpdateApiKey, useDeleteApiKey } from '@/api/apiKeys';
+import { useApiKeys, useCreateApiKey, useUpdateApiKey, useDeleteApiKey, useSaveApiKey } from '@/api/apiKeys';
 import { ApiKeyForm } from '@/forms/ApiKeyForm';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -8,10 +8,10 @@ import { CopyButton } from '@/components/CopyButton';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Plus, Trash2, RefreshCw } from 'lucide-react';
+import { Plus, Pencil, Trash2, RefreshCw } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import type { ApiKey } from '@/types';
+import type { ApiKey, CreateKeyReq } from '@/types';
 
 export default function ApiKeys() {
   const { t } = useTranslation();
@@ -19,7 +19,9 @@ export default function ApiKeys() {
   const createKey = useCreateApiKey();
   const deleteKey = useDeleteApiKey();
   const updateKey = useUpdateApiKey();
+  const saveKey = useSaveApiKey();
   const [showAdd, setShowAdd] = useState(false);
+  const [editKey, setEditKey] = useState<ApiKey | null>(null);
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ApiKey | null>(null);
 
@@ -29,6 +31,17 @@ export default function ApiKeys() {
       onSuccess: () => { toast.success(t('toast.deleted')); setDeleteTarget(null); refetch(); },
       onError: (err) => toast.error(err.message),
     });
+  };
+
+  const handleEditSubmit = (data: CreateKeyReq) => {
+    if (!editKey) return;
+    saveKey.mutate(
+      { keyVal: editKey.key, data },
+      {
+        onSuccess: () => { toast.success('已更新'); setEditKey(null); refetch(); },
+        onError: (err) => toast.error(err.message),
+      },
+    );
   };
 
   return (
@@ -60,6 +73,8 @@ export default function ApiKeys() {
                     <th className="text-left py-3 px-4">{t('table.key')}</th>
                     <th className="text-center py-3 px-4">{t('table.statusLabel')}</th>
                     <th className="text-left py-3 px-4">{t('apikey.expires')}</th>
+                    <th className="text-right py-3 px-4">费用限制</th>
+                    <th className="text-left py-3 px-4">模型限制</th>
                     <th className="text-right py-3 px-4">{t('table.actions')}</th>
                   </tr>
                 </thead>
@@ -87,7 +102,16 @@ export default function ApiKeys() {
                       <td className="py-3 px-4 text-xs text-muted-foreground">
                         {k.expires_at ? new Date(k.expires_at).toLocaleDateString() : t('apikey.never')}
                       </td>
+                      <td className="py-3 px-4 text-right text-xs">
+                        {k.spend_limit != null ? `¥${k.spend_limit}` : '-'}
+                      </td>
+                      <td className="py-3 px-4 text-xs text-muted-foreground max-w-[150px] truncate">
+                        {k.allowed_models && k.allowed_models.length > 0 ? k.allowed_models.join(', ') : '-'}
+                      </td>
                       <td className="py-3 px-4 text-right">
+                        <Button variant="ghost" size="sm" onClick={() => setEditKey(k)}>
+                          <Pencil className="size-3.5" />
+                        </Button>
                         <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(k)}>
                           <Trash2 className="size-3.5 text-destructive" />
                         </Button>
@@ -117,6 +141,15 @@ export default function ApiKeys() {
             });
           }}
           isPending={createKey.isPending}
+        />
+      )}
+      {editKey && (
+        <ApiKeyForm
+          open={true}
+          editKey={editKey}
+          onOpenChange={(open) => { if (!open) setEditKey(null); }}
+          onSubmit={handleEditSubmit}
+          isPending={saveKey.isPending}
         />
       )}
       <ConfirmDialog

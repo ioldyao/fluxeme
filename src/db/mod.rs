@@ -137,6 +137,9 @@ impl Database {
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN context_length INTEGER;");
         // Backward compat: add name column to channels
         let _ = conn.execute_batch("ALTER TABLE channels ADD COLUMN name TEXT NOT NULL DEFAULT '';");
+        // Backward compat: add spend_limit/allowed_models columns to api_keys
+        let _ = conn.execute_batch("ALTER TABLE api_keys ADD COLUMN spend_limit REAL;");
+        let _ = conn.execute_batch("ALTER TABLE api_keys ADD COLUMN allowed_models TEXT;");
         // User model subscriptions
         let _ = conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS user_subscriptions (
@@ -183,8 +186,8 @@ impl Database {
     pub fn delete_api_key(&self, key: &str) -> Result<(), DbError> {
         users::delete_api_key(&self.conn()?, key)
     }
-    pub fn update_api_key(&self, key: &str, enabled: bool) -> Result<(), DbError> {
-        users::update_api_key(&self.conn()?, key, enabled)
+    pub fn update_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
+        users::update_api_key(&self.conn()?, key)
     }
     #[allow(dead_code)]
     pub fn lookup_key(&self, key: &str) -> Result<Option<(User, ApiKey)>, DbError> {

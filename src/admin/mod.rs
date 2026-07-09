@@ -454,6 +454,11 @@ async fn my_keys(
 struct CreateMyKeyReq {
     name: Option<String>,
     enabled: Option<bool>,
+    expires_at: Option<String>,
+    #[serde(default)]
+    spend_limit: Option<f64>,
+    #[serde(default)]
+    allowed_models: Option<Vec<String>>,
 }
 
 async fn create_my_key(
@@ -469,7 +474,9 @@ async fn create_my_key(
         user_id: session.user_id.clone(),
         name: req.name.unwrap_or_default(),
         enabled: req.enabled.unwrap_or(true),
-        expires_at: None,
+        expires_at: req.expires_at,
+        spend_limit: req.spend_limit,
+        allowed_models: req.allowed_models,
     };
 
     state.db.create_api_key(&ak).map_err(|e| AdminError::internal(e.0))?;
@@ -481,6 +488,46 @@ async fn create_my_key(
         "name": ak.name,
         "enabled": ak.enabled,
     })))
+}
+
+#[derive(Deserialize)]
+struct UpdateMyKeyReq {
+    name: Option<String>,
+    enabled: Option<bool>,
+    expires_at: Option<String>,
+    #[serde(default)]
+    spend_limit: Option<f64>,
+    #[serde(default)]
+    allowed_models: Option<Vec<String>>,
+}
+
+async fn update_my_key(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(key_val): Path<String>,
+    Json(req): Json<UpdateMyKeyReq>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+
+    let keys = state.db.list_api_keys(&session.user_id)
+        .map_err(|e| AdminError::internal(e.0))?;
+    let existing = keys.iter().find(|k| k.key == key_val)
+        .ok_or_else(|| AdminError::not_found("Key not found"))?;
+
+    let ak = ApiKey {
+        key: key_val.clone(),
+        user_id: session.user_id.clone(),
+        name: req.name.unwrap_or(existing.name.clone()),
+        enabled: req.enabled.unwrap_or(existing.enabled),
+        expires_at: req.expires_at.or(existing.expires_at.clone()),
+        spend_limit: req.spend_limit.or(existing.spend_limit),
+        allowed_models: req.allowed_models.or(existing.allowed_models.clone()),
+    };
+
+    state.db.update_api_key(&ak).map_err(|e| AdminError::internal(e.0))?;
+    state.auth.reload();
+
+    Ok(Json(serde_json::json!({ "key": key_val, "updated": true })))
 }
 
 async fn delete_my_key(
@@ -522,8 +569,16 @@ async fn toggle_my_key(
         return Err(AdminError::not_found("Key not found"));
     }
 
-    state.db.update_api_key(&key_val, req.enabled)
-        .map_err(|e| AdminError::internal(e.0))?;
+    let ak = ApiKey {
+        key: key_val.clone(),
+        user_id: session.user_id.clone(),
+        name: String::new(),
+        enabled: req.enabled,
+        expires_at: None,
+        spend_limit: None,
+        allowed_models: None,
+    };
+    state.db.update_api_key(&ak).map_err(|e| AdminError::internal(e.0))?;
     state.auth.reload();
 
     Ok(Json(serde_json::json!({ "key": key_val, "enabled": req.enabled })))
@@ -532,13 +587,18 @@ async fn toggle_my_key(
 async fn toggle_user_key(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Path((_user_id, key_val)): Path<(String, String)>,
+    Path((user_id, key_val)): Path<(String, String)>,
     Json(req): Json<ToggleKeyReq>,
 ) -> Result<Json<Value>, AdminError> {
     require_admin(&state.admin, &headers)?;
 
-    state.db.update_api_key(&key_val, req.enabled)
+    let keys = state.db.list_api_keys(&user_id)
         .map_err(|e| AdminError::internal(e.0))?;
+    let existing = keys.iter().find(|k| k.key == key_val)
+        .ok_or_else(|| AdminError::not_found("Key not found"))?;
+    let mut ak = existing.clone();
+    ak.enabled = req.enabled;
+    state.db.update_api_key(&ak).map_err(|e| AdminError::internal(e.0))?;
     state.auth.reload();
 
     Ok(Json(serde_json::json!({ "key": key_val, "enabled": req.enabled })))
@@ -639,8 +699,7 @@ async fn update_user(
 
     let user = User {
         id: id.clone(),
-        name: req.name.unwrap_or(existing.name),
-        password_hash: if let Some(pw) = req.password {
+        name: req.name.unwrap_or(existing.name.clone()),        password_hash: if let Some(pw) = req.password {
             if pw.is_empty() {
                 None // keep existing
             } else {
@@ -690,6 +749,11 @@ async fn list_user_keys(
 struct CreateKeyReq {
     name: Option<String>,
     enabled: Option<bool>,
+    expires_at: Option<String>,
+    #[serde(default)]
+    spend_limit: Option<f64>,
+    #[serde(default)]
+    allowed_models: Option<Vec<String>>,
 }
 
 async fn create_user_key(
@@ -706,7 +770,9 @@ async fn create_user_key(
         user_id: user_id.clone(),
         name: req.name.unwrap_or_default(),
         enabled: req.enabled.unwrap_or(true),
-        expires_at: None,
+        expires_at: req.expires_at,
+        spend_limit: req.spend_limit,
+        allowed_models: req.allowed_models,
     };
 
     state.db.create_api_key(&ak).map_err(|e| AdminError::internal(e.0))?;
@@ -718,6 +784,35 @@ async fn create_user_key(
         "name": ak.name,
         "enabled": ak.enabled,
     })))
+}
+
+async fn update_user_key(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((user_id, key_val)): Path<(String, String)>,
+    Json(req): Json<CreateKeyReq>,
+) -> Result<Json<Value>, AdminError> {
+    require_admin(&state.admin, &headers)?;
+
+    let keys = state.db.list_api_keys(&user_id)
+        .map_err(|e| AdminError::internal(e.0))?;
+    let existing = keys.iter().find(|k| k.key == key_val)
+        .ok_or_else(|| AdminError::not_found("Key not found"))?;
+
+    let ak = ApiKey {
+        key: key_val.clone(),
+        user_id: user_id.clone(),
+        name: req.name.unwrap_or(existing.name.clone()),
+        enabled: req.enabled.unwrap_or(existing.enabled),
+        expires_at: req.expires_at.or(existing.expires_at.clone()),
+        spend_limit: req.spend_limit.or(existing.spend_limit),
+        allowed_models: req.allowed_models.or(existing.allowed_models.clone()),
+    };
+
+    state.db.update_api_key(&ak).map_err(|e| AdminError::internal(e.0))?;
+    state.auth.reload();
+
+    Ok(Json(serde_json::json!({ "key": key_val, "updated": true })))
 }
 
 async fn delete_user_key(
@@ -1089,7 +1184,7 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         // Current user
         .route("/admin/api/me/password", axum::routing::post(change_my_password))
         .route("/admin/api/me/keys", axum::routing::get(my_keys).post(create_my_key))
-        .route("/admin/api/me/keys/{key_val}", axum::routing::delete(delete_my_key).patch(toggle_my_key))
+        .route("/admin/api/me/keys/{key_val}", axum::routing::delete(delete_my_key).patch(toggle_my_key).put(update_my_key))
 
         // Users
         .route("/admin/api/users", axum::routing::get(list_users).post(create_user))
@@ -1099,7 +1194,7 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         )
         // User API keys (admin)
         .route("/admin/api/users/{user_id}/keys", axum::routing::get(list_user_keys).post(create_user_key))
-        .route("/admin/api/users/{user_id}/keys/{key_val}", axum::routing::delete(delete_user_key).patch(toggle_user_key))
+        .route("/admin/api/users/{user_id}/keys/{key_val}", axum::routing::delete(delete_user_key).patch(toggle_user_key).put(update_user_key))
 
         // Channels
         .route("/admin/api/channels", axum::routing::get(list_channels).post(create_channel))

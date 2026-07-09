@@ -120,19 +120,30 @@ pub fn delete(conn: &Connection, id: &str) -> Result<(), crate::db::DbError> {
 
 // ── API keys ──────────────────────────────────────────────────────
 
+fn row_to_api_key_joined(row: &rusqlite::Row, off: usize) -> rusqlite::Result<ApiKey> {
+    let allowed_models_str: Option<String> = row.get(off + 6)?;
+    Ok(ApiKey {
+        key: row.get(off)?,
+        user_id: row.get(off + 1)?,
+        name: row.get(off + 2)?,
+        enabled: row.get::<_, i32>(off + 3)? != 0,
+        expires_at: row.get(off + 4)?,
+        spend_limit: row.get(off + 5)?,
+        allowed_models: allowed_models_str
+            .filter(|s| !s.is_empty())
+            .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
+    })
+}
+
+fn row_to_api_key(row: &rusqlite::Row) -> rusqlite::Result<ApiKey> {
+    row_to_api_key_joined(row, 0)
+}
+
 pub fn list_api_keys(conn: &Connection, user_id: &str) -> Result<Vec<ApiKey>, crate::db::DbError> {
     let mut stmt = conn.prepare(
-        "SELECT key, user_id, name, enabled, expires_at FROM api_keys WHERE user_id = ?1 ORDER BY key",
+        "SELECT key, user_id, name, enabled, expires_at, spend_limit, allowed_models FROM api_keys WHERE user_id = ?1 ORDER BY key",
     )?;
-    let rows = stmt.query_map(params![user_id], |row| {
-        Ok(ApiKey {
-            key: row.get(0)?,
-            user_id: row.get(1)?,
-            name: row.get(2)?,
-            enabled: row.get::<_, i32>(3)? != 0,
-            expires_at: row.get(4)?,
-        })
-    })?;
+    let rows = stmt.query_map(params![user_id], row_to_api_key)?;
     let mut keys = Vec::new();
     for row in rows {
         keys.push(row?);
@@ -141,17 +152,19 @@ pub fn list_api_keys(conn: &Connection, user_id: &str) -> Result<Vec<ApiKey>, cr
 }
 
 pub fn create_api_key(conn: &Connection, key: &ApiKey) -> Result<(), crate::db::DbError> {
+    let allowed = key.allowed_models.as_ref().map(|m| m.join(","));
     conn.execute(
-        "INSERT INTO api_keys (key, user_id, name, enabled, expires_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![key.key, key.user_id, key.name, key.enabled as i32, key.expires_at],
+        "INSERT INTO api_keys (key, user_id, name, enabled, expires_at, spend_limit, allowed_models) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![key.key, key.user_id, key.name, key.enabled as i32, key.expires_at, key.spend_limit, allowed],
     )?;
     Ok(())
 }
 
-pub fn update_api_key(conn: &Connection, key: &str, enabled: bool) -> Result<(), crate::db::DbError> {
+pub fn update_api_key(conn: &Connection, key: &ApiKey) -> Result<(), crate::db::DbError> {
+    let allowed = key.allowed_models.as_ref().map(|m| m.join(","));
     conn.execute(
-        "UPDATE api_keys SET enabled = ?1 WHERE key = ?2",
-        params![enabled as i32, key],
+        "UPDATE api_keys SET name = ?1, enabled = ?2, expires_at = ?3, spend_limit = ?4, allowed_models = ?5 WHERE key = ?6",
+        params![key.name, key.enabled as i32, key.expires_at, key.spend_limit, allowed, key.key],
     )?;
     Ok(())
 }
@@ -163,17 +176,11 @@ pub fn delete_api_key(conn: &Connection, key: &str) -> Result<(), crate::db::DbE
 
 pub fn lookup_key(conn: &Connection, key: &str) -> Result<Option<(User, ApiKey)>, crate::db::DbError> {
     let mut stmt = conn.prepare(
-        "SELECT u.id, u.name, u.rpm, u.tpm, a.key, a.user_id, a.name, a.enabled, a.expires_at
+        "SELECT u.id, u.name, u.rpm, u.tpm, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
          FROM api_keys a JOIN users u ON u.id = a.user_id WHERE a.key = ?1",
     )?;
     let mut rows = stmt.query_map(params![key], |row| {
-        let api_key = ApiKey {
-            key: row.get(4)?,
-            user_id: row.get(5)?,
-            name: row.get(6)?,
-            enabled: row.get::<_, i32>(7)? != 0,
-            expires_at: row.get(8)?,
-        };
+        let api_key = row_to_api_key_joined(row, 4)?;
         let user = User {
             id: row.get(0)?,
             name: row.get(1)?,
@@ -198,17 +205,11 @@ pub fn lookup_key(conn: &Connection, key: &str) -> Result<Option<(User, ApiKey)>
 
 pub fn all_api_keys(conn: &Connection) -> Result<Vec<(User, ApiKey)>, crate::db::DbError> {
     let mut stmt = conn.prepare(
-        "SELECT u.id, u.name, u.rpm, u.tpm, a.key, a.user_id, a.name, a.enabled, a.expires_at
+        "SELECT u.id, u.name, u.rpm, u.tpm, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
          FROM api_keys a JOIN users u ON u.id = a.user_id ORDER BY a.key",
     )?;
     let rows = stmt.query_map([], |row| {
-        let api_key = ApiKey {
-            key: row.get(4)?,
-            user_id: row.get(5)?,
-            name: row.get(6)?,
-            enabled: row.get::<_, i32>(7)? != 0,
-            expires_at: row.get(8)?,
-        };
+        let api_key = row_to_api_key_joined(row, 4)?;
         let user = User {
             id: row.get(0)?,
             name: row.get(1)?,

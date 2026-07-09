@@ -21,6 +21,8 @@ export interface ApiKey {
   name: string;
   enabled: boolean;
   expires_at?: string | null;
+  spend_limit?: number | null;
+  allowed_models?: string[] | null;
 }
 
 export interface Endpoint {
@@ -140,6 +142,9 @@ export interface UpdateUserReq {
 export interface CreateKeyReq {
   name?: string | null;
   enabled?: boolean | null;
+  expires_at?: string | null;
+  spend_limit?: number | null;
+  allowed_models?: string[] | null;
 }
 
 export type CreateMyKeyReq = CreateKeyReq;

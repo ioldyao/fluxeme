@@ -195,6 +195,8 @@ pub fn seed_from_config(config_path: &str, db: &Database, admin_username: &str) 
                     name: k.name.clone(),
                     enabled: k.enabled,
                     expires_at: k.expires_at.clone(),
+                    spend_limit: None,
+                    allowed_models: None,
                 };
                 if let Err(e) = db.create_api_key(&ak) {
                     tracing::warn!("Seed api key {}: {}", k.key, e);
@@ -238,6 +240,8 @@ pub fn seed_from_config(config_path: &str, db: &Database, admin_username: &str) 
                 name: k.name.clone(),
                 enabled: k.enabled,
                 expires_at: k.expires_at.clone(),
+                spend_limit: None,
+                allowed_models: None,
             };
             if let Err(e) = db.create_api_key(&ak) {
                 tracing::warn!("Seed api_key for {}: {}", t.id, e);

@@ -36,6 +36,19 @@ export function useUpdateApiKey(userId?: string) {
   });
 }
 
+export function useSaveApiKey(userId?: string) {
+  const qc = useQueryClient();
+  const basePath = userId ? `/users/${encodeURIComponent(userId)}/keys` : '/me/keys';
+  return useMutation({
+    mutationFn: ({ keyVal, data }: { keyVal: string; data: any }) =>
+      api(`${basePath}/${encodeURIComponent(keyVal)}`, {
+        method: 'PUT',
+        body: data,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['keys'] }),
+  });
+}
+
 export function useDeleteApiKey(userId?: string) {
   const qc = useQueryClient();
   const basePath = userId ? `/users/${encodeURIComponent(userId)}/keys` : '/me/keys';
