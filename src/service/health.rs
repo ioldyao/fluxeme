@@ -1,6 +1,13 @@
 use serde::{Deserialize, Serialize};
 
 use crate::db::Database;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpstreamModelInfo {
+    pub id: String,
+    pub max_model_len: Option<i64>,
+}
+
 #[derive(Serialize)]
 pub struct ChannelHealthResult {
     pub channel_id: String,
@@ -101,27 +108,69 @@ impl HealthService {
         Ok((total_updated, channels_checked))
     }
 
-    /// Query a single endpoint /v1/models and update context_length for matching models.
-    /// Returns number of models whose context_length was updated.
-    async fn update_models_from_endpoint(&self, url: &str, api_key: &str) -> Result<usize, String> {
+    /// Fetch raw upstream model list from a channel's endpoint.
+    /// Returns deduplicated model info, keeping the max max_model_len across endpoints.
+    pub async fn list_upstream_models(&self, channel_id: &str) -> Result<Vec<UpstreamModelInfo>, String> {
+        let channels = self.db.list_channels().map_err(|e| e.0)?;
+        let ch = channels.iter()
+            .find(|c| c.id == channel_id)
+            .ok_or_else(|| format!("Channel '{}' not found", channel_id))?;
+
+        let mut seen: std::collections::HashMap<String, Option<i64>> = std::collections::HashMap::new();
+        for ep in &ch.endpoints {
+            let url = format!("{}/v1/models", ep.url.trim_end_matches('/'));
+            match self.fetch_upstream_models(&url, &ep.api_key).await {
+                Ok(models) => {
+                    for m in models {
+                        let len = m.max_model_len;
+                        seen.entry(m.id.clone())
+                            .and_modify(|existing| {
+                                if let (Some(e), Some(n)) = (existing.as_mut(), len) {
+                                    if n > *e {
+                                        *e = n;
+                                    }
+                                }
+                            })
+                            .or_insert(len);
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to fetch models from {}: {}", url, e),
+            }
+        }
+
+        let mut result: Vec<UpstreamModelInfo> = seen
+            .into_iter()
+            .map(|(id, max_model_len)| UpstreamModelInfo { id, max_model_len })
+            .collect();
+        result.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(result)
+    }
+
+    /// Fetch /v1/models from a single endpoint and return raw upstream models.
+    async fn fetch_upstream_models(&self, url: &str, api_key: &str) -> Result<Vec<UpstreamModel>, String> {
         let mut req = self.client.get(url);
         if !api_key.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", api_key));
         }
-
         let resp = req.send().await.map_err(|e| format!("HTTP request failed: {}", e))?;
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status()));
         }
-
         let body: UpstreamModelsResponse = resp.json().await.map_err(|e| format!("JSON parse failed: {}", e))?;
+        Ok(body.data)
+    }
+
+    /// Query a single endpoint /v1/models and update context_length for matching models.
+    /// Returns number of models whose context_length was updated.
+    async fn update_models_from_endpoint(&self, url: &str, api_key: &str) -> Result<usize, String> {
+        let body = self.fetch_upstream_models(url, api_key).await?;
 
         // Get all gateway models to match against
         let models = self.db.list_published_models().map_err(|e| e.0)?;
         let all_models = self.db.list_models().map_err(|e| e.0)?;
 
         let mut updated = 0;
-        for upstream in &body.data {
+        for upstream in &body {
             let Some(len) = upstream.max_model_len else { continue };
 
             // Match upstream model ID against gateway model_patterns

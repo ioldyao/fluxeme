@@ -1067,6 +1067,17 @@ async fn health_check_channel(
     Ok(Json(result))
 }
 
+async fn list_upstream_models(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<crate::service::health::UpstreamModelInfo>>, AdminError> {
+    require_admin(&state.admin, &headers)?;
+    let models = state.health.list_upstream_models(&id).await
+        .map_err(|e| AdminError::internal(e))?;
+    Ok(Json(models))
+}
+
 // ── Router ────────────────────────────────────────────────────────
 
 pub fn admin_routes() -> Router<Arc<AppState>> {
@@ -1125,4 +1136,7 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         // Health check
         .route("/admin/api/health-check/models", axum::routing::post(health_check_models))
         .route("/admin/api/health-check/channels/{id}", axum::routing::post(health_check_channel))
+
+        // Upstream model sync
+        .route("/admin/api/channels/{id}/upstream-models", axum::routing::get(list_upstream_models))
 }

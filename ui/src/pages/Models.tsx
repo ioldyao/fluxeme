@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useModels, useCreateModel, useUpdateModel, useDeleteModel, usePublishModel } from '@/api/models';
 import { useChannels } from '@/api/channels';
@@ -8,11 +9,15 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Pencil, Trash2, Plus, RefreshCw, Activity } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { Pencil, Trash2, Plus, RefreshCw, Activity, Import } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/api/client';
-import type { Model } from '@/types';
+import type { Model, UpstreamModel } from '@/types';
 
 export default function Models() {
   const { t } = useTranslation();
@@ -25,6 +30,7 @@ export default function Models() {
   const [editModel, setEditModel] = useState<Model | null>(null);
   const updateModel = useUpdateModel(editModel?.id ?? '');
   const [showAdd, setShowAdd] = useState(false);
+  const [syncOpen, setSyncOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Model | null>(null);
   const [hcLoading, setHcLoading] = useState(false);
 
@@ -56,6 +62,87 @@ export default function Models() {
     }
   };
 
+  // ── SyncUpstreamDialog ──
+  const qc = useQueryClient();
+  const [syncChannelId, setSyncChannelId] = useState('');
+  const [upstreamModels, setUpstreamModels] = useState<UpstreamModel[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [fetching, setFetching] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [fetched, setFetched] = useState(false);
+
+  useEffect(() => {
+    if (!syncOpen) {
+      setSyncChannelId('');
+      setUpstreamModels([]);
+      setSelectedIds(new Set());
+      setFetching(false);
+      setAdding(false);
+      setFetched(false);
+    }
+  }, [syncOpen]);
+
+  const handleFetch = async () => {
+    if (!syncChannelId) return;
+    setFetching(true);
+    try {
+      const models = await api<UpstreamModel[]>(`/channels/${encodeURIComponent(syncChannelId)}/upstream-models`, { method: 'GET' });
+      setUpstreamModels(models);
+      setSelectedIds(new Set());
+      setFetched(true);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === upstreamModels.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(upstreamModels.map((m) => m.id)));
+    }
+  };
+
+  const handleAddSelected = async () => {
+    if (selectedIds.size === 0) return;
+    setAdding(true);
+    let added = 0, errors = 0;
+    for (const modelId of selectedIds) {
+      const upstream = upstreamModels.find((m) => m.id === modelId);
+      try {
+        await api('/models', {
+          method: 'POST',
+          body: {
+            id: modelId, name: modelId, model_pattern: modelId,
+            pricing: { prompt_price: 0, completion_price: 0 },
+            channels: [{ channel_id: syncChannelId, priority: 0 }],
+            context_length: upstream?.max_model_len ?? null,
+            published: false,
+          },
+        });
+        added++;
+      } catch { errors++; }
+    }
+    qc.invalidateQueries({ queryKey: ['models'] });
+    setAdding(false);
+    if (errors > 0) {
+      toast.success(`成功添加 ${added} 个模型，${errors} 个失败`);
+    } else {
+      toast.success(`成功添加 ${added} 个模型`);
+    }
+    setSyncOpen(false);
+  };
+
   return (
     <div className="space-y-4 animate-fade-in">
       <PageHeader
@@ -63,6 +150,9 @@ export default function Models() {
         description={t('model.subtitle')}
         actions={
           <>
+            <Button variant="outline" size="sm" onClick={() => setSyncOpen(true)}>
+              <Import className="size-4 mr-1" />同步上游
+            </Button>
             <Button variant="outline" size="sm" onClick={handleHealthCheck} disabled={hcLoading}>
               <Activity className={cn('size-4 mr-1', hcLoading && 'animate-pulse')} />健康检查
             </Button>
@@ -159,6 +249,70 @@ export default function Models() {
           isPending={createModel.isPending || updateModel.isPending}
         />
       )}
+      <Dialog open={syncOpen} onOpenChange={setSyncOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>同步上游模型</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div className="flex gap-2 items-end">
+              <div className="flex-1 space-y-2">
+                <Label>选择渠道</Label>
+                <Select value={syncChannelId} onValueChange={(v) => {
+                  setSyncChannelId(v ?? '');
+                  setFetched(false); setUpstreamModels([]); setSelectedIds(new Set());
+                }}>
+                  <SelectTrigger className="w-full">
+                    <span>{syncChannelId ? channels?.find((ch) => ch.id === syncChannelId)?.name || syncChannelId : '请选择渠道'}</span>
+                    <SelectValue className="sr-only" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {channels?.map((ch) => (
+                      <SelectItem key={ch.id} value={ch.id}>{ch.name || ch.id} ({ch.provider})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button onClick={handleFetch} disabled={!syncChannelId || fetching}>
+                {fetching ? '获取中...' : '获取模型'}
+              </Button>
+            </div>
+            {fetched && (
+              <>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    checked={upstreamModels.length > 0 && selectedIds.size === upstreamModels.length}
+                    onCheckedChange={toggleSelectAll}
+                  />
+                  <span className="text-sm text-muted-foreground">
+                    全选/取消 ({upstreamModels.length} 个模型)
+                  </span>
+                </div>
+                <div className="max-h-64 overflow-y-auto border rounded-md divide-y">
+                  {upstreamModels.length === 0 ? (
+                    <div className="p-4 text-center text-muted-foreground text-sm">未获取到模型</div>
+                  ) : (
+                    upstreamModels.map((m) => (
+                      <label key={m.id} className="flex items-center gap-3 px-3 py-2 hover:bg-muted/50 cursor-pointer">
+                        <Checkbox checked={selectedIds.has(m.id)} onCheckedChange={() => toggleSelect(m.id)} />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium truncate">{m.id}</div>
+                          {m.max_model_len != null && (
+                            <div className="text-xs text-muted-foreground">上下文: {(m.max_model_len).toLocaleString()}</div>
+                          )}
+                        </div>
+                      </label>
+                    ))
+                  )}
+                </div>
+                <div className="flex justify-end">
+                  <Button onClick={handleAddSelected} disabled={selectedIds.size === 0 || adding}>
+                    {adding ? '添加中...' : `添加选中 (${selectedIds.size})`}
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
       <ConfirmDialog
         open={!!deleteTarget}
         onOpenChange={() => setDeleteTarget(null)}

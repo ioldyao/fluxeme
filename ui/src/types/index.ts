@@ -143,3 +143,8 @@ export interface CreateKeyReq {
 }
 
 export type CreateMyKeyReq = CreateKeyReq;
+
+export interface UpstreamModel {
+  id: string;
+  max_model_len?: number | null;
+}
