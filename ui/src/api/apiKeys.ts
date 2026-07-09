@@ -23,6 +23,19 @@ export function useCreateApiKey(userId?: string) {
   });
 }
 
+export function useUpdateApiKey(userId?: string) {
+  const qc = useQueryClient();
+  const basePath = userId ? `/users/${encodeURIComponent(userId)}/keys` : '/me/keys';
+  return useMutation({
+    mutationFn: ({ keyVal, enabled }: { keyVal: string; enabled: boolean }) =>
+      api<{ key: string; enabled: boolean }>(`${basePath}/${encodeURIComponent(keyVal)}`, {
+        method: 'PATCH',
+        body: { enabled },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['keys'] }),
+  });
+}
+
 export function useDeleteApiKey(userId?: string) {
   const qc = useQueryClient();
   const basePath = userId ? `/users/${encodeURIComponent(userId)}/keys` : '/me/keys';

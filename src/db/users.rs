@@ -148,6 +148,14 @@ pub fn create_api_key(conn: &Connection, key: &ApiKey) -> Result<(), crate::db::
     Ok(())
 }
 
+pub fn update_api_key(conn: &Connection, key: &str, enabled: bool) -> Result<(), crate::db::DbError> {
+    conn.execute(
+        "UPDATE api_keys SET enabled = ?1 WHERE key = ?2",
+        params![enabled as i32, key],
+    )?;
+    Ok(())
+}
+
 pub fn delete_api_key(conn: &Connection, key: &str) -> Result<(), crate::db::DbError> {
     conn.execute("DELETE FROM api_keys WHERE key = ?1", params![key])?;
     Ok(())

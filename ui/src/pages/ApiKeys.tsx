@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useApiKeys, useCreateApiKey, useDeleteApiKey } from '@/api/apiKeys';
+import { useApiKeys, useCreateApiKey, useUpdateApiKey, useDeleteApiKey } from '@/api/apiKeys';
 import { ApiKeyForm } from '@/forms/ApiKeyForm';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -8,8 +8,8 @@ import { CopyButton } from '@/components/CopyButton';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Plus, Trash2, RefreshCw } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import type { ApiKey } from '@/types';
 
@@ -18,6 +18,7 @@ export default function ApiKeys() {
   const { data: keys, isLoading, refetch } = useApiKeys();
   const createKey = useCreateApiKey();
   const deleteKey = useDeleteApiKey();
+  const updateKey = useUpdateApiKey();
   const [showAdd, setShowAdd] = useState(false);
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ApiKey | null>(null);
@@ -73,9 +74,15 @@ export default function ApiKeys() {
                         </div>
                       </td>
                       <td className="py-3 px-4 text-center">
-                        <Badge variant={k.enabled ? 'default' : 'secondary'}>
-                          {k.enabled ? t('common.active') : t('common.disabled')}
-                        </Badge>
+                        <Switch
+                          checked={k.enabled}
+                          onCheckedChange={() =>
+                            updateKey.mutate({ keyVal: k.key, enabled: !k.enabled }, {
+                              onError: (err) => toast.error(err.message),
+                            })
+                          }
+                          disabled={updateKey.isPending}
+                        />
                       </td>
                       <td className="py-3 px-4 text-xs text-muted-foreground">
                         {k.expires_at ? new Date(k.expires_at).toLocaleDateString() : t('apikey.never')}

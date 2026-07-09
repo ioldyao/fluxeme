@@ -110,6 +110,11 @@ export interface DashboardAggregations {
   top_models_24h: TopModel[];
 }
 
+export interface DailyUsage {
+  date: string;
+  count: number;
+}
+
 export interface LoginResponse {
   token: string;
   role: UserRole;

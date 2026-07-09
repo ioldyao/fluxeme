@@ -178,6 +178,9 @@ impl Database {
     pub fn delete_api_key(&self, key: &str) -> Result<(), DbError> {
         users::delete_api_key(&self.conn()?, key)
     }
+    pub fn update_api_key(&self, key: &str, enabled: bool) -> Result<(), DbError> {
+        users::update_api_key(&self.conn()?, key, enabled)
+    }
     #[allow(dead_code)]
     pub fn lookup_key(&self, key: &str) -> Result<Option<(User, ApiKey)>, DbError> {
         users::lookup_key(&self.conn()?, key)
@@ -264,6 +267,29 @@ impl Database {
         }
         Ok(records)
     }
+    pub fn daily_usage_counts(&self, since: &str, user_id: Option<&str>) -> Result<Vec<(String, i64)>, DbError> {
+        let conn = self.conn()?;
+        let mut records = Vec::new();
+        if let Some(uid) = user_id {
+            let mut stmt = conn.prepare(
+                "SELECT substr(timestamp, 1, 10) as day, COUNT(*) FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2 GROUP BY day ORDER BY day ASC"
+            )?;
+            let mut rows = stmt.query(params![uid, since])?;
+            while let Some(row) = rows.next()? {
+                records.push((row.get::<_, String>(0)?, row.get::<_, i64>(1)?));
+            }
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT substr(timestamp, 1, 10) as day, COUNT(*) FROM usage_logs WHERE timestamp >= ?1 GROUP BY day ORDER BY day ASC"
+            )?;
+            let mut rows = stmt.query(params![since])?;
+            while let Some(row) = rows.next()? {
+                records.push((row.get::<_, String>(0)?, row.get::<_, i64>(1)?));
+            }
+        }
+        Ok(records)
+    }
+
     pub fn query_usage(&self, limit: usize, user_id: Option<&str>) -> Result<Vec<crate::domain::usage::UsageRecord>, DbError> {
         use crate::domain::usage::UsageRecord;
         let conn = self.conn()?;

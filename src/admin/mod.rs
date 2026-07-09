@@ -503,6 +503,47 @@ async fn delete_my_key(
     Ok(Json(serde_json::json!({ "deleted": key_val })))
 }
 
+#[derive(Deserialize)]
+struct ToggleKeyReq {
+    enabled: bool,
+}
+
+async fn toggle_my_key(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(key_val): Path<String>,
+    Json(req): Json<ToggleKeyReq>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+
+    let keys = state.db.list_api_keys(&session.user_id)
+        .map_err(|e| AdminError::internal(e.0))?;
+    if !keys.iter().any(|k| k.key == key_val) {
+        return Err(AdminError::not_found("Key not found"));
+    }
+
+    state.db.update_api_key(&key_val, req.enabled)
+        .map_err(|e| AdminError::internal(e.0))?;
+    state.auth.reload();
+
+    Ok(Json(serde_json::json!({ "key": key_val, "enabled": req.enabled })))
+}
+
+async fn toggle_user_key(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((_user_id, key_val)): Path<(String, String)>,
+    Json(req): Json<ToggleKeyReq>,
+) -> Result<Json<Value>, AdminError> {
+    require_admin(&state.admin, &headers)?;
+
+    state.db.update_api_key(&key_val, req.enabled)
+        .map_err(|e| AdminError::internal(e.0))?;
+    state.auth.reload();
+
+    Ok(Json(serde_json::json!({ "key": key_val, "enabled": req.enabled })))
+}
+
 // ── User CRUD ─────────────────────────────────────────────────────
 
 async fn list_users(
@@ -968,6 +1009,32 @@ async fn get_usage_detail(
     Ok(Json(record))
 }
 
+#[derive(Serialize)]
+struct DailyUsage {
+    date: String,
+    count: i64,
+}
+
+async fn daily_usage(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<UsageQuery>,
+) -> Result<Json<Vec<DailyUsage>>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+
+    let days = q.limit.unwrap_or(14) as i64;
+    let since = (chrono::Utc::now() - chrono::Duration::days(days))
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
+
+    let user_filter: Option<&str> = if session.role == "admin" { None } else { Some(&session.user_id) };
+
+    let records = state.usage.daily_counts(&since, user_filter)
+        .map_err(|e| AdminError::internal(e))?;
+
+    Ok(Json(records.into_iter().map(|(date, count)| DailyUsage { date, count }).collect()))
+}
+
 // ── Router ────────────────────────────────────────────────────────
 
 pub fn admin_routes() -> Router<Arc<AppState>> {
@@ -979,7 +1046,7 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         // Current user
         .route("/admin/api/me/password", axum::routing::post(change_my_password))
         .route("/admin/api/me/keys", axum::routing::get(my_keys).post(create_my_key))
-        .route("/admin/api/me/keys/{key_val}", axum::routing::delete(delete_my_key))
+        .route("/admin/api/me/keys/{key_val}", axum::routing::delete(delete_my_key).patch(toggle_my_key))
 
         // Users
         .route("/admin/api/users", axum::routing::get(list_users).post(create_user))
@@ -989,7 +1056,7 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         )
         // User API keys (admin)
         .route("/admin/api/users/{user_id}/keys", axum::routing::get(list_user_keys).post(create_user_key))
-        .route("/admin/api/users/{user_id}/keys/{key_val}", axum::routing::delete(delete_user_key))
+        .route("/admin/api/users/{user_id}/keys/{key_val}", axum::routing::delete(delete_user_key).patch(toggle_user_key))
 
         // Channels
         .route("/admin/api/channels", axum::routing::get(list_channels).post(create_channel))
@@ -1020,5 +1087,6 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
 
         // Usage
         .route("/admin/api/usage", axum::routing::get(get_usage))
+        .route("/admin/api/usage/daily", axum::routing::get(daily_usage))
         .route("/admin/api/usage/{request_id}", axum::routing::get(get_usage_detail))
 }

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from './client';
-import type { DashboardStats, DashboardAggregations } from '@/types';
+import type { DashboardStats, DashboardAggregations, DailyUsage } from '@/types';
 
 export function useDashboard() {
   return useQuery({
@@ -14,5 +14,12 @@ export function useDashboardAggregations() {
     queryKey: ['dashboard', 'aggregations'],
     queryFn: () => api<DashboardAggregations>('/dashboard/aggregations'),
     refetchInterval: 60_000,
+  });
+}
+
+export function useDailyUsage(days = 14) {
+  return useQuery({
+    queryKey: ['usage', 'daily', days],
+    queryFn: () => api<DailyUsage[]>(`/usage/daily?limit=${days}`),
   });
 }
