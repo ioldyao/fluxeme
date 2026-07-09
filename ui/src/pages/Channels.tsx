@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useChannels, useDeleteChannel } from '@/api/channels';
+import { useChannels, useCreateChannel, useUpdateChannel, useDeleteChannel } from '@/api/channels';
 import { ChannelForm } from '@/forms/ChannelForm';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -15,8 +15,10 @@ import type { Channel } from '@/types';
 export default function Channels() {
   const { t } = useTranslation();
   const { data: channels, isLoading, refetch } = useChannels();
+  const createChannel = useCreateChannel();
   const deleteChannel = useDeleteChannel();
   const [editChannel, setEditChannel] = useState<Channel | null>(null);
+  const updateChannel = useUpdateChannel(editChannel?.id ?? '');
   const [showAdd, setShowAdd] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Channel | null>(null);
 
@@ -96,6 +98,20 @@ export default function Channels() {
           channel={editChannel}
           open={true}
           onOpenChange={(open) => { if (!open) { setShowAdd(false); setEditChannel(null); }}}
+          onSubmit={(data: any) => {
+            if (editChannel) {
+              updateChannel.mutate(data, {
+                onSuccess: () => { toast.success(t('toast.updated')); setEditChannel(null); refetch(); },
+                onError: (err) => toast.error(err.message),
+              });
+            } else {
+              createChannel.mutate(data, {
+                onSuccess: () => { toast.success(t('toast.created')); setShowAdd(false); refetch(); },
+                onError: (err) => toast.error(err.message),
+              });
+            }
+          }}
+          isPending={createChannel.isPending || updateChannel.isPending}
         />
       )}
       <ConfirmDialog

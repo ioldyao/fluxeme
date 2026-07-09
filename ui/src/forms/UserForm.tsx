@@ -1,23 +1,21 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useCreateUser, useUpdateUser } from '@/api/users';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { toast } from 'sonner';
-import type { User, UpdateUserReq } from '@/types';
+import type { User, CreateUserReq, UpdateUserReq } from '@/types';
 
 interface Props {
   user?: User | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSubmit: (data: CreateUserReq | UpdateUserReq) => void;
+  isPending?: boolean;
 }
 
-export function UserForm({ user, open, onOpenChange }: Props) {
+export function UserForm({ user, open, onOpenChange, onSubmit, isPending }: Props) {
   const { t } = useTranslation();
-  const createUser = useCreateUser();
-  const updateUser = useUpdateUser(user?.id ?? '');
   const [id, setId] = useState('');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
@@ -46,18 +44,12 @@ export function UserForm({ user, open, onOpenChange }: Props) {
       if (name !== user.name) data.name = name;
       if (password) data.password = password;
       if (rateLimits) data.rate_limits = rateLimits;
-      updateUser.mutate(data, {
-        onSuccess: () => { toast.success(t('toast.updated')); onOpenChange(false); },
-        onError: (err) => toast.error(err.message),
-      });
+      onSubmit(data);
     } else {
-      createUser.mutate({
+      onSubmit({
         id, name,
         password: password || null,
         rate_limits: rateLimits ?? null,
-      }, {
-        onSuccess: () => { toast.success(t('toast.created')); onOpenChange(false); },
-        onError: (err) => toast.error(err.message),
       });
     }
   };
@@ -100,7 +92,7 @@ export function UserForm({ user, open, onOpenChange }: Props) {
           </div>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
-            <Button type="submit" disabled={createUser.isPending || updateUser.isPending}>{t('common.save')}</Button>
+            <Button type="submit" disabled={isPending}>{t('common.save')}</Button>
           </div>
         </form>
       </DialogContent>

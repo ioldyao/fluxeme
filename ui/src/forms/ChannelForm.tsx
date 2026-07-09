@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useCreateChannel, useUpdateChannel } from '@/api/channels';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,7 +7,6 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Plus, X } from 'lucide-react';
-import { toast } from 'sonner';
 import type { Channel, Endpoint } from '@/types';
 
 const PROVIDERS = ['openai', 'anthropic', 'vllm', 'azure', 'ollama'] as const;
@@ -17,16 +15,16 @@ interface Props {
   channel?: Channel | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSubmit: (data: Record<string, unknown>) => void;
+  isPending?: boolean;
 }
 
 function emptyEp(): Endpoint {
   return { url: '', api_key: '', weight: 1, timeout_secs: 30 };
 }
 
-export function ChannelForm({ channel, open, onOpenChange }: Props) {
+export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }: Props) {
   const { t } = useTranslation();
-  const create = useCreateChannel();
-  const update = useUpdateChannel(channel?.id ?? '');
   const [provider, setProvider] = useState('');
   const [priority, setPriority] = useState('0');
   const [enabled, setEnabled] = useState(true);
@@ -54,23 +52,14 @@ export function ChannelForm({ channel, open, onOpenChange }: Props) {
       provider,
       priority: Number(priority),
       enabled,
+      ...(channel ? {} : { id: provider }),
       endpoints: endpoints.map((ep) => ({
         ...ep,
         weight: Number(ep.weight),
         timeout_secs: ep.timeout_secs ? Number(ep.timeout_secs) : null,
       })),
     };
-    if (channel) {
-      update.mutate(data, {
-        onSuccess: () => { toast.success(t('toast.updated')); onOpenChange(false); },
-        onError: (err) => toast.error(err.message),
-      });
-    } else {
-      create.mutate({ ...data, id: provider }, {
-        onSuccess: () => { toast.success(t('toast.created')); onOpenChange(false); },
-        onError: (err) => toast.error(err.message),
-      });
-    }
+    onSubmit(data);
   };
 
   return (
@@ -124,7 +113,7 @@ export function ChannelForm({ channel, open, onOpenChange }: Props) {
           </div>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
-            <Button type="submit" disabled={create.isPending || update.isPending}>{t('common.save')}</Button>
+            <Button type="submit" disabled={isPending}>{t('common.save')}</Button>
           </div>
         </form>
       </DialogContent>

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useModels, useDeleteModel, usePublishModel } from '@/api/models';
+import { useModels, useCreateModel, useUpdateModel, useDeleteModel, usePublishModel } from '@/api/models';
 import { ModelForm } from '@/forms/ModelForm';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -14,9 +14,11 @@ import type { Model } from '@/types';
 export default function Models() {
   const { t } = useTranslation();
   const { data: models, isLoading, refetch } = useModels();
+  const createModel = useCreateModel();
   const deleteModel = useDeleteModel();
   const publishModel = usePublishModel();
   const [editModel, setEditModel] = useState<Model | null>(null);
+  const updateModel = useUpdateModel(editModel?.id ?? '');
   const [showAdd, setShowAdd] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Model | null>(null);
 
@@ -106,6 +108,20 @@ export default function Models() {
           model={editModel}
           open={true}
           onOpenChange={(open) => { if (!open) { setShowAdd(false); setEditModel(null); }}}
+          onSubmit={(data: any) => {
+            if (editModel) {
+              updateModel.mutate(data, {
+                onSuccess: () => { toast.success(t('toast.updated')); setEditModel(null); refetch(); },
+                onError: (err) => toast.error(err.message),
+              });
+            } else {
+              createModel.mutate(data, {
+                onSuccess: () => { toast.success(t('toast.created')); setShowAdd(false); refetch(); },
+                onError: (err) => toast.error(err.message),
+              });
+            }
+          }}
+          isPending={createModel.isPending || updateModel.isPending}
         />
       )}
       <ConfirmDialog

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useApiKeys, useDeleteApiKey } from '@/api/apiKeys';
+import { useApiKeys, useCreateApiKey, useDeleteApiKey } from '@/api/apiKeys';
 import { ApiKeyForm } from '@/forms/ApiKeyForm';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -16,8 +16,10 @@ import type { ApiKey } from '@/types';
 export default function ApiKeys() {
   const { t } = useTranslation();
   const { data: keys, isLoading, refetch } = useApiKeys();
+  const createKey = useCreateApiKey();
   const deleteKey = useDeleteApiKey();
   const [showAdd, setShowAdd] = useState(false);
+  const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ApiKey | null>(null);
 
   const handleDelete = () => {
@@ -96,7 +98,18 @@ export default function ApiKeys() {
       {showAdd && (
         <ApiKeyForm
           open={true}
-          onOpenChange={(open) => { if (!open) setShowAdd(false); }}
+          onOpenChange={(open) => { if (!open) { setShowAdd(false); setCreatedKey(null); }}}
+          createdKey={createdKey}
+          onSubmit={(data: any) => {
+            createKey.mutate(data, {
+              onSuccess: (resp: any) => {
+                setCreatedKey(resp.key);
+                toast.success(t('apikey.generatedTitle'));
+              },
+              onError: (err) => toast.error(err.message),
+            });
+          }}
+          isPending={createKey.isPending}
         />
       )}
       <ConfirmDialog

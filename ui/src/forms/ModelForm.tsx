@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useCreateModel, useUpdateModel } from '@/api/models';
 import { useChannels } from '@/api/channels';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -8,20 +7,19 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Plus, X } from 'lucide-react';
-import { toast } from 'sonner';
 import type { Model } from '@/types';
 
 interface Props {
   model?: Model | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSubmit: (data: Record<string, unknown>) => void;
+  isPending?: boolean;
 }
 
-export function ModelForm({ model, open, onOpenChange }: Props) {
+export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Props) {
   const { t } = useTranslation();
   const { data: channels } = useChannels();
-  const create = useCreateModel();
-  const update = useUpdateModel(model?.id ?? '');
   const [id, setId] = useState('');
   const [name, setName] = useState('');
   const [modelPattern, setModelPattern] = useState('');
@@ -57,17 +55,7 @@ export function ModelForm({ model, open, onOpenChange }: Props) {
       pricing: { prompt_price: Number(promptPrice), completion_price: Number(completionPrice) },
       channels: bindings.map((b) => ({ channel_id: b.channel_id, priority: Number(b.priority) })),
     };
-    if (model) {
-      update.mutate(data, {
-        onSuccess: () => { toast.success(t('toast.updated')); onOpenChange(false); },
-        onError: (err) => toast.error(err.message),
-      });
-    } else {
-      create.mutate(data, {
-        onSuccess: () => { toast.success(t('toast.created')); onOpenChange(false); },
-        onError: (err) => toast.error(err.message),
-      });
-    }
+    onSubmit(data);
   };
 
   return (
@@ -134,7 +122,7 @@ export function ModelForm({ model, open, onOpenChange }: Props) {
           </div>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
-            <Button type="submit" disabled={create.isPending || update.isPending}>{t('common.save')}</Button>
+            <Button type="submit" disabled={isPending}>{t('common.save')}</Button>
           </div>
         </form>
       </DialogContent>

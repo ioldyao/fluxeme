@@ -1,29 +1,8 @@
 import { NavLink } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
-import {
-  LayoutDashboard,
-  Users,
-  Radio,
-  Braces,
-  Key,
-  Route,
-  ScrollText,
-  Cog,
-} from 'lucide-react';
-
-const navItems: { to: string; label: string; icon: React.ComponentType<{ className?: string }>; adminOnly: boolean; end?: boolean }[] = [
-  { to: '/', label: 'nav.dashboard', icon: LayoutDashboard, adminOnly: false, end: true },
-  { to: '/users', label: 'nav.users', icon: Users, adminOnly: true },
-  { to: '/channels', label: 'nav.channels', icon: Radio, adminOnly: true },
-  { to: '/models', label: 'nav.models', icon: Braces, adminOnly: true, end: true },
-  { to: '/models/marketplace', label: 'nav.modelMarketplace', icon: Braces, adminOnly: false },
-  { to: '/models/mine', label: 'nav.myModels', icon: Braces, adminOnly: false },
-  { to: '/api-keys', label: 'nav.apiKeys', icon: Key, adminOnly: false },
-  { to: '/rules', label: 'nav.rules', icon: Route, adminOnly: true },
-  { to: '/usage', label: 'nav.usage', icon: ScrollText, adminOnly: false },
-  { to: '/settings', label: 'nav.settings', icon: Cog, adminOnly: false },
-];
+import { Cog } from 'lucide-react';
+import { navRoutes } from '@/routes/config';
 
 export function Sidebar() {
   const { t } = useTranslation();
@@ -36,12 +15,12 @@ export function Sidebar() {
         <span className="font-semibold text-sm">{t('nav.subtitle')}</span>
       </div>
       <nav className="flex-1 p-3 space-y-1">
-        {navItems
-          .filter((item) => !item.adminOnly || role === 'admin')
+        {navRoutes
+          .filter((item) => item.guard !== 'admin' || role === 'admin')
           .map((item) => (
             <NavLink
-              key={item.to}
-              to={item.to}
+              key={item.path ?? item.label}
+              to={item.path ?? '/'}
               end={item.end}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
@@ -51,8 +30,8 @@ export function Sidebar() {
                 }`
               }
             >
-              <item.icon className="h-4 w-4" />
-              {t(item.label)}
+              {item.icon && <item.icon className="h-4 w-4" />}
+              {item.label && t(item.label)}
             </NavLink>
           ))}
       </nav>

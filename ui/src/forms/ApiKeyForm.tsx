@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useCreateApiKey } from '@/api/apiKeys';
 import { CopyButton } from '@/components/CopyButton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -8,33 +7,27 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card } from '@/components/ui/card';
-import { toast } from 'sonner';
+import type { CreateKeyReq } from '@/types';
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSubmit: (data: CreateKeyReq) => void;
+  createdKey?: string | null;
+  isPending?: boolean;
 }
 
-export function ApiKeyForm({ open, onOpenChange }: Props) {
+export function ApiKeyForm({ open, onOpenChange, onSubmit, createdKey, isPending }: Props) {
   const { t } = useTranslation();
-  const create = useCreateApiKey();
   const [name, setName] = useState('');
   const [enabled, setEnabled] = useState(true);
-  const [createdKey, setCreatedKey] = useState<string | null>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    create.mutate({ name: name || null, enabled }, {
-      onSuccess: (data) => {
-        setCreatedKey(data.key);
-        toast.success(t('apikey.generatedTitle'));
-      },
-      onError: (err) => toast.error(err.message),
-    });
+    onSubmit({ name: name || null, enabled });
   };
 
   const handleClose = () => {
-    setCreatedKey(null);
     setName('');
     setEnabled(true);
     onOpenChange(false);
@@ -72,7 +65,7 @@ export function ApiKeyForm({ open, onOpenChange }: Props) {
             </div>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={handleClose}>{t('common.cancel')}</Button>
-              <Button type="submit" disabled={create.isPending}>{t('common.save')}</Button>
+              <Button type="submit" disabled={isPending}>{t('common.save')}</Button>
             </div>
           </form>
         )}

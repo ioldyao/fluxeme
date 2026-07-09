@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useUsers, useDeleteUser } from '@/api/users';
+import { useUsers, useCreateUser, useUpdateUser, useDeleteUser } from '@/api/users';
 import { UserForm } from '@/forms/UserForm';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -15,9 +15,11 @@ import type { User } from '@/types';
 export default function Users() {
   const { t } = useTranslation();
   const { data: users, isLoading, refetch } = useUsers();
+  const createUser = useCreateUser();
   const deleteUser = useDeleteUser();
   const [search, setSearch] = useState('');
   const [editUser, setEditUser] = useState<User | null>(null);
+  const updateUser = useUpdateUser(editUser?.id ?? '');
   const [showAdd, setShowAdd] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
 
@@ -97,6 +99,20 @@ export default function Users() {
           user={editUser}
           open={true}
           onOpenChange={(open) => { if (!open) { setShowAdd(false); setEditUser(null); }}}
+          onSubmit={(data: any) => {
+            if (editUser) {
+              updateUser.mutate(data, {
+                onSuccess: () => { toast.success(t('toast.updated')); setEditUser(null); },
+                onError: (err) => toast.error(err.message),
+              });
+            } else {
+              createUser.mutate(data, {
+                onSuccess: () => { toast.success(t('toast.created')); setShowAdd(false); },
+                onError: (err) => toast.error(err.message),
+              });
+            }
+          }}
+          isPending={createUser.isPending || updateUser.isPending}
         />
       )}
       <ConfirmDialog

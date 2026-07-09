@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
 import { useCurrency } from '@/store/currency';
+import { formatCost } from '@/lib/cost';
 import { useUsage } from '@/api/usage';
 import { api } from '@/api/client';
 import { UsageLogDetail } from '@/components/UsageLogDetail';
@@ -40,15 +41,6 @@ export default function Usage() {
     }
     return map;
   }, [models]);
-
-  const formatCost = (promptTokens: number, completionTokens: number, modelName: string) => {
-    const pricing = modelPricing[modelName];
-    if (!pricing) return '—';
-    const usd = (promptTokens / 1000) * pricing.prompt_price + (completionTokens / 1000) * pricing.completion_price;
-    const value = currency === 'cny' ? usd * rate : usd;
-    const symbol = currency === 'cny' ? '¥' : '$';
-    return `${symbol}${value.toFixed(4)}`;
-  };
 
   const handleChartTab = (tab: string) => {
     if (tab === 'chart') {
@@ -130,7 +122,7 @@ export default function Usage() {
                           <td className="py-3 px-4 text-right">{r.prompt_tokens}</td>
                           <td className="py-3 px-4 text-right">{r.completion_tokens}</td>
                           <td className="py-3 px-4 text-right font-medium">{r.total_tokens}</td>
-                          {role === 'admin' && <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, r.model)}</td>}
+                          {role === 'admin' && <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, modelPricing[r.model], currency, rate)}</td>}
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>
                           <td className="py-3 px-4 text-center">
                             {r.success ? (

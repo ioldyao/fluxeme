@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useRules, useDeleteRule } from '@/api/rules';
+import { useRules, useCreateRule, useUpdateRule, useDeleteRule } from '@/api/rules';
 import { RuleForm } from '@/forms/RuleForm';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -14,8 +14,10 @@ import type { RoutingRule } from '@/types';
 export default function Rules() {
   const { t } = useTranslation();
   const { data: rules, isLoading, refetch } = useRules();
+  const createRule = useCreateRule();
   const deleteRule = useDeleteRule();
   const [editRule, setEditRule] = useState<RoutingRule | null>(null);
+  const updateRule = useUpdateRule(editRule?.name ?? '');
   const [showAdd, setShowAdd] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<RoutingRule | null>(null);
 
@@ -89,6 +91,20 @@ export default function Rules() {
           rule={editRule}
           open={true}
           onOpenChange={(open) => { if (!open) { setShowAdd(false); setEditRule(null); }}}
+          onSubmit={(data: any) => {
+            if (editRule) {
+              updateRule.mutate(data, {
+                onSuccess: () => { toast.success(t('toast.updated')); setEditRule(null); refetch(); },
+                onError: (err) => toast.error(err.message),
+              });
+            } else {
+              createRule.mutate(data, {
+                onSuccess: () => { toast.success(t('toast.created')); setShowAdd(false); refetch(); },
+                onError: (err) => toast.error(err.message),
+              });
+            }
+          }}
+          isPending={createRule.isPending || updateRule.isPending}
         />
       )}
       <ConfirmDialog
