@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
+import { useCurrency } from '@/store/currency';
 import { useUsage } from '@/api/usage';
+import { useModels } from '@/api/models';
 import { api } from '@/api/client';
 import { UsageLogDetail } from '@/components/UsageLogDetail';
+import { PageHeader } from '@/components/PageHeader';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,7 +23,27 @@ export default function Usage() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const params = role === 'admin' && userFilter ? { limit, user_id: userFilter } : { limit };
   const { data: usage, isLoading, refetch } = useUsage(params);
+  const { data: models } = useModels();
+  const { currency, rate } = useCurrency();
   const [chartTab, setChartTab] = useState('list');
+
+  const modelPricing = useMemo(() => {
+    if (!models) return {};
+    const map: Record<string, { prompt_price: number; completion_price: number }> = {};
+    for (const m of models) {
+      map[m.name] = m.pricing;
+    }
+    return map;
+  }, [models]);
+
+  const formatCost = (promptTokens: number, completionTokens: number, modelName: string) => {
+    const pricing = modelPricing[modelName];
+    if (!pricing) return '—';
+    const usd = (promptTokens / 1000) * pricing.prompt_price + (completionTokens / 1000) * pricing.completion_price;
+    const value = currency === 'cny' ? usd * rate : usd;
+    const symbol = currency === 'cny' ? '¥' : '$';
+    return `${symbol}${value.toFixed(4)}`;
+  };
 
   const handleChartTab = (tab: string) => {
     if (tab === 'chart') {
@@ -34,23 +57,23 @@ export default function Usage() {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">{t('usage.title')}</h1>
-          <p className="text-sm text-muted-foreground">{t('usage.subtitle')}</p>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => refetch()}>
-          <RefreshCw className="h-4 w-4 mr-1" />{t('common.refresh')}
-        </Button>
-      </div>
+      <PageHeader
+        title={t('usage.title')}
+        description={t('usage.subtitle')}
+        actions={
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            <RefreshCw className="size-4 mr-1" />{t('common.refresh')}
+          </Button>
+        }
+      />
 
       <Tabs value={chartTab} onValueChange={handleChartTab}>
         <TabsList>
           <TabsTrigger value="list">
-            <List className="h-4 w-4 mr-1" />{t('usage.list')}
+            <List className="size-4 mr-1" />{t('usage.list')}
           </TabsTrigger>
           <TabsTrigger value="chart">
-            <BarChart3 className="h-4 w-4 mr-1" />{t('usage.chart')}
+            <BarChart3 className="size-4 mr-1" />{t('usage.chart')}
           </TabsTrigger>
         </TabsList>
 
@@ -58,7 +81,7 @@ export default function Usage() {
           {role === 'admin' && (
             <div className="flex gap-2">
               <div className="relative flex-1 max-w-xs">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
                 <Input
                   className="pl-9" placeholder={t('usage.allUsers')}
                   value={userFilter} onChange={(e) => setUserFilter(e.target.value)}
@@ -85,6 +108,7 @@ export default function Usage() {
                         <th className="text-right py-3 px-4">{t('table.prompt')}</th>
                         <th className="text-right py-3 px-4">{t('table.completion')}</th>
                         <th className="text-right py-3 px-4">{t('table.total')}</th>
+                        <th className="text-right py-3 px-4">{t('table.cost')}</th>
                         <th className="text-right py-3 px-4">{t('table.latency')}</th>
                         <th className="text-center py-3 px-4">{t('table.status')}</th>
                       </tr>
@@ -101,12 +125,13 @@ export default function Usage() {
                           <td className="py-3 px-4 text-right">{r.prompt_tokens}</td>
                           <td className="py-3 px-4 text-right">{r.completion_tokens}</td>
                           <td className="py-3 px-4 text-right font-medium">{r.total_tokens}</td>
+                          <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, r.model)}</td>
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>
                           <td className="py-3 px-4 text-center">
                             {r.success ? (
-                              <CheckCircle2 className="h-4 w-4 text-green-500 inline" />
+                              <CheckCircle2 className="size-4 text-green-500 inline" />
                             ) : (
-                              <XCircle className="h-4 w-4 text-red-500 inline" />
+                              <XCircle className="size-4 text-red-500 inline" />
                             )}
                           </td>
                         </tr>
@@ -124,7 +149,7 @@ export default function Usage() {
         <TabsContent value="chart">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">{t('usage.chart')}</CardTitle>
+              <CardTitle>{t('usage.chart')}</CardTitle>
             </CardHeader>
             <CardContent>
               <EmptyState message={t('usage.chartNotAvailable')} />

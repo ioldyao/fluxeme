@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { useCurrency, CURRENCY_SYMBOL, CURRENCY_CODE, type CurrencyCode } from '@/store/currency';
+import { PageHeader } from '@/components/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,15 +13,12 @@ export default function SettingsPage() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-2xl font-semibold">{t('settings.title')}</h1>
-        <p className="text-sm text-muted-foreground">{t('settings.subtitle')}</p>
-      </div>
+      <PageHeader title={t('settings.title')} description={t('settings.subtitle')} />
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <SettingsIcon className="h-4 w-4" />
+          <CardTitle className="flex items-center gap-2">
+            <SettingsIcon className="size-4" />
             {t('settings.currency')}
           </CardTitle>
         </CardHeader>

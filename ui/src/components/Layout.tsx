@@ -4,12 +4,14 @@ import { TopBar } from './TopBar';
 
 export function Layout() {
   return (
-    <div className="flex">
+    <div className="flex min-h-screen bg-background">
       <Sidebar />
-      <div className="flex-1 ml-60 min-h-screen">
+      <div className="flex min-w-0 flex-1 flex-col ml-60">
         <TopBar />
-        <main className="p-6">
-          <Outlet />
+        <main className="flex-1 p-4 lg:p-6">
+          <div className="mx-auto w-full max-w-7xl">
+            <Outlet />
+          </div>
         </main>
       </div>
     </div>

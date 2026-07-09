@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useModels, useDeleteModel, usePublishModel } from '@/api/models';
 import { ModelForm } from '@/forms/ModelForm';
+import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
@@ -29,20 +30,20 @@ export default function Models() {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">{t('model.title')}</h1>
-          <p className="text-sm text-muted-foreground">{t('model.subtitle')}</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
-            <RefreshCw className="h-4 w-4 mr-1" />{t('common.refresh')}
-          </Button>
-          <Button onClick={() => setShowAdd(true)}>
-            <Plus className="h-4 w-4 mr-1" />{t('model.add')}
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title={t('model.title')}
+        description={t('model.subtitle')}
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              <RefreshCw className="size-4 mr-1" />{t('common.refresh')}
+            </Button>
+            <Button onClick={() => setShowAdd(true)}>
+              <Plus className="size-4 mr-1" />{t('model.add')}
+            </Button>
+          </>
+        }
+      />
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
@@ -84,10 +85,10 @@ export default function Models() {
                       </td>
                       <td className="py-3 px-4 text-right">
                         <Button variant="ghost" size="sm" onClick={() => setEditModel(m)}>
-                          <Pencil className="h-3 w-3" />
+                          <Pencil className="size-3.5" />
                         </Button>
                         <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(m)}>
-                          <Trash2 className="h-3 w-3 text-destructive" />
+                          <Trash2 className="size-3.5 text-destructive" />
                         </Button>
                       </td>
                     </tr>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
 import { api } from '@/api/client';
+import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -46,15 +47,12 @@ export default function Profile() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-2xl font-semibold">{t('profile.title')}</h1>
-        <p className="text-sm text-muted-foreground">{t('profile.subtitle')}</p>
-      </div>
+      <PageHeader title={t('profile.title')} description={t('profile.subtitle')} />
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <User className="h-4 w-4" />
+          <CardTitle className="flex items-center gap-2">
+            <User className="size-4" />
             {t('profile.userInfo')}
           </CardTitle>
         </CardHeader>
@@ -79,8 +77,8 @@ export default function Profile() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <Key className="h-4 w-4" />
+          <CardTitle className="flex items-center gap-2">
+            <Key className="size-4" />
             {t('profile.changePassword')}
           </CardTitle>
         </CardHeader>

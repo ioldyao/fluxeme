@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { usePublicModels, useSubscriptions, useSubscribeModel, useUnsubscribeModel } from '@/api/models';
+import { PageHeader } from '@/components/PageHeader';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -32,15 +33,15 @@ export default function ModelsMarketplace() {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">模型广场</h1>
-          <p className="text-sm text-muted-foreground">浏览并订阅已发布的模型</p>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => refetch()}>
-          <RefreshCw className="h-4 w-4 mr-1" />{t('common.refresh')}
-        </Button>
-      </div>
+      <PageHeader
+        title="模型广场"
+        description="浏览并订阅已发布的模型"
+        actions={
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            <RefreshCw className="size-4 mr-1" />{t('common.refresh')}
+          </Button>
+        }
+      />
 
       {isLoading ? (
         <div className="p-12 text-center text-muted-foreground">{t('common.loading')}</div>
@@ -51,10 +52,10 @@ export default function ModelsMarketplace() {
             const pending = subscribe.isPending || unsubscribe.isPending;
             return (
               <Card key={model.id} className="flex flex-col">
-                <CardHeader className="pb-3">
+                <CardHeader>
                   <div className="flex items-start justify-between">
                     <div className="space-y-1">
-                      <CardTitle className="text-base">{model.name}</CardTitle>
+                      <CardTitle>{model.name}</CardTitle>
                       <p className="text-xs text-muted-foreground font-mono">{model.model_pattern}</p>
                     </div>
                     {isSubscribed && <Badge>已订阅</Badge>}
@@ -79,9 +80,9 @@ export default function ModelsMarketplace() {
                     className="w-full"
                   >
                     {isSubscribed ? (
-                      pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4 mr-1" />
+                      pending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4 mr-1" />
                     ) : (
-                      <Plus className="h-4 w-4 mr-1" />
+                      <Plus className="size-4 mr-1" />
                     )}
                     {isSubscribed ? '已订阅' : '订阅'}
                   </Button>

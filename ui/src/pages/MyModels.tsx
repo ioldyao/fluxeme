@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { useSubscriptions, useUnsubscribeModel } from '@/api/models';
+import { PageHeader } from '@/components/PageHeader';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -21,15 +22,15 @@ export default function MyModels() {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">我的模型</h1>
-          <p className="text-sm text-muted-foreground">管理你订阅的模型</p>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => refetch()}>
-          <RefreshCw className="h-4 w-4 mr-1" />{t('common.refresh')}
-        </Button>
-      </div>
+      <PageHeader
+        title="我的模型"
+        description="管理你订阅的模型"
+        actions={
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            <RefreshCw className="size-4 mr-1" />{t('common.refresh')}
+          </Button>
+        }
+      />
 
       {isLoading ? (
         <div className="p-12 text-center text-muted-foreground">{t('common.loading')}</div>
@@ -37,7 +38,7 @@ export default function MyModels() {
         <div className="grid grid-cols-1 gap-3">
           {models.map((model) => (
             <Card key={model.id}>
-              <CardContent className="p-4">
+              <CardContent className="p-5">
                 <div className="flex items-center justify-between">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
@@ -62,9 +63,9 @@ export default function MyModels() {
                     disabled={unsubscribe.isPending}
                   >
                     {unsubscribe.isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <Loader2 className="size-4 animate-spin" />
                     ) : (
-                      <Trash2 className="h-4 w-4 text-destructive" />
+                      <Trash2 className="size-4 text-destructive" />
                     )}
                   </Button>
                 </div>

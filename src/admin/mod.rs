@@ -294,7 +294,22 @@ async fn dashboard_aggregations(
     let models = state.db.list_models().unwrap_or_default();
     let mut pricing: std::collections::HashMap<String, (f64, f64)> = std::collections::HashMap::new();
     for m in &models {
+        pricing.insert(m.name.clone(), (m.pricing.prompt_price, m.pricing.completion_price));
         pricing.insert(m.model_pattern.clone(), (m.pricing.prompt_price, m.pricing.completion_price));
+    }
+
+    fn lookup_price<'a>(model_name: &str, pricing: &'a std::collections::HashMap<String, (f64, f64)>) -> &'a (f64, f64) {
+        if let Some(price) = pricing.get(model_name) {
+            return price;
+        }
+        for (pattern, price) in pricing {
+            if let Some(prefix) = pattern.strip_suffix('*') {
+                if model_name.starts_with(prefix) {
+                    return price;
+                }
+            }
+        }
+        pricing.get("").unwrap_or(&(0.0, 0.0))
     }
 
     // All-time totals
@@ -328,7 +343,7 @@ async fn dashboard_aggregations(
     let mut model_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
 
     for r in &records {
-        let price = pricing.get(&r.model).copied().unwrap_or((0.0, 0.0));
+        let price = *lookup_price(&r.model, &pricing);
         let cost = (r.prompt_tokens as f64 / 1000.0 * price.0)
                   + (r.completion_tokens as f64 / 1000.0 * price.1);
         total_cost_24h += cost;
@@ -342,7 +357,7 @@ async fn dashboard_aggregations(
     let all_records = state.db.query_usage_since("1970-01-01T00:00:00", user_filter)
         .map_err(|e| AdminError::internal(e.0))?;
     for r in &all_records {
-        let price = pricing.get(&r.model).copied().unwrap_or((0.0, 0.0));
+        let price = *lookup_price(&r.model, &pricing);
         total_cost += (r.prompt_tokens as f64 / 1000.0 * price.0)
                     + (r.completion_tokens as f64 / 1000.0 * price.1);
     }

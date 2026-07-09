@@ -1,9 +1,10 @@
 import { useTranslation } from 'react-i18next';
+import { PageHeader } from '@/components/PageHeader';
 import { useAuth } from '@/store/auth';
 import { useCurrency, CURRENCY_SYMBOL, CURRENCY_CODE } from '@/store/currency';
 import { useDashboard, useDashboardAggregations } from '@/api/dashboard';
 import { useSubscriptions } from '@/api/models';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Users, Radio, Braces, Key, Activity, Zap, BarChart3, Bell, HelpCircle } from 'lucide-react';
 
 export default function Dashboard() {
@@ -20,35 +21,32 @@ export default function Dashboard() {
 
   const cards = isAdmin
     ? [
-        { title: t('dash.users'), value: stats?.users ?? 0, icon: <Users className="h-5 w-5" /> },
-        { title: t('dash.channels'), value: stats?.channels ?? 0, icon: <Radio className="h-5 w-5" /> },
-        { title: t('dash.models'), value: stats?.models ?? 0, icon: <Braces className="h-5 w-5" /> },
-        { title: t('dash.apiKeys'), value: stats?.api_keys ?? 0, icon: <Key className="h-5 w-5" /> },
-        { title: t('dash.requests'), value: stats?.total_requests ?? 0, icon: <Activity className="h-5 w-5" /> },
+        { title: t('dash.users'), value: stats?.users ?? 0, icon: <Users className="size-5" /> },
+        { title: t('dash.channels'), value: stats?.channels ?? 0, icon: <Radio className="size-5" /> },
+        { title: t('dash.models'), value: stats?.models ?? 0, icon: <Braces className="size-5" /> },
+        { title: t('dash.apiKeys'), value: stats?.api_keys ?? 0, icon: <Key className="size-5" /> },
+        { title: t('dash.requests'), value: stats?.total_requests ?? 0, icon: <Activity className="size-5" /> },
       ]
     : [
-        { title: t('dash.models'), value: subscriptions?.length ?? 0, icon: <Braces className="h-5 w-5" /> },
-        { title: t('dash.apiKeys'), value: stats?.api_keys ?? 0, icon: <Key className="h-5 w-5" /> },
-        { title: t('dash.requests'), value: stats?.total_requests ?? 0, icon: <Activity className="h-5 w-5" /> },
+        { title: t('dash.models'), value: subscriptions?.length ?? 0, icon: <Braces className="size-5" /> },
+        { title: t('dash.apiKeys'), value: stats?.api_keys ?? 0, icon: <Key className="size-5" /> },
+        { title: t('dash.requests'), value: stats?.total_requests ?? 0, icon: <Activity className="size-5" /> },
       ];
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-2xl font-semibold">{t('dash.title')}</h1>
-        <p className="text-sm text-muted-foreground">{t('dash.subtitle')}</p>
-      </div>
+      <PageHeader title={t('dash.title')} description={t('dash.subtitle')} />
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         {cards.map((stat) => (
-          <Card key={stat.title} className="p-4">
-            <div className="flex items-center gap-3">
+          <Card key={stat.title}>
+            <CardContent className="flex items-center gap-3 p-5">
               <div className="p-2 rounded-lg bg-brand/10 text-brand">{stat.icon}</div>
               <div>
                 <p className="text-xs text-muted-foreground">{stat.title}</p>
                 <p className="text-xl font-semibold mt-0.5">{isLoading ? '...' : stat.value.toLocaleString()}</p>
               </div>
-            </div>
+            </CardContent>
           </Card>
         ))}
       </div>
@@ -56,15 +54,15 @@ export default function Dashboard() {
       {agg && (
         <>
           <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <BarChart3 className="h-4 w-4 text-brand" />
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BarChart3 className="size-4 text-brand" />
                 {t('dash.usageOverview')}
               </CardTitle>
-              <p className="text-xs text-muted-foreground">{t('dash.usageOverviewSub')}</p>
+              <CardDescription>{t('dash.usageOverviewSub')}</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <p className="text-2xl font-bold">{sym}{convert(agg.cost_24h).toFixed(2)}</p>
                   <p className="text-xs text-muted-foreground mt-1">{t('dash.cost24h')}</p>
@@ -85,12 +83,12 @@ export default function Dashboard() {
           </Card>
 
           <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Zap className="h-4 w-4 text-brand" />
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Zap className="size-4 text-brand" />
                 {t('dash.performance')}
               </CardTitle>
-              <p className="text-xs text-muted-foreground">{t('dash.performanceSub')}</p>
+              <CardDescription>{t('dash.performanceSub')}</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -123,9 +121,9 @@ export default function Dashboard() {
           </Card>
 
           <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <BarChart3 className="h-4 w-4 text-brand" />
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BarChart3 className="size-4 text-brand" />
                 {t('dash.topModels')}
               </CardTitle>
             </CardHeader>
@@ -160,8 +158,8 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2"><Bell className="h-4 w-4" /> {t('dash.announcements')}</CardTitle>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Bell className="size-4" /> {t('dash.announcements')}</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-xs text-muted-foreground">{t('dash.announcementsSub')}</p>
@@ -169,8 +167,8 @@ export default function Dashboard() {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2"><HelpCircle className="h-4 w-4" /> FAQ</CardTitle>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><HelpCircle className="size-4" /> FAQ</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-xs text-muted-foreground">{t('dash.faqSub')}</p>
