@@ -1,9 +1,10 @@
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
+import { useCurrency, CURRENCY_SYMBOL, CURRENCY_CODE } from '@/store/currency';
 import { useDashboard, useDashboardAggregations } from '@/api/dashboard';
 import { useSubscriptions } from '@/api/models';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, Radio, Braces, Key, Activity, TrendingUp, Zap, BarChart3, Info, Bell, HelpCircle } from 'lucide-react';
+import { Users, Radio, Braces, Key, Activity, Zap, BarChart3, Bell, HelpCircle } from 'lucide-react';
 
 export default function Dashboard() {
   const { t } = useTranslation();
@@ -11,6 +12,10 @@ export default function Dashboard() {
   const { data: stats, isLoading } = useDashboard();
   const { data: agg } = useDashboardAggregations();
   const { data: subscriptions } = useSubscriptions();
+  const { currency, rate } = useCurrency();
+  const sym = CURRENCY_SYMBOL[currency];
+  const code = CURRENCY_CODE[currency];
+  const convert = (v: number) => currency === 'cny' ? v * rate : v;
   const isAdmin = role === 'admin';
 
   const cards = isAdmin
@@ -50,41 +55,34 @@ export default function Dashboard() {
 
       {agg && (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-muted-foreground font-normal flex items-center gap-2">
-                  <TrendingUp className="h-4 w-4 text-brand" />
-                  {t('dash.cost24h')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-2xl font-bold">${agg.cost_24h.toFixed(2)}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-muted-foreground font-normal flex items-center gap-2">
-                  <BarChart3 className="h-4 w-4 text-brand" />
-                  {t('dash.totalCost')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-2xl font-bold">${agg.total_cost?.toFixed(2) || '0.00'}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-muted-foreground font-normal flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-brand" />
-                  {t('dash.totalRequests')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-2xl font-bold">{agg.total_requests.toLocaleString()}</p>
-              </CardContent>
-            </Card>
-          </div>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 text-brand" />
+                {t('dash.usageOverview')}
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">{t('dash.usageOverviewSub')}</p>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                <div>
+                  <p className="text-2xl font-bold">{sym}{convert(agg.cost_24h).toFixed(2)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{t('dash.cost24h')}</p>
+                  <p className="text-xs text-muted-foreground">{t('dash.cost24hLabel', { currency: code })}</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{sym}{convert(agg.total_cost ?? 0).toFixed(2)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{t('dash.historicalUsage')}</p>
+                  <p className="text-xs text-muted-foreground">{t('dash.totalCostLabel', { currency: code })}</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{agg.total_requests.toLocaleString()}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{t('dash.requestCount')}</p>
+                  <p className="text-xs text-muted-foreground">{t('dash.totalRequests')}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader className="pb-2">
@@ -147,7 +145,7 @@ export default function Dashboard() {
                           />
                         </div>
                         <span className="text-xs font-medium w-14 text-right">{m.percentage.toFixed(1)}%</span>
-                        <span className="text-xs text-muted-foreground w-14 text-right">{m.count}次</span>
+                        <span className="text-xs text-muted-foreground w-14 text-right">{t('common.count', { count: m.count })}</span>
                       </div>
                     );
                   })}
@@ -160,21 +158,7 @@ export default function Dashboard() {
         </>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2"><Info className="h-4 w-4" /> {t('dash.apiInfo')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-xs text-muted-foreground">{t('dash.apiInfoSub')}</p>
-            <p className="text-sm mt-2">
-              {isAdmin && (stats?.channels ?? 0) > 0
-                ? <span className="text-green-500">✓</span>
-                : <span className="text-yellow-500">—</span>}
-              {' '}{stats && (stats?.channels ?? 0) > 0 ? `已配置 ${stats.channels} 个渠道` : t('dash.noRoutes')}
-            </p>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2"><Bell className="h-4 w-4" /> {t('dash.announcements')}</CardTitle>

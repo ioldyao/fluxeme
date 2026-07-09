@@ -103,7 +103,7 @@ export function ChannelForm({ channel, open, onOpenChange }: Props) {
             <div className="flex items-center justify-between">
               <Label>{t('form.endpoints')}</Label>
               <Button type="button" variant="ghost" size="sm" onClick={addEp}>
-                <Plus className="h-3 w-3 mr-1" />添加
+                <Plus className="h-3 w-3 mr-1" />{t('common.add')}
               </Button>
             </div>
             {endpoints.map((ep, i) => (

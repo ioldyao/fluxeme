@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
 import { useUsage } from '@/api/usage';
+import { api } from '@/api/client';
 import { UsageLogDetail } from '@/components/UsageLogDetail';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
@@ -23,11 +24,10 @@ export default function Usage() {
 
   const handleChartTab = (tab: string) => {
     if (tab === 'chart') {
-      fetch('/admin/api/usage/aggregations').catch(() => {
-        toast.error('聚合 API 待实现，切换到列表视图');
-        setChartTab('list');
-        return;
-      });
+      api('/usage/aggregations')
+        .then(() => setChartTab(tab))
+        .catch(() => toast.error(t('usage.chartNotAvailable')));
+      return;
     }
     setChartTab(tab);
   };
@@ -47,10 +47,10 @@ export default function Usage() {
       <Tabs value={chartTab} onValueChange={handleChartTab}>
         <TabsList>
           <TabsTrigger value="list">
-            <List className="h-4 w-4 mr-1" />列表
+            <List className="h-4 w-4 mr-1" />{t('usage.list')}
           </TabsTrigger>
           <TabsTrigger value="chart">
-            <BarChart3 className="h-4 w-4 mr-1" />图表
+            <BarChart3 className="h-4 w-4 mr-1" />{t('usage.chart')}
           </TabsTrigger>
         </TabsList>
 
@@ -124,10 +124,10 @@ export default function Usage() {
         <TabsContent value="chart">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">用量图表</CardTitle>
+              <CardTitle className="text-base">{t('usage.chart')}</CardTitle>
             </CardHeader>
             <CardContent>
-              <EmptyState message="聚合 API 待实现，切换到列表视图" />
+              <EmptyState message={t('usage.chartNotAvailable')} />
             </CardContent>
           </Card>
         </TabsContent>

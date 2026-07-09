@@ -79,7 +79,7 @@ export default function Models() {
                           onClick={() => publishModel.mutate(m.id, { onError: (err) => toast.error(err.message) })}
                           disabled={publishModel.isPending}
                         >
-                          {m.published ? '已发布' : '发布'}
+                          {m.published ? t('model.published') : t('model.publish')}
                         </Button>
                       </td>
                       <td className="py-3 px-4 text-right">

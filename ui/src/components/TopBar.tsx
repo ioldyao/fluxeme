@@ -49,15 +49,15 @@ export function TopBar() {
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => setMode('light')}>
               <Sun className="h-4 w-4 mr-2" />
-              浅色{mode === 'light' && ' ✓'}
+              {t('theme.light')}{mode === 'light' && ' ✓'}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setMode('dark')}>
               <Moon className="h-4 w-4 mr-2" />
-              深色{mode === 'dark' && ' ✓'}
+              {t('theme.dark')}{mode === 'dark' && ' ✓'}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setMode('system')}>
               <Monitor className="h-4 w-4 mr-2" />
-              跟随系统{mode === 'system' && ' ✓'}
+              {t('theme.system')}{mode === 'system' && ' ✓'}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

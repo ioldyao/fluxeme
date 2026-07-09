@@ -14,6 +14,7 @@ import ApiKeys from '@/pages/ApiKeys';
 import Rules from '@/pages/Rules';
 import Usage from '@/pages/Usage';
 import Profile from '@/pages/Profile';
+import SettingsPage from '@/pages/Settings';
 import NotFound from '@/pages/NotFound';
 
 export default function App() {
@@ -35,6 +36,7 @@ export default function App() {
           <Route path="/api-keys" element={<ApiKeys />} />
           <Route path="/usage" element={<Usage />} />
           <Route path="/profile" element={<Profile />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Route>
       <Route path="*" element={<NotFound />} />

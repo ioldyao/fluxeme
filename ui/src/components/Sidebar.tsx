@@ -17,11 +17,12 @@ const navItems: { to: string; label: string; icon: React.ComponentType<{ classNa
   { to: '/users', label: 'nav.users', icon: Users, adminOnly: true },
   { to: '/channels', label: 'nav.channels', icon: Radio, adminOnly: true },
   { to: '/models', label: 'nav.models', icon: Braces, adminOnly: true, end: true },
-  { to: '/models/marketplace', label: '模型广场', icon: Braces, adminOnly: false },
-  { to: '/models/mine', label: '我的模型', icon: Braces, adminOnly: false },
+  { to: '/models/marketplace', label: 'nav.modelMarketplace', icon: Braces, adminOnly: false },
+  { to: '/models/mine', label: 'nav.myModels', icon: Braces, adminOnly: false },
   { to: '/api-keys', label: 'nav.apiKeys', icon: Key, adminOnly: false },
   { to: '/rules', label: 'nav.rules', icon: Route, adminOnly: true },
   { to: '/usage', label: 'nav.usage', icon: ScrollText, adminOnly: false },
+  { to: '/settings', label: 'nav.settings', icon: Cog, adminOnly: false },
 ];
 
 export function Sidebar() {

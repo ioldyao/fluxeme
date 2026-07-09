@@ -106,7 +106,7 @@ export function ModelForm({ model, open, onOpenChange }: Props) {
             <div className="flex items-center justify-between">
               <Label>{t('form.bindChannels')}</Label>
               <Button type="button" variant="ghost" size="sm" onClick={addBinding} disabled={!channels?.length}>
-                <Plus className="h-3 w-3 mr-1" />添加
+                <Plus className="h-3 w-3 mr-1" />{t('common.add')}
               </Button>
             </div>
             {!channels?.length && <p className="text-xs text-muted-foreground">{t('form.noChannels')}</p>}
