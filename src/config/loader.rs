@@ -300,6 +300,7 @@ pub fn seed_from_config(
                         weight: ep.weight,
                         timeout_secs: ep.timeout_secs,
                         enabled: true,
+                        enable_gzip: false,
                     })
                     .collect(),
             };

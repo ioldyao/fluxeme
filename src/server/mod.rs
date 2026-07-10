@@ -5,6 +5,7 @@ use std::sync::{Arc, RwLock};
 use axum::Router;
 use axum::http::HeaderValue;
 use tower::ServiceBuilder;
+use tower_http::compression::CompressionLayer;
 use tower_http::cors::{CorsLayer, AllowOrigin};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
@@ -98,6 +99,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .fallback(tower_http::services::ServeFile::new("web/index.html")),
         )
         .layer(TraceLayer::new_for_http())
+        .layer(CompressionLayer::new())
         .layer(cors)
         .layer(security_headers)
         .with_state(state)

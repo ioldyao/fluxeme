@@ -41,10 +41,15 @@ impl VllmAdapter {
         }
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-        let (body_bytes, content_encoding) = super::compress_json_body(&body);
-        let mut req = client.post(&url).headers(headers).body(body_bytes);
-        if let Some(ce) = content_encoding {
-            req = req.header("Content-Encoding", ce);
+        let mut req = client.post(&url).headers(headers);
+        if endpoint.enable_gzip {
+            let (body_bytes, content_encoding) = super::compress_json_body(&body);
+            req = req.body(body_bytes);
+            if let Some(ce) = content_encoding {
+                req = req.header("Content-Encoding", ce);
+            }
+        } else {
+            req = req.json(&body);
         }
         let resp = req.send().await
             .map_err(|e| ProviderError(format!("Request failed: {}", e)))?;
@@ -98,10 +103,15 @@ impl ProviderAdapter for VllmAdapter {
         }
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-        let (body_bytes, content_encoding) = super::compress_json_body(&body);
-        let mut req = client.post(&url).headers(headers).body(body_bytes);
-        if let Some(ce) = content_encoding {
-            req = req.header("Content-Encoding", ce);
+        let mut req = client.post(&url).headers(headers);
+        if endpoint.enable_gzip {
+            let (body_bytes, content_encoding) = super::compress_json_body(&body);
+            req = req.body(body_bytes);
+            if let Some(ce) = content_encoding {
+                req = req.header("Content-Encoding", ce);
+            }
+        } else {
+            req = req.json(&body);
         }
         let response = req.send().await
             .map_err(|e| ProviderError(format!("Stream request failed: {}", e)))?;

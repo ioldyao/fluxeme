@@ -37,6 +37,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Channel>, crate::db::DbError> {
                     weight: row.get(4)?,
                     timeout_secs: row.get(5)?,
                     enabled: row.get::<_, i32>(6)? != 0,
+                    enable_gzip: false,
                 },
             ))
         })?
@@ -128,6 +129,7 @@ fn list_endpoints(
             weight: row.get(4)?,
             timeout_secs: row.get(5)?,
             enabled: row.get::<_, i32>(6)? != 0,
+            enable_gzip: false,
         })
     })?;
     let mut eps = Vec::new();
@@ -150,6 +152,7 @@ pub fn get_endpoint(conn: &Connection, id: i64) -> Result<Option<Endpoint>, crat
             weight: row.get(4)?,
             timeout_secs: row.get(5)?,
             enabled: row.get::<_, i32>(6)? != 0,
+            enable_gzip: false,
         })
     })?;
     match rows.next() {
