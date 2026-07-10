@@ -95,6 +95,7 @@ const en: Record<string, string> = {
   'usage.cost': 'Cost',
   'usage.channel': 'Channel',
   'usage.apiKey': 'API Key',
+  'usage.apiFormat': 'API Format',
   'common.loading': 'Loading...',
   'common.save': 'Save',
   'common.cancel': 'Cancel',

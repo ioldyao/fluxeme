@@ -154,6 +154,10 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                 </div>
               )}
               <div className="rounded-lg border p-3 space-y-1">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('usage.apiFormat')}</div>
+                <div className="font-medium font-mono text-xs">{record.api_format ?? '—'}</div>
+              </div>
+              <div className="rounded-lg border p-3 space-y-1">
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('table.time')}</div>
                 <div className="font-medium text-xs">{new Date(record.timestamp).toLocaleString()}</div>
               </div>

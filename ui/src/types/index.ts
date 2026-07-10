@@ -95,6 +95,7 @@ export interface UsageRecord {
   response_body?: string | null;
   reasoning_body?: string | null;
   api_key_name?: string | null;
+  api_format?: string;
 }
 
 export interface DashboardStats {

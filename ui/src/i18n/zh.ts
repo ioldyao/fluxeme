@@ -95,6 +95,7 @@ const zh: Record<string, string> = {
   'usage.cost': '费用',
   'usage.channel': '渠道',
   'usage.apiKey': 'API Key',
+  'usage.apiFormat': '请求格式',
   'common.loading': '加载中...',
   'common.save': '保存',
   'common.cancel': '取消',

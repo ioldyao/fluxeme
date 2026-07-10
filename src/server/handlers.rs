@@ -425,6 +425,7 @@ struct UsageTrackingStream<S> {
     model: String,
     start: Instant,
     req_body: Option<String>,
+    api_format: String,
     recorded: bool,
 }
 
@@ -479,6 +480,7 @@ impl<S> UsageTrackingStream<S> {
             success: completed,
             request_body: self.req_body.clone(),
             api_key_name: Some(self.api_key_name.clone()),
+            api_format: self.api_format.clone(),
             reasoning_body: {
                 let (reasoning, _) = extract_sse_content(&self.resp_buf);
                 Some(if reasoning.len() > 102400 {
@@ -531,6 +533,7 @@ async fn handle_streaming(
                 model,
                 start,
                 req_body,
+                api_format: "openai".to_string(),
                 recorded: false,
             };
 
@@ -566,6 +569,7 @@ async fn handle_streaming(
                 response_body: None,
                 reasoning_body: None,
                 api_key_name: Some(api_key_name),
+                api_format: "openai".to_string(),
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -605,6 +609,7 @@ async fn handle_messages_streaming(
                 model,
                 start,
                 req_body,
+                api_format: "anthropic".to_string(),
                 recorded: false,
             };
 
@@ -640,6 +645,7 @@ async fn handle_messages_streaming(
                 response_body: None,
                 reasoning_body: None,
                 api_key_name: Some(api_key_name),
+                api_format: "anthropic".to_string(),
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -706,6 +712,7 @@ async fn handle_non_streaming(
                     response_body: serde_json::to_string(&resp).ok(),
                     reasoning_body: reasoning,
                     api_key_name: Some(api_key_name),
+                    api_format: "openai".to_string(),
                 });
 
                 return Ok(Json(resp).into_response());
@@ -735,6 +742,7 @@ async fn handle_non_streaming(
                     response_body: None,
                     reasoning_body: None,
                     api_key_name: None,
+                    api_format: "openai".to_string(),
                 });
                 return Err(GatewayError::Upstream(e.0));
             }
@@ -761,6 +769,7 @@ async fn handle_non_streaming(
         response_body: None,
         reasoning_body: None,
         api_key_name: None,
+        api_format: "openai".to_string(),
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -832,6 +841,7 @@ async fn handle_messages_non_streaming(
                     response_body: serde_json::to_string(&resp).ok(),
                     reasoning_body: reasoning,
                     api_key_name: Some(api_key_name),
+                    api_format: "anthropic".to_string(),
                 });
 
                 return Ok(Json(resp).into_response());
@@ -858,6 +868,7 @@ async fn handle_messages_non_streaming(
                     response_body: None,
                     reasoning_body: None,
                     api_key_name: None,
+                    api_format: "anthropic".to_string(),
                 });
                 return Err(GatewayError::Upstream(e.0));
             }
@@ -883,6 +894,7 @@ async fn handle_messages_non_streaming(
         response_body: None,
         reasoning_body: None,
         api_key_name: None,
+        api_format: "anthropic".to_string(),
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -1053,6 +1065,7 @@ async fn relay_to_upstream(
                     response_body: serde_json::to_string(&resp).ok(),
                     reasoning_body: reasoning,
                     api_key_name: Some(user.api_key_name.clone()),
+                    api_format: "relay".to_string(),
                 });
 
                 return Ok(Json(resp).into_response());
@@ -1079,6 +1092,7 @@ async fn relay_to_upstream(
                     response_body: None,
                     reasoning_body: None,
                     api_key_name: Some(user.api_key_name.clone()),
+                    api_format: "relay".to_string(),
                 });
                 return Err(GatewayError::from(e));
             }
@@ -1103,6 +1117,7 @@ async fn relay_to_upstream(
         response_body: None,
         reasoning_body: None,
         api_key_name: Some(user.api_key_name),
+        api_format: "relay".to_string(),
     });
     Err(GatewayError::Upstream(err_msg))
 }
