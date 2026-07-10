@@ -2,12 +2,14 @@ pub mod openai;
 pub mod anthropic;
 pub mod vllm;
 
+use std::net::{IpAddr, ToSocketAddrs};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
 use futures::stream::Stream;
 use serde_json::Value;
+use url::Url;
 
 use crate::config::types::EndpointConfig;
 
@@ -68,6 +70,59 @@ pub trait ProviderAdapter: Send + Sync {
             "Relay not supported for path: {}",
             path
         )))
+    }
+}
+
+/// Validate that an endpoint URL doesn't resolve to a private/reserved IP (SSRF protection).
+pub fn validate_endpoint_url(url_str: &str) -> Result<(), ProviderError> {
+    let parsed = Url::parse(url_str).map_err(|_| {
+        ProviderError("Invalid endpoint URL format".into())
+    })?;
+    let host = parsed.host_str().ok_or_else(|| {
+        ProviderError("Endpoint URL has no host".into())
+    })?;
+
+    // Check if host is an IP literal
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_private_ip(&ip) {
+            return Err(ProviderError(
+                "SSRF blocked: endpoint resolves to a private or reserved IP address".into(),
+            ));
+        }
+        return Ok(());
+    }
+
+    // Resolve hostname to IP addresses
+    let addr_iter = format!("{}:0", host).to_socket_addrs().map_err(|_| {
+        ProviderError(format!("Failed to resolve endpoint host: {}", host))
+    })?;
+
+    for addr in addr_iter {
+        if is_private_ip(&addr.ip()) {
+            return Err(ProviderError(
+                "SSRF blocked: endpoint resolves to a private or reserved IP address".into(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn is_private_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.to_ipv4_mapped().is_some_and(|v4| {
+                    v4.is_private() || v4.is_loopback()
+                })
+        }
     }
 }
 

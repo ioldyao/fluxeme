@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import type { UserRole, LoginResponse } from '@/types';
 
 interface AuthState {
@@ -33,8 +33,9 @@ export const useAuth = create<AuthState>()(
           userName: null,
         }),
     }),
-    // WARNING: JWT token stored in localStorage — accessible to any JS in same origin.
-    // For production, migrate to httpOnly cookies.
-    { name: 'auth' },
+    {
+      name: 'auth',
+      storage: createJSONStorage(() => sessionStorage),
+    },
   ),
 );

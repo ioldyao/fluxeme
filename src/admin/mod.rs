@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::{Json, Router};
@@ -193,15 +193,18 @@ struct LoginReq {
 
 async fn admin_login(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     Json(req): Json<LoginReq>,
 ) -> Result<Json<Value>, AdminError> {
-    // Rate limit login attempts by IP
-    let client_ip = headers
+    // Rate limit login attempts by real peer IP
+    let client_ip = addr.ip().to_string();
+    if let Some(fwd) = headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        .or_else(|| headers.get("x-real-ip").and_then(|v| v.to_str().ok()))
-        .unwrap_or("unknown");
+    {
+        tracing::debug!(real_ip = %client_ip, forwarded_for = %fwd, "login attempt");
+    }
     state
         .rate_limiter
         .check_rpm(&format!("login:{}", client_ip), 10)

@@ -52,7 +52,7 @@ pub fn resolve_jwt_secret(cfg: &AppConfig) -> String {
         });
 
     if secret == "ai-gateway-jwt-secret-change-me" {
-        tracing::warn!("CRITICAL: Using default JWT secret! Set GATEWAY_JWT_SECRET env var or configure jwt_secret.");
+        panic!("CRITICAL: Default JWT secret is not allowed in production! Set GATEWAY_JWT_SECRET env var or configure jwt_secret in config.yaml.");
     }
 
     secret

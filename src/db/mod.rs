@@ -726,6 +726,17 @@ impl Database {
         Ok(result)
     }
 
+    /// Delete usage log records older than the given cutoff timestamp.
+    /// Returns the number of deleted rows.
+    pub fn purge_usage_logs(&self, cutoff: &str) -> Result<usize, DbError> {
+        let conn = self.conn()?;
+        let count = conn.execute(
+            "DELETE FROM usage_logs WHERE timestamp < ?1",
+            rusqlite::params![cutoff],
+        )?;
+        Ok(count)
+    }
+
     pub fn usage_stats_since(
         &self,
         since: &str,

@@ -17,6 +17,7 @@ impl VllmAdapter {
         path: &str,
         body: Value,
     ) -> Result<Value, ProviderError> {
+        super::validate_endpoint_url(&endpoint.url)?;
         let client = shared_client();
 
         let base = endpoint.url.trim_end_matches('/');
@@ -55,9 +56,10 @@ impl VllmAdapter {
             .map_err(|e| ProviderError(format!("Failed to parse response: {}", e)))?;
 
         if !status.is_success() {
+            tracing::error!(%status, body = %resp_body, "vllm upstream request failed");
             return Err(ProviderError(format!(
-                "Upstream returned {}: {}",
-                status, resp_body
+                "Upstream request failed with status {}",
+                status.as_u16()
             )));
         }
 
@@ -80,6 +82,7 @@ impl ProviderAdapter for VllmAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<StreamResult, ProviderError> {
+        super::validate_endpoint_url(&endpoint.url)?;
         let client = shared_client();
 
         let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
@@ -109,9 +112,10 @@ impl ProviderAdapter for VllmAdapter {
                 .text()
                 .await
                 .unwrap_or_default();
+            tracing::error!(%status, body = %body, "vllm upstream stream request failed");
             return Err(ProviderError(format!(
-                "Upstream returned {}: {}",
-                status, body
+                "Upstream request failed with status {}",
+                status.as_u16()
             )));
         }
 

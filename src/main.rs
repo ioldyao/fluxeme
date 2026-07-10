@@ -34,7 +34,7 @@ async fn main() {
         std::env::var("GATEWAY_CONFIG").unwrap_or_else(|_| "config/config.yaml".to_string());
 
     // Load config (server settings only)
-    let raw_config = match loader::load_config(&config_path) {
+    let mut raw_config = match loader::load_config(&config_path) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!("Failed to load config: {}", e);
@@ -44,6 +44,16 @@ async fn main() {
 
     let addr = format!("{}:{}", raw_config.server.host, raw_config.server.port);
     let admin_username = raw_config.admin.username.clone();
+
+    // Resolve admin password: env var takes precedence over config file
+    if let Ok(env_password) = std::env::var("GATEWAY_ADMIN_PASSWORD") {
+        raw_config.admin.password = env_password;
+    } else {
+        tracing::warn!(
+            "Admin password from config file. Consider setting GATEWAY_ADMIN_PASSWORD env var."
+        );
+    }
+
     let db_path = raw_config.database.path.clone();
     let jwt_secret = loader::resolve_jwt_secret(&raw_config);
     let config = Arc::new(RwLock::new(raw_config));
@@ -92,6 +102,21 @@ async fn main() {
         },
     );
 
+    // Run usage log cleanup on startup
+    {
+        let days = config.read().unwrap().database.retention_days;
+        if days > 0 {
+            let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
+            let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%S").to_string();
+            match db.purge_usage_logs(&cutoff_str) {
+                Ok(count) => {
+                    tracing::info!("Purged {} usage log records older than {} days", count, days)
+                }
+                Err(e) => tracing::error!("Failed to purge usage logs: {}", e),
+            }
+        }
+    }
+
     let state = Arc::new(AppState {
         config,
         auth,
@@ -113,7 +138,12 @@ async fn main() {
         .await
         .expect("Failed to bind address");
 
-    axum::serve(listener, app).await.expect("Server error");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
+    .expect("Server error");
 
     usage_handle.abort();
 }

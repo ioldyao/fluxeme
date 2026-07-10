@@ -214,8 +214,8 @@ impl RoutingService {
         }
 
         Err(RouteError(format!(
-            "No route found for user '{}' model '{}'",
-            user_id, model
+            "No route found for model '{}'",
+            model
         )))
     }
 }

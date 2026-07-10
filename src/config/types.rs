@@ -4,6 +4,10 @@ fn default_db_path() -> String {
     "gateway.db".to_string()
 }
 
+fn default_retention_days() -> u64 {
+    90
+}
+
 fn default_weight() -> u32 {
     1
 }
@@ -34,6 +38,8 @@ pub struct AppConfig {
     pub jwt_secret: Option<String>,
     #[serde(default)]
     pub sso: SsoConfig,
+    #[serde(default)]
+    pub cors: CorsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -52,6 +58,29 @@ pub struct AdminConfig {
 pub struct DatabaseConfig {
     #[serde(default = "default_db_path")]
     pub path: String,
+    #[serde(default = "default_retention_days")]
+    pub retention_days: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CorsConfig {
+    #[serde(default = "default_allowed_origins")]
+    pub allowed_origins: Vec<String>,
+}
+
+impl Default for CorsConfig {
+    fn default() -> Self {
+        Self {
+            allowed_origins: default_allowed_origins(),
+        }
+    }
+}
+
+fn default_allowed_origins() -> Vec<String> {
+    vec![
+        "http://localhost:5173".to_string(),
+        "http://localhost:8080".to_string(),
+    ]
 }
 
 /// Resolved endpoint with credentials, passed to provider adapters.

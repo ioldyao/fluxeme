@@ -52,6 +52,7 @@ impl ProviderAdapter for AnthropicAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<Value, ProviderError> {
+        super::validate_endpoint_url(&endpoint.url)?;
         let client = shared_client();
 
         let url = format!("{}/v1/messages", endpoint.url.trim_end_matches('/'));
@@ -86,6 +87,7 @@ impl ProviderAdapter for AnthropicAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<StreamResult, ProviderError> {
+        super::validate_endpoint_url(&endpoint.url)?;
         let client = shared_client();
 
         let url = format!("{}/v1/messages", endpoint.url.trim_end_matches('/'));
@@ -102,9 +104,10 @@ impl ProviderAdapter for AnthropicAdapter {
         let status = response.status();
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
+            tracing::error!(%status, body = %text, "anthropic upstream stream request failed");
             return Err(ProviderError(format!(
-                "Upstream returned {}: {}",
-                status, text
+                "Upstream request failed with status {}",
+                status.as_u16()
             )));
         }
 
@@ -152,6 +155,7 @@ impl ProviderAdapter for AnthropicAdapter {
         path: &str,
         body: Value,
     ) -> Result<Value, ProviderError> {
+        super::validate_endpoint_url(&endpoint.url)?;
         let client = shared_client();
 
         let url = format!(
@@ -176,9 +180,10 @@ impl ProviderAdapter for AnthropicAdapter {
             .map_err(|e| ProviderError(format!("Failed to parse response: {}", e)))?;
 
         if !status.is_success() {
+            tracing::error!(%status, body = %resp_body, "anthropic relay request failed");
             return Err(ProviderError(format!(
-                "Upstream returned {}: {}",
-                status, resp_body
+                "Upstream request failed with status {}",
+                status.as_u16()
             )));
         }
 

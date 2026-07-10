@@ -3,8 +3,9 @@ pub mod handlers;
 use std::sync::{Arc, RwLock};
 
 use axum::Router;
+use axum::http::HeaderValue;
 use tower::ServiceBuilder;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{CorsLayer, AllowOrigin};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
@@ -29,8 +30,18 @@ pub struct AppState {
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
+    let allowed_origins: Vec<HeaderValue> = state
+        .config
+        .read()
+        .unwrap()
+        .cors
+        .allowed_origins
+        .iter()
+        .map(|o| o.parse().expect("Invalid origin URL in cors.allowed_origins"))
+        .collect();
+
     let cors = CorsLayer::new()
-        .allow_origin(tower_http::cors::Any)
+        .allow_origin(AllowOrigin::list(allowed_origins))
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,
@@ -52,6 +63,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::X_FRAME_OPTIONS,
             axum::http::HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            axum::http::HeaderValue::from_static(
+                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'",
+            ),
         ));
 
     Router::new()
