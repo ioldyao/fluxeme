@@ -106,6 +106,63 @@ fn trim_model(body: &mut Value) -> Result<String, GatewayError> {
     Ok(s)
 }
 
+/// Non-standard reasoning field names from various providers to normalize.
+const REASONING_ALIASES: &[&str] = &["reasoning", "thinking", "thinking_content"];
+
+fn rename_to_reasoning_content(obj: &mut serde_json::Map<String, Value>) {
+    if obj.contains_key("reasoning_content") {
+        return;
+    }
+    for &alias in REASONING_ALIASES {
+        if let Some(val) = obj.remove(alias) {
+            obj.insert("reasoning_content".into(), val);
+            return;
+        }
+    }
+}
+
+fn normalize_reasoning_inner(val: &mut Value) {
+    if let Some(choices) = val.get_mut("choices").and_then(|c| c.as_array_mut()) {
+        for choice in choices.iter_mut() {
+            if let Some(msg) = choice.get_mut("message").and_then(|m| m.as_object_mut()) {
+                rename_to_reasoning_content(msg);
+            }
+            if let Some(delta) = choice.get_mut("delta").and_then(|m| m.as_object_mut()) {
+                rename_to_reasoning_content(delta);
+            }
+        }
+    }
+}
+
+fn normalize_sse_reasoning(data: &str) -> String {
+    let mut out = String::with_capacity(data.len());
+    for line in data.lines() {
+        let trimmed = line.trim();
+        if let Some(json_str) = trimmed.strip_prefix("data: ") {
+            if json_str.trim() == "[DONE]" {
+                out.push_str(line);
+                out.push('\n');
+                continue;
+            }
+            if let Ok(mut val) = serde_json::from_str::<Value>(json_str) {
+                normalize_reasoning_inner(&mut val);
+                let indent = &line[..line.len() - trimmed.len()];
+                out.push_str(indent);
+                out.push_str("data: ");
+                out.push_str(&serde_json::to_string(&val).unwrap_or_default());
+                out.push('\n');
+            } else {
+                out.push_str(line);
+                out.push('\n');
+            }
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 struct RouteTarget {
     channel_id: String,
     endpoint: EndpointConfig,
@@ -293,6 +350,7 @@ async fn handle_streaming(
 
     match stream_result {
         Ok(stream) => {
+            let stream = stream.map(|data| normalize_sse_reasoning(&data));
             let usage_stream = UsageTrackingStream {
                 inner: stream,
                 resp_buf: String::new(),
@@ -366,7 +424,9 @@ async fn handle_non_streaming(
     let latency_ms = start.elapsed().as_millis() as u64;
 
     match result {
-        Ok(resp) => {
+        Ok(mut resp) => {
+            normalize_reasoning_inner(&mut resp);
+
             let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
             let completion_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0);
 
@@ -548,7 +608,8 @@ async fn relay_to_upstream(
     let req_body = serde_json::to_string(&body).ok();
 
     match route.adapter.relay(&route.endpoint, upstream_path, body).await {
-        Ok(resp) => {
+        Ok(mut resp) => {
+            normalize_reasoning_inner(&mut resp);
             let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
             let completion_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0);
 
