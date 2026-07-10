@@ -30,7 +30,8 @@ impl ProviderAdapter for OpenAIAdapter {
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-        tracing::info!(endpoint = %endpoint.url, "Sending request to upstream (openai)");
+        let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
+        tracing::info!(endpoint = %endpoint.url, body_size = %body_size, "Sending request to upstream (openai)");
 
         let req = client.post(&url).headers(headers).json(&body);
         let resp = req.send().await.map_err(|e| {
@@ -73,6 +74,9 @@ impl ProviderAdapter for OpenAIAdapter {
                 .map_err(|e| ProviderError(format!("Invalid API key: {}", e)))?,
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+        let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
+        tracing::info!(endpoint = %endpoint.url, body_size = %body_size, "Sending stream request to upstream (openai)");
 
         let req = client.post(&url).headers(headers).json(&body);
         let response = req.send().await

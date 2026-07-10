@@ -41,6 +41,9 @@ impl VllmAdapter {
         }
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
+        let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
+        tracing::info!(endpoint = %endpoint.url, body_size = %body_size, path = %path, "Sending request to upstream (vllm)");
+
         let req = client.post(&url).headers(headers).json(&body);
         let resp = req.send().await
             .map_err(|e| ProviderError(format!("Request failed: {}", e)))?;
@@ -93,6 +96,9 @@ impl ProviderAdapter for VllmAdapter {
             );
         }
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+        let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
+        tracing::info!(endpoint = %endpoint.url, body_size = %body_size, "Sending stream request to upstream (vllm)");
 
         let req = client.post(&url).headers(headers).json(&body);
         let response = req.send().await

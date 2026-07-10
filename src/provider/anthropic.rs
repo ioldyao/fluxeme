@@ -58,7 +58,8 @@ impl ProviderAdapter for AnthropicAdapter {
         let url = format!("{}/v1/messages", endpoint.url.trim_end_matches('/'));
         let headers = build_anthropic_headers(endpoint)?;
 
-        tracing::info!(endpoint = %endpoint.url, "Sending request to upstream");
+        let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
+        tracing::info!(endpoint = %endpoint.url, body_size = %body_size, "Sending request to upstream (anthropic)");
 
         let req = client.post(&url).headers(headers).json(&body);
         let resp = req.send().await.map_err(|e| {
@@ -92,6 +93,9 @@ impl ProviderAdapter for AnthropicAdapter {
 
         let url = format!("{}/v1/messages", endpoint.url.trim_end_matches('/'));
         let headers = build_anthropic_headers(endpoint)?;
+
+        let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
+        tracing::info!(endpoint = %endpoint.url, body_size = %body_size, "Sending stream request to upstream (anthropic)");
 
         let req = client.post(&url).headers(headers).json(&body);
         let response = req.send().await
@@ -160,6 +164,9 @@ impl ProviderAdapter for AnthropicAdapter {
             path.trim_start_matches('/')
         );
         let headers = build_anthropic_headers(endpoint)?;
+
+        let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
+        tracing::info!(endpoint = %endpoint.url, body_size = %body_size, "Sending relay request to upstream (anthropic)");
 
         let req = client.post(&url).headers(headers).json(&body);
         let resp = req.send().await

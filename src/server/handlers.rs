@@ -912,10 +912,13 @@ pub async fn chat_completions(
     let request_id = Uuid::new_v4().to_string();
     let start = Instant::now();
 
+    let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
+    let content_len = headers.get("content-length").and_then(|v| v.to_str().ok()).unwrap_or("unknown");
+
     let user = state.auth.authenticate(&headers)?;
     let model = trim_model(&mut body)?;
 
-    tracing::info!(request_id, user = %user.user_id, model = %model, "Incoming request");
+    tracing::info!(request_id, user = %user.user_id, model = %model, body_size = %body_size, content_length = %content_len, "Incoming request");
 
     if let Some(ref allowed) = user.allowed_models {
         if !allowed.contains(&model) {
@@ -961,10 +964,12 @@ pub async fn messages(
     let request_id = Uuid::new_v4().to_string();
     let start = Instant::now();
 
+    let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
+
     let user = state.auth.authenticate(&headers)?;
     let model = trim_model(&mut body)?;
 
-    tracing::info!(request_id, user = %user.user_id, model = %model, "Incoming messages request");
+    tracing::info!(request_id, user = %user.user_id, model = %model, body_size = %body_size, "Incoming messages request");
 
     if let Some(ref allowed) = user.allowed_models {
         if !allowed.contains(&model) {

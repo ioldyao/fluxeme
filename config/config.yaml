@@ -6,7 +6,7 @@ admin:
   password: admin123
 database:
   path: data/gateway.db
-jwt_secret: ai-gateway-jwt-secret-change-me
+jwt_secret: kavPPuhLK2uCfywwCpWRfwcaHZENcdyP
 
 # SSO / 统一身份认证 (OIDC)
 sso:
