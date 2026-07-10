@@ -1155,19 +1155,47 @@ pub async fn health() -> Json<Value> {
 pub async fn list_models(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<Value>, GatewayError> {
     let user = state.auth.authenticate(&headers)?;
     let subs = state.db.list_subscriptions(&user.user_id).unwrap_or_default();
     let subscribed: std::collections::HashSet<String> = subs.iter().map(|m| m.id.clone()).collect();
 
-    let models: Vec<Value> = state.routing.list_display_models()
+    let mut models: Vec<Value> = state.routing.list_display_models()
         .into_iter()
         .filter(|m| subscribed.contains(m["upstream_id"].as_str().unwrap_or("")))
         .collect();
 
+    let limit: usize = params.get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(20)
+        .min(1000);
+
+    let after_id = params.get("after_id");
+    let before_id = params.get("before_id");
+
+    if let Some(after) = after_id {
+        if let Some(pos) = models.iter().position(|m| m["id"].as_str() == Some(after)) {
+            models = models.split_off(pos + 1);
+        }
+    }
+    if let Some(before) = before_id {
+        if let Some(pos) = models.iter().position(|m| m["id"].as_str() == Some(before)) {
+            models.truncate(pos);
+        }
+    }
+
+    let has_more = models.len() > limit;
+    models.truncate(limit);
+
+    let first_id = models.first().and_then(|m| m["id"].as_str().map(|s| s.to_string()));
+    let last_id = models.last().and_then(|m| m["id"].as_str().map(|s| s.to_string()));
+
     Ok(Json(serde_json::json!({
-        "object": "list",
         "data": models,
+        "first_id": first_id,
+        "has_more": has_more,
+        "last_id": last_id,
     })))
 }
 

@@ -34,7 +34,7 @@ impl ProviderAdapter for AnthropicAdapter {
     ) -> Result<Value, ProviderError> {
         let client = shared_client();
 
-        let url = format!("{}/messages", endpoint.url.trim_end_matches('/'));
+        let url = format!("{}/v1/messages", endpoint.url.trim_end_matches('/'));
         let anthropic_body = openai_to_anthropic(&body);
 
         let headers = build_anthropic_headers(endpoint)?;
@@ -71,7 +71,7 @@ impl ProviderAdapter for AnthropicAdapter {
     ) -> Result<StreamResult, ProviderError> {
         let client = shared_client();
 
-        let url = format!("{}/messages", endpoint.url.trim_end_matches('/'));
+        let url = format!("{}/v1/messages", endpoint.url.trim_end_matches('/'));
         let anthropic_body = openai_to_anthropic(&body);
 
         let headers = build_anthropic_headers(endpoint)?;
@@ -151,7 +151,7 @@ impl ProviderAdapter for AnthropicAdapter {
         body: Value,
     ) -> Result<Value, ProviderError> {
         let client = shared_client();
-        let url = format!("{}/messages", endpoint.url.trim_end_matches('/'));
+        let url = format!("{}/v1/messages", endpoint.url.trim_end_matches('/'));
         let headers = build_anthropic_headers(endpoint)?;
 
         let resp = client
@@ -185,7 +185,7 @@ impl ProviderAdapter for AnthropicAdapter {
         body: Value,
     ) -> Result<StreamResult, ProviderError> {
         let client = shared_client();
-        let url = format!("{}/messages", endpoint.url.trim_end_matches('/'));
+        let url = format!("{}/v1/messages", endpoint.url.trim_end_matches('/'));
         let headers = build_anthropic_headers(endpoint)?;
 
         let response = client

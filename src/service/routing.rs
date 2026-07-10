@@ -144,11 +144,15 @@ impl RoutingService {
             .map(|m| {
                 serde_json::json!({
                     "id": m.name,
-                    "object": "model",
-                    "created": 0,
-                    "owned_by": "gateway",
+                    "type": "model",
+                    "display_name": m.name,
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "max_input_tokens": m.context_length.unwrap_or(0),
+                    "max_tokens": m.context_length.unwrap_or(0),
+                    "capabilities": {},
                     "upstream_id": m.id,
                     "model_pattern": m.model_pattern,
+                    "category": m.category,
                 })
             })
             .collect()

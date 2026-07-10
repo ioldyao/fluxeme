@@ -41,6 +41,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .allow_headers([
             axum::http::header::AUTHORIZATION,
             axum::http::header::CONTENT_TYPE,
+            axum::http::header::HeaderName::from_static("x-api-key"),
         ]);
 
     let security_headers = ServiceBuilder::new()
