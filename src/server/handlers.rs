@@ -448,7 +448,10 @@ pub async fn chat_completions(
         state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens(&body))?;
     }
 
-    let channel_id = state.routing.route(&user.user_id, &model)?;
+    let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model)?;
+    if let Some(ref id) = upstream_model {
+        body["model"] = Value::String(id.clone());
+    }
     let route = resolve_route(&state, &channel_id)?;
     let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
 
@@ -490,7 +493,10 @@ pub async fn messages(
         state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body))?;
     }
 
-    let channel_id = state.routing.route(&user.user_id, &model)?;
+    let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model)?;
+    if let Some(ref id) = upstream_model {
+        body["model"] = Value::String(id.clone());
+    }
     let route = resolve_route(&state, &channel_id)?;
     let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
 
@@ -533,7 +539,10 @@ async fn relay_to_upstream(
         state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens(&body))?;
     }
 
-    let channel_id = state.routing.route(&user.user_id, &model)?;
+    let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model)?;
+    if let Some(ref id) = upstream_model {
+        body["model"] = Value::String(id.clone());
+    }
     let route = resolve_route(state, &channel_id)?;
     let latency_ms = start.elapsed().as_millis() as u64;
     let req_body = serde_json::to_string(&body).ok();
@@ -652,7 +661,7 @@ pub async fn list_models(
 
     let models: Vec<Value> = state.routing.list_display_models()
         .into_iter()
-        .filter(|m| subscribed.contains(m["id"].as_str().unwrap_or("")))
+        .filter(|m| subscribed.contains(m["upstream_id"].as_str().unwrap_or("")))
         .collect();
 
     Ok(Json(serde_json::json!({

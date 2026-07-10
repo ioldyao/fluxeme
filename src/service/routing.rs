@@ -109,18 +109,18 @@ impl RoutingService {
             .iter()
             .map(|m| {
                 serde_json::json!({
-                    "id": m.id,
+                    "id": m.name,
                     "object": "model",
                     "created": 0,
                     "owned_by": "gateway",
-                    "name": m.name,
+                    "upstream_id": m.id,
                     "model_pattern": m.model_pattern,
                 })
             })
             .collect()
     }
 
-    pub fn route(&self, user_id: &str, model: &str) -> Result<String, RouteError> {
+    pub fn route(&self, user_id: &str, model: &str) -> Result<(String, Option<String>), RouteError> {
         // Load subscribed model IDs for this user
         let subscribed: HashSet<String> = self.db.list_subscribed_model_ids(user_id)
             .unwrap_or_default()
@@ -134,7 +134,7 @@ impl RoutingService {
                 if !subscribed.contains(&model_cfg.id) {
                     continue; // skip models the user isn't subscribed to
                 }
-                if match_pattern(model, &model_cfg.model_pattern) {
+                if match_pattern(model, &model_cfg.model_pattern) || (!model_cfg.name.is_empty() && model == model_cfg.name) {
                     let mut bindings: Vec<&crate::domain::model::ModelChannel> =
                         model_cfg.channels.iter().collect();
                     bindings.sort_by_key(|b| b.priority);
@@ -142,7 +142,7 @@ impl RoutingService {
                     for binding in &bindings {
                         if let Some(ch) = self.channels.read().unwrap_or_else(|e| e.into_inner()).get(&binding.channel_id) {
                             if ch.enabled {
-                                return Ok(ch.id.clone());
+                                return Ok((ch.id.clone(), Some(model_cfg.id.clone())));
                             }
                         }
                     }
@@ -171,7 +171,7 @@ impl RoutingService {
             matched.sort_by_key(|(p, _)| *p);
 
             if let Some((_, id)) = matched.first() {
-                return Ok(id.clone());
+                return Ok((id.clone(), None));
             }
         }
 

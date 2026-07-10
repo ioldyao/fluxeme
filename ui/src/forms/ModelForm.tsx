@@ -69,12 +69,12 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
           {!model && (
             <div className="space-y-2">
               <Label>{t('form.modelName')}</Label>
-              <Input value={id} onChange={(e) => setId(e.target.value)} required />
+              <Input value={id} onChange={(e) => setId(e.target.value)} placeholder="gpt-4, claude-sonnet-4-20250514" required />
             </div>
           )}
           <div className="space-y-2">
             <Label>{t('form.name')}</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} required />
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('form.namePlaceholder')} required />
           </div>
           <div className="space-y-2">
             <Label>{t('form.modelPattern')}</Label>
