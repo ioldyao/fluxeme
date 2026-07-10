@@ -112,6 +112,7 @@ const en: Record<string, string> = {
   'common.done': 'Done',
   'common.days': 'days',
   'common.notFound': 'Not found',
+  'common.pageSize': 'Page size',
   'login.title': 'Sign In',
   'login.subtitle': 'AI Gateway Platform',
   'login.username': 'Username',

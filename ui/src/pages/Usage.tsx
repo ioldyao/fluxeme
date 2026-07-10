@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Search, RefreshCw, CheckCircle2, XCircle, BarChart3, List } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -74,8 +75,8 @@ export default function Usage() {
         </TabsList>
 
         <TabsContent value="list" className="space-y-4">
-          {role === 'admin' && (
-            <div className="flex gap-2">
+          <div className="flex gap-2">
+            {role === 'admin' && (
               <div className="relative flex-1 max-w-xs">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
                 <Input
@@ -83,10 +84,22 @@ export default function Usage() {
                   value={userFilter} onChange={(e) => setUserFilter(e.target.value)}
                 />
               </div>
-              <Input type="number" className="w-20" value={limit}
-                onChange={(e) => setLimit(Number(e.target.value) || 50)} />
+            )}
+            <div className="flex items-center gap-2 ml-auto">
+              <span className="text-xs text-muted-foreground whitespace-nowrap">{t('common.pageSize')}</span>
+              <Select value={String(limit)} onValueChange={(v) => setLimit(Number(v))}>
+                <SelectTrigger className="w-20 h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="20">20</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                  <SelectItem value="200">200</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-          )}
+          </div>
 
           <Card>
             <CardContent className="p-0">

@@ -112,6 +112,7 @@ const zh: Record<string, string> = {
   'common.done': '完成',
   'common.days': '天',
   'common.notFound': '未找到',
+  'common.pageSize': '每页行数',
   'login.title': '登录',
   'login.subtitle': 'AI 网关平台',
   'login.username': '用户名',
