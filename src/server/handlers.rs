@@ -727,7 +727,7 @@ async fn handle_non_streaming(
                 // return immediately without retrying.
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
-                    request_id,
+                    request_id: request_id.clone(),
                     user_id,
                     user_name,
                     channel_id,
@@ -744,6 +744,7 @@ async fn handle_non_streaming(
                     api_key_name: None,
                     api_format: "openai".to_string(),
                 });
+                tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Upstream request failed (retries exhausted)");
                 return Err(GatewayError::Upstream(e.0));
             }
         }
@@ -853,7 +854,7 @@ async fn handle_messages_non_streaming(
             Err(e) => {
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
-                    request_id,
+                    request_id: request_id.clone(),
                     user_id,
                     user_name,
                     channel_id,
@@ -870,6 +871,7 @@ async fn handle_messages_non_streaming(
                     api_key_name: None,
                     api_format: "anthropic".to_string(),
                 });
+                tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Messages upstream request failed (retries exhausted)");
                 return Err(GatewayError::Upstream(e.0));
             }
         }
@@ -913,6 +915,8 @@ pub async fn chat_completions(
     let user = state.auth.authenticate(&headers)?;
     let model = trim_model(&mut body)?;
 
+    tracing::info!(request_id, user = %user.user_id, model = %model, "Incoming request");
+
     if let Some(ref allowed) = user.allowed_models {
         if !allowed.contains(&model) {
             return Err(GatewayError::Auth(format!("Model '{}' not allowed for this API key", model)));
@@ -930,6 +934,8 @@ pub async fn chat_completions(
     }
     let mut route = resolve_route(&state, &channel_id)?;
     let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    tracing::info!(request_id, channel = %channel_id, endpoint = %route.endpoint.url, "Routing resolved");
 
     if is_streaming {
         handle_streaming(
@@ -958,6 +964,8 @@ pub async fn messages(
     let user = state.auth.authenticate(&headers)?;
     let model = trim_model(&mut body)?;
 
+    tracing::info!(request_id, user = %user.user_id, model = %model, "Incoming messages request");
+
     if let Some(ref allowed) = user.allowed_models {
         if !allowed.contains(&model) {
             return Err(GatewayError::Auth(format!("Model '{}' not allowed for this API key", model)));
@@ -975,6 +983,8 @@ pub async fn messages(
     }
     let mut route = resolve_route(&state, &channel_id)?;
     let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    tracing::info!(request_id, channel = %channel_id, endpoint = %route.endpoint.url, "Messages routing resolved");
 
     if is_streaming {
         handle_messages_streaming(

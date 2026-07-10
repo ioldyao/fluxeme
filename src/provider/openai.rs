@@ -30,13 +30,18 @@ impl ProviderAdapter for OpenAIAdapter {
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
+        tracing::info!(endpoint = %endpoint.url, "Sending request to upstream (openai)");
+
         let resp = client
             .post(&url)
             .headers(headers)
             .json(&body)
             .send()
             .await
-            .map_err(|e| ProviderError(format!("Request failed: {}", e)))?;
+            .map_err(|e| {
+                tracing::error!(endpoint = %endpoint.url, error = %e, "OpenAI upstream HTTP request failed");
+                ProviderError(format!("Request failed: {}", e))
+            })?;
 
         let status = resp.status();
         let resp_body: Value = resp

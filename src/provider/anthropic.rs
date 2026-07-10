@@ -58,13 +58,18 @@ impl ProviderAdapter for AnthropicAdapter {
         let url = format!("{}/v1/messages", endpoint.url.trim_end_matches('/'));
         let headers = build_anthropic_headers(endpoint)?;
 
+        tracing::info!(endpoint = %endpoint.url, "Sending request to upstream");
+
         let resp = client
             .post(&url)
             .headers(headers)
             .json(&body)
             .send()
             .await
-            .map_err(|e| ProviderError(format!("Request failed: {}", e)))?;
+            .map_err(|e| {
+                tracing::error!(endpoint = %endpoint.url, error = %e, "Upstream HTTP request failed");
+                ProviderError(format!("Request failed: {}", e))
+            })?;
 
         let status = resp.status();
         let resp_body: Value = resp
