@@ -126,25 +126,25 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                 <div className="font-medium font-mono">{record.latency_ms}ms</div>
               </div>
               <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Prompt tokens</div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('usage.promptTokens')}</div>
                 <div className="font-medium font-mono">{record.prompt_tokens.toLocaleString()}</div>
               </div>
               <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Completion tokens</div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('usage.completionTokens')}</div>
                 <div className="font-medium font-mono">{record.completion_tokens.toLocaleString()}</div>
               </div>
               <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Total tokens</div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('usage.totalTokens')}</div>
                 <div className="font-medium font-mono">{record.total_tokens.toLocaleString()}</div>
               </div>
               <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Cost</div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('usage.cost')}</div>
                 <div className="font-medium font-mono">
                   {costStr || <span className="text-muted-foreground text-xs">—</span>}
                 </div>
               </div>
               <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Channel</div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('usage.channel')}</div>
                 <div className="font-medium font-mono text-xs truncate">{record.channel_id}</div>
               </div>
               {record.api_key_name && (
