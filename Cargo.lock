@@ -39,7 +39,6 @@ dependencies = [
  "bytes",
  "chrono",
  "dashmap",
- "flate2",
  "futures",
  "jsonwebtoken",
  "reqwest",

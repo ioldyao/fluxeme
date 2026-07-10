@@ -28,8 +28,6 @@ pub struct Endpoint {
     pub timeout_secs: Option<u64>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-    #[serde(default)]
-    pub enable_gzip: bool,
 }
 
 fn default_priority() -> i32 {

@@ -53,7 +53,6 @@ impl RoutingService {
                         weight: ep.weight,
                         timeout_secs: ep.timeout_secs,
                         enabled: ep.enabled,
-                        enable_gzip: ep.enable_gzip,
                     })
                     .collect();
                 cache_map.insert(id.clone(), (ch.provider.clone(), Arc::new(LoadBalancer::new(&endpoints)), endpoints));
@@ -97,7 +96,6 @@ impl RoutingService {
                 weight: ep.weight,
                 timeout_secs: ep.timeout_secs,
                 enabled: ep.enabled,
-                enable_gzip: ep.enable_gzip,
             })
             .collect();
         Some((ch.provider.clone(), endpoints))

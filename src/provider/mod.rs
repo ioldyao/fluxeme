@@ -2,16 +2,12 @@ pub mod openai;
 pub mod anthropic;
 pub mod vllm;
 
-use std::io::Write;
 use std::net::{IpAddr, ToSocketAddrs};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-use bytes::Bytes;
-use flate2::write::GzEncoder;
-use flate2::Compression;
 use futures::stream::Stream;
 use serde_json::Value;
 use url::Url;
@@ -156,36 +152,6 @@ fn shared_client() -> Arc<reqwest::Client> {
             )
         })
         .clone()
-}
-
-/// Gzip-compress a JSON value if its serialized size exceeds THRESHOLD_BYTES.
-/// Returns (compressed_or_raw_bytes, optional_content_encoding).
-pub fn compress_json_body(body: &Value) -> (Bytes, Option<&'static str>) {
-    const THRESHOLD_BYTES: usize = 512;
-
-    let json_bytes = match serde_json::to_vec(body) {
-        Ok(b) => b,
-        Err(_) => return (Bytes::new(), None),
-    };
-
-    if json_bytes.len() < THRESHOLD_BYTES {
-        return (json_bytes.into(), None);
-    }
-
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    if encoder.write_all(&json_bytes).is_err() {
-        return (json_bytes.into(), None);
-    }
-    let compressed = match encoder.finish() {
-        Ok(c) => c,
-        Err(_) => return (json_bytes.into(), None),
-    };
-
-    if compressed.len() < json_bytes.len() {
-        (compressed.into(), Some("gzip"))
-    } else {
-        (json_bytes.into(), None)
-    }
 }
 
 pub struct ProviderRegistry {
