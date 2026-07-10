@@ -32,13 +32,12 @@ impl ProviderAdapter for OpenAIAdapter {
 
         tracing::info!(endpoint = %endpoint.url, "Sending request to upstream (openai)");
 
-        let resp = client
-            .post(&url)
-            .headers(headers)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
+        let (body_bytes, content_encoding) = super::compress_json_body(&body);
+        let mut req = client.post(&url).headers(headers).body(body_bytes);
+        if let Some(ce) = content_encoding {
+            req = req.header("Content-Encoding", ce);
+        }
+        let resp = req.send().await.map_err(|e| {
                 tracing::error!(endpoint = %endpoint.url, error = %e, "OpenAI upstream HTTP request failed");
                 ProviderError(format!("Request failed: {}", e))
             })?;
@@ -79,12 +78,12 @@ impl ProviderAdapter for OpenAIAdapter {
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-        let response = client
-            .post(&url)
-            .headers(headers)
-            .json(&body)
-            .send()
-            .await
+        let (body_bytes, content_encoding) = super::compress_json_body(&body);
+        let mut req = client.post(&url).headers(headers).body(body_bytes);
+        if let Some(ce) = content_encoding {
+            req = req.header("Content-Encoding", ce);
+        }
+        let response = req.send().await
             .map_err(|e| ProviderError(format!("Stream request failed: {}", e)))?;
 
         let status = response.status();
