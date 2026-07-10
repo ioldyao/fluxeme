@@ -1220,6 +1220,86 @@ async fn unsubscribe_model(
     Ok(Json(serde_json::json!({ "unsubscribed": model_id })))
 }
 
+#[derive(Deserialize)]
+struct TestConnectionBody {
+    model_id: String,
+}
+
+async fn test_subscription_connection(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<TestConnectionBody>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+
+    // Check the user is subscribed to this model
+    let subscribed = state
+        .db
+        .list_subscribed_model_ids(&session.user_id)
+        .map_err(|e| AdminError::internal(e.0))?;
+    if !subscribed.contains(&body.model_id) {
+        return Err(AdminError::forbidden("未订阅此模型"));
+    }
+
+    // Load model to get channel bindings
+    let model = state
+        .db
+        .get_model(&body.model_id)
+        .map_err(|e| AdminError::internal(e.0))?
+        .ok_or_else(|| AdminError::not_found("模型不存在"))?;
+
+    // Find the first enabled channel for this model (by priority)
+    let mut bindings = model.channels;
+    bindings.sort_by_key(|b| b.priority);
+
+    let channel_id = bindings
+        .iter()
+        .find_map(|b| state.routing.get_channel(&b.channel_id).filter(|ch| ch.enabled).map(|ch| ch.id.clone()))
+        .ok_or_else(|| AdminError::internal("该模型没有可用的通道"))?;
+
+    // Resolve provider adapter + endpoint from the channel
+    let (provider_name, balancer, _) = state
+        .routing
+        .get_route(&channel_id)
+        .ok_or_else(|| AdminError::internal("通道路由不可用"))?;
+
+    let adapter = state
+        .providers
+        .get(&provider_name)
+        .ok_or_else(|| AdminError::internal("未找到提供商适配器"))?;
+
+    let (endpoint_idx, endpoint) = balancer
+        .as_health_aware()
+        .select()
+        .ok_or_else(|| AdminError::internal("没有可用的端点"))?;
+
+    // Send a minimal chat completion as a connectivity probe
+    let test_body = serde_json::json!({
+        "model": model.model_pattern,
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 1,
+        "stream": false,
+    });
+
+    match adapter.chat_complete(endpoint, test_body).await {
+        Ok(resp) => {
+            balancer.as_health_aware().record_success(endpoint_idx);
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "model": resp.get("model"),
+                "status": "ok",
+            })))
+        }
+        Err(e) => {
+            balancer.as_health_aware().record_failure(endpoint_idx);
+            Ok(Json(serde_json::json!({
+                "success": false,
+                "error": e.0,
+            })))
+        }
+    }
+}
+
 // ── Routing Rule CRUD ─────────────────────────────────────────────
 
 async fn list_rules(
@@ -1602,6 +1682,10 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route(
             "/admin/api/me/subscriptions/{model_id}",
             axum::routing::post(subscribe_model).delete(unsubscribe_model),
+        )
+        .route(
+            "/admin/api/me/test-connection",
+            axum::routing::post(test_subscription_connection),
         )
         // Routing rules
         .route(

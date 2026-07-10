@@ -50,6 +50,13 @@ export function useUnsubscribeModel() {
   });
 }
 
+export function useTestModelConnection() {
+  return useMutation({
+    mutationFn: (modelId: string) =>
+      api<{ success: boolean; error?: string }>('/me/test-connection', { method: 'POST', body: { model_id: modelId } }),
+  });
+}
+
 export function useCreateModel() {
   const qc = useQueryClient();
   return useMutation({

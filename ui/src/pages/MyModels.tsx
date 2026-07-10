@@ -1,21 +1,42 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSubscriptions, useUnsubscribeModel } from '@/api/models';
+import { useSubscriptions, useUnsubscribeModel, useTestModelConnection } from '@/api/models';
 import { PageHeader } from '@/components/PageHeader';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { RefreshCw, Trash2, Loader2 } from 'lucide-react';
+import { RefreshCw, Trash2, Loader2, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function MyModels() {
   const { t } = useTranslation();
   const { data: models, isLoading, isError, refetch } = useSubscriptions();
   const unsubscribe = useUnsubscribeModel();
+  const testConnection = useTestModelConnection();
+  const [testingId, setTestingId] = useState<string | null>(null);
 
   const handleUnsubscribe = (modelId: string) => {
     unsubscribe.mutate(modelId, {
       onSuccess: () => { toast.success('已取消订阅'); refetch(); },
       onError: (err) => toast.error(err.message),
+    });
+  };
+
+  const handleTestConnection = (modelId: string) => {
+    setTestingId(modelId);
+    testConnection.mutate(modelId, {
+      onSuccess: (res) => {
+        setTestingId(null);
+        if (res.success) {
+          toast.success('连接成功');
+        } else {
+          toast.error(res.error || '连接失败');
+        }
+      },
+      onError: (err) => {
+        setTestingId(null);
+        toast.error(err.message);
+      },
     });
   };
 
@@ -55,18 +76,33 @@ export default function MyModels() {
                       P: ${model.pricing.prompt_price}/1K · C: ${model.pricing.completion_price}/1K
                     </div>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleUnsubscribe(model.id)}
-                    disabled={unsubscribe.isPending}
-                  >
-                    {unsubscribe.isPending ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="size-4 text-destructive" />
-                    )}
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleTestConnection(model.id)}
+                      disabled={testingId === model.id}
+                      title="测试连接"
+                    >
+                      {testingId === model.id ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Link2 className="size-4" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleUnsubscribe(model.id)}
+                      disabled={unsubscribe.isPending}
+                    >
+                      {unsubscribe.isPending ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="size-4 text-destructive" />
+                      )}
+                    </Button>
+                  </div>
                 </div>
               </CardContent>
             </Card>
