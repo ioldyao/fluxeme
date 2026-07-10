@@ -10,7 +10,8 @@ RUN pnpm run build
 
 # ── Backend build ──
 FROM rust:1.88-alpine AS backend
-RUN apk add --no-cache musl-dev
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories && \
+    apk add --no-cache musl-dev
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs && \
