@@ -43,10 +43,9 @@ pub fn load_config(path: &str) -> Result<AppConfig, String> {
 /// Resolve the JWT secret from config or environment variable.
 /// Panics if neither source provides a value.
 pub fn resolve_jwt_secret(cfg: &AppConfig) -> String {
-    let secret = cfg
-        .jwt_secret
-        .clone()
-        .or_else(|| std::env::var("GATEWAY_JWT_SECRET").ok())
+    let secret = std::env::var("GATEWAY_JWT_SECRET")
+        .ok()
+        .or_else(|| cfg.jwt_secret.clone())
         .unwrap_or_else(|| {
             panic!("GATEWAY_JWT_SECRET must be set via config or environment variable");
         });
