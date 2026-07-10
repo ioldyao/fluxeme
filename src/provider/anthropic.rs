@@ -145,4 +145,43 @@ impl ProviderAdapter for AnthropicAdapter {
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
         Ok(Pin::from(Box::new(stream)))
     }
+
+    async fn relay(
+        &self,
+        endpoint: &EndpointConfig,
+        path: &str,
+        body: Value,
+    ) -> Result<Value, ProviderError> {
+        let client = shared_client();
+
+        let url = format!(
+            "{}/{}",
+            endpoint.url.trim_end_matches('/'),
+            path.trim_start_matches('/')
+        );
+        let headers = build_anthropic_headers(endpoint)?;
+
+        let resp = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| ProviderError(format!("Request failed: {}", e)))?;
+
+        let status = resp.status();
+        let resp_body: Value = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError(format!("Failed to parse response: {}", e)))?;
+
+        if !status.is_success() {
+            return Err(ProviderError(format!(
+                "Upstream returned {}: {}",
+                status, resp_body
+            )));
+        }
+
+        Ok(resp_body)
+    }
 }

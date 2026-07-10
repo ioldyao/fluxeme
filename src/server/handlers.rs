@@ -1125,6 +1125,15 @@ pub async fn embeddings(
         Uuid::new_v4().to_string(), Instant::now()).await
 }
 
+pub async fn batches(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Json<Value>,
+) -> Result<Response, GatewayError> {
+    relay_to_upstream(&state, &headers, body.0, "/v1/messages/batches",
+        Uuid::new_v4().to_string(), Instant::now()).await
+}
+
 pub async fn tokenize(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

@@ -65,6 +65,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             axum::routing::post(handlers::completions),
         )
         .route("/v1/embeddings", axum::routing::post(handlers::embeddings))
+        .route(
+            "/v1/messages/batches",
+            axum::routing::post(handlers::batches),
+        )
         .route("/tokenize", axum::routing::post(handlers::tokenize))
         .route("/detokenize", axum::routing::post(handlers::detokenize))
         .route("/v1/models", axum::routing::get(handlers::list_models))
