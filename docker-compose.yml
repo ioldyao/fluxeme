@@ -1,0 +1,18 @@
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-gateway
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config:/app/config:ro
+      - gateway-data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+      - GATEWAY_CONFIG=/app/config/config.yaml
+
+volumes:
+  gateway-data:
