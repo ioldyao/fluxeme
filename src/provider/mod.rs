@@ -38,6 +38,26 @@ pub trait ProviderAdapter: Send + Sync {
         body: Value,
     ) -> Result<StreamResult, ProviderError>;
 
+    /// Handle native-format /v1/messages request (e.g. Anthropic format).
+    /// Default delegates to chat_complete (which applies format conversion).
+    async fn messages(
+        &self,
+        endpoint: &EndpointConfig,
+        body: Value,
+    ) -> Result<Value, ProviderError> {
+        self.chat_complete(endpoint, body).await
+    }
+
+    /// Handle streaming native-format /v1/messages request.
+    /// Default delegates to chat_complete_stream.
+    async fn messages_stream(
+        &self,
+        endpoint: &EndpointConfig,
+        body: Value,
+    ) -> Result<StreamResult, ProviderError> {
+        self.chat_complete_stream(endpoint, body).await
+    }
+
     async fn relay(
         &self,
         _endpoint: &EndpointConfig,

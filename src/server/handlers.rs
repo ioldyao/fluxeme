@@ -230,17 +230,33 @@ fn extract_sse_content(data: &str) -> (String, String) {
     let mut content = String::new();
     for line in data.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed == "data: [DONE]" {
+        if trimmed.is_empty() || trimmed == "data: [DONE]" || trimmed.starts_with("event: ") {
             continue;
         }
         let json_str = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
         if let Ok(val) = serde_json::from_str::<Value>(json_str) {
+            // OpenAI format: choices[0].delta.{reasoning_content, content}
             if let Some(delta) = val.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("delta")) {
                 if let Some(text) = delta.get("reasoning_content").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
                     reasoning.push_str(text);
                 }
                 if let Some(text) = delta.get("content").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
                     content.push_str(text);
+                }
+            }
+            // Anthropic format: content_block_delta delta.{thinking, text}
+            if val.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
+                if let Some(delta) = val.get("delta") {
+                    if delta.get("type").and_then(|t| t.as_str()) == Some("thinking_delta") {
+                        if let Some(text) = delta.get("thinking").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                            reasoning.push_str(text);
+                        }
+                    }
+                    if delta.get("type").and_then(|t| t.as_str()) == Some("text_delta") {
+                        if let Some(text) = delta.get("text").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                            content.push_str(text);
+                        }
+                    }
                 }
             }
         }
@@ -257,16 +273,38 @@ fn parse_sse_usage(data: &str) -> (u64, u64) {
     let mut c_tokens = 0u64;
     for line in data.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed == "data: [DONE]" {
+        if trimmed.is_empty() || trimmed == "data: [DONE]" || trimmed.starts_with("event: ") {
             continue;
         }
         let json_str = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
         if let Ok(val) = serde_json::from_str::<Value>(json_str) {
+            // OpenAI format: {usage: {prompt_tokens, completion_tokens}}
             if let Some(usage) = val.get("usage") {
                 let p = usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                 let c = usage.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                 if p > p_tokens { p_tokens = p; }
                 if c > c_tokens { c_tokens = c; }
+            }
+            // Anthropic message_start: {type: "message_start", message: {usage: {input_tokens, output_tokens}}}
+            if val.get("type").and_then(|t| t.as_str()) == Some("message_start") {
+                if let Some(msg) = val.get("message") {
+                    if let Some(usage) = msg.get("usage") {
+                        if let Some(p) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
+                            if p > p_tokens { p_tokens = p; }
+                        }
+                        if let Some(c) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
+                            if c > c_tokens { c_tokens = c; }
+                        }
+                    }
+                }
+            }
+            // Anthropic message_delta: {type: "message_delta", usage: {output_tokens}}
+            if val.get("type").and_then(|t| t.as_str()) == Some("message_delta") {
+                if let Some(usage) = val.get("usage") {
+                    if let Some(c) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
+                        if c > c_tokens { c_tokens = c; }
+                    }
+                }
             }
         }
     }
@@ -534,6 +572,80 @@ async fn handle_streaming(
     }
 }
 
+// ── Messages streaming (Anthropic-native format) ──────────────────
+
+async fn handle_messages_streaming(
+    state: &AppState,
+    adapter: Arc<dyn crate::provider::ProviderAdapter>,
+    endpoint: EndpointConfig,
+    body: Value,
+    request_id: String,
+    user_id: String,
+    user_name: String,
+    api_key_name: String,
+    channel_id: String,
+    model: String,
+    start: Instant,
+) -> Result<Response, GatewayError> {
+    let req_body = serde_json::to_string(&body).ok();
+    let stream_result = adapter.messages_stream(&endpoint, body).await;
+
+    match stream_result {
+        Ok(stream) => {
+            let stream = SseBuffer { inner: stream, buf: String::new(), overflow_error: None };
+            let usage_stream = UsageTrackingStream {
+                inner: stream,
+                resp_buf: String::new(),
+                usage: state.usage.clone(),
+                request_id,
+                user_id,
+                user_name,
+                api_key_name,
+                channel_id,
+                model,
+                start,
+                req_body,
+                recorded: false,
+            };
+
+            let body_stream = usage_stream.map(|data| {
+                Ok::<_, std::convert::Infallible>(Bytes::from(data))
+            });
+
+            Ok(Response::builder()
+                .header("content-type", "text/event-stream")
+                .header("cache-control", "no-cache")
+                .header("connection", "keep-alive")
+                .header("access-control-allow-origin", "*")
+                .body(Body::from_stream(body_stream))
+                .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
+        }
+        Err(e) => {
+            let latency_ms = start.elapsed().as_millis() as u64;
+            let (p_tokens, c_tokens) = parse_sse_usage("");
+            state.usage.record(UsageRecord {
+                timestamp: Utc::now().to_rfc3339(),
+                request_id,
+                user_id,
+                user_name,
+                channel_id,
+                model,
+                prompt_tokens: p_tokens,
+                completion_tokens: c_tokens,
+                total_tokens: p_tokens + c_tokens,
+                latency_ms,
+                status_code: 502,
+                success: false,
+                request_body: req_body,
+                response_body: None,
+                reasoning_body: None,
+                api_key_name: Some(api_key_name),
+            });
+            Err(GatewayError::Upstream(e.0))
+        }
+    }
+}
+
 // ── Non-streaming ─────────────────────────────────────────────────
 
 async fn handle_non_streaming(
@@ -653,6 +765,128 @@ async fn handle_non_streaming(
     Err(GatewayError::Upstream(err_msg))
 }
 
+// ── Messages non-streaming (Anthropic-native format) ──────────────
+
+async fn handle_messages_non_streaming(
+    state: &AppState,
+    route: &mut RouteTarget,
+    body: Value,
+    request_id: String,
+    user_id: String,
+    user_name: String,
+    api_key_name: String,
+    channel_id: String,
+    model: String,
+    start: Instant,
+) -> Result<Response, GatewayError> {
+    let req_body = serde_json::to_string(&body).ok();
+    let mut last_error: Option<ProviderError> = None;
+
+    for attempt in 0..=MAX_RETRIES {
+        if attempt > 0 {
+            if !route.retry_next() {
+                break;
+            }
+        }
+
+        let result = route.adapter.messages(&route.endpoint, body.clone()).await;
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        match result {
+            Ok(resp) => {
+                route.balancer.as_health_aware().record_success(route.endpoint_idx);
+
+                let prompt_tokens = resp["usage"]["input_tokens"].as_u64().unwrap_or(0);
+                let completion_tokens = resp["usage"]["output_tokens"].as_u64().unwrap_or(0);
+
+                let reasoning = resp.get("content")
+                    .and_then(|c| c.as_array())
+                    .and_then(|blocks| {
+                        blocks.iter().find_map(|b| {
+                            if b["type"] == "thinking" {
+                                b["thinking"].as_str()
+                            } else if b["type"] == "redacted_thinking" {
+                                b["data"].as_str()
+                            } else {
+                                None
+                            }
+                        })
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                    });
+
+                state.usage.record(UsageRecord {
+                    timestamp: Utc::now().to_rfc3339(),
+                    request_id,
+                    user_id,
+                    user_name,
+                    channel_id,
+                    model,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens: prompt_tokens + completion_tokens,
+                    latency_ms,
+                    status_code: 200,
+                    success: true,
+                    request_body: req_body,
+                    response_body: serde_json::to_string(&resp).ok(),
+                    reasoning_body: reasoning,
+                    api_key_name: Some(api_key_name),
+                });
+
+                return Ok(Json(resp).into_response());
+            }
+            Err(e) if is_retryable_error(&e) => {
+                route.balancer.as_health_aware().record_failure(route.endpoint_idx);
+                last_error = Some(e);
+            }
+            Err(e) => {
+                state.usage.record(UsageRecord {
+                    timestamp: Utc::now().to_rfc3339(),
+                    request_id,
+                    user_id,
+                    user_name,
+                    channel_id,
+                    model,
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                    latency_ms,
+                    status_code: 502,
+                    success: false,
+                    request_body: req_body,
+                    response_body: None,
+                    reasoning_body: None,
+                    api_key_name: None,
+                });
+                return Err(GatewayError::Upstream(e.0));
+            }
+        }
+    }
+
+    let latency_ms = start.elapsed().as_millis() as u64;
+    let err_msg = last_error.map(|e| e.0).unwrap_or_else(|| "All endpoints unavailable".to_string());
+    state.usage.record(UsageRecord {
+        timestamp: Utc::now().to_rfc3339(),
+        request_id,
+        user_id,
+        user_name,
+        channel_id,
+        model,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        latency_ms,
+        status_code: 502,
+        success: false,
+        request_body: req_body,
+        response_body: None,
+        reasoning_body: None,
+        api_key_name: None,
+    });
+    Err(GatewayError::Upstream(err_msg))
+}
+
 // ── Handlers ──────────────────────────────────────────────────────
 
 pub async fn chat_completions(
@@ -731,13 +965,13 @@ pub async fn messages(
     let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
 
     if is_streaming {
-        handle_streaming(
+        handle_messages_streaming(
             &state, route.adapter, route.endpoint, body,
             request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start,
         )
         .await
     } else {
-        handle_non_streaming(
+        handle_messages_non_streaming(
             &state, &mut route, body,
             request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start,
         )
