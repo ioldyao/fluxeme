@@ -1,4 +1,6 @@
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Instant;
 
 use axum::body::Body;
@@ -8,6 +10,7 @@ use axum::response::{IntoResponse, Json, Response};
 use bytes::Bytes;
 use chrono::Utc;
 use futures::stream::StreamExt;
+use futures::Stream;
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -134,10 +137,39 @@ fn resolve_route(state: &AppState, channel_id: &str) -> Result<RouteTarget, Gate
 
 // ── Streaming ─────────────────────────────────────────────────────
 
+/// Extract reasoning and output content from raw SSE data.
+/// Returns (reasoning, content) extracted from delta chunks.
+fn extract_sse_content(data: &str) -> (String, String) {
+    let mut reasoning = String::new();
+    let mut content = String::new();
+    for line in data.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed == "data: [DONE]" {
+            continue;
+        }
+        let json_str = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
+        if let Ok(val) = serde_json::from_str::<Value>(json_str) {
+            if let Some(delta) = val.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("delta")) {
+                if let Some(text) = delta.get("reasoning_content").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                    reasoning.push_str(text);
+                }
+                if let Some(text) = delta.get("content").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                    content.push_str(text);
+                }
+            }
+        }
+    }
+    (reasoning, content)
+}
+
 /// Parse token usage from accumulated SSE data.
-/// Many providers send a final chunk with `"usage"` before `[DONE]`.
+/// Scans forward, taking the max for each token type — handles both
+/// OpenAI (final chunk has all usage) and Anthropic (message_start has
+/// prompt_tokens, message_delta has completion_tokens).
 fn parse_sse_usage(data: &str) -> (u64, u64) {
-    for line in data.lines().rev() {
+    let mut p_tokens = 0u64;
+    let mut c_tokens = 0u64;
+    for line in data.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed == "data: [DONE]" {
             continue;
@@ -147,13 +179,98 @@ fn parse_sse_usage(data: &str) -> (u64, u64) {
             if let Some(usage) = val.get("usage") {
                 let p = usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                 let c = usage.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                if p > 0 || c > 0 {
-                    return (p, c);
-                }
+                if p > p_tokens { p_tokens = p; }
+                if c > c_tokens { c_tokens = c; }
             }
         }
     }
-    (0, 0)
+    (p_tokens, c_tokens)
+}
+
+// ── Usage-tracking stream wrapper ─────────────────────────────────
+
+struct UsageTrackingStream<S> {
+    inner: S,
+    resp_buf: String,
+    usage: crate::service::UsageService,
+    request_id: String,
+    user_id: String,
+    user_name: String,
+    channel_id: String,
+    model: String,
+    start: Instant,
+    req_body: Option<String>,
+    recorded: bool,
+}
+
+impl<S: Stream<Item = String> + Unpin> Stream for UsageTrackingStream<S> {
+    type Item = String;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match Pin::new(&mut self.inner).poll_next(cx) {
+            Poll::Ready(Some(data)) => {
+                self.resp_buf.push_str(&data);
+                Poll::Ready(Some(data))
+            }
+            Poll::Ready(None) => {
+                self.record_usage(true);
+                Poll::Ready(None)
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl<S> Drop for UsageTrackingStream<S> {
+    fn drop(&mut self) {
+        if !self.recorded {
+            self.record_usage(false);
+        }
+    }
+}
+
+impl<S> UsageTrackingStream<S> {
+    fn record_usage(&mut self, completed: bool) {
+        if self.recorded {
+            return;
+        }
+        self.recorded = true;
+
+        let latency_ms = self.start.elapsed().as_millis() as u64;
+        let (p_tokens, c_tokens) = parse_sse_usage(&self.resp_buf);
+
+        self.usage.record(UsageRecord {
+            timestamp: Utc::now().to_rfc3339(),
+            request_id: self.request_id.clone(),
+            user_id: self.user_id.clone(),
+            user_name: self.user_name.clone(),
+            channel_id: self.channel_id.clone(),
+            model: self.model.clone(),
+            prompt_tokens: p_tokens,
+            completion_tokens: c_tokens,
+            total_tokens: p_tokens + c_tokens,
+            latency_ms,
+            status_code: if completed { 200 } else { 499 },
+            success: completed,
+            request_body: self.req_body.clone(),
+            reasoning_body: {
+                let (reasoning, _) = extract_sse_content(&self.resp_buf);
+                Some(if reasoning.len() > 102400 {
+                    reasoning.chars().take(102400).collect()
+                } else {
+                    reasoning
+                })
+            },
+            response_body: {
+                let (_, content) = extract_sse_content(&self.resp_buf);
+                Some(if content.len() > 102400 {
+                    content.chars().take(102400).collect()
+                } else {
+                    content
+                })
+            },
+        });
+    }
 }
 
 async fn handle_streaming(
@@ -173,47 +290,21 @@ async fn handle_streaming(
 
     match stream_result {
         Ok(stream) => {
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-            let tx_for_usage = tx.clone();
-            let usage = state.usage.clone();
+            let usage_stream = UsageTrackingStream {
+                inner: stream,
+                resp_buf: String::new(),
+                usage: state.usage.clone(),
+                request_id,
+                user_id,
+                user_name,
+                channel_id,
+                model,
+                start,
+                req_body,
+                recorded: false,
+            };
 
-            tokio::spawn(async move {
-                let mut stream = Box::pin(stream);
-                let mut resp_buf = String::new();
-                while let Some(data) = stream.next().await {
-                    resp_buf.push_str(&data);
-                    let _ = tx_for_usage.send(data);
-                }
-                drop(tx_for_usage);
-
-                // Try to extract token usage from SSE stream
-                let (p_tokens, c_tokens) = parse_sse_usage(&resp_buf);
-
-                let latency_ms = start.elapsed().as_millis() as u64;
-                usage.record(UsageRecord {
-                    timestamp: Utc::now().to_rfc3339(),
-                    request_id,
-                    user_id,
-                    user_name,
-                    channel_id,
-                    model,
-                    prompt_tokens: p_tokens,
-                    completion_tokens: c_tokens,
-                    total_tokens: p_tokens + c_tokens,
-                    latency_ms,
-                    status_code: 200,
-                    success: true,
-                    request_body: req_body.clone(),
-                    response_body: Some(if resp_buf.len() > 10240 {
-                        resp_buf.chars().take(10240).collect()
-                    } else {
-                        resp_buf
-                    }),
-                });
-            });
-
-            let rx_stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
-            let body_stream = rx_stream.map(|data| {
+            let body_stream = usage_stream.map(|data| {
                 Ok::<_, std::convert::Infallible>(Bytes::from(data))
             });
 
@@ -227,6 +318,7 @@ async fn handle_streaming(
         }
         Err(e) => {
             let latency_ms = start.elapsed().as_millis() as u64;
+            let (p_tokens, c_tokens) = parse_sse_usage("");
             state.usage.record(UsageRecord {
                 timestamp: Utc::now().to_rfc3339(),
                 request_id,
@@ -234,14 +326,15 @@ async fn handle_streaming(
                 user_name,
                 channel_id,
                 model,
-                prompt_tokens: 0,
-                completion_tokens: 0,
-                total_tokens: 0,
+                prompt_tokens: p_tokens,
+                completion_tokens: c_tokens,
+                total_tokens: p_tokens + c_tokens,
                 latency_ms,
                 status_code: 502,
                 success: false,
                 request_body: req_body,
                 response_body: None,
+                reasoning_body: None,
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -271,6 +364,14 @@ async fn handle_non_streaming(
             let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
             let completion_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0);
 
+            let reasoning = resp.get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|c| c.get("message"))
+                .and_then(|m| m.get("reasoning_content"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
             state.usage.record(UsageRecord {
                 timestamp: Utc::now().to_rfc3339(),
                 request_id,
@@ -286,6 +387,7 @@ async fn handle_non_streaming(
                 success: true,
                 request_body: req_body,
                 response_body: serde_json::to_string(&resp).ok(),
+                reasoning_body: reasoning,
             });
 
             Ok(Json(resp).into_response())
@@ -306,6 +408,7 @@ async fn handle_non_streaming(
                 success: false,
                 request_body: req_body,
                 response_body: None,
+                reasoning_body: None,
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -432,6 +535,14 @@ async fn relay_to_upstream(
             let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
             let completion_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0);
 
+            let reasoning = resp.get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|c| c.get("message"))
+                .and_then(|m| m.get("reasoning_content"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
             state.usage.record(UsageRecord {
                 timestamp: Utc::now().to_rfc3339(),
                 request_id,
@@ -447,6 +558,7 @@ async fn relay_to_upstream(
                 success: true,
                 request_body: req_body,
                 response_body: serde_json::to_string(&resp).ok(),
+                reasoning_body: reasoning,
             });
 
             Ok(Json(resp).into_response())
@@ -467,6 +579,7 @@ async fn relay_to_upstream(
                 success: false,
                 request_body: req_body,
                 response_body: None,
+                reasoning_body: None,
             });
 
             Err(GatewayError::from(e))

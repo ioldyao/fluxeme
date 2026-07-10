@@ -16,4 +16,5 @@ pub struct UsageRecord {
     pub success: bool,
     pub request_body: Option<String>,
     pub response_body: Option<String>,
+    pub reasoning_body: Option<String>,
 }

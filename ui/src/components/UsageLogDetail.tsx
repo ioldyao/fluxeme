@@ -46,15 +46,11 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
     }
   };
 
-  const formatResponse = (val: string | null | undefined, streaming: boolean) => {
-    if (!val) return streaming ? '(streaming, no data captured)' : '(empty)';
-    if (!streaming) {
-      try {
-        return JSON.stringify(JSON.parse(val), null, 2);
-      } catch {
-        return val;
-      }
-    }
+  const formatResponse = (val: string | null | undefined) => {
+    if (!val) return '(empty)';
+    // New format: extracted plain text
+    if (!val.trim().startsWith('data:')) return val;
+    // Old format: raw SSE data — parse and extract
     const lines = val.split('\n').filter(l => l.trim());
     const parsed: string[] = [];
     for (const line of lines) {
@@ -63,11 +59,12 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
       try {
         const d = JSON.parse(sse);
         const content = d.choices?.[0]?.delta?.content
+          || d.choices?.[0]?.delta?.reasoning_content
           || d.choices?.[0]?.text
           || '';
         if (content) parsed.push(content);
       } catch {
-        parsed.push(line);
+        continue;
       }
     }
     return parsed.length > 0 ? parsed.join('') : val;
@@ -146,7 +143,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
               <div className="rounded-lg border p-3 space-y-1">
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Cost</div>
                 <div className="font-medium font-mono">
-                  {totalCost !== null
+                  {totalCost !== null && totalCost > 0
                     ? `$${totalCost.toFixed(6)}`
                     : <span className="text-muted-foreground text-xs">—</span>
                   }
@@ -170,6 +167,20 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
               </pre>
             </div>
 
+            {/* Reasoning (thinking) body */}
+            {record.reasoning_body && (
+              <div>
+                <details>
+                  <summary className="text-sm font-medium cursor-pointer select-none">
+                    Reasoning {streaming && <span className="ml-1 text-xs text-yellow-500">(streaming)</span>}
+                  </summary>
+                  <pre className="rounded-lg bg-muted p-3 text-xs overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap break-all max-w-full mt-1">
+                    {record.reasoning_body}
+                  </pre>
+                </details>
+              </div>
+            )}
+
             {/* Response body */}
             <div className="max-w-full">
               <h4 className="text-sm font-medium mb-1">
@@ -177,7 +188,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                 {streaming && <span className="ml-2 text-xs text-yellow-500">(streaming)</span>}
               </h4>
               <pre className="rounded-lg bg-muted p-3 text-xs overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap break-all max-w-full">
-                {formatResponse(record.response_body, streaming)}
+                {formatResponse(record.response_body)}
               </pre>
             </div>
           </div>

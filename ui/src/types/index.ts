@@ -90,6 +90,7 @@ export interface UsageRecord {
   success: boolean;
   request_body?: string | null;
   response_body?: string | null;
+  reasoning_body?: string | null;
 }
 
 export interface DashboardStats {

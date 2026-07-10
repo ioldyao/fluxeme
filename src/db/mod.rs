@@ -135,7 +135,8 @@ impl Database {
                 status_code INTEGER NOT NULL,
                 success INTEGER NOT NULL,
                 request_body TEXT,
-                response_body TEXT
+                response_body TEXT,
+                reasoning_body TEXT
             );
             ",
         )?;
@@ -145,6 +146,7 @@ impl Database {
         // Backward compat: add request_body/response_body columns
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN request_body TEXT;");
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN response_body TEXT;");
+        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN reasoning_body TEXT;");
         // Backward compat: add published column to models
         let _ = conn
             .execute_batch("ALTER TABLE models ADD COLUMN published INTEGER NOT NULL DEFAULT 0;");
@@ -241,8 +243,8 @@ impl Database {
     pub fn insert_usage(&self, record: &crate::domain::usage::UsageRecord) -> Result<(), DbError> {
         let conn = self.conn()?;
         conn.execute(
-            "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             rusqlite::params![
                 record.timestamp,
                 record.request_id,
@@ -258,6 +260,7 @@ impl Database {
                 record.success as i32,
                 record.request_body,
                 record.response_body,
+                record.reasoning_body,
             ],
         )?;
         Ok(())
@@ -304,6 +307,7 @@ impl Database {
                     success: row.get::<_, i32>(11)? != 0,
                     request_body: None,
                     response_body: None,
+                    reasoning_body: None,
                 });
             }
         } else {
@@ -328,6 +332,7 @@ impl Database {
                     success: row.get::<_, i32>(11)? != 0,
                     request_body: None,
                     response_body: None,
+                    reasoning_body: None,
                 });
             }
         }
@@ -391,6 +396,7 @@ impl Database {
                     success: row.get::<_, i32>(11)? != 0,
                     request_body: None,
                     response_body: None,
+                    reasoning_body: None,
                 });
             }
         } else {
@@ -415,6 +421,7 @@ impl Database {
                     success: row.get::<_, i32>(11)? != 0,
                     request_body: None,
                     response_body: None,
+                    reasoning_body: None,
                 });
             }
         }
@@ -427,7 +434,7 @@ impl Database {
     ) -> Result<Option<crate::domain::usage::UsageRecord>, DbError> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(
-            "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body
+            "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body
              FROM usage_logs WHERE request_id = ?1",
         )?;
         let mut rows = stmt.query(rusqlite::params![request_id])?;
@@ -447,6 +454,7 @@ impl Database {
                 success: row.get::<_, i32>(11)? != 0,
                 request_body: row.get(12)?,
                 response_body: row.get(13)?,
+                reasoning_body: row.get(14)?,
             }))
         } else {
             Ok(None)
@@ -687,6 +695,7 @@ impl Database {
                     success: row.get::<_, i32>(11)? != 0,
                     request_body: None,
                     response_body: None,
+                    reasoning_body: None,
                 });
             }
         } else {
@@ -711,6 +720,7 @@ impl Database {
                     success: row.get::<_, i32>(11)? != 0,
                     request_body: None,
                     response_body: None,
+                    reasoning_body: None,
                 });
             }
         }
@@ -720,8 +730,8 @@ impl Database {
 
 pub fn insert_usage_row(conn: &Connection, record: &UsageRecord) -> Result<(), rusqlite::Error> {
     conn.execute(
-        "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             record.timestamp,
             record.request_id,
@@ -737,6 +747,7 @@ pub fn insert_usage_row(conn: &Connection, record: &UsageRecord) -> Result<(), r
             record.success as i32,
             record.request_body,
             record.response_body,
+            record.reasoning_body,
         ],
     )?;
     Ok(())
