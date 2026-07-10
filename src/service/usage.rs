@@ -55,6 +55,10 @@ impl UsageService {
     pub fn cost_rows_since(&self, since: &str, user_id: Option<&str>) -> Result<Vec<UsageRecord>, String> {
         self.db.usage_cost_rows_since(since, user_id).map_err(|e| e.0)
     }
+
+    pub fn daily_stats(&self, since: &str, user_id: Option<&str>) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, String> {
+        self.db.daily_usage_stats(since, user_id).map_err(|e| e.0)
+    }
 }
 
 async fn background_writer(db: Arc<Database>, mut rx: Receiver<UsageRecord>) {

@@ -383,6 +383,41 @@ impl Database {
         Ok(records)
     }
 
+    pub fn daily_usage_stats(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError> {
+        let conn = self.conn()?;
+        let mut records = Vec::new();
+        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(uid) = user_id {
+            (
+                "SELECT substr(timestamp, 1, 10) as day, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(total_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(latency_ms),0) FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2 GROUP BY day ORDER BY day ASC".into(),
+                vec![Box::new(uid.to_string()), Box::new(since.to_string())],
+            )
+        } else {
+            (
+                "SELECT substr(timestamp, 1, 10) as day, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(total_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(latency_ms),0) FROM usage_logs WHERE timestamp >= ?1 GROUP BY day ORDER BY day ASC".into(),
+                vec![Box::new(since.to_string())],
+            )
+        };
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(params_ref.as_slice())?;
+        while let Some(row) = rows.next()? {
+            records.push((
+                row.get::<_, String>(0)?,
+                row.get::<_, u64>(1)?,
+                row.get::<_, u64>(2)?,
+                row.get::<_, u64>(3)?,
+                row.get::<_, u64>(4)?,
+                row.get::<_, u64>(5)?,
+                row.get::<_, u64>(6)?,
+            ));
+        }
+        Ok(records)
+    }
+
     pub fn query_usage(
         &self,
         limit: usize,

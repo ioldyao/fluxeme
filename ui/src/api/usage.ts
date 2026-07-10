@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from './client';
-import type { UsageRecord } from '@/types';
+import type { UsageRecord, DailyAggregate } from '@/types';
 
 interface UsageParams {
   limit?: number;
@@ -27,5 +27,12 @@ export function useUsageDetail(requestId: string | null) {
     queryKey: ['usage', requestId],
     queryFn: () => api<UsageRecord>(`/usage/${requestId}`),
     enabled: !!requestId,
+  });
+}
+
+export function useUsageAggregate(days: number = 14) {
+  return useQuery({
+    queryKey: ['usage', 'aggregate', days],
+    queryFn: () => api<DailyAggregate[]>(`/usage/aggregate?days=${days}`),
   });
 }

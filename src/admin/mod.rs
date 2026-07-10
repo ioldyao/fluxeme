@@ -1465,6 +1465,64 @@ async fn daily_usage(
     ))
 }
 
+// ── Usage Aggregation ─────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct UsageAggregateQuery {
+    days: Option<i64>,
+    user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct DailyAggregate {
+    date: String,
+    count: u64,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+    success_count: u64,
+    latency_ms: u64,
+}
+
+async fn usage_aggregate(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<UsageAggregateQuery>,
+) -> Result<Json<Vec<DailyAggregate>>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+
+    let days = q.days.unwrap_or(14);
+    let since = (chrono::Utc::now() - chrono::Duration::days(days))
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
+
+    let user_filter: Option<&str> = if session.role == "admin" {
+        q.user_id.as_deref()
+    } else {
+        Some(&session.user_id)
+    };
+
+    let records = state
+        .usage
+        .daily_stats(&since, user_filter)
+        .map_err(AdminError::internal)?;
+
+    Ok(Json(
+        records
+            .into_iter()
+            .map(|(date, count, pt, ct, tt, sc, lat)| DailyAggregate {
+                date,
+                count,
+                prompt_tokens: pt,
+                completion_tokens: ct,
+                total_tokens: tt,
+                success_count: sc,
+                latency_ms: lat,
+            })
+            .collect(),
+    ))
+}
+
 // ── Health Check ──────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -1705,6 +1763,7 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         // Usage
         .route("/admin/api/usage", axum::routing::get(get_usage))
         .route("/admin/api/usage/daily", axum::routing::get(daily_usage))
+        .route("/admin/api/usage/aggregate", axum::routing::get(usage_aggregate))
         .route(
             "/admin/api/usage/{request_id}",
             axum::routing::get(get_usage_detail),

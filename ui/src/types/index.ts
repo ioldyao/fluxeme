@@ -129,6 +129,16 @@ export interface DailyUsage {
   count: number;
 }
 
+export interface DailyAggregate {
+  date: string;
+  count: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  success_count: number;
+  latency_ms: number;
+}
+
 export interface LoginResponse {
   token: string;
   role: UserRole;

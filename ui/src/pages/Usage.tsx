@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
 import { useCurrency } from '@/store/currency';
 import { formatCost } from '@/lib/cost';
-import { useUsage } from '@/api/usage';
+import { useUsage, useUsageAggregate } from '@/api/usage';
 import { api } from '@/api/client';
 import { UsageLogDetail } from '@/components/UsageLogDetail';
 import { PageHeader } from '@/components/PageHeader';
@@ -14,6 +14,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Search, RefreshCw, CheckCircle2, XCircle, BarChart3, List } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LineChart, Line, Legend,
+} from 'recharts';
 
 export default function Usage() {
   const { t } = useTranslation();
@@ -31,6 +35,8 @@ export default function Usage() {
   });
   const { currency, rate } = useCurrency();
   const [chartTab, setChartTab] = useState('list');
+  const [chartDays, setChartDays] = useState(14);
+  const { data: aggregate, isLoading: aggLoading } = useUsageAggregate(chartDays);
 
   const modelPricing = useMemo(() => {
     if (!models) return {};
@@ -145,15 +151,95 @@ export default function Usage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="chart">
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('usage.chart')}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <EmptyState message={t('usage.chartNotAvailable')} />
-            </CardContent>
-          </Card>
+        <TabsContent value="chart" className="space-y-4">
+          <div className="flex gap-2">
+            {[7, 14, 30].map(d => (
+              <Button key={d} variant={chartDays === d ? 'default' : 'outline'} size="sm" onClick={() => setChartDays(d)}>
+                {d}{t('common.days')}
+              </Button>
+            ))}
+          </div>
+
+          {aggLoading ? (
+            <Card>
+              <CardContent className="p-8 text-center text-muted-foreground">{t('common.loading')}</CardContent>
+            </Card>
+          ) : aggregate && aggregate.length > 0 ? (
+            <>
+              <Card>
+                <CardHeader><CardTitle className="text-base">{t('dash.requests')}</CardTitle></CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={aggregate}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis dataKey="date" fontSize={11} stroke="hsl(var(--muted-foreground))" />
+                      <YAxis fontSize={11} stroke="hsl(var(--muted-foreground))" />
+                      <Tooltip
+                        contentStyle={{
+                          background: 'hsl(var(--popover))',
+                          border: '1px solid hsl(var(--border))',
+                          borderRadius: 'var(--radius)',
+                          fontSize: 13,
+                        }}
+                      />
+                      <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name={t('dash.requests')} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader><CardTitle className="text-base">{t('usage.totalTokens')}</CardTitle></CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={aggregate}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis dataKey="date" fontSize={11} stroke="hsl(var(--muted-foreground))" />
+                      <YAxis fontSize={11} stroke="hsl(var(--muted-foreground))" />
+                      <Tooltip
+                        contentStyle={{
+                          background: 'hsl(var(--popover))',
+                          border: '1px solid hsl(var(--border))',
+                          borderRadius: 'var(--radius)',
+                          fontSize: 13,
+                        }}
+                      />
+                      <Legend />
+                      <Bar dataKey="prompt_tokens" stackId="tokens" fill="hsl(215, 80%, 60%)" radius={[0, 0, 0, 0]} name={t('dash.prompt')} />
+                      <Bar dataKey="completion_tokens" stackId="tokens" fill="hsl(140, 60%, 50%)" radius={[4, 4, 0, 0]} name={t('dash.completion')} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader><CardTitle className="text-base">{t('dash.successRate')}</CardTitle></CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <LineChart data={aggregate.map(d => ({ ...d, successRate: d.count > 0 ? +(d.success_count / d.count * 100).toFixed(1) : 100 }))}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis dataKey="date" fontSize={11} stroke="hsl(var(--muted-foreground))" />
+                      <YAxis domain={[0, 100]} unit="%" fontSize={11} stroke="hsl(var(--muted-foreground))" />
+                      <Tooltip
+                        contentStyle={{
+                          background: 'hsl(var(--popover))',
+                          border: '1px solid hsl(var(--border))',
+                          borderRadius: 'var(--radius)',
+                          fontSize: 13,
+                        }}
+                        formatter={(value: number) => [`${value}%`, t('dash.successRate')]}
+                      />
+                      <Line type="monotone" dataKey="successRate" stroke="hsl(140, 60%, 50%)" strokeWidth={2} dot={false} name={t('dash.successRate')} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+            </>
+          ) : (
+            <Card>
+              <CardContent className="p-8 text-center text-muted-foreground">{t('empty.noUsage')}</CardContent>
+            </Card>
+          )}
         </TabsContent>
       </Tabs>
 
