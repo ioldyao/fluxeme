@@ -1285,16 +1285,25 @@ async fn test_subscription_connection(
         .select()
         .ok_or_else(|| AdminError::internal("没有可用的端点"))?;
 
-    // Send a minimal chat completion as a connectivity probe
-    let test_body = serde_json::json!({
-        "model": model.model_pattern,
-        "messages": [{"role": "user", "content": "hi"}],
-        "max_tokens": 1,
-        "stream": false,
-    });
-
+    // Send a minimal request as a connectivity probe.
+    // Use native /v1/messages format for Anthropic, /v1/chat/completions for others.
     let start = std::time::Instant::now();
-    let result = adapter.chat_complete(endpoint, test_body).await;
+    let result = if provider_name == "anthropic" {
+        let test_body = serde_json::json!({
+            "model": model.model_pattern,
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1,
+        });
+        adapter.messages(endpoint, test_body).await
+    } else {
+        let test_body = serde_json::json!({
+            "model": model.model_pattern,
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1,
+            "stream": false,
+        });
+        adapter.chat_complete(endpoint, test_body).await
+    };
     let latency_ms = start.elapsed().as_millis() as u64;
 
     match result {
