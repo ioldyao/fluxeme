@@ -1681,6 +1681,34 @@ async fn toggle_endpoint(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
+// ── Settings ──────────────────────────────────────────────────────
+
+async fn get_allow_private_ips(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AdminError> {
+    require_admin(&state.admin, &headers)?;
+    let value = state.db.get_setting("allow_private_ips").map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "enabled": value.as_deref() == Some("true") })))
+}
+
+#[derive(Deserialize)]
+struct AllowPrivateIpsReq {
+    enabled: bool,
+}
+
+async fn set_allow_private_ips(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<AllowPrivateIpsReq>,
+) -> Result<Json<Value>, AdminError> {
+    require_admin(&state.admin, &headers)?;
+    let value = if req.enabled { "true" } else { "false" };
+    state.db.set_setting("allow_private_ips", value).map_err(db_err)?;
+    crate::provider::set_allow_private_ips(req.enabled);
+    Ok(Json(serde_json::json!({ "enabled": req.enabled })))
+}
+
 // ── Router ────────────────────────────────────────────────────────
 
 pub fn admin_routes() -> Router<Arc<AppState>> {
@@ -1821,5 +1849,10 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route(
             "/admin/api/channels/{id}/upstream-models",
             axum::routing::get(list_upstream_models),
+        )
+        // Settings
+        .route(
+            "/admin/api/settings/allow-private-ips",
+            axum::routing::get(get_allow_private_ips).put(set_allow_private_ips),
         )
 }

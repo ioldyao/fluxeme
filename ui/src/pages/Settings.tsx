@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useCurrency, CURRENCY_SYMBOL, CURRENCY_CODE, type CurrencyCode } from '@/store/currency';
 import { PageHeader } from '@/components/PageHeader';
@@ -5,10 +6,33 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
+import { api } from '@/api/client';
 
 export default function SettingsPage() {
   const { t } = useTranslation();
   const { currency, rate, setCurrency, setRate } = useCurrency();
+  const [allowPrivateIps, setAllowPrivateIps] = useState(true);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api<{ enabled: boolean }>('/settings/allow-private-ips')
+      .then((r) => setAllowPrivateIps(r.enabled))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const toggleAllowPrivateIps = async (checked: boolean) => {
+    setAllowPrivateIps(checked);
+    try {
+      await api('/settings/allow-private-ips', {
+        method: 'PUT',
+        body: { enabled: checked },
+      });
+    } catch {
+      setAllowPrivateIps(!checked);
+    }
+  };
 
   return (
     <div className="max-w-2xl mx-auto space-y-6 animate-fade-in">
@@ -78,6 +102,23 @@ export default function SettingsPage() {
                 <p className="text-lg font-semibold text-brand">{CURRENCY_SYMBOL[currency]}{rate.toFixed(1)}</p>
               </div>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-6 space-y-6">
+          <h2 className="text-sm font-semibold text-foreground mb-4">{t('settings.security')}</h2>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <Label className="text-sm">{t('settings.allowPrivateIps')}</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">{t('settings.allowPrivateIpsHint')}</p>
+            </div>
+            <Switch
+              checked={allowPrivateIps}
+              onCheckedChange={toggleAllowPrivateIps}
+              disabled={loading}
+            />
           </div>
         </CardContent>
       </Card>

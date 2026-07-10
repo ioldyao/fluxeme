@@ -117,6 +117,11 @@ async fn main() {
         }
     }
 
+    // Load allow_private_ips setting from DB
+    if let Ok(Some(v)) = db.get_setting("allow_private_ips") {
+        provider::set_allow_private_ips(v == "true");
+    }
+
     let state = Arc::new(AppState {
         config,
         auth,

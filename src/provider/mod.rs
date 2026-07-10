@@ -4,6 +4,7 @@ pub mod vllm;
 
 use std::net::{IpAddr, ToSocketAddrs};
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -73,8 +74,21 @@ pub trait ProviderAdapter: Send + Sync {
     }
 }
 
+/// Global flag to allow private IP addresses (disables SSRF protection).
+static ALLOW_PRIVATE_IPS: AtomicBool = AtomicBool::new(true);
+
+/// Set whether private IPs are allowed.
+pub fn set_allow_private_ips(allow: bool) {
+    ALLOW_PRIVATE_IPS.store(allow, Ordering::Relaxed);
+    tracing::info!("Private IP access: {}", if allow { "ALLOWED" } else { "BLOCKED" });
+}
+
 /// Validate that an endpoint URL doesn't resolve to a private/reserved IP (SSRF protection).
 pub fn validate_endpoint_url(url_str: &str) -> Result<(), ProviderError> {
+    if ALLOW_PRIVATE_IPS.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+
     let parsed = Url::parse(url_str).map_err(|_| {
         ProviderError("Invalid endpoint URL format".into())
     })?;

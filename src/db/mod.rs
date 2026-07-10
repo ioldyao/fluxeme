@@ -728,6 +728,29 @@ impl Database {
 
     /// Delete usage log records older than the given cutoff timestamp.
     /// Returns the number of deleted rows.
+    /// Get a balancer setting by key.
+    pub fn get_setting(&self, key: &str) -> Result<Option<String>, DbError> {
+        let conn = self.conn()?;
+        let result = conn
+            .query_row(
+                "SELECT value FROM balancer_settings WHERE key = ?1",
+                params![key],
+                |row| row.get::<_, String>(0),
+            )
+            .ok();
+        Ok(result)
+    }
+
+    /// Set a balancer setting (upsert).
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<(), DbError> {
+        let conn = self.conn()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO balancer_settings (key, value) VALUES (?1, ?2)",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
     pub fn purge_usage_logs(&self, cutoff: &str) -> Result<usize, DbError> {
         let conn = self.conn()?;
         let count = conn.execute(
