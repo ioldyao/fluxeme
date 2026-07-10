@@ -43,6 +43,7 @@ pub struct AuthResult {
     pub user_name: String,
     pub rate_limits: Option<(u64, u64)>,
     pub allowed_models: Option<Vec<String>>,
+    pub api_key_name: String,
 }
 
 /// Session info for admin panel login

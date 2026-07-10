@@ -76,6 +76,7 @@ impl AuthService {
                         (rl.rpm.unwrap_or(u64::MAX), rl.tpm.unwrap_or(u64::MAX))
                     }),
                     allowed_models: api_key.allowed_models.clone(),
+                    api_key_name: api_key.name.clone(),
                 });
             }
         }

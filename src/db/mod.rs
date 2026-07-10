@@ -136,7 +136,8 @@ impl Database {
                 success INTEGER NOT NULL,
                 request_body TEXT,
                 response_body TEXT,
-                reasoning_body TEXT
+                reasoning_body TEXT,
+                api_key_name TEXT
             );
             ",
         )?;
@@ -147,6 +148,7 @@ impl Database {
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN request_body TEXT;");
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN response_body TEXT;");
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN reasoning_body TEXT;");
+        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN api_key_name TEXT;");
         // Backward compat: add published column to models
         let _ = conn
             .execute_batch("ALTER TABLE models ADD COLUMN published INTEGER NOT NULL DEFAULT 0;");
@@ -243,8 +245,8 @@ impl Database {
     pub fn insert_usage(&self, record: &crate::domain::usage::UsageRecord) -> Result<(), DbError> {
         let conn = self.conn()?;
         conn.execute(
-            "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             rusqlite::params![
                 record.timestamp,
                 record.request_id,
@@ -261,6 +263,7 @@ impl Database {
                 record.request_body,
                 record.response_body,
                 record.reasoning_body,
+                record.api_key_name,
             ],
         )?;
         Ok(())
@@ -287,7 +290,7 @@ impl Database {
         let mut records = Vec::new();
         if let Some(uid) = user_id {
             let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name
                  FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2 ORDER BY id ASC",
             )?;
             let mut rows = stmt.query(rusqlite::params![uid, since])?;
@@ -308,11 +311,12 @@ impl Database {
                     request_body: None,
                     response_body: None,
                     reasoning_body: None,
+                    api_key_name: row.get::<_, Option<String>>(12).ok().flatten(),
                 });
             }
         } else {
             let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name
                  FROM usage_logs WHERE timestamp >= ?1 ORDER BY id ASC",
             )?;
             let mut rows = stmt.query(rusqlite::params![since])?;
@@ -333,6 +337,7 @@ impl Database {
                     request_body: None,
                     response_body: None,
                     reasoning_body: None,
+                    api_key_name: row.get::<_, Option<String>>(12).ok().flatten(),
                 });
             }
         }
@@ -376,7 +381,7 @@ impl Database {
 
         if let Some(uid) = user_id {
             let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name
                  FROM usage_logs WHERE user_id = ?1 ORDER BY id DESC LIMIT ?2",
             )?;
             let mut rows = stmt.query(rusqlite::params![uid, limit as i64])?;
@@ -397,11 +402,12 @@ impl Database {
                     request_body: None,
                     response_body: None,
                     reasoning_body: None,
+                    api_key_name: row.get::<_, Option<String>>(12).ok().flatten(),
                 });
             }
         } else {
             let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name
                  FROM usage_logs ORDER BY id DESC LIMIT ?1",
             )?;
             let mut rows = stmt.query(rusqlite::params![limit as i64])?;
@@ -422,6 +428,7 @@ impl Database {
                     request_body: None,
                     response_body: None,
                     reasoning_body: None,
+                    api_key_name: row.get::<_, Option<String>>(12).ok().flatten(),
                 });
             }
         }
@@ -434,7 +441,7 @@ impl Database {
     ) -> Result<Option<crate::domain::usage::UsageRecord>, DbError> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(
-            "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body
+            "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name
              FROM usage_logs WHERE request_id = ?1",
         )?;
         let mut rows = stmt.query(rusqlite::params![request_id])?;
@@ -455,6 +462,7 @@ impl Database {
                 request_body: row.get(12)?,
                 response_body: row.get(13)?,
                 reasoning_body: row.get(14)?,
+                api_key_name: row.get(15)?,
             }))
         } else {
             Ok(None)
@@ -675,7 +683,7 @@ impl Database {
         let mut records = Vec::new();
         if let Some(uid) = user_id {
             let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name
                  FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2 ORDER BY id ASC",
             )?;
             let mut rows = stmt.query(params![uid, since])?;
@@ -696,11 +704,12 @@ impl Database {
                     request_body: None,
                     response_body: None,
                     reasoning_body: None,
+                    api_key_name: row.get::<_, Option<String>>(12).ok().flatten(),
                 });
             }
         } else {
             let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name
                  FROM usage_logs WHERE timestamp >= ?1 ORDER BY id ASC",
             )?;
             let mut rows = stmt.query(params![since])?;
@@ -721,6 +730,7 @@ impl Database {
                     request_body: None,
                     response_body: None,
                     reasoning_body: None,
+                    api_key_name: row.get::<_, Option<String>>(12).ok().flatten(),
                 });
             }
         }
@@ -730,8 +740,8 @@ impl Database {
 
 pub fn insert_usage_row(conn: &Connection, record: &UsageRecord) -> Result<(), rusqlite::Error> {
     conn.execute(
-        "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             record.timestamp,
             record.request_id,
@@ -748,6 +758,7 @@ pub fn insert_usage_row(conn: &Connection, record: &UsageRecord) -> Result<(), r
             record.request_body,
             record.response_body,
             record.reasoning_body,
+            record.api_key_name,
         ],
     )?;
     Ok(())

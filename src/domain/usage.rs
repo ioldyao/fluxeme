@@ -17,4 +17,5 @@ pub struct UsageRecord {
     pub request_body: Option<String>,
     pub response_body: Option<String>,
     pub reasoning_body: Option<String>,
+    pub api_key_name: Option<String>,
 }

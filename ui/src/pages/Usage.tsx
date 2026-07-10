@@ -101,6 +101,7 @@ export default function Usage() {
                         <th className="text-left py-3 px-4">{t('table.time')}</th>
                         <th className="text-left py-3 px-4">{t('table.requestId')}</th>
                         <th className="text-left py-3 px-4">{t('table.user')}</th>
+                        <th className="text-left py-3 px-4">{t('table.apiKey')}</th>
                         <th className="text-left py-3 px-4">{t('table.model')}</th>
                         <th className="text-right py-3 px-4">{t('table.prompt')}</th>
                         <th className="text-right py-3 px-4">{t('table.completion')}</th>
@@ -118,6 +119,7 @@ export default function Usage() {
                           </td>
                           <td className="py-3 px-4 font-mono text-xs">{r.request_id.substring(0, 8)}</td>
                           <td className="py-3 px-4">{r.user_name}</td>
+                          <td className="py-3 px-4">{r.api_key_name}</td>
                           <td className="py-3 px-4">{r.model}</td>
                           <td className="py-3 px-4 text-right">{r.prompt_tokens}</td>
                           <td className="py-3 px-4 text-right">{r.completion_tokens}</td>

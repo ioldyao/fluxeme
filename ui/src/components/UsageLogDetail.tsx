@@ -83,6 +83,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
             {record && (
               <span className="font-mono text-xs text-muted-foreground">
                 {record.request_id.substring(0, 12)}
+                {record.api_key_name && <span className="ml-2 not-italic font-normal">· {record.api_key_name}</span>}
               </span>
             )}
           </DialogTitle>
@@ -153,6 +154,12 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Channel</div>
                 <div className="font-medium font-mono text-xs truncate">{record.channel_id}</div>
               </div>
+              {record.api_key_name && (
+                <div className="rounded-lg border p-3 space-y-1">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('usage.apiKey')}</div>
+                  <div className="font-medium text-xs truncate">{record.api_key_name}</div>
+                </div>
+              )}
               <div className="rounded-lg border p-3 space-y-1">
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('table.time')}</div>
                 <div className="font-medium text-xs">{new Date(record.timestamp).toLocaleString()}</div>
@@ -161,7 +168,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
 
             {/* Request body */}
             <div>
-              <h4 className="text-sm font-medium mb-1">Request</h4>
+              <h4 className="text-sm font-medium mb-1">{t('usage.request')}</h4>
               <pre className="rounded-lg bg-muted p-3 text-xs overflow-x-auto max-h-60 overflow-y-auto whitespace-pre-wrap break-all max-w-full">
                 {formatJson(record.request_body)}
               </pre>
@@ -172,7 +179,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
               <div>
                 <details>
                   <summary className="text-sm font-medium cursor-pointer select-none">
-                    Reasoning {streaming && <span className="ml-1 text-xs text-yellow-500">(streaming)</span>}
+                    {t('usage.thinking')} {streaming && <span className="ml-1 text-xs text-yellow-500">(streaming)</span>}
                   </summary>
                   <pre className="rounded-lg bg-muted p-3 text-xs overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap break-all max-w-full mt-1">
                     {record.reasoning_body}
@@ -183,10 +190,11 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
 
             {/* Response body */}
             <div className="max-w-full">
-              <h4 className="text-sm font-medium mb-1">
-                Response
-                {streaming && <span className="ml-2 text-xs text-yellow-500">(streaming)</span>}
-              </h4>
+              <div className="flex items-center gap-2 mb-1">
+                <h4 className="text-sm font-medium">{t('usage.output')}</h4>
+                {streaming && <span className="text-xs text-yellow-500">(streaming)</span>}
+              </div>
+              <div className="text-xs text-muted-foreground mb-1">{t('usage.reply')}</div>
               <pre className="rounded-lg bg-muted p-3 text-xs overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap break-all max-w-full">
                 {formatResponse(record.response_body)}
               </pre>

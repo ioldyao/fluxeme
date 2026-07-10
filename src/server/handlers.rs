@@ -196,6 +196,7 @@ struct UsageTrackingStream<S> {
     request_id: String,
     user_id: String,
     user_name: String,
+    api_key_name: String,
     channel_id: String,
     model: String,
     start: Instant,
@@ -253,6 +254,7 @@ impl<S> UsageTrackingStream<S> {
             status_code: if completed { 200 } else { 499 },
             success: completed,
             request_body: self.req_body.clone(),
+            api_key_name: Some(self.api_key_name.clone()),
             reasoning_body: {
                 let (reasoning, _) = extract_sse_content(&self.resp_buf);
                 Some(if reasoning.len() > 102400 {
@@ -281,6 +283,7 @@ async fn handle_streaming(
     request_id: String,
     user_id: String,
     user_name: String,
+    api_key_name: String,
     channel_id: String,
     model: String,
     start: Instant,
@@ -297,6 +300,7 @@ async fn handle_streaming(
                 request_id,
                 user_id,
                 user_name,
+                api_key_name,
                 channel_id,
                 model,
                 start,
@@ -335,6 +339,7 @@ async fn handle_streaming(
                 request_body: req_body,
                 response_body: None,
                 reasoning_body: None,
+                api_key_name: Some(api_key_name),
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -351,6 +356,7 @@ async fn handle_non_streaming(
     request_id: String,
     user_id: String,
     user_name: String,
+    api_key_name: String,
     channel_id: String,
     model: String,
     start: Instant,
@@ -388,6 +394,7 @@ async fn handle_non_streaming(
                 request_body: req_body,
                 response_body: serde_json::to_string(&resp).ok(),
                 reasoning_body: reasoning,
+                api_key_name: Some(api_key_name),
             });
 
             Ok(Json(resp).into_response())
@@ -409,6 +416,7 @@ async fn handle_non_streaming(
                 request_body: req_body,
                 response_body: None,
                 reasoning_body: None,
+                api_key_name: None,
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -447,13 +455,13 @@ pub async fn chat_completions(
     if is_streaming {
         handle_streaming(
             &state, route.adapter, route.endpoint, body,
-            request_id, user.user_id, user.user_name, route.channel_id, model, start,
+            request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start,
         )
         .await
     } else {
         handle_non_streaming(
             &state, route.adapter, route.endpoint, body,
-            request_id, user.user_id, user.user_name, route.channel_id, model, start,
+            request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start,
         )
         .await
     }
@@ -489,13 +497,13 @@ pub async fn messages(
     if is_streaming {
         handle_streaming(
             &state, route.adapter, route.endpoint, body,
-            request_id, user.user_id, user.user_name, route.channel_id, model, start,
+            request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start,
         )
         .await
     } else {
         handle_non_streaming(
             &state, route.adapter, route.endpoint, body,
-            request_id, user.user_id, user.user_name, route.channel_id, model, start,
+            request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start,
         )
         .await
     }
@@ -559,6 +567,7 @@ async fn relay_to_upstream(
                 request_body: req_body,
                 response_body: serde_json::to_string(&resp).ok(),
                 reasoning_body: reasoning,
+                api_key_name: Some(user.api_key_name.clone()),
             });
 
             Ok(Json(resp).into_response())
@@ -580,6 +589,7 @@ async fn relay_to_upstream(
                 request_body: req_body,
                 response_body: None,
                 reasoning_body: None,
+                api_key_name: Some(user.api_key_name.clone()),
             });
 
             Err(GatewayError::from(e))
