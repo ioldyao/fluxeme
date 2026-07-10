@@ -4,12 +4,19 @@ import type { UsageRecord, DailyAggregate } from '@/types';
 
 interface UsageParams {
   limit?: number;
+  offset?: number;
   user_id?: string;
+}
+
+interface UsageResponse {
+  records: UsageRecord[];
+  total: number;
 }
 
 export function useUsage(params: UsageParams = {}) {
   const searchParams = new URLSearchParams();
   if (params.limit) searchParams.set('limit', String(params.limit));
+  if (params.offset) searchParams.set('offset', String(params.offset));
   if (params.user_id) searchParams.set('user_id', params.user_id);
   const qs = searchParams.toString();
 
@@ -18,7 +25,7 @@ export function useUsage(params: UsageParams = {}) {
 
   return useQuery({
     queryKey: ['usage', stableKey],
-    queryFn: () => api<UsageRecord[]>(`/usage${qs ? `?${qs}` : ''}`),
+    queryFn: () => api<UsageResponse>(`/usage${qs ? `?${qs}` : ''}`),
   });
 }
 

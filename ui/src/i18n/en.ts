@@ -113,6 +113,8 @@ const en: Record<string, string> = {
   'common.days': 'days',
   'common.notFound': 'Not found',
   'common.pageSize': 'Page size',
+  'common.prev': 'Prev',
+  'common.next': 'Next',
   'login.title': 'Sign In',
   'login.subtitle': 'AI Gateway Platform',
   'login.username': 'Username',

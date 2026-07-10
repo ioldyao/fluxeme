@@ -1379,17 +1379,25 @@ async fn delete_rule(
 #[derive(Deserialize)]
 struct UsageQuery {
     limit: Option<usize>,
+    offset: Option<usize>,
     user_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct UsageResponse {
+    records: Vec<crate::domain::usage::UsageRecord>,
+    total: usize,
 }
 
 async fn get_usage(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(q): Query<UsageQuery>,
-) -> Result<Json<Vec<crate::domain::usage::UsageRecord>>, AdminError> {
+) -> Result<Json<UsageResponse>, AdminError> {
     let session = require_session(&state.admin, &headers)?;
 
     let limit = q.limit.unwrap_or(50);
+    let offset = q.offset.unwrap_or(0);
 
     // Regular users can only see their own usage
     let user_filter = if session.role == "user" {
@@ -1398,15 +1406,23 @@ async fn get_usage(
         q.user_id
     };
 
+    let total = state
+        .usage
+        .count_filtered(user_filter.as_deref())
+        .map_err(|e| {
+            tracing::error!("Usage count failed: {}", e);
+            AdminError::internal("Internal server error")
+        })?;
+
     let records = state
         .usage
-        .query(limit, user_filter.as_deref())
+        .query(limit, offset, user_filter.as_deref())
         .map_err(|e| {
             tracing::error!("Usage query failed: {}", e);
             AdminError::internal("Internal server error")
         })?;
 
-    Ok(Json(records))
+    Ok(Json(UsageResponse { records, total }))
 }
 
 async fn get_usage_detail(

@@ -293,6 +293,18 @@ impl Database {
             |row| row.get(0),
         )?)
     }
+    pub fn count_usage_filtered(&self, user_id: Option<&str>) -> Result<usize, DbError> {
+        let conn = self.conn()?;
+        if let Some(uid) = user_id {
+            Ok(conn.query_row(
+                "SELECT COUNT(*) FROM usage_logs WHERE user_id = ?1",
+                [uid],
+                |row| row.get(0),
+            )?)
+        } else {
+            Ok(conn.query_row("SELECT COUNT(*) FROM usage_logs", [], |row| row.get(0))?)
+        }
+    }
     pub fn query_usage_since(
         &self,
         since: &str,
@@ -421,6 +433,7 @@ impl Database {
     pub fn query_usage(
         &self,
         limit: usize,
+        offset: usize,
         user_id: Option<&str>,
     ) -> Result<Vec<crate::domain::usage::UsageRecord>, DbError> {
         use crate::domain::usage::UsageRecord;
@@ -430,9 +443,9 @@ impl Database {
         if let Some(uid) = user_id {
             let mut stmt = conn.prepare(
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name
-                 FROM usage_logs WHERE user_id = ?1 ORDER BY id DESC LIMIT ?2",
+                 FROM usage_logs WHERE user_id = ?1 ORDER BY id DESC LIMIT ?2 OFFSET ?3",
             )?;
-            let mut rows = stmt.query(rusqlite::params![uid, limit as i64])?;
+            let mut rows = stmt.query(rusqlite::params![uid, limit as i64, offset as i64])?;
             while let Some(row) = rows.next()? {
                 records.push(UsageRecord {
                     timestamp: row.get(0)?,
@@ -456,9 +469,9 @@ impl Database {
         } else {
             let mut stmt = conn.prepare(
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name
-                 FROM usage_logs ORDER BY id DESC LIMIT ?1",
+                 FROM usage_logs ORDER BY id DESC LIMIT ?1 OFFSET ?2",
             )?;
-            let mut rows = stmt.query(rusqlite::params![limit as i64])?;
+            let mut rows = stmt.query(rusqlite::params![limit as i64, offset as i64])?;
             while let Some(row) = rows.next()? {
                 records.push(UsageRecord {
                     timestamp: row.get(0)?,

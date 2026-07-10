@@ -24,10 +24,15 @@ export default function Usage() {
   const { t } = useTranslation();
   const { role } = useAuth();
   const [limit, setLimit] = useState(50);
+  const [offset, setOffset] = useState(0);
   const [userFilter, setUserFilter] = useState('');
   const [detailId, setDetailId] = useState<string | null>(null);
-  const params = role === 'admin' && userFilter ? { limit, user_id: userFilter } : { limit };
+  const params = { limit, offset, ...(role === 'admin' && userFilter ? { user_id: userFilter } : {}) };
   const { data: usage, isLoading, isError, refetch } = useUsage(params);
+  const records = usage?.records ?? [];
+  const total = usage?.total ?? 0;
+  const page = offset / limit + 1;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
   const { data: models } = useQuery({
     queryKey: ['models'],
     queryFn: () => api<import('@/types').Model[]>('/models'),
@@ -87,7 +92,7 @@ export default function Usage() {
             )}
             <div className="flex items-center gap-2 ml-auto">
               <span className="text-xs text-muted-foreground whitespace-nowrap">{t('common.pageSize')}</span>
-              <Select value={String(limit)} onValueChange={(v) => setLimit(Number(v))}>
+              <Select value={String(limit)} onValueChange={(v) => { setLimit(Number(v)); setOffset(0); }}>
                 <SelectTrigger className="w-20 h-9">
                   <SelectValue />
                 </SelectTrigger>
@@ -112,7 +117,7 @@ export default function Usage() {
                     <Button variant="outline" onClick={() => refetch()}>{t('common.refresh')}</Button>
                   </div>
                 </div>
-              ) : usage && usage.length > 0 ? (
+              ) : records.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -131,7 +136,7 @@ export default function Usage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {usage.map((r) => (
+                      {records.map((r) => (
                         <tr key={r.request_id} className="border-b last:border-0 hover:bg-muted/50 cursor-pointer" onClick={() => setDetailId(r.request_id)}>
                           <td className="py-3 px-4 text-muted-foreground whitespace-nowrap text-xs">
                             {new Date(r.timestamp).toLocaleString()}
@@ -159,6 +164,30 @@ export default function Usage() {
                 </div>
               ) : (
                 <EmptyState message={t('empty.noUsage')} />
+              )}
+              {records.length > 0 && (
+                <div className="flex items-center justify-between px-4 py-3 border-t">
+                  <span className="text-xs text-muted-foreground">
+                    {total > 0 && `${(page - 1) * limit + 1}–${Math.min(page * limit, total)} / ${total}`}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setOffset(offset - limit)}>
+                      {t('common.prev')}
+                    </Button>
+                    {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                      const start = Math.max(0, Math.min(page - 3, totalPages - 5));
+                      const p = start + i + 1;
+                      return (
+                        <Button key={p} variant={p === page ? 'default' : 'outline'} size="sm" className="w-8" onClick={() => setOffset((p - 1) * limit)}>
+                          {p}
+                        </Button>
+                      );
+                    })}
+                    <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setOffset(offset + limit)}>
+                      {t('common.next')}
+                    </Button>
+                  </div>
+                </div>
               )}
             </CardContent>
           </Card>

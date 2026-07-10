@@ -113,6 +113,8 @@ const zh: Record<string, string> = {
   'common.days': '天',
   'common.notFound': '未找到',
   'common.pageSize': '每页行数',
+  'common.prev': '上一页',
+  'common.next': '下一页',
   'login.title': '登录',
   'login.subtitle': 'AI 网关平台',
   'login.username': '用户名',
