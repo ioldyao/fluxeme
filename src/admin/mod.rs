@@ -1281,13 +1281,18 @@ async fn test_subscription_connection(
         "stream": false,
     });
 
-    match adapter.chat_complete(endpoint, test_body).await {
+    let start = std::time::Instant::now();
+    let result = adapter.chat_complete(endpoint, test_body).await;
+    let latency_ms = start.elapsed().as_millis() as u64;
+
+    match result {
         Ok(resp) => {
             balancer.as_health_aware().record_success(endpoint_idx);
             Ok(Json(serde_json::json!({
                 "success": true,
                 "model": resp.get("model"),
                 "status": "ok",
+                "latency_ms": latency_ms,
             })))
         }
         Err(e) => {
@@ -1295,6 +1300,7 @@ async fn test_subscription_connection(
             Ok(Json(serde_json::json!({
                 "success": false,
                 "error": e.0,
+                "latency_ms": latency_ms,
             })))
         }
     }

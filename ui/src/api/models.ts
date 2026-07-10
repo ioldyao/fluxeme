@@ -50,10 +50,16 @@ export function useUnsubscribeModel() {
   });
 }
 
+export interface ModelTestResult {
+  success: boolean;
+  error?: string;
+  latency_ms?: number;
+}
+
 export function useTestModelConnection() {
   return useMutation({
     mutationFn: (modelId: string) =>
-      api<{ success: boolean; error?: string }>('/me/test-connection', { method: 'POST', body: { model_id: modelId } }),
+      api<ModelTestResult>('/me/test-connection', { method: 'POST', body: { model_id: modelId } }),
   });
 }
 

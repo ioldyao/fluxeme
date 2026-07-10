@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSubscriptions, useUnsubscribeModel, useTestModelConnection } from '@/api/models';
+import { useSubscriptions, useUnsubscribeModel, useTestModelConnection, type ModelTestResult } from '@/api/models';
 import { PageHeader } from '@/components/PageHeader';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,7 @@ export default function MyModels() {
   const unsubscribe = useUnsubscribeModel();
   const testConnection = useTestModelConnection();
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, ModelTestResult>>({});
 
   const handleUnsubscribe = (modelId: string) => {
     unsubscribe.mutate(modelId, {
@@ -27,8 +28,9 @@ export default function MyModels() {
     testConnection.mutate(modelId, {
       onSuccess: (res) => {
         setTestingId(null);
+        setResults((prev) => ({ ...prev, [modelId]: res }));
         if (res.success) {
-          toast.success('连接成功');
+          toast.success(`连接成功 (${res.latency_ms}ms)`);
         } else {
           toast.error(res.error || '连接失败');
         }
@@ -69,8 +71,16 @@ export default function MyModels() {
                 <div className="flex items-center justify-between">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
+                      {results[model.id] && (
+                        <span className={`inline-block size-2 rounded-full ${results[model.id].success ? 'bg-green-500' : 'bg-red-500'}`} />
+                      )}
                       <h3 className="font-medium">{model.name}</h3>
                       <span className="text-xs text-muted-foreground font-mono">{model.model_pattern}</span>
+                      {results[model.id]?.latency_ms !== undefined && (
+                        <span className={`text-xs ${results[model.id].success ? 'text-green-600' : 'text-red-500'}`}>
+                          {results[model.id].latency_ms}ms
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-muted-foreground">
                       P: ${model.pricing.prompt_price}/1K · C: ${model.pricing.completion_price}/1K
