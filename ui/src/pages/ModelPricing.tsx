@@ -8,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { useCurrency, CURRENCY_SYMBOL, CURRENCY_CODE } from '@/store/currency';
 import type { Pricing } from '@/types';
 
 const PRICE_FIELDS: { key: keyof Pricing; labelKey: string }[] = [
@@ -48,6 +49,9 @@ export default function ModelPricingPage() {
   const { t } = useTranslation();
   const { data: models, isLoading, isError, refetch } = useModels();
   const updatePricing = useUpdateModelPricing();
+  const { currency, rate } = useCurrency();
+  const sym = CURRENCY_SYMBOL[currency];
+  const code = CURRENCY_CODE[currency];
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dirty, setDirty] = useState<Record<string, Pricing>>({});
@@ -176,7 +180,7 @@ export default function ModelPricingPage() {
                           setPrice(key, isNaN(v) ? 0 : Math.max(0, v));
                         }}
                       />
-                      <span className="text-xs text-muted-foreground w-16">/1M</span>
+                      <span className="text-xs text-muted-foreground w-20">$/1M</span>
                     </div>
                   </div>
                 ))}
@@ -204,7 +208,7 @@ export default function ModelPricingPage() {
                         <span className="text-muted-foreground">{label}</span>
                         <span className="font-semibold">
                           {v > 0
-                            ? t('pricing.perMillion', { price: `$${v.toFixed(2)}` })
+                            ? t('pricing.perMillion', { price: `${sym}${(currency === 'cny' ? v * rate : v).toFixed(2)}` })
                             : t('pricing.empty')}
                         </span>
                       </div>

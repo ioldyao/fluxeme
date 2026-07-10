@@ -3,7 +3,9 @@ import { useUsageDetail } from '@/api/usage';
 import { usePublicModels } from '@/api/models';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { CheckCircle2, XCircle, Radio, RadioIcon } from 'lucide-react';
-import type { Model, Pricing } from '@/types';
+import { useCurrency } from '@/store/currency';
+import { formatCost } from '@/lib/cost';
+import type { Model } from '@/types';
 
 interface Props {
   requestId: string | null;
@@ -28,13 +30,6 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
 
   const findModel = (modelName: string): Model | undefined => {
     return models?.find(m => m.name === modelName || modelName.startsWith(m.name));
-  };
-
-  const calcCost = (promptTokens: number, completionTokens: number, pricing?: Pricing) => {
-    if (!pricing) return null;
-    const promptCost = (promptTokens / 1000) * pricing.prompt_price;
-    const completionCost = (completionTokens / 1000) * pricing.completion_price;
-    return promptCost + completionCost;
   };
 
   const formatJson = (val: string | null | undefined) => {
@@ -70,9 +65,10 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
     return parsed.length > 0 ? parsed.join('') : val;
   };
 
+  const { currency, rate } = useCurrency();
   const streaming = record ? isStreaming(record) : false;
   const matchedModel = record ? findModel(record.model) : undefined;
-  const totalCost = record ? calcCost(record.prompt_tokens, record.completion_tokens, matchedModel?.pricing) : null;
+  const costStr = record ? formatCost(record.prompt_tokens, record.completion_tokens, matchedModel?.pricing, currency, rate) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -144,10 +140,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
               <div className="rounded-lg border p-3 space-y-1">
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Cost</div>
                 <div className="font-medium font-mono">
-                  {totalCost !== null && totalCost > 0
-                    ? `$${totalCost.toFixed(6)}`
-                    : <span className="text-muted-foreground text-xs">—</span>
-                  }
+                  {costStr || <span className="text-muted-foreground text-xs">—</span>}
                 </div>
               </div>
               <div className="rounded-lg border p-3 space-y-1">
