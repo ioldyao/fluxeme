@@ -83,9 +83,11 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle>{channel ? t('channel.edit') : t('channel.add')}</DialogTitle></DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="text-xl">{channel ? t('channel.edit') : t('channel.add')}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-2">
             <Label>{t('form.name')}</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('form.channelName')} />
@@ -141,9 +143,9 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
               );
             })}
           </div>
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
-            <Button type="submit" disabled={isPending}>{t('common.save')}</Button>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button type="button" variant="outline" size="lg" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
+            <Button type="submit" size="lg" disabled={isPending}>{t('common.save')}</Button>
           </div>
         </form>
       </DialogContent>

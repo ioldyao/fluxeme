@@ -43,27 +43,31 @@ export function RuleForm({ rule, open, onOpenChange, onSubmit, isPending }: Prop
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>{rule ? t('rule.edit') : t('rule.add')}</DialogTitle></DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="text-xl">{rule ? t('rule.edit') : t('rule.add')}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-6">
           {!rule && (
             <div className="space-y-2">
-              <Label>{t('form.ruleName')}</Label>
+              <Label className="text-sm font-medium">{t('form.ruleName')}</Label>
               <Input value={name} onChange={(e) => setName(e.target.value)} required />
             </div>
           )}
           <div className="space-y-2">
-            <Label>{t('form.userIdLabel')}</Label>
+            <Label className="text-sm font-medium">{t('form.userIdLabel')}</Label>
             <Input value={userId} onChange={(e) => setUserId(e.target.value)} />
           </div>
           <div className="space-y-2">
-            <Label>{t('form.modelPattern')}</Label>
+            <Label className="text-sm font-medium">{t('form.modelPattern')}</Label>
             <Input value={modelPattern} onChange={(e) => setModelPattern(e.target.value)} placeholder="*" />
           </div>
           <div className="space-y-2">
-            <Label>{t('form.channel')}</Label>
+            <Label className="text-sm font-medium">{t('form.channel')}</Label>
             <Select value={channelId} onValueChange={(v) => setChannelId(v ?? '')} required>
-              <SelectTrigger><SelectValue placeholder={t('form.selectChannel')} /></SelectTrigger>
+              <SelectTrigger className="h-10">
+                <SelectValue placeholder={t('form.selectChannel')} />
+              </SelectTrigger>
               <SelectContent>
                 {channels?.map((ch) => (
                   <SelectItem key={ch.id} value={ch.id}>{ch.id} ({ch.provider})</SelectItem>
@@ -71,9 +75,9 @@ export function RuleForm({ rule, open, onOpenChange, onSubmit, isPending }: Prop
               </SelectContent>
             </Select>
           </div>
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
-            <Button type="submit" disabled={isPending}>{t('common.save')}</Button>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button type="button" variant="outline" size="lg" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
+            <Button type="submit" size="lg" disabled={isPending}>{t('common.save')}</Button>
           </div>
         </form>
       </DialogContent>

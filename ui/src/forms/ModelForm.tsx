@@ -63,9 +63,11 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle>{model ? t('model.edit') : t('model.add')}</DialogTitle></DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="text-xl">{model ? t('model.edit') : t('model.add')}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-6">
           {!model && (
             <div className="space-y-2">
               <Label>{t('form.modelName')}</Label>
@@ -130,9 +132,9 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
               </div>
             ))}
           </div>
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
-            <Button type="submit" disabled={isPending}>{t('common.save')}</Button>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button type="button" variant="outline" size="lg" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
+            <Button type="submit" size="lg" disabled={isPending}>{t('common.save')}</Button>
           </div>
         </form>
       </DialogContent>

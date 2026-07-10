@@ -56,43 +56,48 @@ export function UserForm({ user, open, onOpenChange, onSubmit, isPending }: Prop
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle>{user ? t('user.edit') : t('user.add')}</DialogTitle></DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {!user && (
-            <div className="space-y-2">
-              <Label htmlFor="uid">{t('form.userId')}</Label>
-              <Input id="uid" value={id} onChange={(e) => setId(e.target.value)} required />
-            </div>
-          )}
-          <div className="space-y-2">
-            <Label htmlFor="uname">{t('form.name')}</Label>
-            <Input id="uname" value={name} onChange={(e) => setName(e.target.value)} required />
-          </div>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="text-xl">{user ? t('user.edit') : t('user.add')}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-6">
           {user ? (
             <div className="space-y-2">
-              <Label htmlFor="upwd">{t('login.password')} (留空不修改)</Label>
-              <Input id="upwd" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+              <Label className="text-sm font-medium">{t('form.userId')}</Label>
+              <div className="px-3 py-2 rounded-md bg-muted text-sm text-muted-foreground">{user.id}</div>
             </div>
           ) : (
             <div className="space-y-2">
-              <Label htmlFor="pwd">{t('login.password')}</Label>
-              <Input id="pwd" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+              <Label className="text-sm font-medium">{t('form.userId')}</Label>
+              <Input value={id} onChange={(e) => setId(e.target.value)} required />
             </div>
           )}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="rpm">{t('form.rpm')}</Label>
-              <Input id="rpm" type="number" value={rpm} onChange={(e) => setRpm(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="tpml">{t('form.tpm')}</Label>
-              <Input id="tpml" type="number" value={tpm} onChange={(e) => setTpm(e.target.value)} />
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">{t('form.name')}</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} required />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">
+              {t('login.password')}{user && <span className="text-muted-foreground font-normal ml-1">（留空不修改）</span>}
+            </Label>
+            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </div>
+          <div className="space-y-3">
+            <Label className="text-sm font-medium">速率限制</Label>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">{t('form.rpm')}</Label>
+                <Input type="number" value={rpm} onChange={(e) => setRpm(e.target.value)} placeholder="不限" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">{t('form.tpm')}</Label>
+                <Input type="number" value={tpm} onChange={(e) => setTpm(e.target.value)} placeholder="不限" />
+              </div>
             </div>
           </div>
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
-            <Button type="submit" disabled={isPending}>{t('common.save')}</Button>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button type="button" variant="outline" size="lg" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
+            <Button type="submit" size="lg" disabled={isPending}>{t('common.save')}</Button>
           </div>
         </form>
       </DialogContent>
