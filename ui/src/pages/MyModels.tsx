@@ -4,7 +4,6 @@ import { PageHeader } from '@/components/PageHeader';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { RefreshCw, Trash2, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -51,13 +50,6 @@ export default function MyModels() {
                     <div className="flex items-center gap-2">
                       <h3 className="font-medium">{model.name}</h3>
                       <span className="text-xs text-muted-foreground font-mono">{model.model_pattern}</span>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {model.channels.map((ch) => (
-                        <Badge key={ch.channel_id} variant="secondary" className="text-xs">
-                          {ch.channel_id} (优先级: {ch.priority})
-                        </Badge>
-                      ))}
                     </div>
                     <div className="text-xs text-muted-foreground">
                       P: ${model.pricing.prompt_price}/1K · C: ${model.pricing.completion_price}/1K
