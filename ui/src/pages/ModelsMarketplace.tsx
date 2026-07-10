@@ -250,13 +250,6 @@ function ModelCard({
           </div>
         </div>
 
-        {/* Channels info */}
-        {model.channels.length > 0 && (
-          <p className="text-xs text-muted-foreground text-center">
-            {t('marketplace.channels', { count: model.channels.length })}
-          </p>
-        )}
-
         {/* Action */}
         <Button
           variant={isSubscribed ? 'outline' : 'default'}
