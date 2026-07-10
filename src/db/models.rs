@@ -4,7 +4,7 @@ use rusqlite::{params, Connection};
 use crate::domain::model::{Model, ModelChannel, Pricing};
 
 pub fn list(conn: &Connection) -> Result<Vec<Model>, crate::db::DbError> {
-    let mut stmt = conn.prepare("SELECT id, name, model_pattern, prompt_price, completion_price, cache_read_price, cache_write_price, image_input_price, audio_input_price, audio_output_price, published, context_length FROM models ORDER BY id")?;
+    let mut stmt = conn.prepare("SELECT id, name, model_pattern, prompt_price, completion_price, cache_read_price, cache_write_price, image_input_price, audio_input_price, audio_output_price, published, context_length, category FROM models ORDER BY id")?;
     let mut models: Vec<Model> = stmt
         .query_map([], |row| {
             Ok(Model {
@@ -23,6 +23,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Model>, crate::db::DbError> {
                 channels: Vec::new(),
                 published: row.get::<_, i32>(10)? != 0,
                 context_length: row.get(11)?,
+                category: row.get::<_, String>(12).unwrap_or_default(),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -60,7 +61,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Model>, crate::db::DbError> {
 
 pub fn get(conn: &Connection, id: &str) -> Result<Option<Model>, crate::db::DbError> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, model_pattern, prompt_price, completion_price, cache_read_price, cache_write_price, image_input_price, audio_input_price, audio_output_price, published, context_length FROM models WHERE id = ?1",
+        "SELECT id, name, model_pattern, prompt_price, completion_price, cache_read_price, cache_write_price, image_input_price, audio_input_price, audio_output_price, published, context_length, category FROM models WHERE id = ?1",
     )?;
     let mut rows = stmt.query_map(params![id], |row| {
         Ok(Model {
@@ -79,6 +80,7 @@ pub fn get(conn: &Connection, id: &str) -> Result<Option<Model>, crate::db::DbEr
             channels: Vec::new(),
             published: row.get::<_, i32>(10)? != 0,
             context_length: row.get(11)?,
+            category: row.get::<_, String>(12).unwrap_or_default(),
         })
     })?;
     match rows.next() {
@@ -92,8 +94,8 @@ pub fn get(conn: &Connection, id: &str) -> Result<Option<Model>, crate::db::DbEr
 
 pub fn create(conn: &Connection, m: &Model) -> Result<(), crate::db::DbError> {
     conn.execute(
-        "INSERT INTO models (id, name, model_pattern, prompt_price, completion_price, cache_read_price, cache_write_price, image_input_price, audio_input_price, audio_output_price, published, context_length) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        params![m.id, m.name, m.model_pattern, m.pricing.prompt_price, m.pricing.completion_price, m.pricing.cache_read_price, m.pricing.cache_write_price, m.pricing.image_input_price, m.pricing.audio_input_price, m.pricing.audio_output_price, m.published as i32, m.context_length],
+        "INSERT INTO models (id, name, model_pattern, prompt_price, completion_price, cache_read_price, cache_write_price, image_input_price, audio_input_price, audio_output_price, published, context_length, category) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![m.id, m.name, m.model_pattern, m.pricing.prompt_price, m.pricing.completion_price, m.pricing.cache_read_price, m.pricing.cache_write_price, m.pricing.image_input_price, m.pricing.audio_input_price, m.pricing.audio_output_price, m.published as i32, m.context_length, m.category],
     )?;
     for binding in &m.channels {
         create_binding(conn, &m.id, binding)?;
@@ -103,8 +105,8 @@ pub fn create(conn: &Connection, m: &Model) -> Result<(), crate::db::DbError> {
 
 pub fn update(conn: &Connection, m: &Model) -> Result<(), crate::db::DbError> {
     conn.execute(
-        "UPDATE models SET name = ?1, model_pattern = ?2, prompt_price = ?3, completion_price = ?4, cache_read_price = ?5, cache_write_price = ?6, image_input_price = ?7, audio_input_price = ?8, audio_output_price = ?9, published = ?10, context_length = ?11 WHERE id = ?12",
-        params![m.name, m.model_pattern, m.pricing.prompt_price, m.pricing.completion_price, m.pricing.cache_read_price, m.pricing.cache_write_price, m.pricing.image_input_price, m.pricing.audio_input_price, m.pricing.audio_output_price, m.published as i32, m.context_length, m.id],
+        "UPDATE models SET name = ?1, model_pattern = ?2, prompt_price = ?3, completion_price = ?4, cache_read_price = ?5, cache_write_price = ?6, image_input_price = ?7, audio_input_price = ?8, audio_output_price = ?9, published = ?10, context_length = ?11, category = ?12 WHERE id = ?13",
+        params![m.name, m.model_pattern, m.pricing.prompt_price, m.pricing.completion_price, m.pricing.cache_read_price, m.pricing.cache_write_price, m.pricing.image_input_price, m.pricing.audio_input_price, m.pricing.audio_output_price, m.published as i32, m.context_length, m.category, m.id],
     )?;
     conn.execute(
         "DELETE FROM model_channels WHERE model_id = ?1",

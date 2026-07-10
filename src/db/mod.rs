@@ -197,6 +197,9 @@ impl Database {
         // Backward compat: add enabled column to endpoints
         let _ = conn
             .execute_batch("ALTER TABLE endpoints ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;");
+        // Backward compat: add category column to models
+        let _ = conn
+            .execute_batch("ALTER TABLE models ADD COLUMN category TEXT NOT NULL DEFAULT '';");
         // Balancer settings table
         let _ = conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS balancer_settings (
@@ -538,7 +541,7 @@ impl Database {
     // Subscriptions
     pub fn list_published_models(&self) -> Result<Vec<Model>, DbError> {
         let conn = self.conn()?;
-        let mut stmt = conn.prepare("SELECT id, name, model_pattern, prompt_price, completion_price, cache_read_price, cache_write_price, image_input_price, audio_input_price, audio_output_price, published, context_length FROM models WHERE published = 1 ORDER BY id")?;
+        let mut stmt = conn.prepare("SELECT id, name, model_pattern, prompt_price, completion_price, cache_read_price, cache_write_price, image_input_price, audio_input_price, audio_output_price, published, context_length, category FROM models WHERE published = 1 ORDER BY id")?;
         let models: Vec<Model> = stmt
             .query_map([], |row| {
                 Ok(Model {
@@ -557,6 +560,7 @@ impl Database {
                     channels: Vec::new(),
                     published: true,
                     context_length: row.get(11)?,
+                    category: row.get::<_, String>(12).unwrap_or_default(),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -631,7 +635,7 @@ impl Database {
     pub fn list_subscriptions(&self, user_id: &str) -> Result<Vec<Model>, DbError> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(
-            "SELECT m.id, m.name, m.model_pattern, m.prompt_price, m.completion_price, m.cache_read_price, m.cache_write_price, m.image_input_price, m.audio_input_price, m.audio_output_price, m.published, m.context_length
+            "SELECT m.id, m.name, m.model_pattern, m.prompt_price, m.completion_price, m.cache_read_price, m.cache_write_price, m.image_input_price, m.audio_input_price, m.audio_output_price, m.published, m.context_length, m.category
              FROM models m INNER JOIN user_subscriptions s ON m.id = s.model_id
              WHERE s.user_id = ?1 ORDER BY m.id",
         )?;
@@ -653,6 +657,7 @@ impl Database {
                     channels: Vec::new(),
                     published: row.get::<_, i32>(10)? != 0,
                     context_length: row.get(11)?,
+                    category: row.get::<_, String>(12).unwrap_or_default(),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

@@ -336,6 +336,7 @@ pub fn seed_from_config(
                     .collect(),
                 published: false,
                 context_length: None,
+                category: String::default(),
             };
             if let Err(e) = db.create_model(&model) {
                 tracing::warn!("Seed model {}: {}", m.id, e);

@@ -27,32 +27,27 @@ function inferProvider(pattern: string): string {
   return '';
 }
 
-function inferCategory(pattern: string): string {
-  const p = pattern.toLowerCase();
-  if (/^(whisper-|tts-|audio-)/.test(p)) return 'audio';
-  if (/^(dall-e-|flux-|stable-|sdxl)/.test(p)) return 'image';
-  if (/^(text-embedding|embedding)/.test(p)) return 'embedding';
-  if (/^(deepseek|o[1-9])/.test(p)) return 'reasoning';
-  return 'chat';
-}
-
 const CATEGORY_LABELS: Record<string, string> = {
   chat: '对话',
   reasoning: '推理',
-  image: '图像',
-  embedding: '向量',
-  audio: '语音',
+  tools: '工具',
+  web: '联网',
+  vision: '视觉',
+  rerank: '重排',
+  embedding: '嵌入',
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
   chat: 'default',
   reasoning: 'success',
-  image: 'warning',
+  tools: 'warning',
+  web: 'secondary',
+  vision: 'muted',
+  rerank: 'default',
   embedding: 'secondary',
-  audio: 'muted',
 };
 
-const CATEGORY_KEYS = ['all', 'chat', 'reasoning', 'image', 'embedding', 'audio'] as const;
+const CATEGORY_KEYS = ['all', 'chat', 'reasoning', 'tools', 'web', 'vision', 'rerank', 'embedding'] as const;
 type CategoryKey = (typeof CATEGORY_KEYS)[number];
 
 export default function ModelsMarketplace() {
@@ -73,10 +68,9 @@ export default function ModelsMarketplace() {
       .map((m) => ({
         ...m,
         _provider: inferProvider(m.model_pattern),
-        _category: inferCategory(m.model_pattern),
       }))
       .filter((m) => {
-        if (category !== 'all' && m._category !== category) return false;
+        if (category !== 'all' && !(m.category?.split(',').includes(category) ?? false)) return false;
         if (!query) return true;
         const q = query.toLowerCase();
         return m.name.toLowerCase().includes(q) || m.model_pattern.toLowerCase().includes(q) || m._provider.toLowerCase().includes(q);
@@ -192,7 +186,7 @@ function ModelCard({
   pending,
   onToggle,
 }: {
-  model: Model & { _provider: string; _category: string };
+  model: Model & { _provider: string };
   isSubscribed: boolean;
   pending: boolean;
   onToggle: (id: string, subscribed: boolean) => void;
@@ -215,11 +209,11 @@ function ModelCard({
               </div>
               <div className="flex items-center gap-2 mt-1">
                 <p className="text-xs text-muted-foreground">{model._provider || t('marketplace.provider')}</p>
-                {model._category && (
-                  <Badge variant={CATEGORY_COLORS[model._category] as any} className="text-[10px] px-1.5 py-0">
-                    {CATEGORY_LABELS[model._category]}
+                {(model.category?.split(',').filter(Boolean) ?? []).map((cat) => (
+                  <Badge key={cat} variant={CATEGORY_COLORS[cat] as any} className="text-[10px] px-1.5 py-0">
+                    {CATEGORY_LABELS[cat] ?? cat}
                   </Badge>
-                )}
+                ))}
               </div>
             </div>
           </div>

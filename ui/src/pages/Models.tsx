@@ -19,6 +19,16 @@ import { cn } from '@/lib/utils';
 import { api } from '@/api/client';
 import type { Model, UpstreamModel } from '@/types';
 
+const CATEGORY_LABELS: Record<string, string> = {
+  chat: '对话',
+  reasoning: '推理',
+  tools: '工具',
+  web: '联网',
+  vision: '视觉',
+  rerank: '重排',
+  embedding: '嵌入',
+};
+
 export default function Models() {
   const { t } = useTranslation();
   const { data: models, isLoading, isError, refetch } = useModels();
@@ -184,6 +194,7 @@ export default function Models() {
                     <th className="text-left py-3 px-4">{t('table.name')}</th>
                     <th className="text-left py-3 px-4">{t('table.modelPattern')}</th>
                     <th className="text-right py-3 px-4">{t('table.bindings')}</th>
+                    <th className="text-left py-3 px-4">分类</th>
                     <th className="text-right py-3 px-4">上下文</th>
                     <th className="text-right py-3 px-4">{t('table.price')}</th>
                     <th className="text-center py-3 px-4">发布</th>
@@ -200,6 +211,9 @@ export default function Models() {
                         {m.channels.length > 0
                           ? m.channels.map((b) => channelName(b.channel_id)).join(', ')
                           : '-'}
+                      </td>
+                      <td className="py-3 px-4 text-xs">
+                        {(m.category?.split(',').filter(Boolean) ?? []).map((cat) => CATEGORY_LABELS[cat] ?? cat).join(', ') || '-'}
                       </td>
                       <td className="py-3 px-4 text-right text-xs font-mono">{formatCtx(m.context_length)}</td>
                       <td className="py-3 px-4 text-right text-xs">

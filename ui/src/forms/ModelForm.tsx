@@ -7,7 +7,18 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Plus, X } from 'lucide-react';
 import { useChannels } from '@/api/channels';
+import { Checkbox } from '@/components/ui/checkbox';
 import type { Model } from '@/types';
+
+const CATEGORIES = [
+  { value: 'chat', label: '对话' },
+  { value: 'reasoning', label: '推理' },
+  { value: 'tools', label: '工具' },
+  { value: 'web', label: '联网' },
+  { value: 'vision', label: '视觉' },
+  { value: 'rerank', label: '重排' },
+  { value: 'embedding', label: '嵌入' },
+] as const;
 
 interface Props {
   model?: Model | null;
@@ -27,6 +38,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
   const [completionPrice, setCompletionPrice] = useState('0');
   const [contextLength, setContextLength] = useState('');
   const [bindings, setBindings] = useState<{ channel_id: string; priority: number }[]>([]);
+  const [category, setCategory] = useState<string[]>([]);
 
   useEffect(() => {
     if (model) {
@@ -37,9 +49,10 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
       setCompletionPrice(String(model.pricing.completion_price));
       setContextLength(model.context_length ? String(model.context_length) : '');
       setBindings(model.channels);
+      setCategory(model.category ? model.category.split(',').filter(Boolean) : []);
     } else {
       setId(''); setName(''); setModelPattern(''); setPromptPrice('0'); setCompletionPrice('0');
-      setContextLength(''); setBindings([]);
+      setContextLength(''); setBindings([]); setCategory([]);
     }
   }, [model, open]);
 
@@ -55,8 +68,18 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
     e.preventDefault();
     const data = {
       id, name, model_pattern: modelPattern,
-      pricing: { prompt_price: Number(promptPrice), completion_price: Number(completionPrice) },
+      pricing: {
+        prompt_price: Number(promptPrice),
+        completion_price: Number(completionPrice),
+        cache_read_price: model?.pricing.cache_read_price ?? 0,
+        cache_write_price: model?.pricing.cache_write_price ?? 0,
+        image_input_price: model?.pricing.image_input_price ?? 0,
+        audio_input_price: model?.pricing.audio_input_price ?? 0,
+        audio_output_price: model?.pricing.audio_output_price ?? 0,
+      },
       context_length: contextLength ? Number(contextLength) : null,
+      published: model?.published ?? false,
+      category: category.join(','),
       channels: bindings.map((b) => ({ channel_id: b.channel_id, priority: Number(b.priority) })),
     };
     onSubmit(data);
@@ -119,6 +142,27 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                   onChange={(e) => setContextLength(e.target.value)}
                   placeholder="例如: 131072"
                 />
+              </div>
+
+              <div className="space-y-2 pt-1">
+                <Label className="text-xs font-medium text-muted-foreground">分类</Label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {CATEGORIES.map((cat) => (
+                    <label key={cat.value} className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+                      <Checkbox
+                        checked={category.includes(cat.value)}
+                        onCheckedChange={(v) => {
+                          if (v) {
+                            setCategory([...category, cat.value]);
+                          } else {
+                            setCategory(category.filter((c) => c !== cat.value));
+                          }
+                        }}
+                      />
+                      {cat.label}
+                    </label>
+                  ))}
+                </div>
               </div>
 
               <div className="space-y-2 pt-1">

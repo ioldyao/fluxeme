@@ -68,6 +68,7 @@ export interface Model {
   channels: ModelChannel[];
   published?: boolean;
   context_length?: number | null;
+  category?: string;
 }
 
 export interface RoutingRule {

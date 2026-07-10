@@ -14,6 +14,8 @@ pub struct Model {
     pub published: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_length: Option<i64>,
+    #[serde(default)]
+    pub category: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
