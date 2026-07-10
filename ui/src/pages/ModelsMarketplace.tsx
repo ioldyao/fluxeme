@@ -4,10 +4,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import { usePublicModels, useSubscriptions, useSubscribeModel, useUnsubscribeModel } from '@/api/models';
 import { PageHeader } from '@/components/PageHeader';
 import { EmptyState } from '@/components/EmptyState';
+import { ModelDetailDialog } from '@/components/ModelDetailDialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Search, Check, Loader2, Cpu, RefreshCw } from 'lucide-react';
+import { Search, Check, Loader2, Cpu, RefreshCw, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { Model } from '@/types';
@@ -192,6 +193,7 @@ function ModelCard({
   onToggle: (id: string, subscribed: boolean) => void;
 }) {
   const { t } = useTranslation();
+  const [detailOpen, setDetailOpen] = useState(false);
 
   return (
     <Card className="group flex flex-col transition-colors hover:border-primary/40">
@@ -217,6 +219,15 @@ function ModelCard({
               </div>
             </div>
           </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="shrink-0 size-7 p-0"
+            onClick={() => setDetailOpen(true)}
+            title="详情"
+          >
+            <Info className="size-4" />
+          </Button>
         </div>
 
         {/* Pattern + Context Length */}
@@ -258,6 +269,12 @@ function ModelCard({
           {isSubscribed ? t('marketplace.subscribed') : t('marketplace.subscribe')}
         </Button>
       </CardContent>
+
+      <ModelDetailDialog
+        model={model}
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+      />
     </Card>
   );
 }
