@@ -273,6 +273,106 @@ fn parse_sse_usage(data: &str) -> (u64, u64) {
     (p_tokens, c_tokens)
 }
 
+// ── SSE buffering stream ────────────────────────────────────────────
+
+const MAX_SSE_BUF: usize = 1024 * 1024;
+
+/// Check whether a leftover buffer (incomplete SSE tail) contains only
+/// valid `data:` JSON lines.  Used at EOF to avoid forwarding truncated
+/// events to the client.
+fn sse_tail_is_valid(tail: &str) -> bool {
+    for line in tail.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed == "data: [DONE]" {
+            continue;
+        }
+        if let Some(json_str) = trimmed.strip_prefix("data: ") {
+            if serde_json::from_str::<Value>(json_str).is_err() {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Buffers incoming stream data at `\n\n` boundaries so downstream code
+/// always receives complete SSE events.  This prevents malformed JSON when
+/// a TCP segment splits a `data: {...}` line across two chunks.
+///
+/// Safety mechanisms:
+/// - Buffer capped at 1 MB — beyond that an error event is emitted and the
+///   stream is closed.
+/// - At EOF any leftover data that doesn't form valid JSON is silently
+///   dropped (with a warning) instead of forwarded to the client.
+struct SseBuffer<S> {
+    inner: S,
+    buf: String,
+    overflow_error: Option<String>,
+}
+
+impl<S: Stream<Item = String> + Unpin> Stream for SseBuffer<S> {
+    type Item = String;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // 1) Deliver a pending overflow error event first
+        if let Some(err) = self.overflow_error.take() {
+            return Poll::Ready(Some(err));
+        }
+
+        // 2) Yield complete events from the existing buffer
+        if let Some(pos) = self.buf.find("\n\n") {
+            let complete = self.buf[..pos + 2].to_string();
+            self.buf = self.buf[pos + 2..].to_string();
+            return Poll::Ready(Some(complete));
+        }
+
+        loop {
+            match Pin::new(&mut self.inner).poll_next(cx) {
+                Poll::Ready(Some(data)) => {
+                    // 3) Buffer-overflow protection
+                    if self.buf.len() + data.len() > MAX_SSE_BUF {
+                        tracing::warn!(
+                            buf_len = self.buf.len(),
+                            "SSE buffer exceeded {} byte limit, terminating stream",
+                            MAX_SSE_BUF,
+                        );
+                        self.overflow_error = Some(
+                            "data: {\"error\":\"buffer_overflow\",\"message\":\"SSE buffer exceeded 1MB limit\"}\n\n"
+                                .to_string(),
+                        );
+                        // Discard accumulated data and signal overflow
+                        // on the next poll
+                        return Poll::Ready(None);
+                    }
+
+                    self.buf.push_str(&data);
+                    if let Some(pos) = self.buf.find("\n\n") {
+                        let complete = self.buf[..pos + 2].to_string();
+                        self.buf = self.buf[pos + 2..].to_string();
+                        return Poll::Ready(Some(complete));
+                    }
+                }
+                Poll::Ready(None) => {
+                    if !self.buf.is_empty() {
+                        if sse_tail_is_valid(&self.buf) {
+                            let remaining = std::mem::take(&mut self.buf);
+                            return Poll::Ready(Some(remaining));
+                        }
+                        tracing::warn!(
+                            buf_len = self.buf.len(),
+                            first = &self.buf.chars().take(80).collect::<String>(),
+                            "Dropping invalid SSE tail at stream EOF"
+                        );
+                        self.buf.clear();
+                    }
+                    return Poll::Ready(None);
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
 // ── Usage-tracking stream wrapper ─────────────────────────────────
 
 struct UsageTrackingStream<S> {
@@ -379,7 +479,8 @@ async fn handle_streaming(
 
     match stream_result {
         Ok(stream) => {
-            let stream = stream.map(|data| normalize_sse_reasoning(&data));
+            let stream = SseBuffer { inner: stream, buf: String::new(), overflow_error: None }
+                .map(|data| normalize_sse_reasoning(&data));
             let usage_stream = UsageTrackingStream {
                 inner: stream,
                 resp_buf: String::new(),
