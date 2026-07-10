@@ -12,6 +12,7 @@ use crate::config::types::AppConfig;
 use crate::provider::ProviderRegistry;
 use crate::ratelimit::RateLimiter;
 use crate::service::{AuthService, HealthService, RoutingService, UsageService};
+use crate::sso::SsoModule;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -24,6 +25,7 @@ pub struct AppState {
     pub db: Arc<crate::db::Database>,
     pub admin: Arc<crate::admin::AdminModule>,
     pub health: Arc<HealthService>,
+    pub sso: Arc<SsoModule>,
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {

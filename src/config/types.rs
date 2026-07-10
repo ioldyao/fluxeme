@@ -8,6 +8,22 @@ fn default_weight() -> u32 {
     1
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SsoConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub provider_name: String,
+    #[serde(default)]
+    pub issuer_url: String,
+    #[serde(default)]
+    pub client_id: String,
+    #[serde(default)]
+    pub client_secret: String,
+    #[serde(default)]
+    pub redirect_url: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AppConfig {
     pub server: ServerConfig,
@@ -16,6 +32,8 @@ pub struct AppConfig {
     pub database: DatabaseConfig,
     #[serde(default)]
     pub jwt_secret: Option<String>,
+    #[serde(default)]
+    pub sso: SsoConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

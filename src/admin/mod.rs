@@ -47,7 +47,7 @@ impl AdminModule {
         }
     }
 
-    fn encode_token(&self, info: &SessionInfo) -> Result<String, AdminError> {
+    pub(crate) fn encode_token(&self, info: &SessionInfo) -> Result<String, AdminError> {
         let claims = JwtClaims {
             sub: info.user_id.clone(),
             name: info.user_name.clone(),
@@ -128,19 +128,19 @@ pub enum AdminError {
 }
 
 impl AdminError {
-    fn unauthorized(msg: impl Into<String>) -> Self {
+    pub(crate) fn unauthorized(msg: impl Into<String>) -> Self {
         AdminError::Unauthorized(msg.into())
     }
-    fn forbidden(msg: impl Into<String>) -> Self {
+    pub(crate) fn forbidden(msg: impl Into<String>) -> Self {
         AdminError::Forbidden(msg.into())
     }
-    fn not_found(msg: impl Into<String>) -> Self {
+    pub(crate) fn not_found(msg: impl Into<String>) -> Self {
         AdminError::NotFound(msg.into())
     }
-    fn bad_request(msg: impl Into<String>) -> Self {
+    pub(crate) fn bad_request(msg: impl Into<String>) -> Self {
         AdminError::BadRequest(msg.into())
     }
-    fn internal(msg: impl Into<String>) -> Self {
+    pub(crate) fn internal(msg: impl Into<String>) -> Self {
         AdminError::Internal(msg.into())
     }
     fn too_many_requests(msg: impl Into<String>) -> Self {
@@ -1502,6 +1502,18 @@ async fn toggle_endpoint(
 pub fn admin_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/admin/api/login", axum::routing::post(admin_login))
+        .route(
+            "/admin/api/sso/status",
+            axum::routing::get(crate::sso::sso_status_handler),
+        )
+        .route(
+            "/admin/api/sso/login",
+            axum::routing::get(crate::sso::sso_login_handler),
+        )
+        .route(
+            "/admin/api/sso/callback",
+            axum::routing::get(crate::sso::sso_callback_handler),
+        )
         .route("/admin/api/dashboard", axum::routing::get(admin_dashboard))
         .route(
             "/admin/api/dashboard/aggregations",

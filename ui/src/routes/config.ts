@@ -27,6 +27,7 @@ export interface RouteConfig {
 export const publicRoutes: RouteConfig[] = [
   { path: '/login', Component: lazy(() => import('@/pages/Login')), guard: 'public' },
   { path: '/register', Component: lazy(() => import('@/pages/Register')), guard: 'public' },
+  { path: '/sso/callback', Component: lazy(() => import('@/pages/SsoCallback')), guard: 'public' },
 ];
 
 export const authRoutes: RouteConfig[] = [

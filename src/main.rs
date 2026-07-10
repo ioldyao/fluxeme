@@ -7,6 +7,7 @@ mod provider;
 mod ratelimit;
 mod server;
 mod service;
+mod sso;
 
 use std::sync::{Arc, RwLock};
 
@@ -70,6 +71,26 @@ async fn main() {
     let health = Arc::new(HealthService::new(db.clone()).expect("Failed to create HealthService"));
     let admin = Arc::new(AdminModule::new(&jwt_secret));
 
+    let sso = Arc::new(
+        match sso::SsoModule::new(&config.read().unwrap().sso).await {
+            Ok(m) => {
+                let cfg = config.read().unwrap();
+                if cfg.sso.enabled {
+                    tracing::info!(
+                        "SSO enabled: provider={}, issuer={}",
+                        cfg.sso.provider_name,
+                        cfg.sso.issuer_url
+                    );
+                }
+                m
+            }
+            Err(e) => {
+                tracing::error!("Failed to initialize SSO: {}", e);
+                std::process::exit(1);
+            }
+        },
+    );
+
     let state = Arc::new(AppState {
         config,
         auth,
@@ -80,6 +101,7 @@ async fn main() {
         db,
         admin,
         health,
+        sso,
     });
 
     let app = build_router(state);

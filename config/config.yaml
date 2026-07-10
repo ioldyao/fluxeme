@@ -7,3 +7,12 @@ admin:
 database:
   path: data/gateway.db
 jwt_secret: ai-gateway-jwt-secret-change-me
+
+# SSO / 统一身份认证 (OIDC)
+sso:
+  enabled: false
+  provider_name: SSO
+  issuer_url: https://your-idp.example.com
+  client_id: your-client-id
+  client_secret: your-client-secret
+  redirect_url: http://localhost:8080/admin/api/sso/callback
