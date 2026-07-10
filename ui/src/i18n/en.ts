@@ -98,6 +98,8 @@ const en: Record<string, string> = {
   'common.refresh': 'Refresh',
   'common.active': 'Active',
   'common.disabled': 'Disabled',
+  'common.meltdown': 'Circuit Open',
+  'common.unknown': 'Unknown',
   'common.confirm': 'Confirm',
   'common.generate': 'Generate',
   'common.copy': 'Copy',

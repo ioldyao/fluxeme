@@ -37,12 +37,19 @@ pub struct DatabaseConfig {
 }
 
 /// Resolved endpoint with credentials, passed to provider adapters.
-/// Separated from domain::Endpoint (which has DB fields like id, channel_id).
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EndpointConfig {
+    #[serde(default)]
+    pub id: Option<i64>,
     pub url: String,
     pub api_key: String,
     #[serde(default = "default_weight")]
     pub weight: u32,
     pub timeout_secs: Option<u64>,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+fn default_enabled() -> bool {
+    true
 }

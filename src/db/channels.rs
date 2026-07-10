@@ -23,7 +23,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Channel>, crate::db::DbError> {
 
     // Single batch query for all endpoints
     let mut estmt = conn.prepare(
-        "SELECT id, channel_id, url, api_key, weight, timeout_secs FROM endpoints ORDER BY channel_id",
+        "SELECT id, channel_id, url, api_key, weight, timeout_secs, enabled FROM endpoints ORDER BY channel_id",
     )?;
     let endpoint_rows = estmt
         .query_map([], |row| {
@@ -36,6 +36,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Channel>, crate::db::DbError> {
                     api_key: row.get(3)?,
                     weight: row.get(4)?,
                     timeout_secs: row.get(5)?,
+                    enabled: row.get::<_, i32>(6)? != 0,
                 },
             ))
         })?
@@ -116,7 +117,7 @@ fn list_endpoints(
     channel_id: &str,
 ) -> Result<Vec<Endpoint>, crate::db::DbError> {
     let mut stmt = conn.prepare(
-        "SELECT id, channel_id, url, api_key, weight, timeout_secs FROM endpoints WHERE channel_id = ?1",
+        "SELECT id, channel_id, url, api_key, weight, timeout_secs, enabled FROM endpoints WHERE channel_id = ?1",
     )?;
     let rows = stmt.query_map(params![channel_id], |row| {
         Ok(Endpoint {
@@ -126,6 +127,7 @@ fn list_endpoints(
             api_key: row.get(3)?,
             weight: row.get(4)?,
             timeout_secs: row.get(5)?,
+            enabled: row.get::<_, i32>(6)? != 0,
         })
     })?;
     let mut eps = Vec::new();
@@ -135,14 +137,47 @@ fn list_endpoints(
     Ok(eps)
 }
 
+pub fn get_endpoint(conn: &Connection, id: i64) -> Result<Option<Endpoint>, crate::db::DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, channel_id, url, api_key, weight, timeout_secs, enabled FROM endpoints WHERE id = ?1",
+    )?;
+    let mut rows = stmt.query_map(params![id], |row| {
+        Ok(Endpoint {
+            id: Some(row.get(0)?),
+            channel_id: row.get(1)?,
+            url: row.get(2)?,
+            api_key: row.get(3)?,
+            weight: row.get(4)?,
+            timeout_secs: row.get(5)?,
+            enabled: row.get::<_, i32>(6)? != 0,
+        })
+    })?;
+    match rows.next() {
+        Some(Ok(ep)) => Ok(Some(ep)),
+        _ => Ok(None),
+    }
+}
+
+pub fn update_endpoint_enabled(
+    conn: &Connection,
+    id: i64,
+    enabled: bool,
+) -> Result<(), crate::db::DbError> {
+    conn.execute(
+        "UPDATE endpoints SET enabled = ?1 WHERE id = ?2",
+        params![enabled as i32, id],
+    )?;
+    Ok(())
+}
+
 fn create_endpoint(
     conn: &Connection,
     channel_id: &str,
     ep: &Endpoint,
 ) -> Result<(), crate::db::DbError> {
     conn.execute(
-        "INSERT INTO endpoints (channel_id, url, api_key, weight, timeout_secs) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![channel_id, ep.url, ep.api_key, ep.weight, ep.timeout_secs],
+        "INSERT INTO endpoints (channel_id, url, api_key, weight, timeout_secs, enabled) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![channel_id, ep.url, ep.api_key, ep.weight, ep.timeout_secs, ep.enabled as i32],
     )?;
     Ok(())
 }

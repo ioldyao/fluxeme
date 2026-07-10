@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use rusqlite::{params, Connection};
 
-use crate::domain::channel::Channel;
+use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, Pricing};
 use crate::domain::routing::RoutingRule;
 use crate::domain::usage::UsageRecord;
@@ -193,6 +193,16 @@ impl Database {
         );
         let _ = conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_usage_user_timestamp ON usage_logs(user_id, timestamp)",
+        );
+        // Backward compat: add enabled column to endpoints
+        let _ = conn
+            .execute_batch("ALTER TABLE endpoints ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;");
+        // Balancer settings table
+        let _ = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS balancer_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );",
         );
         Ok(())
     }
@@ -485,6 +495,12 @@ impl Database {
     }
     pub fn delete_channel(&self, id: &str) -> Result<(), DbError> {
         channels::delete(&*self.conn()?, id)
+    }
+    pub fn get_endpoint(&self, id: i64) -> Result<Option<Endpoint>, DbError> {
+        channels::get_endpoint(&*self.conn()?, id)
+    }
+    pub fn update_endpoint_enabled(&self, id: i64, enabled: bool) -> Result<(), DbError> {
+        channels::update_endpoint_enabled(&*self.conn()?, id, enabled)
     }
 
     // Models

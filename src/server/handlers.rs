@@ -14,8 +14,10 @@ use futures::Stream;
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::balancer::LoadBalancer;
 use crate::config::types::EndpointConfig;
 use crate::domain::usage::UsageRecord;
+use crate::provider::ProviderError;
 use crate::server::AppState;
 
 // ── Error type ────────────────────────────────────────────────────
@@ -109,6 +111,15 @@ fn trim_model(body: &mut Value) -> Result<String, GatewayError> {
 /// Non-standard reasoning field names from various providers to normalize.
 const REASONING_ALIASES: &[&str] = &["reasoning", "thinking", "thinking_content"];
 
+/// Max retry attempts across different endpoints (per-endpoint failures are recorded on the breaker).
+const MAX_RETRIES: u32 = 2;
+
+/// Whether a `ProviderError` is safe to retry (5xx or network failure).
+/// 4xx errors are never retryable — retrying them would be wasted effort.
+fn is_retryable_error(e: &ProviderError) -> bool {
+    e.0.starts_with("Request failed") || e.0.starts_with("Upstream returned 5")
+}
+
 fn rename_to_reasoning_content(obj: &mut serde_json::Map<String, Value>) {
     if obj.contains_key("reasoning_content") {
         return;
@@ -167,10 +178,26 @@ struct RouteTarget {
     channel_id: String,
     endpoint: EndpointConfig,
     adapter: Arc<dyn crate::provider::ProviderAdapter>,
+    balancer: Arc<LoadBalancer>,
+    endpoint_idx: usize,
+}
+
+impl RouteTarget {
+    /// Try the next available endpoint from the balancer.
+    /// Returns `false` if no more endpoints available.
+    fn retry_next(&mut self) -> bool {
+        if let Some((idx, ep)) = self.balancer.as_health_aware().select() {
+            self.endpoint_idx = idx;
+            self.endpoint = ep.clone();
+            true
+        } else {
+            false
+        }
+    }
 }
 
 fn resolve_route(state: &AppState, channel_id: &str) -> Result<RouteTarget, GatewayError> {
-    let (provider_name, balancer, endpoints) = state
+    let (provider_name, balancer, _endpoints) = state
         .routing
         .get_route(channel_id)
         .ok_or_else(|| GatewayError::Internal("Channel route unavailable".into()))?;
@@ -180,15 +207,17 @@ fn resolve_route(state: &AppState, channel_id: &str) -> Result<RouteTarget, Gate
         .get(provider_name.as_str())
         .ok_or_else(|| GatewayError::Internal("Provider not available".into()))?;
 
-    let endpoint = balancer
-        .select(&endpoints)
-        .ok_or_else(|| GatewayError::Internal("No available endpoints".into()))?
-        .clone();
+    let (idx, endpoint) = balancer
+        .as_health_aware()
+        .select()
+        .ok_or_else(|| GatewayError::Internal("No available endpoints".into()))?;
 
     Ok(RouteTarget {
         channel_id: channel_id.to_string(),
-        endpoint,
+        endpoint: endpoint.clone(),
         adapter,
+        balancer,
+        endpoint_idx: idx,
     })
 }
 
@@ -408,8 +437,7 @@ async fn handle_streaming(
 
 async fn handle_non_streaming(
     state: &AppState,
-    adapter: Arc<dyn crate::provider::ProviderAdapter>,
-    endpoint: EndpointConfig,
+    route: &mut RouteTarget,
     body: Value,
     request_id: String,
     user_id: String,
@@ -420,67 +448,108 @@ async fn handle_non_streaming(
     start: Instant,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
-    let result = adapter.chat_complete(&endpoint, body).await;
-    let latency_ms = start.elapsed().as_millis() as u64;
+    let mut last_error: Option<ProviderError> = None;
 
-    match result {
-        Ok(mut resp) => {
-            normalize_reasoning_inner(&mut resp);
-
-            let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
-            let completion_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0);
-
-            let reasoning = resp.get("choices")
-                .and_then(|c| c.get(0))
-                .and_then(|c| c.get("message"))
-                .and_then(|m| m.get("reasoning_content"))
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string());
-
-            state.usage.record(UsageRecord {
-                timestamp: Utc::now().to_rfc3339(),
-                request_id,
-                user_id,
-                user_name,
-                channel_id,
-                model,
-                prompt_tokens,
-                completion_tokens,
-                total_tokens: prompt_tokens + completion_tokens,
-                latency_ms,
-                status_code: 200,
-                success: true,
-                request_body: req_body,
-                response_body: serde_json::to_string(&resp).ok(),
-                reasoning_body: reasoning,
-                api_key_name: Some(api_key_name),
-            });
-
-            Ok(Json(resp).into_response())
+    for attempt in 0..=MAX_RETRIES {
+        if attempt > 0 {
+            if !route.retry_next() {
+                break;
+            }
         }
-        Err(e) => {
-            state.usage.record(UsageRecord {
-                timestamp: Utc::now().to_rfc3339(),
-                request_id,
-                user_id,
-                user_name,
-                channel_id,
-                model,
-                prompt_tokens: 0,
-                completion_tokens: 0,
-                total_tokens: 0,
-                latency_ms,
-                status_code: 502,
-                success: false,
-                request_body: req_body,
-                response_body: None,
-                reasoning_body: None,
-                api_key_name: None,
-            });
-            Err(GatewayError::Upstream(e.0))
+
+        let result = route.adapter.chat_complete(&route.endpoint, body.clone()).await;
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        match result {
+            Ok(mut resp) => {
+                route.balancer.as_health_aware().record_success(route.endpoint_idx);
+                normalize_reasoning_inner(&mut resp);
+
+                let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
+                let completion_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0);
+
+                let reasoning = resp.get("choices")
+                    .and_then(|c| c.get(0))
+                    .and_then(|c| c.get("message"))
+                    .and_then(|m| m.get("reasoning_content"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
+
+                state.usage.record(UsageRecord {
+                    timestamp: Utc::now().to_rfc3339(),
+                    request_id,
+                    user_id,
+                    user_name,
+                    channel_id,
+                    model,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens: prompt_tokens + completion_tokens,
+                    latency_ms,
+                    status_code: 200,
+                    success: true,
+                    request_body: req_body,
+                    response_body: serde_json::to_string(&resp).ok(),
+                    reasoning_body: reasoning,
+                    api_key_name: Some(api_key_name),
+                });
+
+                return Ok(Json(resp).into_response());
+            }
+            Err(e) if is_retryable_error(&e) => {
+                route.balancer.as_health_aware().record_failure(route.endpoint_idx);
+                last_error = Some(e);
+                // Continue to next retry attempt
+            }
+            Err(e) => {
+                // Non-retryable (4xx etc.) — don't record failure on the breaker,
+                // return immediately without retrying.
+                state.usage.record(UsageRecord {
+                    timestamp: Utc::now().to_rfc3339(),
+                    request_id,
+                    user_id,
+                    user_name,
+                    channel_id,
+                    model,
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                    latency_ms,
+                    status_code: 502,
+                    success: false,
+                    request_body: req_body,
+                    response_body: None,
+                    reasoning_body: None,
+                    api_key_name: None,
+                });
+                return Err(GatewayError::Upstream(e.0));
+            }
         }
     }
+
+    // All retry attempts exhausted without success
+    let latency_ms = start.elapsed().as_millis() as u64;
+    let err_msg = last_error.map(|e| e.0).unwrap_or_else(|| "All endpoints unavailable".to_string());
+    state.usage.record(UsageRecord {
+        timestamp: Utc::now().to_rfc3339(),
+        request_id,
+        user_id,
+        user_name,
+        channel_id,
+        model,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        latency_ms,
+        status_code: 502,
+        success: false,
+        request_body: req_body,
+        response_body: None,
+        reasoning_body: None,
+        api_key_name: None,
+    });
+    Err(GatewayError::Upstream(err_msg))
 }
 
 // ── Handlers ──────────────────────────────────────────────────────
@@ -512,7 +581,7 @@ pub async fn chat_completions(
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
-    let route = resolve_route(&state, &channel_id)?;
+    let mut route = resolve_route(&state, &channel_id)?;
     let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
 
     if is_streaming {
@@ -523,8 +592,8 @@ pub async fn chat_completions(
         .await
     } else {
         handle_non_streaming(
-            &state, route.adapter, route.endpoint, body,
-            request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start,
+            &state, &mut route, body,
+            request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start,
         )
         .await
     }
@@ -557,7 +626,7 @@ pub async fn messages(
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
-    let route = resolve_route(&state, &channel_id)?;
+    let mut route = resolve_route(&state, &channel_id)?;
     let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
 
     if is_streaming {
@@ -568,8 +637,8 @@ pub async fn messages(
         .await
     } else {
         handle_non_streaming(
-            &state, route.adapter, route.endpoint, body,
-            request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start,
+            &state, &mut route, body,
+            request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start,
         )
         .await
     }
@@ -603,68 +672,104 @@ async fn relay_to_upstream(
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
-    let route = resolve_route(state, &channel_id)?;
+    let mut route = resolve_route(state, &channel_id)?;
     let latency_ms = start.elapsed().as_millis() as u64;
     let req_body = serde_json::to_string(&body).ok();
+    let mut last_error: Option<ProviderError> = None;
 
-    match route.adapter.relay(&route.endpoint, upstream_path, body).await {
-        Ok(mut resp) => {
-            normalize_reasoning_inner(&mut resp);
-            let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
-            let completion_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0);
-
-            let reasoning = resp.get("choices")
-                .and_then(|c| c.get(0))
-                .and_then(|c| c.get("message"))
-                .and_then(|m| m.get("reasoning_content"))
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string());
-
-            state.usage.record(UsageRecord {
-                timestamp: Utc::now().to_rfc3339(),
-                request_id,
-                user_id: user.user_id,
-                user_name: user.user_name,
-                channel_id: route.channel_id,
-                model,
-                prompt_tokens,
-                completion_tokens,
-                total_tokens: prompt_tokens + completion_tokens,
-                latency_ms,
-                status_code: 200,
-                success: true,
-                request_body: req_body,
-                response_body: serde_json::to_string(&resp).ok(),
-                reasoning_body: reasoning,
-                api_key_name: Some(user.api_key_name.clone()),
-            });
-
-            Ok(Json(resp).into_response())
+    for attempt in 0..=MAX_RETRIES {
+        if attempt > 0 {
+            if !route.retry_next() {
+                break;
+            }
         }
-        Err(e) => {
-            state.usage.record(UsageRecord {
-                timestamp: Utc::now().to_rfc3339(),
-                request_id,
-                user_id: user.user_id,
-                user_name: user.user_name,
-                channel_id: route.channel_id,
-                model,
-                prompt_tokens: 0,
-                completion_tokens: 0,
-                total_tokens: 0,
-                latency_ms,
-                status_code: 502,
-                success: false,
-                request_body: req_body,
-                response_body: None,
-                reasoning_body: None,
-                api_key_name: Some(user.api_key_name.clone()),
-            });
 
-            Err(GatewayError::from(e))
+        let result = route.adapter.relay(&route.endpoint, upstream_path, body.clone()).await;
+
+        match result {
+            Ok(mut resp) => {
+                route.balancer.as_health_aware().record_success(route.endpoint_idx);
+                normalize_reasoning_inner(&mut resp);
+                let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
+                let completion_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0);
+
+                let reasoning = resp.get("choices")
+                    .and_then(|c| c.get(0))
+                    .and_then(|c| c.get("message"))
+                    .and_then(|m| m.get("reasoning_content"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
+
+                state.usage.record(UsageRecord {
+                    timestamp: Utc::now().to_rfc3339(),
+                    request_id,
+                    user_id: user.user_id,
+                    user_name: user.user_name,
+                    channel_id: route.channel_id,
+                    model,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens: prompt_tokens + completion_tokens,
+                    latency_ms,
+                    status_code: 200,
+                    success: true,
+                    request_body: req_body,
+                    response_body: serde_json::to_string(&resp).ok(),
+                    reasoning_body: reasoning,
+                    api_key_name: Some(user.api_key_name.clone()),
+                });
+
+                return Ok(Json(resp).into_response());
+            }
+            Err(e) if is_retryable_error(&e) => {
+                route.balancer.as_health_aware().record_failure(route.endpoint_idx);
+                last_error = Some(e);
+            }
+            Err(e) => {
+                state.usage.record(UsageRecord {
+                    timestamp: Utc::now().to_rfc3339(),
+                    request_id,
+                    user_id: user.user_id,
+                    user_name: user.user_name,
+                    channel_id: route.channel_id,
+                    model,
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                    latency_ms,
+                    status_code: 502,
+                    success: false,
+                    request_body: req_body,
+                    response_body: None,
+                    reasoning_body: None,
+                    api_key_name: Some(user.api_key_name.clone()),
+                });
+                return Err(GatewayError::from(e));
+            }
         }
     }
+
+    let err_msg = last_error.map(|e| e.0).unwrap_or_else(|| "All endpoints unavailable".to_string());
+    state.usage.record(UsageRecord {
+        timestamp: Utc::now().to_rfc3339(),
+        request_id,
+        user_id: user.user_id,
+        user_name: user.user_name,
+        channel_id: route.channel_id,
+        model,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        latency_ms,
+        status_code: 502,
+        success: false,
+        request_body: req_body,
+        response_body: None,
+        reasoning_body: None,
+        api_key_name: Some(user.api_key_name),
+    });
+    Err(GatewayError::Upstream(err_msg))
 }
 
 pub async fn completions(

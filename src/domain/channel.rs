@@ -17,11 +17,8 @@ pub struct Channel {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Endpoint {
-    #[serde(skip)]
-    #[allow(dead_code)]
     pub id: Option<i64>,
     #[serde(skip)]
-    #[allow(dead_code)]
     pub channel_id: String,
     pub url: String,
     #[serde(default)]
@@ -29,6 +26,8 @@ pub struct Endpoint {
     #[serde(default = "default_weight")]
     pub weight: u32,
     pub timeout_secs: Option<u64>,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
 }
 
 fn default_priority() -> i32 {

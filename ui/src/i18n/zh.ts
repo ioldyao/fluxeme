@@ -98,6 +98,8 @@ const zh: Record<string, string> = {
   'common.refresh': '刷新',
   'common.active': '启用',
   'common.disabled': '禁用',
+  'common.meltdown': '熔断中',
+  'common.unknown': '未知',
   'common.confirm': '确认',
   'common.generate': '随机生成',
   'common.copy': '复制',

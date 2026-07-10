@@ -300,6 +300,7 @@ pub fn seed_from_config(
                         api_key: ep.api_key.clone(),
                         weight: ep.weight,
                         timeout_secs: ep.timeout_secs,
+                        enabled: true,
                     })
                     .collect(),
             };

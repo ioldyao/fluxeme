@@ -1431,6 +1431,72 @@ async fn list_upstream_models(
     Ok(Json(models))
 }
 
+// ── Load balancer/health API ─────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ToggleEndpointBody {
+    enabled: bool,
+}
+
+#[derive(Serialize)]
+struct EndpointHealthItem {
+    endpoint_id: i64,
+    url: String,
+    enabled: bool,
+    available: bool,
+}
+
+#[derive(Serialize)]
+struct ChannelHealthResponse {
+    channel_id: String,
+    endpoints: Vec<EndpointHealthItem>,
+}
+
+async fn get_channel_health(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<ChannelHealthResponse>, AdminError> {
+    require_admin(&state.admin, &headers)?;
+    let eps = state.routing.channel_health(&id);
+    let ch = state.db.get_channel(&id).map_err(|e| AdminError::internal(e.0))?;
+    let channel_id = ch.as_ref().map(|c| c.id.clone()).unwrap_or(id);
+    let endpoints = eps
+        .into_iter()
+        .map(|(eid, enabled, available)| {
+            let url = state
+                .db
+                .get_endpoint(eid)
+                .ok()
+                .flatten()
+                .map(|ep| ep.url)
+                .unwrap_or_default();
+            EndpointHealthItem {
+                endpoint_id: eid,
+                url,
+                enabled,
+                available,
+            }
+        })
+        .collect();
+    Ok(Json(ChannelHealthResponse { channel_id, endpoints }))
+}
+
+async fn toggle_endpoint(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(body): Json<ToggleEndpointBody>,
+) -> Result<Json<Value>, AdminError> {
+    require_admin(&state.admin, &headers)?;
+    state
+        .db
+        .update_endpoint_enabled(id, body.enabled)
+        .map_err(|e| AdminError::internal(e.0))?;
+    state.routing.set_endpoint_enabled(id, body.enabled);
+    Ok(Json(serde_json::json!({ "success": true })))
+}
+
 // ── Router ────────────────────────────────────────────────────────
 
 pub fn admin_routes() -> Router<Arc<AppState>> {
@@ -1486,6 +1552,14 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route(
             "/admin/api/channels/{id}",
             axum::routing::put(update_channel).delete(delete_channel),
+        )
+        .route(
+            "/admin/api/channels/{id}/health",
+            axum::routing::get(get_channel_health),
+        )
+        .route(
+            "/admin/api/endpoints/{id}",
+            axum::routing::patch(toggle_endpoint),
         )
         // Models
         .route(

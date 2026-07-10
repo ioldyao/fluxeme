@@ -26,10 +26,12 @@ export interface ApiKey {
 }
 
 export interface Endpoint {
+  id?: number | null;
   url: string;
   api_key: string;
   weight: number;
   timeout_secs?: number | null;
+  enabled?: boolean;
 }
 
 export type Provider = 'openai' | 'anthropic' | 'vllm' | 'azure' | 'ollama' | string;
