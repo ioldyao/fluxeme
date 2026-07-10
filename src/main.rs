@@ -68,6 +68,7 @@ async fn main() {
     let (usage, usage_handle) = UsageService::new(db.clone());
     let providers = Arc::new(ProviderRegistry::new());
     let rate_limiter = Arc::new(RateLimiter::new());
+    rate_limiter.start_cleanup_task();
     let health = Arc::new(HealthService::new(db.clone()).expect("Failed to create HealthService"));
     let admin = Arc::new(AdminModule::new(&jwt_secret));
 

@@ -14,6 +14,7 @@ use crate::domain::model::Model;
 use crate::domain::model::Pricing;
 use crate::domain::routing::RoutingRule;
 use crate::domain::user::{ApiKey, SessionInfo, User};
+use crate::ratelimit::RateLimiter;
 use crate::server::AppState;
 
 const SESSION_TTL_SECS: i64 = 24 * 3600;
@@ -38,12 +39,14 @@ struct JwtClaims {
 
 pub struct AdminModule {
     secret: String,
+    rate_limiter: RateLimiter,
 }
 
 impl AdminModule {
     pub fn new(secret: &str) -> Self {
         Self {
             secret: secret.to_string(),
+            rate_limiter: RateLimiter::new(),
         }
     }
 
@@ -85,6 +88,7 @@ impl Clone for AdminModule {
     fn clone(&self) -> Self {
         Self {
             secret: self.secret.clone(),
+            rate_limiter: self.rate_limiter.clone(),
         }
     }
 }
@@ -102,7 +106,15 @@ fn extract_token(headers: &HeaderMap) -> Result<String, AdminError> {
 
 fn require_session(admin: &AdminModule, headers: &HeaderMap) -> Result<SessionInfo, AdminError> {
     let token = extract_token(headers)?;
-    admin.decode_token(&token)
+    let session = admin.decode_token(&token)?;
+
+    // Rate limit: 300 requests/minute per admin session to prevent abuse
+    admin
+        .rate_limiter
+        .check_rpm(&format!("admin:{}", session.user_id), 300)
+        .map_err(|_| AdminError::too_many_requests("Too many requests. Try again later."))?;
+
+    Ok(session)
 }
 
 /// Require admin role. Returns 403 (not 401) so the frontend can

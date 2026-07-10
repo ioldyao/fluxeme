@@ -19,6 +19,37 @@ impl RateLimiter {
         }
     }
 
+    /// Spawn a background task that periodically removes stale entries
+    /// from the DashMap counters to prevent unbounded memory growth.
+    pub fn start_cleanup_task(self: &Arc<Self>) {
+        let this = self.clone();
+        tokio::spawn(async move {
+            // Delay first cleanup to avoid startup overhead
+            tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                this.cleanup();
+            }
+        });
+    }
+
+    fn cleanup(&self) {
+        let now = Instant::now();
+        let window = std::time::Duration::from_secs(WINDOW_SECS);
+
+        self.rpm_counters.retain(|_, timestamps| {
+            timestamps.retain(|t| now.duration_since(*t) < window);
+            !timestamps.is_empty()
+        });
+
+        self.tpm_counters.retain(|_, entries| {
+            entries.retain(|(t, _)| now.duration_since(*t) < window);
+            !entries.is_empty()
+        });
+    }
+
     pub fn check_rpm(&self, key: &str, limit: u64) -> Result<(), RateLimitError> {
         if limit == u64::MAX {
             return Ok(());
