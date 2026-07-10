@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useChannels } from '@/api/channels';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Plus, X } from 'lucide-react';
+import { useChannels } from '@/api/channels';
 import type { Model } from '@/types';
 
 interface Props {
@@ -38,7 +38,8 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
       setContextLength(model.context_length ? String(model.context_length) : '');
       setBindings(model.channels);
     } else {
-      setId(''); setName(''); setModelPattern(''); setPromptPrice('0'); setCompletionPrice('0'); setContextLength(''); setBindings([]);
+      setId(''); setName(''); setModelPattern(''); setPromptPrice('0'); setCompletionPrice('0');
+      setContextLength(''); setBindings([]);
     }
   }, [model, open]);
 
@@ -63,78 +64,167 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle className="text-xl">{model ? t('model.edit') : t('model.add')}</DialogTitle>
+      <DialogContent className="sm:max-w-4xl p-0 gap-0 max-h-[85vh] flex flex-col">
+        <DialogHeader className="px-6 py-5 border-b shrink-0">
+          <DialogTitle className="text-lg font-semibold">
+            {model ? t('model.edit') : t('model.add')}
+          </DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {!model && (
-            <div className="space-y-2">
-              <Label>{t('form.modelName')}</Label>
-              <Input value={id} onChange={(e) => setId(e.target.value)} placeholder="gpt-4, claude-sonnet-4-20250514" required />
-            </div>
-          )}
-          <div className="space-y-2">
-            <Label>{t('form.name')}</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('form.namePlaceholder')} required />
-          </div>
-          <div className="space-y-2">
-            <Label>{t('form.modelPattern')}</Label>
-            <Input value={modelPattern} onChange={(e) => setModelPattern(e.target.value)} placeholder="gpt-4*, claude-*" />
-          </div>
-          <div className="space-y-2">
-            <Label>{t('form.pricing')}</Label>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label className="text-xs">{t('form.promptPrice')}</Label>
-                <Input type="number" step="0.0001" value={promptPrice} onChange={(e) => setPromptPrice(e.target.value)} />
-              </div>
-              <div>
-                <Label className="text-xs">{t('form.completionPrice')}</Label>
-                <Input type="number" step="0.0001" value={completionPrice} onChange={(e) => setCompletionPrice(e.target.value)} />
-              </div>
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label>上下文长度</Label>
-            <Input type="number" step="1" min="0" value={contextLength} onChange={(e) => setContextLength(e.target.value)} placeholder="例如: 131072" />
-          </div>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>{t('form.bindChannels')}</Label>
-              <Button type="button" variant="ghost" size="sm" onClick={addBinding} disabled={!channels?.length}>
-                <Plus className="h-3 w-3 mr-1" />{t('common.add')}
-              </Button>
-            </div>
-            {!channels?.length && <p className="text-xs text-muted-foreground">{t('form.noChannels')}</p>}
-            {bindings.map((b, i) => (
-              <div key={i} className="flex gap-2 items-center border p-2 rounded-md">
-                <div className="flex-1">
-                  <Select value={b.channel_id} onValueChange={(v) => updateBinding(i, 'channel_id', v ?? '')}>
-                    <SelectTrigger>
-                      <span>{channels?.find((ch) => ch.id === b.channel_id)?.name || b.channel_id}</span>
-                      <SelectValue className="sr-only" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {channels?.map((ch) => (
-                        <SelectItem key={ch.id} value={ch.id}>{ch.name || ch.id} ({ch.provider})</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div className="flex flex-1 min-h-0">
+            <div className="w-72 shrink-0 border-r bg-muted/20 px-5 py-6 space-y-5 overflow-y-auto">
+              {!model && (
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium">{t('form.modelName')}</Label>
+                  <Input
+                    className="h-9 bg-background"
+                    value={id}
+                    onChange={(e) => setId(e.target.value)}
+                    placeholder="gpt-4, claude-sonnet-4"
+                    required
+                  />
                 </div>
-                <div className="w-20">
-                  <Input type="number" placeholder={t('form.channelPriority')} value={b.priority}
-                    onChange={(e) => updateBinding(i, 'priority', Number(e.target.value))} />
+              )}
+
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">{t('form.name')}</Label>
+                <Input
+                  className="h-9 bg-background"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={t('form.namePlaceholder')}
+                  required
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">{t('form.modelPattern')}</Label>
+                <Input
+                  className="h-9 bg-background"
+                  value={modelPattern}
+                  onChange={(e) => setModelPattern(e.target.value)}
+                  placeholder="gpt-4*, claude-*"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">上下文长度</Label>
+                <Input
+                  className="h-9 bg-background"
+                  type="number"
+                  step="1"
+                  min="0"
+                  value={contextLength}
+                  onChange={(e) => setContextLength(e.target.value)}
+                  placeholder="例如: 131072"
+                />
+              </div>
+
+              <div className="space-y-2 pt-1">
+                <Label className="text-xs font-medium text-muted-foreground">{t('form.pricing')}</Label>
+                <div className="space-y-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">{t('form.promptPrice')}（/1K tokens）</Label>
+                    <Input
+                      className="h-9 bg-background"
+                      type="number"
+                      step="0.0001"
+                      value={promptPrice}
+                      onChange={(e) => setPromptPrice(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">{t('form.completionPrice')}（/1K tokens）</Label>
+                    <Input
+                      className="h-9 bg-background"
+                      type="number"
+                      step="0.0001"
+                      value={completionPrice}
+                      onChange={(e) => setCompletionPrice(e.target.value)}
+                    />
+                  </div>
                 </div>
-                <Button type="button" variant="ghost" size="sm" onClick={() => removeBinding(i)}>
-                  <X className="h-3 w-3" />
+              </div>
+            </div>
+
+            <div className="flex-1 min-h-0 flex flex-col">
+              <div className="flex items-center justify-between px-6 pt-5 pb-3 shrink-0">
+                <Label className="text-sm font-medium text-muted-foreground">
+                  {t('form.bindChannels')}（{bindings.length}）
+                </Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={addBinding}
+                  disabled={!channels?.length}
+                >
+                  <Plus className="h-3.5 w-3.5 mr-1" />{t('common.add')}
                 </Button>
               </div>
-            ))}
+
+              <div className="flex-1 overflow-y-auto px-6 pb-6">
+                {!channels?.length && (
+                  <p className="text-xs text-muted-foreground">{t('form.noChannels')}</p>
+                )}
+
+                {bindings.length > 0 && (
+                  <div className="space-y-2">
+                    {bindings.map((b, i) => (
+                      <div
+                        key={i}
+                        className="grid grid-cols-[1fr_88px_32px] gap-3 items-center rounded-lg border bg-muted/30 px-3 py-2.5"
+                      >
+                        <Select value={b.channel_id} onValueChange={(v) => updateBinding(i, 'channel_id', v ?? '')}>
+                          <SelectTrigger className="h-9 bg-background">
+                            <span className="truncate">
+                              {channels?.find((ch) => ch.id === b.channel_id)?.name || b.channel_id}
+                            </span>
+                            <SelectValue className="sr-only" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {channels?.map((ch) => (
+                              <SelectItem key={ch.id} value={ch.id}>
+                                {ch.name || ch.id} ({ch.provider})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+
+                        <Input
+                          className="h-9 bg-background"
+                          type="number"
+                          placeholder={t('form.channelPriority')}
+                          value={b.priority}
+                          onChange={(e) => updateBinding(i, 'priority', Number(e.target.value))}
+                        />
+
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                          onClick={() => removeBinding(i)}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-          <div className="flex justify-end gap-3 pt-2">
-            <Button type="button" variant="outline" size="lg" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
-            <Button type="submit" size="lg" disabled={isPending}>{t('common.save')}</Button>
+
+          <div className="flex justify-end gap-3 px-6 py-4 border-t bg-muted/20 shrink-0">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" disabled={isPending}>
+              {t('common.save')}
+            </Button>
           </div>
         </form>
       </DialogContent>

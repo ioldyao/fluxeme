@@ -83,69 +83,163 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle className="text-xl">{channel ? t('channel.edit') : t('channel.add')}</DialogTitle>
+      <DialogContent className="sm:max-w-4xl p-0 gap-0 max-h-[85vh] flex flex-col">
+        <DialogHeader className="px-6 py-5 border-b shrink-0">
+          <DialogTitle className="text-lg font-semibold">
+            {channel ? t('channel.edit') : t('channel.add')}
+          </DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-2">
-            <Label>{t('form.name')}</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('form.channelName')} />
-          </div>
-          <div className="space-y-2">
-            <Label>{t('form.provider')}</Label>
-            <Select value={provider} onValueChange={(v) => setProvider(v ?? '')} required>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {PROVIDERS.map((p) => (
-                  <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>{t('form.priority')}</Label>
-              <Input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} />
+
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div className="flex flex-1 min-h-0">
+            <div className="w-64 shrink-0 border-r bg-muted/20 px-5 py-6 space-y-5">
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">{t('form.name')}</Label>
+                <Input
+                  className="h-9 bg-background"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={t('form.channelName')}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">{t('form.provider')}</Label>
+                <Select value={provider} onValueChange={(v) => setProvider(v ?? '')} required>
+                  <SelectTrigger className="h-9 bg-background"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {PROVIDERS.map((p) => (
+                      <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">{t('form.priority')}</Label>
+                <Input
+                  className="h-9 bg-background"
+                  type="number"
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value)}
+                />
+              </div>
+
+              <label className="flex items-center gap-2 text-sm pt-1">
+                <Checkbox checked={enabled} onCheckedChange={(v) => setEnabled(!!v)} />
+                {t('form.enabled')}
+              </label>
             </div>
-            <div className="flex items-end pb-2 gap-2">
-              <Checkbox id="enabled" checked={enabled} onCheckedChange={(v) => setEnabled(!!v)} />
-              <Label htmlFor="enabled">{t('form.enabled')}</Label>
+
+            <div className="flex-1 min-h-0 flex flex-col">
+              <div className="flex items-center justify-between px-6 pt-5 pb-3 shrink-0">
+                <Label className="text-sm font-medium text-muted-foreground">
+                  {t('form.endpoints')}（{endpoints.length}）
+                </Label>
+                <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={addEp}>
+                  <Plus className="h-3.5 w-3.5 mr-1" />{t('common.add')}
+                </Button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-6 pb-6 space-y-3">
+                {endpoints.map((ep, i) => {
+                  const hs = healthStatus(ep);
+                  return (
+                    <div key={i} className="rounded-lg border bg-muted/30 p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-muted-foreground">端点 {i + 1}</span>
+                        <div className="flex items-center gap-3">
+                          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <span className={`inline-block w-2 h-2 rounded-full ${hs.color}`} />
+                            {hs.title}
+                          </span>
+                          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <Checkbox
+                              checked={ep.enabled !== false}
+                              onCheckedChange={(v) => updateEp(i, 'enabled', !!v)}
+                            />
+                            {t('form.enabled')}
+                          </label>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            onClick={() => removeEp(i)}
+                            disabled={endpoints.length <= 1}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      <Input
+                        className="h-9 bg-background"
+                        placeholder="URL"
+                        value={ep.url}
+                        onChange={(e) => updateEp(i, 'url', e.target.value)}
+                        required
+                      />
+
+                      <div className="grid grid-cols-[1fr_80px_80px] gap-3">
+                        <div className="space-y-1">
+                          <Input
+                            className="h-9 bg-background"
+                            placeholder="API Key"
+                            type="password"
+                            value={ep.api_key}
+                            onChange={(e) => updateEp(i, 'api_key', e.target.value)}
+                            required
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Input
+                            className="h-9 bg-background"
+                            placeholder={t('form.weight')}
+                            type="number"
+                            value={ep.weight}
+                            onChange={(e) => updateEp(i, 'weight', Number(e.target.value))}
+                          />
+                          <p className="text-[10px] text-muted-foreground leading-tight">权重越高流量越多</p>
+                        </div>
+                        <div className="space-y-1">
+                          <Input
+                            className="h-9 bg-background"
+                            placeholder={t('form.timeout')}
+                            type="number"
+                            value={ep.timeout_secs ?? ''}
+                            onChange={(e) =>
+                              updateEp(i, 'timeout_secs', e.target.value ? Number(e.target.value) : null)
+                            }
+                          />
+                          <p className="text-[10px] text-muted-foreground leading-tight">超时秒数</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-3 text-[10px] text-muted-foreground">
+                        <span className="inline-flex items-center gap-1">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500" /> 正常
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500" /> 熔断
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-gray-400" /> 已禁用
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>{t('form.endpoints')}</Label>
-              <Button type="button" variant="ghost" size="sm" onClick={addEp}>
-                <Plus className="h-3 w-3 mr-1" />{t('common.add')}
-              </Button>
-            </div>
-            {endpoints.map((ep, i) => {
-              const hs = healthStatus(ep);
-              return (
-                <div key={i} className="flex gap-2 items-start border p-2 rounded-md">
-                  <div className="flex-1 space-y-1">
-                    <Input placeholder="URL" value={ep.url} onChange={(e) => updateEp(i, 'url', e.target.value)} required />
-                    <Input placeholder="API Key" type="password" value={ep.api_key} onChange={(e) => updateEp(i, 'api_key', e.target.value)} required />
-                  </div>
-                  <div className="w-20 space-y-1">
-                    <Input placeholder={t('form.weight')} type="number" value={ep.weight} onChange={(e) => updateEp(i, 'weight', Number(e.target.value))} />
-                    <Input placeholder={t('form.timeout')} type="number" value={ep.timeout_secs ?? ''} onChange={(e) => updateEp(i, 'timeout_secs', e.target.value ? Number(e.target.value) : null)} />
-                  </div>
-                  <div className="flex flex-col items-center gap-0.5 mt-1 min-w-[20px]">
-                    <span className={`inline-block w-2.5 h-2.5 rounded-full ${hs.color}`} title={hs.title} />
-                    <Checkbox checked={ep.enabled !== false} onCheckedChange={(v) => updateEp(i, 'enabled', !!v)} />
-                  </div>
-                  <Button type="button" variant="ghost" size="sm" className="mt-1" onClick={() => removeEp(i)} disabled={endpoints.length <= 1}>
-                    <X className="h-3 w-3" />
-                  </Button>
-                </div>
-              );
-            })}
-          </div>
-          <div className="flex justify-end gap-3 pt-2">
-            <Button type="button" variant="outline" size="lg" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
-            <Button type="submit" size="lg" disabled={isPending}>{t('common.save')}</Button>
+
+          <div className="flex justify-end gap-3 px-6 py-4 border-t bg-muted/20 shrink-0">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" disabled={isPending}>
+              {t('common.save')}
+            </Button>
           </div>
         </form>
       </DialogContent>
