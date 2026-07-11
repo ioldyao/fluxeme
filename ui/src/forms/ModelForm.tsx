@@ -10,15 +10,7 @@ import { useChannels } from '@/api/channels';
 import { Checkbox } from '@/components/ui/checkbox';
 import type { Model } from '@/types';
 
-const CATEGORIES = [
-  { value: 'chat', label: '对话' },
-  { value: 'reasoning', label: '推理' },
-  { value: 'tools', label: '工具' },
-  { value: 'web', label: '联网' },
-  { value: 'vision', label: '视觉' },
-  { value: 'rerank', label: '重排' },
-  { value: 'embedding', label: '嵌入' },
-] as const;
+const CATEGORY_VALUES = ['chat', 'reasoning', 'tools', 'web', 'vision', 'rerank', 'embedding'] as const;
 
 interface Props {
   model?: Model | null;
@@ -132,7 +124,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-sm font-medium">上下文长度</Label>
+                <Label className="text-sm font-medium">{t('form.contextLength')}</Label>
                 <Input
                   className="h-9 bg-background"
                   type="number"
@@ -140,26 +132,26 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                   min="0"
                   value={contextLength}
                   onChange={(e) => setContextLength(e.target.value)}
-                  placeholder="例如: 131072"
+                  placeholder={t('form.contextLengthPlaceholder')}
                 />
               </div>
 
               <div className="space-y-2 pt-1">
-                <Label className="text-xs font-medium text-muted-foreground">分类</Label>
+                <Label className="text-xs font-medium text-muted-foreground">{t('model.category')}</Label>
                 <div className="grid grid-cols-2 gap-1.5">
-                  {CATEGORIES.map((cat) => (
-                    <label key={cat.value} className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+                  {CATEGORY_VALUES.map((cat) => (
+                    <label key={cat} className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
                       <Checkbox
-                        checked={category.includes(cat.value)}
+                        checked={category.includes(cat)}
                         onCheckedChange={(v) => {
                           if (v) {
-                            setCategory([...category, cat.value]);
+                            setCategory([...category, cat]);
                           } else {
-                            setCategory(category.filter((c) => c !== cat.value));
+                            setCategory(category.filter((c) => c !== cat));
                           }
                         }}
                       />
-                      {cat.label}
+                      {t(`model.category.${cat}`)}
                     </label>
                   ))}
                 </div>
@@ -169,7 +161,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                 <Label className="text-xs font-medium text-muted-foreground">{t('form.pricing')}</Label>
                 <div className="space-y-2">
                   <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">{t('form.promptPrice')}（/1K tokens）</Label>
+                    <Label className="text-xs text-muted-foreground">{t('form.promptPricePerK')}</Label>
                     <Input
                       className="h-9 bg-background"
                       type="number"
@@ -179,7 +171,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">{t('form.completionPrice')}（/1K tokens）</Label>
+                    <Label className="text-xs text-muted-foreground">{t('form.completionPricePerK')}</Label>
                     <Input
                       className="h-9 bg-background"
                       type="number"
@@ -195,7 +187,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
             <div className="flex-1 min-h-0 flex flex-col">
               <div className="flex items-center justify-between px-6 pt-5 pb-3 shrink-0">
                 <Label className="text-sm font-medium text-muted-foreground">
-                  {t('form.bindChannels')}（{bindings.length}）
+                  {t('form.bindChannelsCount', { count: bindings.length })}
                 </Label>
                 <Button
                   type="button"
