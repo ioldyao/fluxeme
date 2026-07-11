@@ -1,10 +1,14 @@
 use std::pin::Pin;
+use std::time::Instant;
 
 use futures::stream::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde_json::Value;
 
-use super::{ProviderAdapter, ProviderError, StreamResult};
+use super::{
+    classify_reqwest_error, classify_status, default_config, request_timeout, ErrorKind,
+    ProviderAdapter, ProviderError, RequestKind, StreamResult,
+};
 use crate::config::types::EndpointConfig;
 use crate::provider::shared_client;
 
@@ -13,7 +17,7 @@ fn build_anthropic_headers(endpoint: &EndpointConfig) -> Result<HeaderMap, Provi
     headers.insert(
         "x-api-key",
         HeaderValue::from_str(&endpoint.api_key)
-            .map_err(|e| ProviderError(format!("Invalid API key: {}", e)))?,
+            .map_err(|e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other))?,
     );
     headers.insert(
         "anthropic-version",
@@ -32,8 +36,9 @@ impl ProviderAdapter for AnthropicAdapter {
         _endpoint: &EndpointConfig,
         _body: Value,
     ) -> Result<Value, ProviderError> {
-        Err(ProviderError(
-            "Anthropic provider only supports /v1/messages, not /v1/chat/completions".into(),
+        Err(ProviderError::new(
+            "Anthropic provider only supports /v1/messages, not /v1/chat/completions",
+            ErrorKind::Other,
         ))
     }
 
@@ -42,8 +47,9 @@ impl ProviderAdapter for AnthropicAdapter {
         _endpoint: &EndpointConfig,
         _body: Value,
     ) -> Result<StreamResult, ProviderError> {
-        Err(ProviderError(
-            "Anthropic provider only supports /v1/messages, not /v1/chat/completions".into(),
+        Err(ProviderError::new(
+            "Anthropic provider only supports /v1/messages, not /v1/chat/completions",
+            ErrorKind::Other,
         ))
     }
 
@@ -59,27 +65,61 @@ impl ProviderAdapter for AnthropicAdapter {
         let headers = build_anthropic_headers(endpoint)?;
 
         let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
-        tracing::info!(endpoint = %endpoint.url, body_size = %body_size, "Sending request to upstream (anthropic)");
+        let timeout = request_timeout(
+            &RequestKind::Unary { body_size },
+            endpoint,
+            &default_config(),
+        );
+        tracing::info!(
+            endpoint = %endpoint.url,
+            body_size = %body_size,
+            timeout_ms = timeout.as_millis(),
+            "Sending request to upstream (anthropic)"
+        );
 
-        let req = client.post(&url).headers(headers).json(&body);
+        let resp_start = Instant::now();
+        let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
         let resp = req.send().await.map_err(|e| {
-                tracing::error!(endpoint = %endpoint.url, error = %e, "Upstream HTTP request failed");
-                ProviderError(format!("Request failed: {}", e))
-            })?;
+            let kind = classify_reqwest_error(&e);
+            tracing::error!(
+                endpoint = %endpoint.url,
+                error = %e,
+                error_kind = ?kind,
+                elapsed_ms = resp_start.elapsed().as_millis(),
+                "Upstream HTTP request failed (anthropic)"
+            );
+            ProviderError::new(format!("Request failed: {}", e), kind)
+        })?;
 
         let status = resp.status();
-        let resp_body: Value = resp
-            .json()
-            .await
-            .map_err(|e| ProviderError(format!("Failed to parse response: {}", e)))?;
+        tracing::info!(
+            endpoint = %endpoint.url,
+            ttfb_ms = resp_start.elapsed().as_millis(),
+            status = status.as_u16(),
+            "Upstream response header received (anthropic)"
+        );
+
+        let body_resp = resp.bytes().await.map_err(|e| {
+            ProviderError::new(format!("Failed to read response body: {}", e), ErrorKind::Parse)
+        })?;
+        tracing::info!(
+            endpoint = %endpoint.url,
+            body_size = body_resp.len(),
+            total_ms = resp_start.elapsed().as_millis(),
+            "Upstream full response received (anthropic)"
+        );
 
         if !status.is_success() {
-            return Err(ProviderError(format!(
-                "Upstream returned {}: {}",
-                status, resp_body
-            )));
+            let resp_text = String::from_utf8_lossy(&body_resp);
+            let kind = classify_status(status.as_u16());
+            return Err(ProviderError::new(
+                format!("Upstream returned {}: {}", status.as_u16(), resp_text),
+                kind,
+            ));
         }
 
+        let resp_body: Value = serde_json::from_slice(&body_resp)
+            .map_err(|e| ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse))?;
         Ok(resp_body)
     }
 
@@ -95,20 +135,35 @@ impl ProviderAdapter for AnthropicAdapter {
         let headers = build_anthropic_headers(endpoint)?;
 
         let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
-        tracing::info!(endpoint = %endpoint.url, body_size = %body_size, "Sending stream request to upstream (anthropic)");
+        let timeout = request_timeout(&RequestKind::Streaming, endpoint, &default_config());
+        tracing::info!(
+            endpoint = %endpoint.url,
+            body_size = %body_size,
+            total_timeout_ms = timeout.as_millis(),
+            "Sending stream request to upstream (anthropic)"
+        );
 
-        let req = client.post(&url).headers(headers).json(&body);
-        let response = req.send().await
-            .map_err(|e| ProviderError(format!("Stream request failed: {}", e)))?;
+        let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
+        let response = req.send().await.map_err(|e| {
+            let kind = classify_reqwest_error(&e);
+            tracing::error!(
+                endpoint = %endpoint.url,
+                error = %e,
+                error_kind = ?kind,
+                "Anthropic upstream stream request failed"
+            );
+            ProviderError::new(format!("Stream request failed: {}", e), kind)
+        })?;
 
         let status = response.status();
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
+            let kind = classify_status(status.as_u16());
             tracing::error!(%status, body = %text, "anthropic upstream stream request failed");
-            return Err(ProviderError(format!(
-                "Upstream request failed with status {}",
-                status.as_u16()
-            )));
+            return Err(ProviderError::new(
+                format!("Upstream request failed with status {}", status.as_u16()),
+                kind,
+            ));
         }
 
         let (tx, rx) = tokio::sync::mpsc::channel::<String>(1024);
@@ -166,26 +221,61 @@ impl ProviderAdapter for AnthropicAdapter {
         let headers = build_anthropic_headers(endpoint)?;
 
         let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
-        tracing::info!(endpoint = %endpoint.url, body_size = %body_size, "Sending relay request to upstream (anthropic)");
+        let timeout = request_timeout(
+            &RequestKind::Unary { body_size },
+            endpoint,
+            &default_config(),
+        );
+        tracing::info!(
+            endpoint = %endpoint.url,
+            body_size = %body_size,
+            timeout_ms = timeout.as_millis(),
+            "Sending relay request to upstream (anthropic)"
+        );
 
-        let req = client.post(&url).headers(headers).json(&body);
-        let resp = req.send().await
-            .map_err(|e| ProviderError(format!("Request failed: {}", e)))?;
+        let resp_start = Instant::now();
+        let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
+        let resp = req.send().await.map_err(|e| {
+            let kind = classify_reqwest_error(&e);
+            tracing::error!(
+                endpoint = %endpoint.url,
+                error = %e,
+                error_kind = ?kind,
+                elapsed_ms = resp_start.elapsed().as_millis(),
+                "Upstream relay request failed (anthropic)"
+            );
+            ProviderError::new(format!("Request failed: {}", e), kind)
+        })?;
 
         let status = resp.status();
-        let resp_body: Value = resp
-            .json()
-            .await
-            .map_err(|e| ProviderError(format!("Failed to parse response: {}", e)))?;
+        tracing::info!(
+            endpoint = %endpoint.url,
+            ttfb_ms = resp_start.elapsed().as_millis(),
+            status = status.as_u16(),
+            "Upstream response header received (anthropic relay)"
+        );
+        let body_resp = resp.bytes().await.map_err(|e| {
+            ProviderError::new(format!("Failed to read response body: {}", e), ErrorKind::Parse)
+        })?;
+        tracing::info!(
+            endpoint = %endpoint.url,
+            body_size = body_resp.len(),
+            total_ms = resp_start.elapsed().as_millis(),
+            "Upstream full response received (anthropic relay)"
+        );
 
         if !status.is_success() {
-            tracing::error!(%status, body = %resp_body, "anthropic relay request failed");
-            return Err(ProviderError(format!(
-                "Upstream request failed with status {}",
-                status.as_u16()
-            )));
+            let resp_text = String::from_utf8_lossy(&body_resp);
+            let kind = classify_status(status.as_u16());
+            tracing::error!(%status, body = %resp_text, "anthropic relay request failed");
+            return Err(ProviderError::new(
+                format!("Upstream request failed with status {}", status.as_u16()),
+                kind,
+            ));
         }
 
+        let resp_body: Value = serde_json::from_slice(&body_resp)
+            .map_err(|e| ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse))?;
         Ok(resp_body)
     }
 }

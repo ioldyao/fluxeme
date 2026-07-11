@@ -100,3 +100,49 @@ pub struct EndpointConfig {
 fn default_enabled() -> bool {
     true
 }
+
+// ── Gateway Runtime Config ──────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayRuntimeConfig {
+    #[serde(default = "default_connect_timeout")]
+    pub connect_timeout_secs: u64,
+    #[serde(default = "default_unary_base_timeout")]
+    pub unary_base_timeout_secs: u64,
+    #[serde(default = "default_body_size_extra")]
+    pub body_size_extra_secs_per_100kb: u64,
+    #[serde(default = "default_stream_first_byte_timeout")]
+    pub stream_first_byte_timeout_secs: u64,
+    #[serde(default = "default_stream_idle_timeout")]
+    pub stream_idle_timeout_secs: u64,
+    #[serde(default = "default_stream_total_timeout")]
+    pub stream_total_timeout_secs: u64,
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    #[serde(default = "default_handler_timeout")]
+    pub handler_timeout_secs: u64,
+}
+
+fn default_connect_timeout() -> u64 { 10 }
+fn default_unary_base_timeout() -> u64 { 60 }
+fn default_body_size_extra() -> u64 { 5 }
+fn default_stream_first_byte_timeout() -> u64 { 60 }
+fn default_stream_idle_timeout() -> u64 { 30 }
+fn default_stream_total_timeout() -> u64 { 600 }
+fn default_max_retries() -> u32 { 2 }
+fn default_handler_timeout() -> u64 { 240 }
+
+impl Default for GatewayRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            connect_timeout_secs: default_connect_timeout(),
+            unary_base_timeout_secs: default_unary_base_timeout(),
+            body_size_extra_secs_per_100kb: default_body_size_extra(),
+            stream_first_byte_timeout_secs: default_stream_first_byte_timeout(),
+            stream_idle_timeout_secs: default_stream_idle_timeout(),
+            stream_total_timeout_secs: default_stream_total_timeout(),
+            max_retries: default_max_retries(),
+            handler_timeout_secs: default_handler_timeout(),
+        }
+    }
+}

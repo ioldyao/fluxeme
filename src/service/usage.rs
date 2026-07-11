@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
@@ -68,12 +69,20 @@ impl UsageService {
 async fn background_writer(db: Arc<Database>, mut rx: Receiver<UsageRecord>) {
     while let Some(record) = rx.recv().await {
         let mut batch = vec![record];
+        let deadline = tokio::time::sleep(Duration::from_millis(10));
+        tokio::pin!(deadline);
+
         while batch.len() < 100 {
-            match rx.try_recv() {
-                Ok(r) => batch.push(r),
-                Err(_) => break,
+            tokio::select! {
+                biased;
+                r = rx.recv() => match r {
+                    Some(r) => batch.push(r),
+                    None => break,
+                },
+                _ = &mut deadline => break,
             }
         }
+
         let db = db.clone();
         let _ = tokio::task::spawn_blocking(move || {
             let conn = match db.conn() {
@@ -83,25 +92,19 @@ async fn background_writer(db: Arc<Database>, mut rx: Receiver<UsageRecord>) {
                     return;
                 }
             };
-            if batch.len() == 1 {
-                if let Err(e) = crate::db::insert_usage_row(&conn, &batch[0]) {
+            if let Err(e) = conn.execute("BEGIN", []) {
+                tracing::error!("Failed to begin transaction: {}", e);
+                return;
+            }
+            for r in &batch {
+                if let Err(e) = crate::db::insert_usage_row(&conn, r) {
                     tracing::error!("Failed to insert usage record: {}", e);
-                }
-            } else {
-                if let Err(e) = conn.execute("BEGIN", []) {
-                    tracing::error!("Failed to begin transaction: {}", e);
+                    let _ = conn.execute("ROLLBACK", []);
                     return;
                 }
-                for r in &batch {
-                    if let Err(e) = crate::db::insert_usage_row(&conn, r) {
-                        tracing::error!("Failed to insert usage record: {}", e);
-                        let _ = conn.execute("ROLLBACK", []);
-                        return;
-                    }
-                }
-                if let Err(e) = conn.execute("COMMIT", []) {
-                    tracing::error!("Failed to commit batch: {}", e);
-                }
+            }
+            if let Err(e) = conn.execute("COMMIT", []) {
+                tracing::error!("Failed to commit batch: {}", e);
             }
         })
         .await;

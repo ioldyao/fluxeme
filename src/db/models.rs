@@ -144,6 +144,43 @@ pub(super) fn list_bindings(
     Ok(bindings)
 }
 
+/// Batch-load channel bindings for a list of models (single query, no N+1).
+pub fn load_bindings(
+    conn: &Connection,
+    models: &mut [Model],
+) -> Result<(), crate::db::DbError> {
+    if models.is_empty() {
+        return Ok(());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT model_id, channel_id, priority FROM model_channels ORDER BY model_id, priority",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                ModelChannel {
+                    model_id: row.get(0)?,
+                    channel_id: row.get(1)?,
+                    priority: row.get(2)?,
+                },
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut by_model: std::collections::HashMap<String, Vec<ModelChannel>> =
+        std::collections::HashMap::new();
+    for (model_id, binding) in rows {
+        by_model.entry(model_id).or_default().push(binding);
+    }
+    for m in models {
+        if let Some(bindings) = by_model.remove(&m.id) {
+            m.channels = bindings;
+        }
+    }
+    Ok(())
+}
+
 pub fn update_pricing(conn: &Connection, id: &str, p: &Pricing) -> Result<(), crate::db::DbError> {
     conn.execute(
         "UPDATE models SET prompt_price=?1, completion_price=?2, cache_read_price=?3, cache_write_price=?4, image_input_price=?5, audio_input_price=?6, audio_output_price=?7 WHERE id=?8",

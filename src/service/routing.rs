@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 use crate::balancer::LoadBalancer;
 use crate::config::types::EndpointConfig;
 
-type RouteCacheEntry = (String, Arc<LoadBalancer>, Vec<EndpointConfig>);
+type RouteCacheEntry = (String, Arc<LoadBalancer>);
 type RouteCache = RwLock<HashMap<String, RouteCacheEntry>>;
 use crate::domain::channel::Channel;
 use crate::domain::model::Model;
@@ -55,7 +55,7 @@ impl RoutingService {
                         enabled: ep.enabled,
                     })
                     .collect();
-                cache_map.insert(id.clone(), (ch.provider.clone(), Arc::new(LoadBalancer::new(&endpoints)), endpoints));
+                cache_map.insert(id.clone(), (ch.provider.clone(), Arc::new(LoadBalancer::new(&endpoints))));
             }
             *self.cache.write().unwrap_or_else(|e| e.into_inner()) = cache_map;
         }
@@ -107,11 +107,14 @@ impl RoutingService {
 
     /// Find an endpoint by DB id and update its enabled state in the circuit breaker.
     pub fn set_endpoint_enabled(&self, endpoint_id: i64, enabled: bool) {
+        let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
         let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
-        for (_, (_, balancer, endpoints)) in cache.iter() {
-            for (i, ep) in endpoints.iter().enumerate() {
+        for (_, ch) in chs.iter() {
+            for (i, ep) in ch.endpoints.iter().enumerate() {
                 if ep.id == Some(endpoint_id) {
-                    balancer.as_health_aware().breakers()[i].set_enabled(enabled);
+                    if let Some((_, balancer)) = cache.get(&ch.id) {
+                        balancer.as_health_aware().breakers()[i].set_enabled(enabled);
+                    }
                     return;
                 }
             }
@@ -120,19 +123,21 @@ impl RoutingService {
 
     /// Collect health status for all endpoints in a channel.
     pub fn channel_health(&self, channel_id: &str) -> Vec<(i64, bool, bool)> {
+        let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
         let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
-        if let Some((_, balancer, endpoints)) = cache.get(channel_id) {
-            let balancer = balancer.as_health_aware();
-            endpoints
-                .iter()
-                .enumerate()
-                .filter_map(|(i, ep)| {
-                    ep.id.map(|id| (id, balancer.breakers()[i].is_enabled(), balancer.breakers()[i].is_available()))
-                })
-                .collect()
-        } else {
-            Vec::new()
+        if let Some(ch) = chs.get(channel_id) {
+            if let Some((_, balancer)) = cache.get(channel_id) {
+                let balancer = balancer.as_health_aware();
+                return ch.endpoints
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, ep)| {
+                        ep.id.map(|id| (id, balancer.breakers()[i].is_enabled(), balancer.breakers()[i].is_available()))
+                    })
+                    .collect();
+            }
         }
+        Vec::new()
     }
 
     /// Route a model to a channel ID for the given user.

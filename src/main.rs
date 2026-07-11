@@ -122,6 +122,11 @@ async fn main() {
         provider::set_allow_private_ips(v == "true");
     }
 
+    // Load runtime gateway config (timeouts, etc.)
+    let gateway_config = Arc::new(RwLock::new(
+        db.get_gateway_config().unwrap_or_default(),
+    ));
+
     let state = Arc::new(AppState {
         config,
         auth,
@@ -133,6 +138,7 @@ async fn main() {
         admin,
         health,
         sso,
+        gateway_config,
     });
 
     let app = build_router(state);

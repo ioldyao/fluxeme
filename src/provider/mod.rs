@@ -7,17 +7,41 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use futures::stream::Stream;
 use serde_json::Value;
 use url::Url;
 
-use crate::config::types::EndpointConfig;
+use crate::config::types::{EndpointConfig, GatewayRuntimeConfig};
 
 pub type StreamResult = Pin<Box<dyn Stream<Item = String> + Send>>;
 
+// ── Error types ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ErrorKind {
+    Timeout,
+    ConnectFailed,
+    RateLimited,
+    Upstream5xx,
+    Upstream4xx,
+    Parse,
+    Other,
+}
+
 #[derive(Debug)]
-pub struct ProviderError(pub String);
+pub struct ProviderError(pub String, pub ErrorKind);
+
+impl ProviderError {
+    pub fn kind(&self) -> ErrorKind {
+        self.1
+    }
+
+    pub fn new(msg: impl Into<String>, kind: ErrorKind) -> Self {
+        Self(msg.into(), kind)
+    }
+}
 
 impl std::fmt::Display for ProviderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -26,6 +50,74 @@ impl std::fmt::Display for ProviderError {
 }
 
 impl std::error::Error for ProviderError {}
+
+/// Classify a reqwest transport error (from `.send().await`).
+pub fn classify_reqwest_error(e: &reqwest::Error) -> ErrorKind {
+    if e.is_timeout() {
+        ErrorKind::Timeout
+    } else if e.is_connect() {
+        ErrorKind::ConnectFailed
+    } else {
+        ErrorKind::Other
+    }
+}
+
+/// Classify an HTTP response status code.
+pub fn classify_status(code: u16) -> ErrorKind {
+    match code {
+        429 => ErrorKind::RateLimited,
+        500..=599 => ErrorKind::Upstream5xx,
+        400..=499 => ErrorKind::Upstream4xx,
+        _ => ErrorKind::Other,
+    }
+}
+
+/// Determine whether a ProviderError should be retried.
+pub fn is_retryable_error(e: &ProviderError) -> bool {
+    matches!(
+        e.kind(),
+        ErrorKind::Timeout | ErrorKind::Upstream5xx | ErrorKind::RateLimited
+    )
+}
+
+// ── Request kind & timeout calculation ──────────────────────────────
+
+pub enum RequestKind {
+    /// Non-streaming: total timeout = base + body_size extra
+    Unary { body_size: usize },
+    /// Streaming: loose 600s fallback; primary control is idle timeout.
+    Streaming,
+}
+
+/// Compute per-request timeout.
+///
+/// Unary: base = endpoint.timeout_secs ?? config.unary_base_timeout_secs,
+///        plus body_size_extra_secs_per_100kb * (body_size / 100_000).
+///
+/// Streaming: returns stream_total_timeout_secs as a loose safety net.
+///            The primary disconnect mechanism is the idle timeout in
+///            tokio::select!, not this total timeout.
+pub fn request_timeout(
+    kind: &RequestKind,
+    endpoint: &EndpointConfig,
+    config: &GatewayRuntimeConfig,
+) -> Duration {
+    match kind {
+        RequestKind::Unary { body_size } => {
+            let base = endpoint.timeout_secs.unwrap_or(config.unary_base_timeout_secs);
+            let extra = (body_size / 100_000) as u64 * config.body_size_extra_secs_per_100kb;
+            Duration::from_secs(base + extra)
+        }
+        RequestKind::Streaming => {
+            Duration::from_secs(config.stream_total_timeout_secs)
+        }
+    }
+}
+
+/// Default config (fallback when AppState not available).
+pub fn default_config() -> GatewayRuntimeConfig {
+    GatewayRuntimeConfig::default()
+}
 
 #[async_trait::async_trait]
 pub trait ProviderAdapter: Send + Sync {
@@ -67,10 +159,10 @@ pub trait ProviderAdapter: Send + Sync {
         path: &str,
         _body: Value,
     ) -> Result<Value, ProviderError> {
-        Err(ProviderError(format!(
-            "Relay not supported for path: {}",
-            path
-        )))
+        Err(ProviderError::new(
+            format!("Relay not supported for path: {}", path),
+            ErrorKind::Other,
+        ))
     }
 }
 
@@ -90,17 +182,18 @@ pub fn validate_endpoint_url(url_str: &str) -> Result<(), ProviderError> {
     }
 
     let parsed = Url::parse(url_str).map_err(|_| {
-        ProviderError("Invalid endpoint URL format".into())
+        ProviderError::new("Invalid endpoint URL format", ErrorKind::Other)
     })?;
     let host = parsed.host_str().ok_or_else(|| {
-        ProviderError("Endpoint URL has no host".into())
+        ProviderError::new("Endpoint URL has no host", ErrorKind::Other)
     })?;
 
     // Check if host is an IP literal
     if let Ok(ip) = host.parse::<IpAddr>() {
         if is_private_ip(&ip) {
-            return Err(ProviderError(
-                "SSRF blocked: endpoint resolves to a private or reserved IP address".into(),
+            return Err(ProviderError::new(
+                "SSRF blocked: endpoint resolves to a private or reserved IP address",
+                ErrorKind::Other,
             ));
         }
         return Ok(());
@@ -108,13 +201,17 @@ pub fn validate_endpoint_url(url_str: &str) -> Result<(), ProviderError> {
 
     // Resolve hostname to IP addresses
     let addr_iter = format!("{}:0", host).to_socket_addrs().map_err(|_| {
-        ProviderError(format!("Failed to resolve endpoint host: {}", host))
+        ProviderError::new(
+            format!("Failed to resolve endpoint host: {}", host),
+            ErrorKind::Other,
+        )
     })?;
 
     for addr in addr_iter {
         if is_private_ip(&addr.ip()) {
-            return Err(ProviderError(
-                "SSRF blocked: endpoint resolves to a private or reserved IP address".into(),
+            return Err(ProviderError::new(
+                "SSRF blocked: endpoint resolves to a private or reserved IP address",
+                ErrorKind::Other,
             ));
         }
     }
@@ -146,7 +243,13 @@ fn shared_client() -> Arc<reqwest::Client> {
         .get_or_init(|| {
             Arc::new(
                 reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(60))
+                    .connect_timeout(Duration::from_secs(10))
+                    // 600s loose fallback — prevents connection leaks if a
+                    // per-request timeout is accidentally omitted. Individual
+                    // requests override this with tighter timeouts via
+                    // RequestBuilder::timeout().
+                    .timeout(Duration::from_secs(600))
+                    .tcp_keepalive(Duration::from_secs(15))
                     .build()
                     .expect("Failed to build reqwest client"),
             )

@@ -631,7 +631,7 @@ impl Database {
     pub fn list_published_models(&self) -> Result<Vec<Model>, DbError> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare("SELECT id, name, model_pattern, prompt_price, completion_price, cache_read_price, cache_write_price, image_input_price, audio_input_price, audio_output_price, published, context_length, category FROM models WHERE published = 1 ORDER BY id")?;
-        let models: Vec<Model> = stmt
+        let mut models: Vec<Model> = stmt
             .query_map([], |row| {
                 Ok(Model {
                     id: row.get(0)?,
@@ -654,12 +654,8 @@ impl Database {
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
-        let mut result = Vec::new();
-        for mut m in models {
-            m.channels = models::list_bindings(&conn, &m.id)?;
-            result.push(m);
-        }
-        Ok(result)
+        models::load_bindings(&conn, &mut models)?;
+        Ok(models)
     }
 
     pub fn set_model_published(&self, id: &str, published: bool) -> Result<(), DbError> {
@@ -728,7 +724,7 @@ impl Database {
              FROM models m INNER JOIN user_subscriptions s ON m.id = s.model_id
              WHERE s.user_id = ?1 ORDER BY m.id",
         )?;
-        let models: Vec<Model> = stmt
+        let mut models: Vec<Model> = stmt
             .query_map(params![user_id], |row| {
                 Ok(Model {
                     id: row.get(0)?,
@@ -751,12 +747,8 @@ impl Database {
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
-        let mut result = Vec::new();
-        for mut m in models {
-            m.channels = models::list_bindings(&conn, &m.id)?;
-            result.push(m);
-        }
-        Ok(result)
+        models::load_bindings(&conn, &mut models)?;
+        Ok(models)
     }
 
     /// Delete usage log records older than the given cutoff timestamp.
@@ -782,6 +774,20 @@ impl Database {
             params![key, value],
         )?;
         Ok(())
+    }
+
+    pub fn get_gateway_config(&self) -> Result<crate::config::types::GatewayRuntimeConfig, DbError> {
+        match self.get_setting("gateway_config")? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| DbError(format!("Invalid gateway config JSON: {}", e))),
+            None => Ok(crate::config::types::GatewayRuntimeConfig::default()),
+        }
+    }
+
+    pub fn set_gateway_config(&self, config: &crate::config::types::GatewayRuntimeConfig) -> Result<(), DbError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| DbError(format!("Failed to serialize gateway config: {}", e)))?;
+        self.set_setting("gateway_config", &json)
     }
 
     pub fn purge_usage_logs(&self, cutoff: &str) -> Result<usize, DbError> {

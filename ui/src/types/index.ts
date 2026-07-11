@@ -175,3 +175,14 @@ export interface UpstreamModel {
   id: string;
   max_model_len?: number | null;
 }
+
+export interface GatewayRuntimeConfig {
+  connect_timeout_secs: number;
+  unary_base_timeout_secs: number;
+  body_size_extra_secs_per_100kb: number;
+  stream_first_byte_timeout_secs: number;
+  stream_idle_timeout_secs: number;
+  stream_total_timeout_secs: number;
+  max_retries: number;
+  handler_timeout_secs: number;
+}

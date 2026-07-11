@@ -1,7 +1,7 @@
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use axum::extract::State;
@@ -10,6 +10,7 @@ use axum::response::{IntoResponse, Json, Response};
 use bytes::Bytes;
 use chrono::Utc;
 use futures::stream::StreamExt;
+use futures::Future;
 use futures::Stream;
 use serde_json::Value;
 use uuid::Uuid;
@@ -17,7 +18,7 @@ use uuid::Uuid;
 use crate::balancer::LoadBalancer;
 use crate::config::types::EndpointConfig;
 use crate::domain::usage::UsageRecord;
-use crate::provider::ProviderError;
+use crate::provider::{is_retryable_error, ErrorKind};
 use crate::server::AppState;
 
 // ── Error type ────────────────────────────────────────────────────
@@ -111,15 +112,6 @@ fn trim_model(body: &mut Value) -> Result<String, GatewayError> {
 /// Non-standard reasoning field names from various providers to normalize.
 const REASONING_ALIASES: &[&str] = &["reasoning", "thinking", "thinking_content"];
 
-/// Max retry attempts across different endpoints (per-endpoint failures are recorded on the breaker).
-const MAX_RETRIES: u32 = 2;
-
-/// Whether a `ProviderError` is safe to retry (5xx or network failure).
-/// 4xx errors are never retryable — retrying them would be wasted effort.
-fn is_retryable_error(e: &ProviderError) -> bool {
-    e.0.starts_with("Request failed") || e.0.starts_with("Upstream returned 5")
-}
-
 fn rename_to_reasoning_content(obj: &mut serde_json::Map<String, Value>) {
     if obj.contains_key("reasoning_content") {
         return;
@@ -197,7 +189,7 @@ impl RouteTarget {
 }
 
 fn resolve_route(state: &AppState, channel_id: &str) -> Result<RouteTarget, GatewayError> {
-    let (provider_name, balancer, _endpoints) = state
+    let (provider_name, balancer) = state
         .routing
         .get_route(channel_id)
         .ok_or_else(|| GatewayError::Internal("Channel route unavailable".into()))?;
@@ -501,6 +493,80 @@ impl<S> UsageTrackingStream<S> {
     }
 }
 
+// ── Idle-timeout stream wrapper ────────────────────────────────────
+
+/// Wraps a stream with an idle timeout. If no data arrives within the
+/// timeout window, an error SSE event is emitted and the stream terminates.
+///
+/// The first timeout waits `first_byte_timeout`; subsequent timeouts use
+/// `idle_timeout`.  This lets callers set a generous initial allowance
+/// for model "thinking" before tightening the per-chunk expectation.
+struct IdleTimeoutStream {
+    inner: Pin<Box<dyn Stream<Item = String> + Send>>,
+    first_byte_timeout: Duration,
+    idle_timeout: Duration,
+    sleep: Pin<Box<tokio::time::Sleep>>,
+    has_received_data: bool,
+    timed_out: bool,
+}
+
+impl IdleTimeoutStream {
+    fn new(
+        inner: Pin<Box<dyn Stream<Item = String> + Send>>,
+        first_byte_timeout: Duration,
+        idle_timeout: Duration,
+    ) -> Self {
+        Self {
+            inner,
+            first_byte_timeout,
+            idle_timeout,
+            sleep: Box::pin(tokio::time::sleep(first_byte_timeout)),
+            has_received_data: false,
+            timed_out: false,
+        }
+    }
+}
+
+impl Stream for IdleTimeoutStream {
+    type Item = String;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+
+        if this.timed_out {
+            return Poll::Ready(None);
+        }
+
+        match Pin::new(&mut this.inner).poll_next(cx) {
+            Poll::Ready(Some(data)) => {
+                if !this.has_received_data {
+                    this.has_received_data = true;
+                }
+                this.sleep.as_mut().reset(
+                    tokio::time::Instant::now() + this.idle_timeout,
+                );
+                Poll::Ready(Some(data))
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => {
+                if this.sleep.as_mut().poll(cx).is_ready() {
+                    tracing::warn!(
+                        first_byte = !this.has_received_data,
+                        "Stream idle timeout reached"
+                    );
+                    this.timed_out = true;
+                    Poll::Ready(Some(
+                        "data: {\"error\":\"idle_timeout\",\"message\":\"Stream idle timeout\"}\n\n"
+                            .to_string(),
+                    ))
+                } else {
+                    Poll::Pending
+                }
+            }
+        }
+    }
+}
+
 async fn handle_streaming(
     state: &AppState,
     adapter: Arc<dyn crate::provider::ProviderAdapter>,
@@ -519,6 +585,14 @@ async fn handle_streaming(
 
     match stream_result {
         Ok(stream) => {
+            let (first_byte_timeout, idle_timeout) = {
+                let gw = state.gateway_config.read().unwrap();
+                (
+                    Duration::from_secs(gw.stream_first_byte_timeout_secs),
+                    Duration::from_secs(gw.stream_idle_timeout_secs),
+                )
+            };
+            let stream = IdleTimeoutStream::new(stream, first_byte_timeout, idle_timeout);
             let stream = SseBuffer { inner: stream, buf: String::new(), overflow_error: None }
                 .map(|data| normalize_sse_reasoning(&data));
             let usage_stream = UsageTrackingStream {
@@ -596,6 +670,14 @@ async fn handle_messages_streaming(
 
     match stream_result {
         Ok(stream) => {
+            let (first_byte_timeout, idle_timeout) = {
+                let gw = state.gateway_config.read().unwrap();
+                (
+                    Duration::from_secs(gw.stream_first_byte_timeout_secs),
+                    Duration::from_secs(gw.stream_idle_timeout_secs),
+                )
+            };
+            let stream = IdleTimeoutStream::new(stream, first_byte_timeout, idle_timeout);
             let stream = SseBuffer { inner: stream, buf: String::new(), overflow_error: None };
             let usage_stream = UsageTrackingStream {
                 inner: stream,
@@ -667,17 +749,14 @@ async fn handle_non_streaming(
     start: Instant,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
-    let mut last_error: Option<ProviderError> = None;
+    let max_retries = {
+        let gw = state.gateway_config.read().unwrap();
+        gw.max_retries
+    };
+    let mut retry_count = 0u32;
 
-    for attempt in 0..=MAX_RETRIES {
-        if attempt > 0 {
-            if !route.retry_next() {
-                break;
-            }
-        }
-
+    let err_msg: String = loop {
         let result = route.adapter.chat_complete(&route.endpoint, body.clone()).await;
-        let latency_ms = start.elapsed().as_millis() as u64;
 
         match result {
             Ok(mut resp) => {
@@ -695,6 +774,7 @@ async fn handle_non_streaming(
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string());
 
+                let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
                     request_id,
@@ -717,14 +797,28 @@ async fn handle_non_streaming(
 
                 return Ok(Json(resp).into_response());
             }
+            Err(e) if e.kind() == ErrorKind::ConnectFailed => {
+                // Connect failure: try next endpoint without consuming
+                // retry budget or recording on the circuit breaker.
+                if !route.retry_next() {
+                    break e.0;
+                }
+                continue;
+            }
             Err(e) if is_retryable_error(&e) => {
                 route.balancer.as_health_aware().record_failure(route.endpoint_idx);
-                last_error = Some(e);
-                // Continue to next retry attempt
+                if retry_count >= max_retries {
+                    break e.0;
+                }
+                retry_count += 1;
+                if !route.retry_next() {
+                    break e.0;
+                }
             }
             Err(e) => {
                 // Non-retryable (4xx etc.) — don't record failure on the breaker,
                 // return immediately without retrying.
+                let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
                     request_id: request_id.clone(),
@@ -744,15 +838,14 @@ async fn handle_non_streaming(
                     api_key_name: None,
                     api_format: "openai".to_string(),
                 });
-                tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Upstream request failed (retries exhausted)");
+                tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Upstream request failed");
                 return Err(GatewayError::Upstream(e.0));
             }
         }
-    }
+    };
 
     // All retry attempts exhausted without success
     let latency_ms = start.elapsed().as_millis() as u64;
-    let err_msg = last_error.map(|e| e.0).unwrap_or_else(|| "All endpoints unavailable".to_string());
     state.usage.record(UsageRecord {
         timestamp: Utc::now().to_rfc3339(),
         request_id,
@@ -790,17 +883,14 @@ async fn handle_messages_non_streaming(
     start: Instant,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
-    let mut last_error: Option<ProviderError> = None;
+    let max_retries = {
+        let gw = state.gateway_config.read().unwrap();
+        gw.max_retries
+    };
+    let mut retry_count = 0u32;
 
-    for attempt in 0..=MAX_RETRIES {
-        if attempt > 0 {
-            if !route.retry_next() {
-                break;
-            }
-        }
-
+    let err_msg: String = loop {
         let result = route.adapter.messages(&route.endpoint, body.clone()).await;
-        let latency_ms = start.elapsed().as_millis() as u64;
 
         match result {
             Ok(resp) => {
@@ -825,6 +915,7 @@ async fn handle_messages_non_streaming(
                         .map(|s| s.to_string())
                     });
 
+                let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
                     request_id,
@@ -847,11 +938,24 @@ async fn handle_messages_non_streaming(
 
                 return Ok(Json(resp).into_response());
             }
+            Err(e) if e.kind() == ErrorKind::ConnectFailed => {
+                if !route.retry_next() {
+                    break e.0;
+                }
+                continue;
+            }
             Err(e) if is_retryable_error(&e) => {
                 route.balancer.as_health_aware().record_failure(route.endpoint_idx);
-                last_error = Some(e);
+                if retry_count >= max_retries {
+                    break e.0;
+                }
+                retry_count += 1;
+                if !route.retry_next() {
+                    break e.0;
+                }
             }
             Err(e) => {
+                let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
                     request_id: request_id.clone(),
@@ -871,14 +975,13 @@ async fn handle_messages_non_streaming(
                     api_key_name: None,
                     api_format: "anthropic".to_string(),
                 });
-                tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Messages upstream request failed (retries exhausted)");
+                tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Messages upstream request failed");
                 return Err(GatewayError::Upstream(e.0));
             }
         }
-    }
+    };
 
     let latency_ms = start.elapsed().as_millis() as u64;
-    let err_msg = last_error.map(|e| e.0).unwrap_or_else(|| "All endpoints unavailable".to_string());
     state.usage.record(UsageRecord {
         timestamp: Utc::now().to_rfc3339(),
         request_id,
@@ -940,18 +1043,35 @@ pub async fn chat_completions(
 
     tracing::info!(request_id, channel = %channel_id, endpoint = %route.endpoint.url, "Routing resolved");
 
-    if is_streaming {
-        handle_streaming(
-            &state, route.adapter, route.endpoint, body,
-            request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start,
-        )
-        .await
-    } else {
-        handle_non_streaming(
-            &state, &mut route, body,
-            request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start,
-        )
-        .await
+    let handler_timeout = Duration::from_secs(
+        state.gateway_config.read().unwrap().handler_timeout_secs,
+    );
+    let state_clone = state.clone();
+    let rid = request_id.clone();
+
+    let result = tokio::time::timeout(handler_timeout, async move {
+        if is_streaming {
+            handle_streaming(
+                &state_clone, route.adapter, route.endpoint, body,
+                request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start,
+            )
+            .await
+        } else {
+            handle_non_streaming(
+                &state_clone, &mut route, body,
+                request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start,
+            )
+            .await
+        }
+    })
+    .await;
+
+    match result {
+        Ok(inner) => inner,
+        Err(_) => {
+            tracing::error!(rid, handler_timeout_s = handler_timeout.as_secs(), "Chat completions handler timed out");
+            Err(GatewayError::Upstream("Request timed out".into()))
+        }
     }
 }
 
@@ -991,18 +1111,35 @@ pub async fn messages(
 
     tracing::info!(request_id, channel = %channel_id, endpoint = %route.endpoint.url, "Messages routing resolved");
 
-    if is_streaming {
-        handle_messages_streaming(
-            &state, route.adapter, route.endpoint, body,
-            request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start,
-        )
-        .await
-    } else {
-        handle_messages_non_streaming(
-            &state, &mut route, body,
-            request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start,
-        )
-        .await
+    let handler_timeout = Duration::from_secs(
+        state.gateway_config.read().unwrap().handler_timeout_secs,
+    );
+    let state_clone = state.clone();
+    let rid = request_id.clone();
+
+    let result = tokio::time::timeout(handler_timeout, async move {
+        if is_streaming {
+            handle_messages_streaming(
+                &state_clone, route.adapter, route.endpoint, body,
+                request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start,
+            )
+            .await
+        } else {
+            handle_messages_non_streaming(
+                &state_clone, &mut route, body,
+                request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start,
+            )
+            .await
+        }
+    })
+    .await;
+
+    match result {
+        Ok(inner) => inner,
+        Err(_) => {
+            tracing::error!(rid, handler_timeout_s = handler_timeout.as_secs(), "Messages handler timed out");
+            Err(GatewayError::Upstream("Request timed out".into()))
+        }
     }
 }
 
@@ -1035,17 +1172,14 @@ async fn relay_to_upstream(
         body["model"] = Value::String(id.clone());
     }
     let mut route = resolve_route(state, &channel_id)?;
-    let latency_ms = start.elapsed().as_millis() as u64;
     let req_body = serde_json::to_string(&body).ok();
-    let mut last_error: Option<ProviderError> = None;
+    let max_retries = {
+        let gw = state.gateway_config.read().unwrap();
+        gw.max_retries
+    };
+    let mut retry_count = 0u32;
 
-    for attempt in 0..=MAX_RETRIES {
-        if attempt > 0 {
-            if !route.retry_next() {
-                break;
-            }
-        }
-
+    let err_msg: String = loop {
         let result = route.adapter.relay(&route.endpoint, upstream_path, body.clone()).await;
 
         match result {
@@ -1063,6 +1197,7 @@ async fn relay_to_upstream(
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string());
 
+                let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
                     request_id,
@@ -1085,11 +1220,24 @@ async fn relay_to_upstream(
 
                 return Ok(Json(resp).into_response());
             }
+            Err(e) if e.kind() == ErrorKind::ConnectFailed => {
+                if !route.retry_next() {
+                    break e.0;
+                }
+                continue;
+            }
             Err(e) if is_retryable_error(&e) => {
                 route.balancer.as_health_aware().record_failure(route.endpoint_idx);
-                last_error = Some(e);
+                if retry_count >= max_retries {
+                    break e.0;
+                }
+                retry_count += 1;
+                if !route.retry_next() {
+                    break e.0;
+                }
             }
             Err(e) => {
+                let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
                     request_id,
@@ -1112,9 +1260,9 @@ async fn relay_to_upstream(
                 return Err(GatewayError::from(e));
             }
         }
-    }
+    };
 
-    let err_msg = last_error.map(|e| e.0).unwrap_or_else(|| "All endpoints unavailable".to_string());
+    let latency_ms = start.elapsed().as_millis() as u64;
     state.usage.record(UsageRecord {
         timestamp: Utc::now().to_rfc3339(),
         request_id,

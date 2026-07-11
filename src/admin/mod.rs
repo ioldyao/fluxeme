@@ -16,6 +16,7 @@ use crate::domain::model::Pricing;
 use crate::domain::routing::RoutingRule;
 use crate::domain::user::{ApiKey, SessionInfo, User};
 use crate::ratelimit::RateLimiter;
+use crate::config::types::GatewayRuntimeConfig;
 use crate::server::AppState;
 
 const SESSION_TTL_SECS: i64 = 24 * 3600;
@@ -1354,7 +1355,7 @@ async fn test_subscription_connection(
         .ok_or_else(|| AdminError::internal("该模型没有可用的通道"))?;
 
     // Resolve provider adapter + endpoint from the channel
-    let (provider_name, balancer, _) = state
+    let (provider_name, balancer) = state
         .routing
         .get_route(&channel_id)
         .ok_or_else(|| AdminError::internal("通道路由不可用"))?;
@@ -1792,6 +1793,30 @@ async fn set_allow_private_ips(
     Ok(Json(serde_json::json!({ "enabled": req.enabled })))
 }
 
+// ── Gateway Config ──────────────────────────────────────────────────
+
+async fn get_gateway_config_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<GatewayRuntimeConfig>, AdminError> {
+    require_admin(&state.admin, &headers)?;
+    let config = state.db.get_gateway_config().map_err(db_err)?;
+    Ok(Json(config))
+}
+
+async fn set_gateway_config_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(config): Json<GatewayRuntimeConfig>,
+) -> Result<Json<Value>, AdminError> {
+    require_admin(&state.admin, &headers)?;
+    // Validate and persist
+    state.db.set_gateway_config(&config).map_err(db_err)?;
+    // Update in-memory config
+    *state.gateway_config.write().unwrap() = config;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 // ── Router ────────────────────────────────────────────────────────
 
 pub fn admin_routes() -> Router<Arc<AppState>> {
@@ -1941,5 +1966,10 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route(
             "/admin/api/settings/allow-private-ips",
             axum::routing::get(get_allow_private_ips).put(set_allow_private_ips),
+        )
+        .route(
+            "/admin/api/gateway/config",
+            axum::routing::get(get_gateway_config_handler)
+                .put(set_gateway_config_handler),
         )
 }

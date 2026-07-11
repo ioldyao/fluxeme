@@ -1,10 +1,14 @@
 use std::pin::Pin;
+use std::time::Instant;
 
 use futures::stream::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, AUTHORIZATION};
 use serde_json::Value;
 
-use super::{ProviderAdapter, ProviderError, StreamResult};
+use super::{
+    classify_reqwest_error, classify_status, default_config, request_timeout, ErrorKind,
+    ProviderAdapter, ProviderError, RequestKind, StreamResult,
+};
 use crate::config::types::EndpointConfig;
 use crate::provider::shared_client;
 
@@ -36,32 +40,69 @@ impl VllmAdapter {
             headers.insert(
                 AUTHORIZATION,
                 HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key))
-                    .map_err(|e| ProviderError(format!("Invalid API key: {}", e)))?,
+                    .map_err(|e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other))?,
             );
         }
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
-        tracing::info!(endpoint = %endpoint.url, body_size = %body_size, path = %path, "Sending request to upstream (vllm)");
+        let timeout = request_timeout(
+            &RequestKind::Unary { body_size },
+            endpoint,
+            &default_config(),
+        );
+        tracing::info!(
+            endpoint = %endpoint.url,
+            body_size = %body_size,
+            timeout_ms = timeout.as_millis(),
+            path = %path,
+            "Sending request to upstream (vllm)"
+        );
 
-        let req = client.post(&url).headers(headers).json(&body);
-        let resp = req.send().await
-            .map_err(|e| ProviderError(format!("Request failed: {}", e)))?;
+        let resp_start = Instant::now();
+        let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
+        let resp = req.send().await.map_err(|e| {
+            let kind = classify_reqwest_error(&e);
+            tracing::error!(
+                endpoint = %endpoint.url,
+                error = %e,
+                error_kind = ?kind,
+                elapsed_ms = resp_start.elapsed().as_millis(),
+                "VLLM upstream request failed"
+            );
+            ProviderError::new(format!("Request failed: {}", e), kind)
+        })?;
 
         let status = resp.status();
-        let resp_body: Value = resp
-            .json()
-            .await
-            .map_err(|e| ProviderError(format!("Failed to parse response: {}", e)))?;
+        tracing::info!(
+            endpoint = %endpoint.url,
+            ttfb_ms = resp_start.elapsed().as_millis(),
+            status = status.as_u16(),
+            "Upstream response header received (vllm)"
+        );
+
+        let body_resp = resp.bytes().await.map_err(|e| {
+            ProviderError::new(format!("Failed to read response body: {}", e), ErrorKind::Parse)
+        })?;
+        tracing::info!(
+            endpoint = %endpoint.url,
+            body_size = body_resp.len(),
+            total_ms = resp_start.elapsed().as_millis(),
+            "Upstream full response received (vllm)"
+        );
 
         if !status.is_success() {
-            tracing::error!(%status, body = %resp_body, "vllm upstream request failed");
-            return Err(ProviderError(format!(
-                "Upstream request failed with status {}",
-                status.as_u16()
-            )));
+            let resp_text = String::from_utf8_lossy(&body_resp);
+            let kind = classify_status(status.as_u16());
+            tracing::error!(%status, body = %resp_text, "vllm upstream request failed");
+            return Err(ProviderError::new(
+                format!("Upstream request failed with status {}", status.as_u16()),
+                kind,
+            ));
         }
 
+        let resp_body: Value = serde_json::from_slice(&body_resp)
+            .map_err(|e| ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse))?;
         Ok(resp_body)
     }
 }
@@ -92,17 +133,26 @@ impl ProviderAdapter for VllmAdapter {
             headers.insert(
                 AUTHORIZATION,
                 HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key))
-                    .map_err(|e| ProviderError(format!("Invalid API key: {}", e)))?,
+                    .map_err(|e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other))?,
             );
         }
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
-        tracing::info!(endpoint = %endpoint.url, body_size = %body_size, "Sending stream request to upstream (vllm)");
+        let timeout = request_timeout(&RequestKind::Streaming, endpoint, &default_config());
+        tracing::info!(
+            endpoint = %endpoint.url,
+            body_size = %body_size,
+            total_timeout_ms = timeout.as_millis(),
+            "Sending stream request to upstream (vllm)"
+        );
 
-        let req = client.post(&url).headers(headers).json(&body);
+        let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
         let response = req.send().await
-            .map_err(|e| ProviderError(format!("Stream request failed: {}", e)))?;
+            .map_err(|e| {
+                let kind = classify_reqwest_error(&e);
+                ProviderError::new(format!("Stream request failed: {}", e), kind)
+            })?;
 
         let status = response.status();
         if !status.is_success() {
@@ -110,11 +160,12 @@ impl ProviderAdapter for VllmAdapter {
                 .text()
                 .await
                 .unwrap_or_default();
+            let kind = classify_status(status.as_u16());
             tracing::error!(%status, body = %body, "vllm upstream stream request failed");
-            return Err(ProviderError(format!(
-                "Upstream request failed with status {}",
-                status.as_u16()
-            )));
+            return Err(ProviderError::new(
+                format!("Upstream request failed with status {}", status.as_u16()),
+                kind,
+            ));
         }
 
         let byte_stream = response.bytes_stream();

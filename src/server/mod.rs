@@ -10,7 +10,7 @@ use tower_http::cors::{CorsLayer, AllowOrigin};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::config::types::AppConfig;
+use crate::config::types::{AppConfig, GatewayRuntimeConfig};
 use crate::provider::ProviderRegistry;
 use crate::ratelimit::RateLimiter;
 use crate::service::{AuthService, HealthService, RoutingService, UsageService};
@@ -28,6 +28,10 @@ pub struct AppState {
     pub admin: Arc<crate::admin::AdminModule>,
     pub health: Arc<HealthService>,
     pub sso: Arc<SsoModule>,
+    /// Runtime-adjustable timeout config. Read on every request, updated by
+    /// PUT /admin/api/gateway/config.  Uses RwLock so writes propagate instantly
+    /// (single-instance; multi-instance deployments would need a refresh loop).
+    pub gateway_config: Arc<RwLock<GatewayRuntimeConfig>>,
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
