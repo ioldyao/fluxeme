@@ -17,7 +17,6 @@ import {
   Monitor,
   LogOut,
   User,
-  Settings,
 } from 'lucide-react';
 
 export function TopBar() {
@@ -67,10 +66,6 @@ export function TopBar() {
             <span className="text-sm">{userName}</span>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => navigate('/profile')}>
-              <Settings className="h-4 w-4 mr-2" />
-              {t('nav.profile')}
-            </DropdownMenuItem>
             <DropdownMenuItem onClick={handleLogout}>
               <LogOut className="h-4 w-4 mr-2" />
               {t('nav.logout')}
