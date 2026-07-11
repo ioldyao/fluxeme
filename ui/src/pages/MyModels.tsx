@@ -84,8 +84,18 @@ export default function MyModels() {
                       <h3
                         className="font-medium cursor-pointer hover:text-brand transition-colors"
                         onClick={() => {
-                          navigator.clipboard.writeText(model.name);
-                          toast.success(`已复制: ${model.name}`);
+                          const text = model.name;
+                          if (navigator.clipboard) {
+                            navigator.clipboard.writeText(text);
+                          } else {
+                            const el = document.createElement('textarea');
+                            el.value = text;
+                            document.body.appendChild(el);
+                            el.select();
+                            document.execCommand('copy');
+                            document.body.removeChild(el);
+                          }
+                          toast.success(`已复制: ${text}`);
                         }}
                       >{model.name}</h3>
                       <span className="text-xs text-muted-foreground font-mono">{model.model_pattern}</span>
