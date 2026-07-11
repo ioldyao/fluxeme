@@ -32,6 +32,9 @@ async fn main() {
         )
         .init();
 
+    // Load .env file if present (for env var references in config like ${GATEWAY_JWT_SECRET})
+    dotenvy::dotenv().ok();
+
     let config_path =
         std::env::var("GATEWAY_CONFIG").unwrap_or_else(|_| "config/config.yaml".to_string());
 

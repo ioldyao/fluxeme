@@ -87,13 +87,24 @@ fn default_allowed_origins() -> Vec<String> {
 
 // ── Cache Config ────────────────────────────────────────────
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CacheConfig {
-    #[serde(default)]
+    #[serde(default = "default_cache_enabled")]
     pub enabled: bool,
     #[serde(default = "default_cache_redis_url")]
     pub redis_url: String,
 }
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_cache_enabled(),
+            redis_url: default_cache_redis_url(),
+        }
+    }
+}
+
+fn default_cache_enabled() -> bool { true }
 
 fn default_cache_redis_url() -> String {
     "redis://127.0.0.1:6379".to_string()

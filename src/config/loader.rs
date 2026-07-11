@@ -10,9 +10,39 @@ use crate::domain::model::{Model, ModelChannel, Pricing};
 use crate::domain::routing::RoutingRule;
 use crate::domain::user::{ApiKey, RateLimit, User};
 
+/// Replace `${VAR}` patterns in a string with their environment variable values.
+/// If the env var is not set, the placeholder is left as-is.
+fn expand_env_vars(content: &str) -> String {
+    let mut result = String::new();
+    let mut rest = content;
+    while let Some(start) = rest.find("${") {
+        result.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        if let Some(end) = after.find('}') {
+            let var_name = &after[..end];
+            match std::env::var(var_name) {
+                Ok(val) => result.push_str(&val),
+                Err(_) => {
+                    // Leave placeholder as-is so callers can detect unset vars
+                    result.push_str(&format!("${{{}}}", var_name));
+                }
+            }
+            rest = &after[end + 1..];
+        } else {
+            result.push_str("${");
+            rest = after;
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
 pub fn load_config(path: &str) -> Result<AppConfig, String> {
     let content = fs::read_to_string(Path::new(path))
         .map_err(|e| format!("Failed to read config file: {}", e))?;
+
+    // Expand ${VAR} environment variable references before YAML parsing
+    let content = expand_env_vars(&content);
 
     let config: AppConfig =
         serde_yaml::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
@@ -52,6 +82,14 @@ pub fn resolve_jwt_secret(cfg: &AppConfig) -> String {
 
     if secret == "ai-gateway-jwt-secret-change-me" {
         panic!("CRITICAL: Default JWT secret is not allowed in production! Set GATEWAY_JWT_SECRET env var or configure jwt_secret in config.yaml.");
+    }
+
+    if secret.starts_with("${") {
+        panic!(
+            "CRITICAL: JWT secret references env var {} which is not set. \
+             Add GATEWAY_JWT_SECRET to your .env file or environment.",
+            secret
+        );
     }
 
     secret
