@@ -47,6 +47,7 @@ const DEFAULT_GATEWAY_CONFIG: GatewayRuntimeConfig = {
   stream_total_timeout_secs: 600,
   max_retries: 2,
   handler_timeout_secs: 240,
+  cache_ttl_secs: 300,
 };
 
 export default function SettingsPage() {
@@ -302,6 +303,13 @@ export default function SettingsPage() {
                 value={gw('handler_timeout_secs')}
                 disabled={gatewayLoading}
                 onChange={(v) => updateGw('handler_timeout_secs', v)}
+              />
+              <TimeoutField
+                label={t('settings.cacheTtl')}
+                hint={t('settings.cacheTtlHint')}
+                value={gw('cache_ttl_secs')}
+                disabled={gatewayLoading}
+                onChange={(v) => updateGw('cache_ttl_secs', v)}
               />
             </div>
           </CardContent>

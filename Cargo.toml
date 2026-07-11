@@ -26,3 +26,6 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 bcrypt = "0.16"
 jsonwebtoken = "9"
 url = "2"
+redis = { version = "0.28", features = ["tokio-comp", "json"] }
+sha2 = "0.10"
+hex = "0.4"

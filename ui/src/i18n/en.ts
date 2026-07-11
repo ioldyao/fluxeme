@@ -260,6 +260,8 @@ const en: Record<string, string> = {
   'settings.maxRetriesHint': 'Number of retry attempts for retryable upstream failures.',
   'settings.handlerTimeout': 'Handler Timeout (s)',
   'settings.handlerTimeoutHint': 'Maximum time for the entire request lifecycle, including retries.',
+  'settings.cacheTtl': 'Cache TTL (s)',
+  'settings.cacheTtlHint': 'How long a cached response stays valid (0 = use default).',
   'settings.gatewaySaved': 'Gateway configuration saved.',
   'marketplace.title': 'Model Marketplace',
   'marketplace.subtitle': 'Browse and subscribe to published models',

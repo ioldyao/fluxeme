@@ -40,6 +40,8 @@ pub struct AppConfig {
     pub sso: SsoConfig,
     #[serde(default)]
     pub cors: CorsConfig,
+    #[serde(default)]
+    pub cache: CacheConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -83,6 +85,20 @@ fn default_allowed_origins() -> Vec<String> {
     ]
 }
 
+// ── Cache Config ────────────────────────────────────────────
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct CacheConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_cache_redis_url")]
+    pub redis_url: String,
+}
+
+fn default_cache_redis_url() -> String {
+    "redis://127.0.0.1:6379".to_string()
+}
+
 /// Resolved endpoint with credentials, passed to provider adapters.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EndpointConfig {
@@ -121,6 +137,8 @@ pub struct GatewayRuntimeConfig {
     pub max_retries: u32,
     #[serde(default = "default_handler_timeout")]
     pub handler_timeout_secs: u64,
+    #[serde(default = "default_cache_ttl")]
+    pub cache_ttl_secs: u64,
 }
 
 fn default_connect_timeout() -> u64 { 10 }
@@ -131,6 +149,7 @@ fn default_stream_idle_timeout() -> u64 { 30 }
 fn default_stream_total_timeout() -> u64 { 600 }
 fn default_max_retries() -> u32 { 2 }
 fn default_handler_timeout() -> u64 { 240 }
+fn default_cache_ttl() -> u64 { 300 }
 
 impl Default for GatewayRuntimeConfig {
     fn default() -> Self {
@@ -143,6 +162,7 @@ impl Default for GatewayRuntimeConfig {
             stream_total_timeout_secs: default_stream_total_timeout(),
             max_retries: default_max_retries(),
             handler_timeout_secs: default_handler_timeout(),
+            cache_ttl_secs: default_cache_ttl(),
         }
     }
 }

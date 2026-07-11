@@ -10,6 +10,7 @@ use tower_http::cors::{CorsLayer, AllowOrigin};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::cache::RedisCache;
 use crate::config::types::{AppConfig, GatewayRuntimeConfig};
 use crate::provider::ProviderRegistry;
 use crate::ratelimit::RateLimiter;
@@ -32,6 +33,7 @@ pub struct AppState {
     /// PUT /admin/api/gateway/config.  Uses RwLock so writes propagate instantly
     /// (single-instance; multi-instance deployments would need a refresh loop).
     pub gateway_config: Arc<RwLock<GatewayRuntimeConfig>>,
+    pub cache: Arc<RedisCache>,
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {

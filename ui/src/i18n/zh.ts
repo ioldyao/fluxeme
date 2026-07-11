@@ -260,6 +260,8 @@ const zh: Record<string, string> = {
   'settings.maxRetriesHint': '遇到可重试的上游故障时的最大重试次数。',
   'settings.handlerTimeout': '处理器超时（秒）',
   'settings.handlerTimeoutHint': '包含重试在内的整个请求生命周期的最大时间。',
+  'settings.cacheTtl': '缓存 TTL（秒）',
+  'settings.cacheTtlHint': '缓存响应的有效期（0 = 使用默认值）。',
   'settings.gatewaySaved': '网关配置已保存。',
   'marketplace.title': '模型广场',
   'marketplace.subtitle': '浏览并订阅已发布的模型',

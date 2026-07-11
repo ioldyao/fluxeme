@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use bytes::Bytes;
 use chrono::Utc;
@@ -13,6 +13,7 @@ use futures::stream::StreamExt;
 use futures::Future;
 use futures::Stream;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::balancer::LoadBalancer;
@@ -747,6 +748,7 @@ async fn handle_non_streaming(
     channel_id: String,
     model: String,
     start: Instant,
+    cache_key: Option<String>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     let max_retries = {
@@ -778,7 +780,7 @@ async fn handle_non_streaming(
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
                     request_id,
-                    user_id,
+                    user_id: user_id.clone(),
                     user_name,
                     channel_id,
                     model,
@@ -795,7 +797,17 @@ async fn handle_non_streaming(
                     api_format: "openai".to_string(),
                 });
 
-                return Ok(Json(resp).into_response());
+                // Cache the response for non-streaming requests
+                if let Some(ref ck) = cache_key {
+                    if let Ok(body_str) = serde_json::to_string(&resp) {
+                        let ttl = state.gateway_config.read().unwrap().cache_ttl_secs;
+                        let _ = state.cache.set(&user_id, ck, &body_str, ttl).await;
+                    }
+                }
+
+                let mut resp = Json(resp).into_response();
+                resp.headers_mut().insert("x-cache", HeaderValue::from_static("MISS"));
+                return Ok(resp);
             }
             Err(e) if e.kind() == ErrorKind::ConnectFailed => {
                 // Connect failure: try next endpoint without consuming
@@ -1043,6 +1055,32 @@ pub async fn chat_completions(
 
     tracing::info!(request_id, channel = %channel_id, endpoint = %route.endpoint.url, "Routing resolved");
 
+    // ── Cache check (non-streaming only) ──
+    let cache_key = if !is_streaming {
+        let raw_key = format!(
+            "{}:{}",
+            model,
+            serde_json::to_string(&body).unwrap_or_default()
+        );
+        let hash = hex::encode(Sha256::digest(raw_key.as_bytes()));
+        match state.cache.get(&user.user_id, &hash).await {
+            Ok(Some(cached)) => {
+                tracing::info!(request_id, "Cache HIT for model {}", model);
+                if let Ok(val) = serde_json::from_str::<Value>(&cached) {
+                    let mut resp = Json(val).into_response();
+                    resp.headers_mut()
+                        .insert("x-cache", HeaderValue::from_static("HIT"));
+                    return Ok(resp);
+                }
+            }
+            Ok(None) => {}
+            Err(e) => tracing::warn!(request_id, "Cache GET error: {}", e),
+        }
+        Some(hash)
+    } else {
+        None
+    };
+
     let handler_timeout = Duration::from_secs(
         state.gateway_config.read().unwrap().handler_timeout_secs,
     );
@@ -1059,7 +1097,7 @@ pub async fn chat_completions(
         } else {
             handle_non_streaming(
                 &state_clone, &mut route, body,
-                request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start,
+                request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start, cache_key,
             )
             .await
         }

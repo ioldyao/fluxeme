@@ -1,5 +1,6 @@
 mod admin;
 mod balancer;
+mod cache;
 mod config;
 mod db;
 mod domain;
@@ -14,6 +15,7 @@ use std::sync::{Arc, RwLock};
 use tracing_subscriber::EnvFilter;
 
 use crate::admin::AdminModule;
+use crate::cache::RedisCache;
 use crate::config::loader;
 use crate::db::Database;
 use crate::provider::ProviderRegistry;
@@ -127,6 +129,25 @@ async fn main() {
         db.get_gateway_config().unwrap_or_default(),
     ));
 
+    // Initialize Redis cache (noop when disabled)
+    let cache = Arc::new(
+        if config.read().unwrap().cache.enabled {
+            let ttl = gateway_config.read().unwrap().cache_ttl_secs;
+            match RedisCache::new(&config.read().unwrap().cache.redis_url, ttl).await {
+                Ok(c) => {
+                    tracing::info!("Redis cache enabled");
+                    c
+                }
+                Err(e) => {
+                    tracing::error!("Failed to connect to Redis: {}", e);
+                    RedisCache::noop()
+                }
+            }
+        } else {
+            RedisCache::noop()
+        },
+    );
+
     let state = Arc::new(AppState {
         config,
         auth,
@@ -139,6 +160,7 @@ async fn main() {
         health,
         sso,
         gateway_config,
+        cache,
     });
 
     let app = build_router(state);
