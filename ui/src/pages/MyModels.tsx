@@ -74,7 +74,13 @@ export default function MyModels() {
                       {results[model.id] && (
                         <span className={`inline-block size-2 rounded-full ${results[model.id].success ? 'bg-green-500' : 'bg-red-500'}`} />
                       )}
-                      <h3 className="font-medium">{model.name}</h3>
+                      <h3
+                        className="font-medium cursor-pointer hover:text-brand transition-colors"
+                        onClick={() => {
+                          navigator.clipboard.writeText(model.name);
+                          toast.success(`已复制: ${model.name}`);
+                        }}
+                      >{model.name}</h3>
                       <span className="text-xs text-muted-foreground font-mono">{model.model_pattern}</span>
                       {results[model.id]?.latency_ms !== undefined && (
                         <span className={`text-xs ${results[model.id].success ? 'text-green-600' : 'text-red-500'}`}>
