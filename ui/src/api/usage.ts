@@ -26,6 +26,7 @@ export function useUsage(params: UsageParams = {}) {
   return useQuery({
     queryKey: ['usage', stableKey],
     queryFn: () => api<UsageResponse>(`/usage${qs ? `?${qs}` : ''}`),
+    refetchInterval: 60_000,
   });
 }
 
@@ -41,5 +42,6 @@ export function useUsageAggregate(days: number = 14) {
   return useQuery({
     queryKey: ['usage', 'aggregate', days],
     queryFn: () => api<DailyAggregate[]>(`/usage/aggregate?days=${days}`),
+    refetchInterval: 60_000,
   });
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Copy, Check } from 'lucide-react';
 
@@ -9,22 +9,45 @@ interface CopyButtonProps {
 export function CopyButton({ text }: CopyButtonProps) {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
+  const handleCopy = useCallback(async () => {
+    const markCopied = () => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
+    };
+
+    // 优先用现代 Clipboard API（需 HTTPS 或 localhost）
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        markCopied();
+        return;
+      } catch {
+        // 落到 fallback
+      }
+    }
+
+    // Fallback: textarea + execCommand，兼容 HTTP 环境
+    try {
       const el = document.createElement('textarea');
       el.value = text;
+      el.setAttribute('readonly', '');
+      el.style.position = 'fixed';
+      el.style.top = '0';
+      el.style.left = '0';
+      el.style.opacity = '0';
       document.body.appendChild(el);
+      el.focus();
       el.select();
-      document.execCommand('copy');
+      el.setSelectionRange(0, text.length);
+      const ok = document.execCommand('copy');
       document.body.removeChild(el);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (ok) {
+        markCopied();
+      }
+    } catch {
+      // 静默失败，不显示 "Copied"
     }
-  };
+  }, [text]);
 
   return (
     <Button variant="outline" size="sm" onClick={handleCopy}>
