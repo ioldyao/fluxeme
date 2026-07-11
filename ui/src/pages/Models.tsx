@@ -19,16 +19,6 @@ import { cn } from '@/lib/utils';
 import { api } from '@/api/client';
 import type { Model, UpstreamModel } from '@/types';
 
-const CATEGORY_LABELS: Record<string, string> = {
-  chat: '对话',
-  reasoning: '推理',
-  tools: '工具',
-  web: '联网',
-  vision: '视觉',
-  rerank: '重排',
-  embedding: '嵌入',
-};
-
 export default function Models() {
   const { t } = useTranslation();
   const { data: models, isLoading, isError, refetch } = useModels();
@@ -63,7 +53,7 @@ export default function Models() {
     setHcLoading(true);
     try {
       const res = await api<{ models_updated: number; channels_checked: number }>('/health-check/models', { method: 'POST' });
-      toast.success(`${res.channels_checked} 个渠道检查完成, ${res.models_updated} 个模型已更新`);
+      toast.success(t('model.healthCheckResult', { channels: res.channels_checked, models: res.models_updated }));
       refetch();
     } catch (e: any) {
       toast.error(e.message);
@@ -145,9 +135,9 @@ export default function Models() {
     qc.invalidateQueries({ queryKey: ['models'] });
     setAdding(false);
     if (failures.length > 0) {
-      toast.success(`成功添加 ${results.length - failures.length} 个模型，${failures.length} 个失败`);
+      toast.success(t('model.addPartialSuccess', { success: results.length - failures.length, failures: failures.length }));
     } else {
-      toast.success(`成功添加 ${results.length} 个模型`);
+      toast.success(t('model.addSuccess', { count: results.length }));
     }
     setSyncOpen(false);
   };
@@ -160,10 +150,10 @@ export default function Models() {
         actions={
           <>
             <Button variant="outline" size="sm" onClick={() => setSyncOpen(true)}>
-              <Import className="size-4 mr-1" />同步上游
+              <Import className="size-4 mr-1" />{t('model.syncUpstream')}
             </Button>
             <Button variant="outline" size="sm" onClick={handleHealthCheck} disabled={hcLoading}>
-              <Activity className={cn('size-4 mr-1', hcLoading && 'animate-pulse')} />健康检查
+              <Activity className={cn('size-4 mr-1', hcLoading && 'animate-pulse')} />{t('model.healthCheck')}
             </Button>
             <Button variant="outline" size="sm" onClick={() => refetch()}>
               <RefreshCw className="size-4 mr-1" />{t('common.refresh')}
@@ -194,10 +184,10 @@ export default function Models() {
                     <th className="text-left py-3 px-4">{t('table.name')}</th>
                     <th className="text-left py-3 px-4">{t('table.modelPattern')}</th>
                     <th className="text-right py-3 px-4">{t('table.bindings')}</th>
-                    <th className="text-left py-3 px-4">分类</th>
-                    <th className="text-right py-3 px-4">上下文</th>
+                    <th className="text-left py-3 px-4">{t('model.category')}</th>
+                    <th className="text-right py-3 px-4">{t('model.context')}</th>
                     <th className="text-right py-3 px-4">{t('table.price')}</th>
-                    <th className="text-center py-3 px-4">发布</th>
+                    <th className="text-center py-3 px-4">{t('model.publishCol')}</th>
                     <th className="text-right py-3 px-4">{t('table.actions')}</th>
                   </tr>
                 </thead>
@@ -213,7 +203,7 @@ export default function Models() {
                           : '-'}
                       </td>
                       <td className="py-3 px-4 text-xs">
-                        {(m.category?.split(',').filter(Boolean) ?? []).map((cat) => CATEGORY_LABELS[cat] ?? cat).join(', ') || '-'}
+                        {(m.category?.split(',').filter(Boolean) ?? []).map((cat) => t(`model.category.${cat}`, { defaultValue: cat })).join(', ') || '-'}
                       </td>
                       <td className="py-3 px-4 text-right text-xs font-mono">{formatCtx(m.context_length)}</td>
                       <td className="py-3 px-4 text-right text-xs">
@@ -271,17 +261,17 @@ export default function Models() {
       )}
       <Dialog open={syncOpen} onOpenChange={setSyncOpen}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>同步上游模型</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t('model.syncTitle')}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div className="flex gap-2 items-end">
               <div className="flex-1 space-y-2">
-                <Label>选择渠道</Label>
+                <Label>{t('model.selectChannel')}</Label>
                 <Select value={syncChannelId} onValueChange={(v) => {
                   setSyncChannelId(v ?? '');
                   setFetched(false); setUpstreamModels([]); setSelectedIds(new Set());
                 }}>
                   <SelectTrigger className="w-full">
-                    <span>{syncChannelId ? channels?.find((ch) => ch.id === syncChannelId)?.name || syncChannelId : '请选择渠道'}</span>
+                    <span>{syncChannelId ? channels?.find((ch) => ch.id === syncChannelId)?.name || syncChannelId : t('model.selectChannelPlaceholder')}</span>
                     <SelectValue className="sr-only" />
                   </SelectTrigger>
                   <SelectContent>
@@ -292,7 +282,7 @@ export default function Models() {
                 </Select>
               </div>
               <Button onClick={handleFetch} disabled={!syncChannelId || fetching}>
-                {fetching ? '获取中...' : '获取模型'}
+                {fetching ? t('model.fetching') : t('model.fetchModels')}
               </Button>
             </div>
             {fetched && (
@@ -303,12 +293,12 @@ export default function Models() {
                     onCheckedChange={toggleSelectAll}
                   />
                   <span className="text-sm text-muted-foreground">
-                    全选/取消 ({upstreamModels.length} 个模型)
+                    {t('model.selectAll', { count: upstreamModels.length })}
                   </span>
                 </div>
                 <div className="max-h-64 overflow-y-auto border rounded-md divide-y">
                   {upstreamModels.length === 0 ? (
-                    <div className="p-4 text-center text-muted-foreground text-sm">未获取到模型</div>
+                    <div className="p-4 text-center text-muted-foreground text-sm">{t('model.noUpstreamModels')}</div>
                   ) : (
                     upstreamModels.map((m) => (
                       <label key={m.id} className="flex items-center gap-3 px-3 py-2 hover:bg-muted/50 cursor-pointer">
@@ -316,7 +306,7 @@ export default function Models() {
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-medium truncate">{m.id}</div>
                           {m.max_model_len != null && (
-                            <div className="text-xs text-muted-foreground">上下文: {(m.max_model_len).toLocaleString()}</div>
+                            <div className="text-xs text-muted-foreground">{t('model.contextLabel')} {(m.max_model_len).toLocaleString()}</div>
                           )}
                         </div>
                       </label>
@@ -325,7 +315,7 @@ export default function Models() {
                 </div>
                 <div className="flex justify-end">
                   <Button onClick={handleAddSelected} disabled={selectedIds.size === 0 || adding}>
-                    {adding ? '添加中...' : `添加选中 (${selectedIds.size})`}
+                    {adding ? t('model.adding') : t('model.addSelected', { count: selectedIds.size })}
                   </Button>
                 </div>
               </>
