@@ -2,9 +2,15 @@
 gateway.db
 gateway.db-shm
 gateway.db-wal
+gateway.log
 node_modules/
 config/config.yaml
 config.local.yaml
 .claude/worktrees/
 ai.zip
 ai_ex/
+*.env
+.env
+.env.*
+!.env.example
+data/
