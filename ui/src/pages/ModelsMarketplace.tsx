@@ -28,16 +28,6 @@ function inferProvider(pattern: string): string {
   return '';
 }
 
-const CATEGORY_LABELS: Record<string, string> = {
-  chat: '对话',
-  reasoning: '推理',
-  tools: '工具',
-  web: '联网',
-  vision: '视觉',
-  rerank: '重排',
-  embedding: '嵌入',
-};
-
 const CATEGORY_COLORS: Record<string, string> = {
   chat: 'default',
   reasoning: 'success',
@@ -48,8 +38,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   embedding: 'secondary',
 };
 
-const CATEGORY_KEYS = ['all', 'chat', 'reasoning', 'tools', 'web', 'vision', 'rerank', 'embedding'] as const;
-type CategoryKey = (typeof CATEGORY_KEYS)[number];
+const CATEGORY_KEYS = ['chat', 'reasoning', 'tools', 'web', 'vision', 'rerank', 'embedding'] as const;
 
 export default function ModelsMarketplace() {
   const { t } = useTranslation();
@@ -58,10 +47,17 @@ export default function ModelsMarketplace() {
   const { data: subscriptions } = useSubscriptions();
   const subscribe = useSubscribeModel();
   const unsubscribe = useUnsubscribeModel();
-  const [category, setCategory] = useState<CategoryKey>('all');
+  const [author, setAuthor] = useState<string | null>(null);
+  const [serviceProvider, setServiceProvider] = useState<string | null>(null);
+  const [modality, setModality] = useState<string | null>(null);
   const [query, setQuery] = useState('');
 
   const subscribedIds = useMemo(() => new Set(subscriptions?.map((m) => m.id) ?? []), [subscriptions]);
+
+  const authors = useMemo(() => {
+    if (!models) return [];
+    return [...new Set(models.map((m) => inferProvider(m.model_pattern)).filter(Boolean))].sort();
+  }, [models]);
 
   const enriched = useMemo(() => {
     if (!models) return [];
@@ -71,12 +67,14 @@ export default function ModelsMarketplace() {
         _provider: inferProvider(m.model_pattern),
       }))
       .filter((m) => {
-        if (category !== 'all' && !(m.category?.split(',').includes(category) ?? false)) return false;
+        if (author && m._provider !== author) return false;
+        if (serviceProvider && m._provider !== serviceProvider) return false;
+        if (modality && !(m.category?.split(',').includes(modality) ?? false)) return false;
         if (!query) return true;
         const q = query.toLowerCase();
         return m.name.toLowerCase().includes(q) || m.model_pattern.toLowerCase().includes(q) || m._provider.toLowerCase().includes(q);
       });
-  }, [models, category, query]);
+  }, [models, author, serviceProvider, modality, query]);
 
   const handleToggle = (modelId: string, isSubscribed: boolean) => {
     const opts = {
@@ -108,64 +106,100 @@ export default function ModelsMarketplace() {
         }
       />
 
-      {/* Filters + Search */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="flex flex-wrap gap-1.5">
-          {CATEGORY_KEYS.map((k) => (
-            <button
-              key={k}
-              onClick={() => setCategory(k)}
-              className={cn(
-                'rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors',
-                category === k
-                  ? 'border-primary bg-primary/10 text-primary'
-                  : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground',
-              )}
-            >
-              {k === 'all' ? t('marketplace.all') : CATEGORY_LABELS[k]}
-            </button>
-          ))}
-        </div>
-        <div className="relative md:w-64">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t('marketplace.search')}
-            className="h-9 w-full rounded-lg border border-input bg-background pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
-          />
+      <div className="flex gap-8">
+        {/* Left sidebar — filters */}
+        <aside className="w-56 shrink-0 space-y-5">
+          <h3 className="text-sm font-semibold">{t('marketplace.categories')}</h3>
+
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t('marketplace.search')}
+              className="h-9 w-full rounded-lg border border-input bg-background pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <h4 className="text-xs font-medium text-muted-foreground">{t('marketplace.author')}</h4>
+            <div className="flex flex-wrap gap-1">
+              <FilterBtn active={!author} onClick={() => setAuthor(null)} label={t('marketplace.all')} />
+              {authors.map((a) => (
+                <FilterBtn key={a} active={author === a} onClick={() => setAuthor(a)} label={a} />
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <h4 className="text-xs font-medium text-muted-foreground">{t('marketplace.inferenceProvider')}</h4>
+            <div className="flex flex-wrap gap-1">
+              <FilterBtn active={!serviceProvider} onClick={() => setServiceProvider(null)} label={t('marketplace.all')} />
+              {authors.map((a) => (
+                <FilterBtn key={a} active={serviceProvider === a} onClick={() => setServiceProvider(a)} label={a} />
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <h4 className="text-xs font-medium text-muted-foreground">{t('marketplace.modality')}</h4>
+            <div className="flex flex-wrap gap-1">
+              <FilterBtn active={!modality} onClick={() => setModality(null)} label={t('marketplace.all')} />
+              {CATEGORY_KEYS.map((k) => (
+                <FilterBtn key={k} active={modality === k} onClick={() => setModality(k)} label={t(`model.category.${k}`)} />
+              ))}
+            </div>
+          </div>
+        </aside>
+
+        {/* Right content — model cards */}
+        <div className="flex-1 min-w-0">
+          {isLoading ? (
+            <div className="p-12 text-center text-muted-foreground">{t('common.loading')}</div>
+          ) : isError ? (
+            <div className="flex items-center justify-center p-8">
+              <div className="text-center">
+                <p className="text-destructive mb-2">{t('err.loadFailed')}</p>
+                <Button variant="outline" onClick={() => refetch()}>{t('common.refresh')}</Button>
+              </div>
+            </div>
+          ) : enriched.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {enriched.map((model) => {
+                const isSubscribed = subscribedIds.has(model.id);
+                return (
+                  <ModelCard
+                    key={model.id}
+                    model={model}
+                    isSubscribed={isSubscribed}
+                    pending={pending}
+                    onToggle={handleToggle}
+                  />
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyState message={query ? t('marketplace.noMatch') : t('marketplace.noModels')} />
+          )}
         </div>
       </div>
-
-      {/* Content */}
-      {isLoading ? (
-        <div className="p-12 text-center text-muted-foreground">{t('common.loading')}</div>
-      ) : isError ? (
-        <div className="flex items-center justify-center p-8">
-          <div className="text-center">
-            <p className="text-destructive mb-2">{t('err.loadFailed')}</p>
-            <Button variant="outline" onClick={() => refetch()}>{t('common.refresh')}</Button>
-          </div>
-        </div>
-      ) : enriched.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {enriched.map((model) => {
-            const isSubscribed = subscribedIds.has(model.id);
-            return (
-              <ModelCard
-                key={model.id}
-                model={model}
-                isSubscribed={isSubscribed}
-                pending={pending}
-                onToggle={handleToggle}
-              />
-            );
-          })}
-        </div>
-      ) : (
-        <EmptyState message={query ? t('marketplace.noMatch') : t('marketplace.noModels')} />
-      )}
     </div>
+  );
+}
+
+function FilterBtn({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors',
+        active
+          ? 'border-primary bg-primary/10 text-primary'
+          : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground',
+      )}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -213,7 +247,7 @@ function ModelCard({
                 <p className="text-xs text-muted-foreground">{model._provider || t('marketplace.provider')}</p>
                 {(model.category?.split(',').filter(Boolean) ?? []).map((cat) => (
                   <Badge key={cat} variant={CATEGORY_COLORS[cat] as any} className="text-[10px] px-1.5 py-0">
-                    {CATEGORY_LABELS[cat] ?? cat}
+                    {t(`model.category.${cat}`, { defaultValue: cat })}
                   </Badge>
                 ))}
               </div>
