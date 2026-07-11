@@ -176,7 +176,7 @@ function formatPrice(price: number): string {
 
 function formatContextLength(len: number | null | undefined): string {
   if (!len) return '-';
-  if (len >= 1_000_000) return `${(len / 10_000).toFixed(0)} 万`;
+  if (len >= 1_000_000) return `${(len / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
   if (len >= 1_000) return `${(len / 1_000).toFixed(0)}K`;
   return len.toLocaleString();
 }

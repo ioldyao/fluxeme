@@ -54,7 +54,7 @@ export default function Models() {
 
   const formatCtx = (v: number | null | undefined) => {
     if (!v) return '-';
-    if (v >= 1_000_000) return `${(v / 10_000).toFixed(0)}万`;
+    if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
     if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
     return v.toLocaleString();
   };
