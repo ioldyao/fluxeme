@@ -145,6 +145,7 @@ export interface LoginResponse {
   role: UserRole;
   user_id: string;
   user_name: string;
+  timezone?: string;
 }
 
 export interface CreateUserReq {

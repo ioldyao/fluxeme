@@ -211,6 +211,7 @@ impl SsoModule {
                 name: user_name.clone(),
                 password_hash: None,
                 rate_limits: None,
+                timezone: "UTC".to_string(),
             };
             db.create_user(&user)
                 .map_err(|e| AdminError::internal(format!("Failed to create user: {e}")))?;

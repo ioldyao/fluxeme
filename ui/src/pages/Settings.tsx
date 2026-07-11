@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useCurrency, CURRENCY_SYMBOL, CURRENCY_CODE, type CurrencyCode } from '@/store/currency';
-import { useTimezone, COMMON_TIMEZONES } from '@/store/timezone';
+import { useAuth } from '@/store/auth';
+import { useUpdateTimezone } from '@/api/auth';
 import { PageHeader } from '@/components/PageHeader';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -10,10 +11,35 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { api } from '@/api/client';
 
+const COMMON_TIMEZONES: string[] = [
+  'UTC',
+  'Asia/Shanghai',
+  'Asia/Hong_Kong',
+  'Asia/Tokyo',
+  'Asia/Seoul',
+  'Asia/Singapore',
+  'Asia/Taipei',
+  'Asia/Bangkok',
+  'Asia/Kolkata',
+  'Asia/Dubai',
+  'Europe/London',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'Europe/Moscow',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Sao_Paulo',
+  'Australia/Sydney',
+  'Pacific/Auckland',
+];
+
 export default function SettingsPage() {
   const { t } = useTranslation();
   const { currency, rate, setCurrency, setRate } = useCurrency();
-  const { timezone, setTimezone } = useTimezone();
+  const { timezone, setTimezone } = useAuth();
+  const updateTimezone = useUpdateTimezone();
   const [allowPrivateIps, setAllowPrivateIps] = useState(true);
   const [loading, setLoading] = useState(true);
 
@@ -34,6 +60,11 @@ export default function SettingsPage() {
     } catch {
       setAllowPrivateIps(!checked);
     }
+  };
+
+  const handleTimezoneChange = (tz: string) => {
+    setTimezone(tz);
+    updateTimezone.mutate(tz);
   };
 
   return (
@@ -115,7 +146,7 @@ export default function SettingsPage() {
             <div className="flex-1 min-w-0">
               <Label className="text-sm">{t('settings.timezoneLabel')}</Label>
             </div>
-            <Select value={timezone} onValueChange={setTimezone}>
+            <Select value={timezone} onValueChange={handleTimezoneChange}>
               <SelectTrigger className="w-56">
                 <SelectValue />
               </SelectTrigger>

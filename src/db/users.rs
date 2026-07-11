@@ -4,7 +4,7 @@ use crate::domain::user::{ApiKey, User};
 
 /// List all users (password_hash excluded)
 pub fn list(conn: &Connection) -> Result<Vec<User>, crate::db::DbError> {
-    let mut stmt = conn.prepare("SELECT id, name, rpm, tpm FROM users ORDER BY id")?;
+    let mut stmt = conn.prepare("SELECT id, name, rpm, tpm, timezone FROM users ORDER BY id")?;
     let rows = stmt.query_map([], |row| {
         Ok(User {
             id: row.get(0)?,
@@ -19,6 +19,7 @@ pub fn list(conn: &Connection) -> Result<Vec<User>, crate::db::DbError> {
                     None
                 }
             },
+            timezone: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
         })
     })?;
     let mut users = Vec::new();
@@ -30,7 +31,7 @@ pub fn list(conn: &Connection) -> Result<Vec<User>, crate::db::DbError> {
 
 /// Get user by id (password_hash excluded)
 pub fn get(conn: &Connection, id: &str) -> Result<Option<User>, crate::db::DbError> {
-    let mut stmt = conn.prepare("SELECT id, name, rpm, tpm FROM users WHERE id = ?1")?;
+    let mut stmt = conn.prepare("SELECT id, name, rpm, tpm, timezone FROM users WHERE id = ?1")?;
     let mut rows = stmt.query_map(params![id], |row| {
         Ok(User {
             id: row.get(0)?,
@@ -45,6 +46,7 @@ pub fn get(conn: &Connection, id: &str) -> Result<Option<User>, crate::db::DbErr
                     None
                 }
             },
+            timezone: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
         })
     })?;
     match rows.next() {
@@ -56,7 +58,7 @@ pub fn get(conn: &Connection, id: &str) -> Result<Option<User>, crate::db::DbErr
 /// Get user with password_hash for login verification
 pub fn get_with_password(conn: &Connection, id: &str) -> Result<Option<User>, crate::db::DbError> {
     let mut stmt =
-        conn.prepare("SELECT id, name, password_hash, rpm, tpm FROM users WHERE id = ?1")?;
+        conn.prepare("SELECT id, name, password_hash, rpm, tpm, timezone FROM users WHERE id = ?1")?;
     let mut rows = stmt.query_map(params![id], |row| {
         Ok(User {
             id: row.get(0)?,
@@ -71,6 +73,7 @@ pub fn get_with_password(conn: &Connection, id: &str) -> Result<Option<User>, cr
                     None
                 }
             },
+            timezone: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
         })
     })?;
     match rows.next() {
@@ -86,9 +89,10 @@ pub fn create(conn: &Connection, user: &User) -> Result<(), crate::db::DbError> 
         .map(|r| (r.rpm, r.tpm))
         .unwrap_or((None, None));
     let pw_hash = user.password_hash.as_deref().unwrap_or("");
+    let tz = if user.timezone.is_empty() { "UTC" } else { &user.timezone };
     conn.execute(
-        "INSERT INTO users (id, name, password_hash, rpm, tpm) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![user.id, user.name, pw_hash, rpm, tpm],
+        "INSERT INTO users (id, name, password_hash, rpm, tpm, timezone) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![user.id, user.name, pw_hash, rpm, tpm, tz],
     )?;
     Ok(())
 }
@@ -99,18 +103,36 @@ pub fn update(conn: &Connection, user: &User) -> Result<(), crate::db::DbError> 
         .as_ref()
         .map(|r| (r.rpm, r.tpm))
         .unwrap_or((None, None));
+    let tz = if user.timezone.is_empty() { "UTC" } else { &user.timezone };
 
     if let Some(ref pw) = user.password_hash {
         conn.execute(
-            "UPDATE users SET name = ?1, password_hash = ?2, rpm = ?3, tpm = ?4 WHERE id = ?5",
-            params![user.name, pw, rpm, tpm, user.id],
+            "UPDATE users SET name = ?1, password_hash = ?2, rpm = ?3, tpm = ?4, timezone = ?5 WHERE id = ?6",
+            params![user.name, pw, rpm, tpm, tz, user.id],
         )?;
     } else {
         conn.execute(
-            "UPDATE users SET name = ?1, rpm = ?2, tpm = ?3 WHERE id = ?4",
-            params![user.name, rpm, tpm, user.id],
+            "UPDATE users SET name = ?1, rpm = ?2, tpm = ?3, timezone = ?4 WHERE id = ?5",
+            params![user.name, rpm, tpm, tz, user.id],
         )?;
     }
+    Ok(())
+}
+
+/// Get only the timezone for a user (lightweight read for chart grouping)
+pub fn get_timezone(conn: &Connection, id: &str) -> Result<String, crate::db::DbError> {
+    let mut stmt = conn.prepare("SELECT timezone FROM users WHERE id = ?1")?;
+    let tz: Option<String> = stmt.query_row(params![id], |row| row.get(0)).ok();
+    Ok(tz.unwrap_or_else(|| "UTC".to_string()))
+}
+
+/// Update only the timezone for a user
+pub fn update_timezone(conn: &Connection, id: &str, timezone: &str) -> Result<(), crate::db::DbError> {
+    let tz = if timezone.is_empty() { "UTC" } else { timezone };
+    conn.execute(
+        "UPDATE users SET timezone = ?1 WHERE id = ?2",
+        params![tz, id],
+    )?;
     Ok(())
 }
 
@@ -180,11 +202,11 @@ pub fn lookup_key(
     key: &str,
 ) -> Result<Option<(User, ApiKey)>, crate::db::DbError> {
     let mut stmt = conn.prepare(
-        "SELECT u.id, u.name, u.rpm, u.tpm, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
+        "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
          FROM api_keys a JOIN users u ON u.id = a.user_id WHERE a.key = ?1",
     )?;
     let mut rows = stmt.query_map(params![key], |row| {
-        let api_key = row_to_api_key_joined(row, 4)?;
+        let api_key = row_to_api_key_joined(row, 5)?;
         let user = User {
             id: row.get(0)?,
             name: row.get(1)?,
@@ -198,6 +220,7 @@ pub fn lookup_key(
                     None
                 }
             },
+            timezone: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
         };
         Ok((user, api_key))
     })?;
@@ -209,11 +232,11 @@ pub fn lookup_key(
 
 pub fn all_api_keys(conn: &Connection) -> Result<Vec<(User, ApiKey)>, crate::db::DbError> {
     let mut stmt = conn.prepare(
-        "SELECT u.id, u.name, u.rpm, u.tpm, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
+        "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
          FROM api_keys a JOIN users u ON u.id = a.user_id ORDER BY a.key",
     )?;
     let rows = stmt.query_map([], |row| {
-        let api_key = row_to_api_key_joined(row, 4)?;
+        let api_key = row_to_api_key_joined(row, 5)?;
         let user = User {
             id: row.get(0)?,
             name: row.get(1)?,
@@ -227,6 +250,7 @@ pub fn all_api_keys(conn: &Connection) -> Result<Vec<(User, ApiKey)>, crate::db:
                     None
                 }
             },
+            timezone: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
         };
         Ok((user, api_key))
     })?;

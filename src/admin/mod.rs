@@ -252,11 +252,16 @@ async fn admin_login(
                 role: "admin".to_string(),
             };
             let token = state.admin.encode_token(&info)?;
+            let tz = state
+                .db
+                .get_user_timezone(&cfg.admin.username)
+                .unwrap_or_else(|_| "UTC".to_string());
             return Ok(Json(serde_json::json!({
                 "token": token,
                 "role": "admin",
                 "user_id": cfg.admin.username,
                 "user_name": "管理员",
+                "timezone": tz,
             })));
         }
     }
@@ -283,6 +288,7 @@ async fn admin_login(
                             "role": "user",
                             "user_id": u.id,
                             "user_name": u.name,
+                            "timezone": u.timezone,
                         })));
                     }
                     Ok(false) => { /* wrong password - fall through */ }
@@ -572,15 +578,56 @@ async fn change_my_password(
     let new_hash =
         bcrypt::hash(&req.new_password, 10).map_err(|e| AdminError::internal(e.to_string()))?;
 
+    let existing = state
+        .db
+        .get_user(&session.user_id)
+        .map_err(db_err)?
+        .ok_or_else(|| AdminError::not_found("User not found"))?;
+
     let updated = User {
         id: session.user_id.clone(),
         name: session.user_name.clone(),
         password_hash: Some(new_hash),
-        rate_limits: None,
+        rate_limits: existing.rate_limits,
+        timezone: existing.timezone,
     };
     state.db.update_user(&updated).map_err(db_err)?;
 
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct UpdateTimezoneReq {
+    timezone: String,
+}
+
+async fn get_my_timezone(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+    let tz = state.db.get_user_timezone(&session.user_id).map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "timezone": tz })))
+}
+
+async fn update_my_timezone(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<UpdateTimezoneReq>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+
+    // Validate IANA timezone name
+    if req.timezone.parse::<Tz>().is_err() {
+        return Err(AdminError::bad_request("Invalid timezone"));
+    }
+
+    state
+        .db
+        .update_user_timezone(&session.user_id, &req.timezone)
+        .map_err(db_err)?;
+
+    Ok(Json(serde_json::json!({ "ok": true, "timezone": req.timezone })))
 }
 
 async fn my_keys(
@@ -817,6 +864,7 @@ async fn create_user(
         name: req.name,
         password_hash,
         rate_limits: req.rate_limits,
+        timezone: "UTC".to_string(),
     };
 
     state.db.create_user(&user).map_err(db_err)?;
@@ -868,6 +916,7 @@ async fn update_user(
             None // keep existing
         },
         rate_limits: req.rate_limits.or(existing.rate_limits),
+        timezone: existing.timezone,
     };
 
     state.db.update_user(&user).map_err(db_err)?;
@@ -1437,8 +1486,6 @@ struct UsageQuery {
     limit: Option<usize>,
     offset: Option<usize>,
     user_id: Option<String>,
-    #[serde(default)]
-    tz: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1516,7 +1563,8 @@ async fn daily_usage(
     let session = require_session(&state.admin, &headers)?;
 
     let days = q.limit.unwrap_or(14) as i64;
-    let offset = tz_offset_seconds(q.tz.as_deref());
+    let tz = state.db.get_user_timezone(&session.user_id).map_err(db_err)?;
+    let offset = tz_offset_seconds(Some(&tz));
     let since = since_local_days_ago(days, offset);
 
     let user_filter: Option<&str> = if session.role == "admin" {
@@ -1544,8 +1592,6 @@ async fn daily_usage(
 struct UsageAggregateQuery {
     days: Option<i64>,
     user_id: Option<String>,
-    #[serde(default)]
-    tz: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1567,7 +1613,8 @@ async fn usage_aggregate(
     let session = require_session(&state.admin, &headers)?;
 
     let days = q.days.unwrap_or(14);
-    let offset = tz_offset_seconds(q.tz.as_deref());
+    let tz = state.db.get_user_timezone(&session.user_id).map_err(db_err)?;
+    let offset = tz_offset_seconds(Some(&tz));
     let since = since_local_days_ago(days, offset);
 
     let user_filter: Option<&str> = if session.role == "admin" {
@@ -1771,6 +1818,10 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route(
             "/admin/api/me/password",
             axum::routing::post(change_my_password),
+        )
+        .route(
+            "/admin/api/me/timezone",
+            axum::routing::get(get_my_timezone).put(update_my_timezone),
         )
         .route(
             "/admin/api/me/keys",

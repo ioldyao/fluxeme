@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from './client';
-import { useTimezone } from '@/store/timezone';
 import type { UsageRecord, DailyAggregate } from '@/types';
 
 interface UsageParams {
@@ -40,10 +39,9 @@ export function useUsageDetail(requestId: string | null) {
 }
 
 export function useUsageAggregate(days: number = 14) {
-  const tz = useTimezone((s) => s.timezone);
   return useQuery({
-    queryKey: ['usage', 'aggregate', days, tz],
-    queryFn: () => api<DailyAggregate[]>(`/usage/aggregate?days=${days}&tz=${encodeURIComponent(tz)}`),
+    queryKey: ['usage', 'aggregate', days],
+    queryFn: () => api<DailyAggregate[]>(`/usage/aggregate?days=${days}`),
     refetchInterval: 60_000,
   });
 }

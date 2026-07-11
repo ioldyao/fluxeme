@@ -21,3 +21,17 @@ export function useLogin() {
     },
   });
 }
+
+export function useUpdateTimezone() {
+  const setTimezone = useAuth((s) => s.setTimezone);
+  return useMutation({
+    mutationFn: (timezone: string) =>
+      api<{ timezone: string }>('/me/timezone', {
+        method: 'PUT',
+        body: { timezone },
+      }),
+    onSuccess: (res) => {
+      setTimezone(res.timezone);
+    },
+  });
+}

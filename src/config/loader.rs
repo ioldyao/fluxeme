@@ -212,6 +212,7 @@ pub fn seed_from_config(
                 name: "管理员".to_string(),
                 password_hash: None, // admin login uses config, not DB
                 rate_limits: None,
+                timezone: "UTC".to_string(),
             };
             if let Err(e) = db.create_user(&admin_user) {
                 tracing::warn!("Seed admin user: {}", e);
@@ -261,6 +262,7 @@ pub fn seed_from_config(
                 rpm: rl.rpm,
                 tpm: rl.tpm,
             }),
+            timezone: "UTC".to_string(),
         };
         if let Err(e) = db.create_user(&user) {
             tracing::warn!("Seed user {}: {}", t.id, e);

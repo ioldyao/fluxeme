@@ -7,7 +7,9 @@ interface AuthState {
   role: UserRole | null;
   userId: string | null;
   userName: string | null;
+  timezone: string;
   setSession: (res: LoginResponse) => void;
+  setTimezone: (tz: string) => void;
   clear: () => void;
 }
 
@@ -18,19 +20,23 @@ export const useAuth = create<AuthState>()(
       role: null,
       userId: null,
       userName: null,
+      timezone: 'UTC',
       setSession: (res) =>
         set({
           token: res.token,
           role: res.role,
           userId: res.user_id,
           userName: res.user_name,
+          timezone: res.timezone || 'UTC',
         }),
+      setTimezone: (timezone) => set({ timezone }),
       clear: () =>
         set({
           token: null,
           role: null,
           userId: null,
           userName: null,
+          timezone: 'UTC',
         }),
     }),
     {

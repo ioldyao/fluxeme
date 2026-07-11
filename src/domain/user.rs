@@ -8,6 +8,8 @@ pub struct User {
     pub rate_limits: Option<RateLimit>,
     #[serde(skip)]
     pub password_hash: Option<String>,
+    #[serde(default)]
+    pub timezone: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -202,6 +202,9 @@ impl Database {
             .execute_batch("ALTER TABLE models ADD COLUMN category TEXT NOT NULL DEFAULT '';");
         // Backward compat: add api_format column to usage_logs
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN api_format TEXT NOT NULL DEFAULT '';");
+        // Backward compat: add timezone column to users
+        let _ = conn
+            .execute_batch("ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC';");
         // Balancer settings table
         let _ = conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS balancer_settings (
@@ -232,6 +235,12 @@ impl Database {
     }
     pub fn update_user(&self, user: &User) -> Result<(), DbError> {
         users::update(&*self.conn()?, user)
+    }
+    pub fn get_user_timezone(&self, id: &str) -> Result<String, DbError> {
+        users::get_timezone(&*self.conn()?, id)
+    }
+    pub fn update_user_timezone(&self, id: &str, timezone: &str) -> Result<(), DbError> {
+        users::update_timezone(&*self.conn()?, id, timezone)
     }
     pub fn delete_user(&self, id: &str) -> Result<(), DbError> {
         users::delete(&*self.conn()?, id)
