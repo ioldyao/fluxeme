@@ -185,5 +185,5 @@ export interface GatewayRuntimeConfig {
   stream_total_timeout_secs: number;
   max_retries: number;
   handler_timeout_secs: number;
-  cache_ttl_secs?: number;
+  cache_ttl_secs: number;
 }
