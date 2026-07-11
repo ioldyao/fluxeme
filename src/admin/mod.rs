@@ -4,7 +4,8 @@ use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::{Json, Router};
-use chrono::{Duration, Utc};
+use chrono::{Duration, Offset, TimeZone, Utc};
+use chrono_tz::Tz;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -181,6 +182,37 @@ impl IntoResponse for AdminError {
 fn db_err(e: crate::db::DbError) -> AdminError {
     tracing::error!("[admin] DB error: {}", e.0);
     AdminError::internal("Internal server error")
+}
+
+/// Parse IANA timezone name (e.g. "Asia/Shanghai") and return the current
+/// UTC offset in seconds. Falls back to 0 (UTC) on invalid input.
+fn tz_offset_seconds(tz: Option<&str>) -> i64 {
+    let name = match tz {
+        Some(s) if !s.is_empty() => s,
+        _ => return 0,
+    };
+    match name.parse::<Tz>() {
+        Ok(tz) => {
+            let now = Utc::now();
+            tz.offset_from_utc_datetime(&now.naive_utc()).fix().local_minus_utc() as i64
+        }
+        Err(_) => {
+            tracing::warn!(tz = name, "Invalid timezone, falling back to UTC");
+            0
+        }
+    }
+}
+
+/// Compute the `since` timestamp (UTC RFC3339) for "N days ago in the user's
+/// local timezone". A request at 2026-07-11 00:30 Asia/Shanghai for 14 days
+/// should include data from 2026-06-28 00:00 local (= 2026-06-27 16:00 UTC).
+fn since_local_days_ago(days: i64, offset_seconds: i64) -> String {
+    let now_utc = Utc::now();
+    let local_offset = chrono::Duration::seconds(offset_seconds);
+    let now_local = now_utc + local_offset;
+    let since_local = now_local - Duration::days(days);
+    let since_utc = since_local - local_offset;
+    since_utc.format("%Y-%m-%dT%H:%M:%S").to_string()
 }
 
 // ── Login ─────────────────────────────────────────────────────────
@@ -1405,6 +1437,8 @@ struct UsageQuery {
     limit: Option<usize>,
     offset: Option<usize>,
     user_id: Option<String>,
+    #[serde(default)]
+    tz: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1482,9 +1516,8 @@ async fn daily_usage(
     let session = require_session(&state.admin, &headers)?;
 
     let days = q.limit.unwrap_or(14) as i64;
-    let since = (chrono::Utc::now() - chrono::Duration::days(days))
-        .format("%Y-%m-%dT%H:%M:%S")
-        .to_string();
+    let offset = tz_offset_seconds(q.tz.as_deref());
+    let since = since_local_days_ago(days, offset);
 
     let user_filter: Option<&str> = if session.role == "admin" {
         None
@@ -1494,7 +1527,7 @@ async fn daily_usage(
 
     let records = state
         .usage
-        .daily_counts(&since, user_filter)
+        .daily_counts(&since, user_filter, offset)
         .map_err(AdminError::internal)?;
 
     Ok(Json(
@@ -1511,6 +1544,8 @@ async fn daily_usage(
 struct UsageAggregateQuery {
     days: Option<i64>,
     user_id: Option<String>,
+    #[serde(default)]
+    tz: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1532,9 +1567,8 @@ async fn usage_aggregate(
     let session = require_session(&state.admin, &headers)?;
 
     let days = q.days.unwrap_or(14);
-    let since = (chrono::Utc::now() - chrono::Duration::days(days))
-        .format("%Y-%m-%dT%H:%M:%S")
-        .to_string();
+    let offset = tz_offset_seconds(q.tz.as_deref());
+    let since = since_local_days_ago(days, offset);
 
     let user_filter: Option<&str> = if session.role == "admin" {
         q.user_id.as_deref()
@@ -1544,7 +1578,7 @@ async fn usage_aggregate(
 
     let records = state
         .usage
-        .daily_stats(&since, user_filter)
+        .daily_stats(&since, user_filter, offset)
         .map_err(AdminError::internal)?;
 
     Ok(Json(
