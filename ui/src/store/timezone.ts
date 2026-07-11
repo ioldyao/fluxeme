@@ -6,18 +6,10 @@ interface TimezoneState {
   setTimezone: (tz: string) => void;
 }
 
-function detectBrowserTz(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  } catch {
-    return 'UTC';
-  }
-}
-
 export const useTimezone = create<TimezoneState>()(
   persist(
     (set) => ({
-      timezone: detectBrowserTz(),
+      timezone: 'UTC',
       setTimezone: (timezone) => set({ timezone }),
     }),
     { name: 'timezone' },

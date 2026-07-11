@@ -240,7 +240,6 @@ const zh: Record<string, string> = {
   'settings.preview': '预览',
   'settings.timezone': '时区',
   'settings.timezoneLabel': '显示时区',
-  'settings.timezoneHint': '用于用量图表和日期的分组。默认使用浏览器时区。',
   'settings.security': '安全',
   'settings.allowPrivateIps': '允许私有 IP 访问',
   'settings.allowPrivateIpsHint': '启用后，端点可以使用私有/内部 IP 地址（10.x、192.168.x 等）。同时将禁用 SSRF 保护。',

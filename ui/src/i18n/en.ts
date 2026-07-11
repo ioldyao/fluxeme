@@ -240,7 +240,6 @@ const en: Record<string, string> = {
   'settings.preview': 'Preview',
   'settings.timezone': 'Timezone',
   'settings.timezoneLabel': 'Display Timezone',
-  'settings.timezoneHint': 'Used for grouping usage charts and dates. Defaults to your browser timezone.',
   'settings.security': 'Security',
   'settings.allowPrivateIps': 'Allow Private IP Access',
   'settings.allowPrivateIpsHint': 'When enabled, endpoints can use private/internal IP addresses (10.x, 192.168.x, etc.). Disables SSRF protection.',

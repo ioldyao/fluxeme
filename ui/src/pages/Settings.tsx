@@ -114,7 +114,6 @@ export default function SettingsPage() {
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
               <Label className="text-sm">{t('settings.timezoneLabel')}</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">{t('settings.timezoneHint')}</p>
             </div>
             <Select value={timezone} onValueChange={setTimezone}>
               <SelectTrigger className="w-56">
