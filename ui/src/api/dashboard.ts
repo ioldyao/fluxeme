@@ -1,14 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from './client';
+import { useTimezone } from '@/store/timezone';
 import type { DashboardStats, DashboardAggregations, DailyUsage } from '@/types';
-
-function browserTz(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  } catch {
-    return 'UTC';
-  }
-}
 
 export function useDashboard() {
   return useQuery({
@@ -27,7 +20,7 @@ export function useDashboardAggregations() {
 }
 
 export function useDailyUsage(days = 14) {
-  const tz = browserTz();
+  const tz = useTimezone((s) => s.timezone);
   return useQuery({
     queryKey: ['usage', 'daily', days, tz],
     queryFn: () => api<DailyUsage[]>(`/usage/daily?limit=${days}&tz=${encodeURIComponent(tz)}`),
