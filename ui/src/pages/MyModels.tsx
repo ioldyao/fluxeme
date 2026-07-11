@@ -16,6 +16,13 @@ export default function MyModels() {
   const [testingId, setTestingId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, ModelTestResult>>({});
 
+  const formatCtx = (v: number | null | undefined) => {
+    if (!v) return null;
+    if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+    if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
+    return v.toLocaleString();
+  };
+
   const handleUnsubscribe = (modelId: string) => {
     unsubscribe.mutate(modelId, {
       onSuccess: () => { toast.success('已取消订阅'); refetch(); },
@@ -88,6 +95,20 @@ export default function MyModels() {
                         </span>
                       )}
                     </div>
+                    {(model.category || model.context_length) && (
+                      <div className="flex items-center gap-2 pt-0.5">
+                        {model.category?.split(',').filter(Boolean).map((cat) => (
+                          <span key={cat} className="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-muted text-muted-foreground">
+                            {t(`model.category.${cat}`, { defaultValue: cat })}
+                          </span>
+                        ))}
+                        {formatCtx(model.context_length) && (
+                          <span className="text-[10px] font-mono text-muted-foreground">
+                            {t('model.contextLabel')} {formatCtx(model.context_length)}
+                          </span>
+                        )}
+                      </div>
+                    )}
                     <div className="text-xs text-muted-foreground">
                       P: ${model.pricing.prompt_price}/1K · C: ${model.pricing.completion_price}/1K
                     </div>

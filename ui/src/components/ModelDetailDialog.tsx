@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Copy, Check } from 'lucide-react';
 import { toast } from 'sonner';
@@ -152,7 +154,15 @@ const PARAMS_TABLE: Array<{ name: string; type: string; default: string; desc: s
   { name: 'user', type: 'string', default: '—', desc: '用于风险审计的终端用户标识' },
 ];
 
+function formatCtx(v: number | null | undefined): string {
+  if (!v) return '-';
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
+  return v.toLocaleString();
+}
+
 export function ModelDetailDialog({ model, open, onOpenChange }: Props) {
+  const { t } = useTranslation();
   const [format, setFormat] = useState<ApiFormat>('openai');
   const [lang, setLang] = useState<Lang>('curl');
   const [copied, setCopied] = useState(false);
@@ -182,6 +192,49 @@ export function ModelDetailDialog({ model, open, onOpenChange }: Props) {
         </DialogHeader>
 
         <div className="space-y-6">
+          {/* Model Info */}
+          <div className="grid grid-cols-2 gap-3">
+            {model.context_length != null && model.context_length > 0 && (
+              <div className="rounded-lg border bg-muted/20 px-3 py-2.5">
+                <p className="text-[10px] text-muted-foreground mb-0.5">{t('model.context')}</p>
+                <p className="text-sm font-mono font-medium">{formatCtx(model.context_length)}</p>
+              </div>
+            )}
+            {model.category && (
+              <div className="rounded-lg border bg-muted/20 px-3 py-2.5">
+                <p className="text-[10px] text-muted-foreground mb-0.5">{t('marketplace.capabilities')}</p>
+                <div className="flex flex-wrap gap-1 mt-0.5">
+                  {model.category.split(',').filter(Boolean).map((cat) => (
+                    <Badge key={cat} variant="secondary" className="text-[10px] px-1.5 py-0">
+                      {t(`model.category.${cat}`, { defaultValue: cat })}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Pricing Detail */}
+          <section className="space-y-2">
+            <h3 className="text-sm font-semibold">{t('pricing.title')}</h3>
+            <div className="rounded-lg border divide-y text-xs">
+              <div className="flex items-center justify-between px-4 py-2.5">
+                <span className="text-muted-foreground">{t('marketplace.input')}</span>
+                <span className="font-mono font-medium">${model.pricing.prompt_price}/1K</span>
+              </div>
+              <div className="flex items-center justify-between px-4 py-2.5">
+                <span className="text-muted-foreground">{t('marketplace.output')}</span>
+                <span className="font-mono font-medium">${model.pricing.completion_price}/1K</span>
+              </div>
+              {model.pricing.cache_read_price > 0 && (
+                <div className="flex items-center justify-between px-4 py-2.5">
+                  <span className="text-muted-foreground">{t('pricing.cacheRead')}</span>
+                  <span className="font-mono font-medium">${model.pricing.cache_read_price}/1K</span>
+                </div>
+              )}
+            </div>
+          </section>
+
           <section className="space-y-3">
             <h3 className="text-sm font-semibold">API 调用示例</h3>
 
