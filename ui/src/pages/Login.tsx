@@ -23,7 +23,7 @@ export default function Login() {
   const [ssoLoading, setSsoLoading] = useState(true);
 
   useEffect(() => {
-    api<{ setup_required: boolean }>('/admin/api/setup/status')
+    api<{ setup_required: boolean }>('/setup/status')
       .then((res) => {
         if (res.setup_required) {
           navigate('/register', { replace: true });
@@ -31,7 +31,7 @@ export default function Login() {
         }
       })
       .catch(() => {});
-    api<{ enabled: boolean; provider_name: string }>('/admin/api/sso/status')
+    api<{ enabled: boolean; provider_name: string }>('/sso/status')
       .then((res) => {
         setSsoEnabled(res.enabled);
         setSsoProviderName(res.provider_name);
