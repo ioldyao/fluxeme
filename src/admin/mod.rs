@@ -384,9 +384,9 @@ async fn dashboard_aggregations(
     headers: HeaderMap,
 ) -> Result<Json<DashboardAggregations>, AdminError> {
     let session = require_session(&state.admin, &headers)?;
-    let since_24h = (chrono::Utc::now() - chrono::Duration::hours(24))
-        .format("%Y-%m-%dT%H:%M:%S")
-        .to_string();
+    let tz = state.db.get_user_timezone(&session.user_id).map_err(db_err)?;
+    let offset = tz_offset_seconds(Some(&tz));
+    let since_24h = since_local_days_ago(1, offset);
 
     let user_filter: Option<&str> = if session.role == "admin" {
         None
@@ -1678,10 +1678,14 @@ struct ModelActivity {
 
 async fn model_activity(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(q): Query<UsageAggregateQuery>,
 ) -> Result<Json<Vec<ModelActivity>>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
     let days = q.days.unwrap_or(7) as i64;
-    let since = since_local_days_ago(days, 0);
+    let tz = state.db.get_user_timezone(&session.user_id).map_err(db_err)?;
+    let offset = tz_offset_seconds(Some(&tz));
+    let since = since_local_days_ago(days, offset);
     let records = state
         .db
         .model_activity(&since)
