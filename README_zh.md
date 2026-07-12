@@ -20,6 +20,8 @@
 - **SSO** — OIDC 单点登录
 - **健康检查** — 监控上游模型连通性和渠道状态
 
+![AI Gateway Admin UI](docs/images/aigateway.png)
+
 ## 快速开始
 
 ### Docker Compose（推荐）

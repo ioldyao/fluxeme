@@ -20,6 +20,8 @@ A reverse proxy gateway for large language model APIs. Provides a unified OpenAI
 - **SSO** — OIDC-based single sign-on
 - **Health Checks** — Monitor upstream model connectivity and channel status
 
+![AI Gateway Admin UI](docs/images/aigateway.png)
+
 ## Quick Start
 
 ### Docker Compose (recommended)
