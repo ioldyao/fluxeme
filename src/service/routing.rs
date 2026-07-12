@@ -21,7 +21,7 @@ pub struct RoutingService {
 }
 
 impl RoutingService {
-    pub fn new(db: Arc<Database>) -> Self {
+    pub async fn new(db: Arc<Database>) -> Self {
         let svc = Self {
             db,
             channels: RwLock::new(HashMap::new()),
@@ -29,12 +29,12 @@ impl RoutingService {
             rules: RwLock::new(Vec::new()),
             cache: RwLock::new(HashMap::new()),
         };
-        svc.reload();
+        svc.reload().await;
         svc
     }
 
-    pub fn reload(&self) {
-        match self.db.list_channels() {
+    pub async fn reload(&self) {
+        match self.db.list_channels().await {
             Ok(chs) => {
                 let map: HashMap<_, _> = chs.into_iter().map(|c| (c.id.clone(), Arc::new(c))).collect();
                 *self.channels.write().unwrap_or_else(|e| e.into_inner()) = map;
@@ -59,11 +59,11 @@ impl RoutingService {
             }
             *self.cache.write().unwrap_or_else(|e| e.into_inner()) = cache_map;
         }
-        match self.db.list_models() {
+        match self.db.list_models().await {
             Ok(ms) => *self.models.write().unwrap_or_else(|e| e.into_inner()) = ms,
             Err(e) => tracing::error!("Failed to load models: {}", e),
         }
-        match self.db.list_rules() {
+        match self.db.list_rules().await {
             Ok(rs) => *self.rules.write().unwrap_or_else(|e| e.into_inner()) = rs,
             Err(e) => tracing::error!("Failed to load routing rules: {}", e),
         }
@@ -163,9 +163,10 @@ impl RoutingService {
             .collect()
     }
 
-    pub fn route(&self, user_id: &str, model: &str) -> Result<(String, Option<String>), RouteError> {
+    pub async fn route(&self, user_id: &str, model: &str) -> Result<(String, Option<String>), RouteError> {
         // Load subscribed model IDs for this user
         let subscribed: HashSet<String> = self.db.list_subscribed_model_ids(user_id)
+            .await
             .unwrap_or_default()
             .into_iter()
             .collect();

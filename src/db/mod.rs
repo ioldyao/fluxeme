@@ -1,18 +1,13 @@
-mod channels;
-mod models;
-mod rules;
-mod users;
+pub mod backend;
+pub mod pg_backend;
+pub mod sqlite_backend;
 
-use std::path::Path;
-use std::sync::Mutex;
-
-use rusqlite::{params, Connection};
-
+use crate::config::types::GatewayRuntimeConfig;
+use crate::db::backend::DbBackend;
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, Pricing};
 use crate::domain::routing::RoutingRule;
-use crate::domain::usage::UsageFilter;
-use crate::domain::usage::UsageRecord;
+use crate::domain::usage::{UsageFilter, UsageRecord};
 use crate::domain::user::{ApiKey, User};
 
 #[derive(Debug)]
@@ -26,6 +21,12 @@ impl std::fmt::Display for DbError {
 
 impl From<rusqlite::Error> for DbError {
     fn from(e: rusqlite::Error) -> Self {
+        Self(e.to_string())
+    }
+}
+
+impl From<sqlx::Error> for DbError {
+    fn from(e: sqlx::Error) -> Self {
         Self(e.to_string())
     }
 }
@@ -56,723 +57,292 @@ pub struct RechargeKeyRow {
     pub revoked: bool,
 }
 
-fn map_wallet_tx(row: &rusqlite::Row<'_>) -> rusqlite::Result<WalletTransactionRow> {
-    Ok(WalletTransactionRow {
-        id: row.get(0)?, user_id: row.get(1)?, tx_type: row.get(2)?,
-        amount: row.get(3)?, balance_before: row.get(4)?, balance_after: row.get(5)?,
-        method: row.get(6)?, status: row.get(7)?, note: row.get(8)?, created_at: row.get(9)?,
-    })
-}
-
 pub struct Database {
-    conn: Mutex<Connection>,
+    pub backend: Box<dyn DbBackend>,
 }
 
 impl Database {
-    pub fn new(path: &str) -> Self {
-        let path = path.to_string();
-        let exists = Path::new(&path).exists();
-        let conn = Connection::open(&path)
-            .unwrap_or_else(|e| panic!("Failed to open database at {}: {}", path, e));
-        if !exists {
-            conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-                .unwrap_or_else(|e| panic!("Failed to set pragmas: {}", e));
-            Self::migrate_inner(&conn)
-                .unwrap_or_else(|e| panic!("Failed to run initial migration: {}", e));
-            tracing::info!("Database created at {}", path);
-        }
-        Self {
-            conn: Mutex::new(conn),
-        }
-    }
-
-    pub fn conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, DbError> {
-        self.conn
-            .lock()
-            .map_err(|_| DbError("Database mutex poisoned".into()))
-    }
-
-    fn migrate_inner(conn: &Connection) -> Result<(), DbError> {
-        conn.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS users (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                password_hash TEXT NOT NULL DEFAULT '',
-                rpm INTEGER,
-                tpm INTEGER
-            );
-
-            CREATE TABLE IF NOT EXISTS api_keys (
-                key TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                name TEXT DEFAULT '',
-                enabled INTEGER NOT NULL DEFAULT 1,
-                expires_at TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS channels (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL DEFAULT '',
-                provider TEXT NOT NULL,
-                priority INTEGER NOT NULL DEFAULT 1,
-                enabled INTEGER NOT NULL DEFAULT 1
-            );
-
-            CREATE TABLE IF NOT EXISTS endpoints (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
-                url TEXT NOT NULL,
-                api_key TEXT DEFAULT '',
-                weight INTEGER NOT NULL DEFAULT 1,
-                timeout_secs INTEGER
-            );
-
-            CREATE TABLE IF NOT EXISTS models (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                model_pattern TEXT NOT NULL,
-                prompt_price REAL NOT NULL DEFAULT 0.0,
-                completion_price REAL NOT NULL DEFAULT 0.0,
-                cache_read_price REAL NOT NULL DEFAULT 0.0,
-                cache_write_price REAL NOT NULL DEFAULT 0.0,
-                image_input_price REAL NOT NULL DEFAULT 0.0,
-                audio_input_price REAL NOT NULL DEFAULT 0.0,
-                audio_output_price REAL NOT NULL DEFAULT 0.0
-            );
-
-            CREATE TABLE IF NOT EXISTS model_channels (
-                model_id TEXT NOT NULL REFERENCES models(id) ON DELETE CASCADE,
-                channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
-                priority INTEGER NOT NULL DEFAULT 1,
-                PRIMARY KEY (model_id, channel_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS routing_rules (
-                name TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL DEFAULT '*',
-                model_pattern TEXT NOT NULL,
-                channel_id TEXT NOT NULL REFERENCES channels(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS usage_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                request_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                user_name TEXT NOT NULL,
-                channel_id TEXT NOT NULL,
-                model TEXT NOT NULL,
-                prompt_tokens INTEGER NOT NULL,
-                completion_tokens INTEGER NOT NULL,
-                total_tokens INTEGER NOT NULL,
-                latency_ms INTEGER NOT NULL,
-                status_code INTEGER NOT NULL,
-                success INTEGER NOT NULL,
-                request_body TEXT,
-                response_body TEXT,
-                reasoning_body TEXT,
-                api_key_name TEXT
-            );
-            ",
-        )?;
-        // Backward compat: add password_hash column to existing users table
-        let _ = conn
-            .execute_batch("ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT '';");
-        // Backward compat: add request_body/response_body columns
-        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN request_body TEXT;");
-        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN response_body TEXT;");
-        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN reasoning_body TEXT;");
-        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN api_key_name TEXT;");
-        // Backward compat: add published column to models
-        let _ = conn
-            .execute_batch("ALTER TABLE models ADD COLUMN published INTEGER NOT NULL DEFAULT 0;");
-        // Backward compat: add context_length column to models
-        let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN context_length INTEGER;");
-        // Backward compat: add pricing columns to models
-        let _ = conn.execute_batch(
-            "ALTER TABLE models ADD COLUMN cache_read_price REAL NOT NULL DEFAULT 0.0;",
-        );
-        let _ = conn.execute_batch(
-            "ALTER TABLE models ADD COLUMN cache_write_price REAL NOT NULL DEFAULT 0.0;",
-        );
-        let _ = conn.execute_batch(
-            "ALTER TABLE models ADD COLUMN image_input_price REAL NOT NULL DEFAULT 0.0;",
-        );
-        let _ = conn.execute_batch(
-            "ALTER TABLE models ADD COLUMN audio_input_price REAL NOT NULL DEFAULT 0.0;",
-        );
-        let _ = conn.execute_batch(
-            "ALTER TABLE models ADD COLUMN audio_output_price REAL NOT NULL DEFAULT 0.0;",
-        );
-        // Backward compat: add name column to channels
-        let _ =
-            conn.execute_batch("ALTER TABLE channels ADD COLUMN name TEXT NOT NULL DEFAULT '';");
-        // Backward compat: add spend_limit/allowed_models columns to api_keys
-        let _ = conn.execute_batch("ALTER TABLE api_keys ADD COLUMN spend_limit REAL;");
-        let _ = conn.execute_batch("ALTER TABLE api_keys ADD COLUMN allowed_models TEXT;");
-        // User model subscriptions
-        let _ = conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS user_subscriptions (
-                user_id TEXT NOT NULL,
-                model_id TEXT NOT NULL REFERENCES models(id) ON DELETE CASCADE,
-                created_at TEXT NOT NULL,
-                PRIMARY KEY (user_id, model_id)
-            );",
-        );
-        // Performance indexes
-        let _ = conn
-            .execute_batch("CREATE INDEX IF NOT EXISTS idx_usage_user_id ON usage_logs(user_id)");
-        let _ = conn.execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_logs(timestamp)",
-        );
-        let _ = conn.execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_usage_user_timestamp ON usage_logs(user_id, timestamp)",
-        );
-        // Backward compat: add enabled column to endpoints
-        let _ = conn
-            .execute_batch("ALTER TABLE endpoints ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;");
-        // Backward compat: add category column to models
-        let _ = conn
-            .execute_batch("ALTER TABLE models ADD COLUMN category TEXT NOT NULL DEFAULT '';");
-        // Backward compat: add api_format column to usage_logs
-        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN api_format TEXT NOT NULL DEFAULT '';");
-        // Backward compat: add stream column to usage_logs
-        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN stream INTEGER NOT NULL DEFAULT 0;");
-        // Backward compat: add cache_hit_input_tokens column to usage_logs
-        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0;");
-        // Backward compat: add pricing snapshot columns to usage_logs
-        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN prompt_price REAL NOT NULL DEFAULT 0.0;");
-        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN completion_price REAL NOT NULL DEFAULT 0.0;");
-        // Backward compat: add timezone column to users
-        let _ = conn
-            .execute_batch("ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC';");
-        // Backward compat: add balance columns to users
-        let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN balance REAL NOT NULL DEFAULT 0.0;");
-        let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN frozen REAL NOT NULL DEFAULT 0.0;");
-        let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0;");
-        // Backward compat: add role column to users
-        let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user';");
-        // Upgrade existing seeded admin user
-        let _ = conn.execute_batch("UPDATE users SET role='admin' WHERE id='admin' AND role='user';");
-        // Wallet transactions table
-        let _ = conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS wallet_transactions (
-                id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                type TEXT NOT NULL,
-                amount REAL NOT NULL,
-                balance_before REAL NOT NULL DEFAULT 0.0,
-                balance_after REAL NOT NULL DEFAULT 0.0,
-                method TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'completed',
-                note TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL
-            );",
-        );
-        // Recharge keys table
-        let _ = conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS recharge_keys (
-                key TEXT PRIMARY KEY,
-                amount REAL NOT NULL,
-                used_by TEXT,
-                used_at TEXT,
-                created_by TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );",
-        );
-        // Balancer settings table
-        let _ = conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS balancer_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );",
-        );
-        // Backward compat: add expires_at and revoked to recharge_keys
-        let _ = conn.execute_batch("ALTER TABLE recharge_keys ADD COLUMN expires_at TEXT;");
-        let _ = conn.execute_batch("ALTER TABLE recharge_keys ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0;");
-        Ok(())
-    }
-
-    pub fn migrate(&self) -> Result<(), DbError> {
-        Self::migrate_inner(&*self.conn()?)
-    }
-
-    // ── Delegating helpers ──────────────────────────────────────────
-
-    pub fn list_users(&self) -> Result<Vec<User>, DbError> {
-        users::list(&*self.conn()?)
-    }
-    pub fn get_user(&self, id: &str) -> Result<Option<User>, DbError> {
-        users::get(&*self.conn()?, id)
-    }
-    pub fn get_user_with_password(&self, id: &str) -> Result<Option<User>, DbError> {
-        users::get_with_password(&*self.conn()?, id)
-    }
-    pub fn create_user(&self, user: &User) -> Result<(), DbError> {
-        users::create(&*self.conn()?, user)
-    }
-    pub fn update_user(&self, user: &User) -> Result<(), DbError> {
-        users::update(&*self.conn()?, user)
-    }
-    pub fn get_user_timezone(&self, id: &str) -> Result<String, DbError> {
-        users::get_timezone(&*self.conn()?, id)
-    }
-    pub fn update_user_timezone(&self, id: &str, timezone: &str) -> Result<(), DbError> {
-        users::update_timezone(&*self.conn()?, id, timezone)
-    }
-    pub fn delete_user(&self, id: &str) -> Result<(), DbError> {
-        users::delete(&*self.conn()?, id)
-    }
-    pub fn count_admins(&self) -> Result<i64, DbError> {
-        let conn = self.conn()?;
-        conn.query_row(
-            "SELECT COUNT(*) FROM users WHERE role = 'admin'",
-            [],
-            |row| row.get(0),
-        ).map_err(|e| DbError(e.to_string()))
-    }
-    pub fn list_api_keys(&self, user_id: &str) -> Result<Vec<ApiKey>, DbError> {
-        users::list_api_keys(&*self.conn()?, user_id)
-    }
-    pub fn create_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
-        users::create_api_key(&*self.conn()?, key)
-    }
-    pub fn delete_api_key(&self, key: &str) -> Result<(), DbError> {
-        users::delete_api_key(&*self.conn()?, key)
-    }
-    pub fn update_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
-        users::update_api_key(&*self.conn()?, key)
-    }
-    #[allow(dead_code)]
-    pub fn lookup_key(&self, key: &str) -> Result<Option<(User, ApiKey)>, DbError> {
-        users::lookup_key(&*self.conn()?, key)
-    }
-    pub fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError> {
-        users::all_api_keys(&*self.conn()?)
-    }
-
-    // ── Unused helpers (available for future use) ────────────────
-    pub fn insert_usage(&self, record: &crate::domain::usage::UsageRecord) -> Result<(), DbError> {
-        let conn = self.conn()?;
-        conn.execute(
-            "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
-            rusqlite::params![
-                record.timestamp,
-                record.request_id,
-                record.user_id,
-                record.user_name,
-                record.channel_id,
-                record.model,
-                record.prompt_tokens,
-                record.completion_tokens,
-                record.total_tokens,
-                record.latency_ms,
-                record.status_code,
-                record.success as i32,
-                record.request_body,
-                record.response_body,
-                record.reasoning_body,
-                record.api_key_name,
-                record.api_format,
-            ],
-        )?;
-        Ok(())
-    }
-    pub fn count_usage(&self) -> Result<usize, DbError> {
-        let conn = self.conn()?;
-        Ok(conn.query_row("SELECT COUNT(*) FROM usage_logs", [], |row| row.get(0))?)
-    }
-    pub fn count_usage_by_user(&self, user_id: &str) -> Result<usize, DbError> {
-        let conn = self.conn()?;
-        Ok(conn.query_row(
-            "SELECT COUNT(*) FROM usage_logs WHERE user_id = ?1",
-            [user_id],
-            |row| row.get(0),
-        )?)
-    }
-    pub fn count_usage_filtered(&self, filter: &UsageFilter) -> Result<usize, DbError> {
-        let conn = self.conn()?;
-
-        let mut conditions = Vec::new();
-        let mut param_vals: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-
-        if let Some(ref uid) = filter.user_id {
-            conditions.push(format!("user_id = ?{}", param_vals.len() + 1));
-            param_vals.push(Box::new(uid.clone()));
-        }
-        if let Some(ref m) = filter.model {
-            conditions.push(format!("model LIKE ?{}", param_vals.len() + 1));
-            param_vals.push(Box::new(format!("%{}%", m)));
-        }
-        if let Some(ref k) = filter.api_key_name {
-            conditions.push(format!("api_key_name LIKE ?{}", param_vals.len() + 1));
-            param_vals.push(Box::new(format!("%{}%", k)));
-        }
-        if let Some(ref f) = filter.api_format {
-            conditions.push(format!("api_format = ?{}", param_vals.len() + 1));
-            param_vals.push(Box::new(f.clone()));
-        }
-        if let Some(ref sd) = filter.start_date {
-            conditions.push(format!("timestamp >= ?{}", param_vals.len() + 1));
-            param_vals.push(Box::new(sd.clone()));
-        }
-        if let Some(ref ed) = filter.end_date {
-            conditions.push(format!("timestamp <= ?{}", param_vals.len() + 1));
-            param_vals.push(Box::new(ed.clone()));
-        }
-
-        if !conditions.is_empty() {
-            let where_clause = conditions.join(" AND ");
-            let sql = format!("SELECT COUNT(*) FROM usage_logs WHERE {}", where_clause);
-            let mut stmt = conn.prepare(&sql)?;
-            let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_vals.iter().map(|p| p.as_ref()).collect();
-            Ok(stmt.query_row(params_refs.as_slice(), |row| row.get(0))?)
-        } else {
-            Ok(conn.query_row("SELECT COUNT(*) FROM usage_logs", [], |row| row.get(0))?)
+    pub async fn new(db_type: &str, path: &str, pg_url: &str) -> Self {
+        match db_type {
+            "sqlite" => Self {
+                backend: Box::new(
+                    sqlite_backend::SqliteBackend::new(path)
+                        .expect("Failed to create SQLite backend"),
+                ),
+            },
+            _ => {
+                let backend = pg_backend::PgBackend::new(pg_url)
+                    .await
+                    .expect("Failed to create PostgreSQL backend");
+                Self {
+                    backend: Box::new(backend),
+                }
+            }
         }
     }
-    pub fn query_usage_since(
+
+    // ── Migration ────────────────────────────────────────────────────────
+    pub async fn migrate(&self) -> Result<(), DbError> {
+        self.backend.migrate().await
+    }
+
+    // ── Users ────────────────────────────────────────────────────────────
+    pub async fn list_users(&self) -> Result<Vec<User>, DbError> {
+        self.backend.list_users().await
+    }
+    pub async fn get_user(&self, id: &str) -> Result<Option<User>, DbError> {
+        self.backend.get_user(id).await
+    }
+    pub async fn get_user_with_password(&self, id: &str) -> Result<Option<User>, DbError> {
+        self.backend.get_user_with_password(id).await
+    }
+    pub async fn create_user(&self, user: &User) -> Result<(), DbError> {
+        self.backend.create_user(user).await
+    }
+    pub async fn update_user(&self, user: &User) -> Result<(), DbError> {
+        self.backend.update_user(user).await
+    }
+    pub async fn delete_user(&self, id: &str) -> Result<(), DbError> {
+        self.backend.delete_user(id).await
+    }
+    pub async fn count_admins(&self) -> Result<i64, DbError> {
+        self.backend.count_admins().await
+    }
+    pub async fn get_user_timezone(&self, id: &str) -> Result<String, DbError> {
+        self.backend.get_user_timezone(id).await
+    }
+    pub async fn update_user_timezone(&self, id: &str, timezone: &str) -> Result<(), DbError> {
+        self.backend.update_user_timezone(id, timezone).await
+    }
+
+    // ── API Keys ─────────────────────────────────────────────────────────
+    pub async fn list_api_keys(&self, user_id: &str) -> Result<Vec<ApiKey>, DbError> {
+        self.backend.list_api_keys(user_id).await
+    }
+    pub async fn create_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
+        self.backend.create_api_key(key).await
+    }
+    pub async fn delete_api_key(&self, key: &str) -> Result<(), DbError> {
+        self.backend.delete_api_key(key).await
+    }
+    pub async fn update_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
+        self.backend.update_api_key(key).await
+    }
+    pub async fn lookup_key(&self, key: &str) -> Result<Option<(User, ApiKey)>, DbError> {
+        self.backend.lookup_key(key).await
+    }
+    pub async fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError> {
+        self.backend.all_api_keys().await
+    }
+
+    // ── Channels & Endpoints ─────────────────────────────────────────────
+    pub async fn list_channels(&self) -> Result<Vec<Channel>, DbError> {
+        self.backend.list_channels().await
+    }
+    pub async fn get_channel(&self, id: &str) -> Result<Option<Channel>, DbError> {
+        self.backend.get_channel(id).await
+    }
+    pub async fn create_channel(&self, ch: &Channel) -> Result<(), DbError> {
+        self.backend.create_channel(ch).await
+    }
+    pub async fn update_channel(&self, ch: &Channel) -> Result<(), DbError> {
+        self.backend.update_channel(ch).await
+    }
+    pub async fn delete_channel(&self, id: &str) -> Result<(), DbError> {
+        self.backend.delete_channel(id).await
+    }
+    pub async fn get_endpoint(&self, id: i64) -> Result<Option<Endpoint>, DbError> {
+        self.backend.get_endpoint(id).await
+    }
+    pub async fn update_endpoint_enabled(&self, id: i64, enabled: bool) -> Result<(), DbError> {
+        self.backend.update_endpoint_enabled(id, enabled).await
+    }
+
+    // ── Models ───────────────────────────────────────────────────────────
+    pub async fn list_models(&self) -> Result<Vec<Model>, DbError> {
+        self.backend.list_models().await
+    }
+    pub async fn get_model(&self, id: &str) -> Result<Option<Model>, DbError> {
+        self.backend.get_model(id).await
+    }
+    pub async fn create_model(&self, m: &Model) -> Result<(), DbError> {
+        self.backend.create_model(m).await
+    }
+    pub async fn update_model(&self, m: &Model) -> Result<(), DbError> {
+        self.backend.update_model(m).await
+    }
+    pub async fn delete_model(&self, id: &str) -> Result<(), DbError> {
+        self.backend.delete_model(id).await
+    }
+    pub async fn list_published_models(&self) -> Result<Vec<Model>, DbError> {
+        self.backend.list_published_models().await
+    }
+    pub async fn set_model_published(&self, id: &str, published: bool) -> Result<(), DbError> {
+        self.backend.set_model_published(id, published).await
+    }
+    pub async fn set_model_pricing(&self, id: &str, pricing: &Pricing) -> Result<(), DbError> {
+        self.backend.set_model_pricing(id, pricing).await
+    }
+    pub async fn set_model_context_length(
+        &self,
+        id: &str,
+        context_length: i64,
+    ) -> Result<(), DbError> {
+        self.backend.set_model_context_length(id, context_length).await
+    }
+
+    // ── Subscriptions ────────────────────────────────────────────────────
+    pub async fn subscribe_user(&self, user_id: &str, model_id: &str) -> Result<(), DbError> {
+        self.backend.subscribe_user(user_id, model_id).await
+    }
+    pub async fn unsubscribe_user(&self, user_id: &str, model_id: &str) -> Result<(), DbError> {
+        self.backend.unsubscribe_user(user_id, model_id).await
+    }
+    pub async fn delete_subscriptions_by_model(&self, model_id: &str) -> Result<(), DbError> {
+        self.backend.delete_subscriptions_by_model(model_id).await
+    }
+    pub async fn list_subscribed_model_ids(&self, user_id: &str) -> Result<Vec<String>, DbError> {
+        self.backend.list_subscribed_model_ids(user_id).await
+    }
+    pub async fn list_subscriptions(&self, user_id: &str) -> Result<Vec<Model>, DbError> {
+        self.backend.list_subscriptions(user_id).await
+    }
+
+    // ── Routing Rules ────────────────────────────────────────────────────
+    pub async fn list_rules(&self) -> Result<Vec<RoutingRule>, DbError> {
+        self.backend.list_rules().await
+    }
+    pub async fn create_rule(&self, r: &RoutingRule) -> Result<(), DbError> {
+        self.backend.create_rule(r).await
+    }
+    pub async fn update_rule(&self, r: &RoutingRule) -> Result<(), DbError> {
+        self.backend.update_rule(r).await
+    }
+    pub async fn delete_rule(&self, name: &str) -> Result<(), DbError> {
+        self.backend.delete_rule(name).await
+    }
+
+    // ── Usage Logs ───────────────────────────────────────────────────────
+    pub async fn insert_usage(&self, record: &UsageRecord) -> Result<(), DbError> {
+        self.backend.insert_usage(record).await
+    }
+    pub async fn count_usage(&self) -> Result<usize, DbError> {
+        self.backend.count_usage().await
+    }
+    pub async fn count_usage_by_user(&self, user_id: &str) -> Result<usize, DbError> {
+        self.backend.count_usage_by_user(user_id).await
+    }
+    pub async fn count_usage_filtered(&self, filter: &UsageFilter) -> Result<usize, DbError> {
+        self.backend.count_usage_filtered(filter).await
+    }
+    pub async fn query_usage(
+        &self,
+        limit: usize,
+        offset: usize,
+        filter: &UsageFilter,
+    ) -> Result<Vec<UsageRecord>, DbError> {
+        self.backend.query_usage(limit, offset, filter).await
+    }
+    pub async fn get_usage_detail(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<UsageRecord>, DbError> {
+        self.backend.get_usage_detail(request_id).await
+    }
+    pub async fn purge_usage_logs(&self, cutoff: &str) -> Result<usize, DbError> {
+        self.backend.purge_usage_logs(cutoff).await
+    }
+    pub async fn usage_stats_since(
         &self,
         since: &str,
         user_id: Option<&str>,
-    ) -> Result<Vec<crate::domain::usage::UsageRecord>, DbError> {
-        use crate::domain::usage::UsageRecord;
-        let conn = self.conn()?;
-        let mut records = Vec::new();
-        if let Some(uid) = user_id {
-            let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens
-                 FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2 ORDER BY id ASC",
-            )?;
-            let mut rows = stmt.query(rusqlite::params![uid, since])?;
-            while let Some(row) = rows.next()? {
-                records.push(UsageRecord {
-                    timestamp: row.get(0)?,
-                    request_id: row.get(1)?,
-                    user_id: row.get(2)?,
-                    user_name: row.get(3)?,
-                    channel_id: row.get(4)?,
-                    model: row.get(5)?,
-                    prompt_tokens: row.get(6)?,
-                    completion_tokens: row.get(7)?,
-                    total_tokens: row.get(8)?,
-                    latency_ms: row.get(9)?,
-                    status_code: row.get(10)?,
-                    success: row.get::<_, i32>(11)? != 0,
-                    request_body: None,
-                    response_body: None,
-                    reasoning_body: None,
-                    api_key_name: row.get::<_, Option<String>>(12).ok().flatten(),
-                    api_format: row.get::<_, String>(13).unwrap_or_default(),
-                    stream: row.get::<_, i32>(14)? != 0,
-                    cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
-                    prompt_price: 0.0,
-                    completion_price: 0.0,
-                });
-            }
-        } else {
-            let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens
-                 FROM usage_logs WHERE timestamp >= ?1 ORDER BY id ASC",
-            )?;
-            let mut rows = stmt.query(rusqlite::params![since])?;
-            while let Some(row) = rows.next()? {
-                records.push(UsageRecord {
-                    timestamp: row.get(0)?,
-                    request_id: row.get(1)?,
-                    user_id: row.get(2)?,
-                    user_name: row.get(3)?,
-                    channel_id: row.get(4)?,
-                    model: row.get(5)?,
-                    prompt_tokens: row.get(6)?,
-                    completion_tokens: row.get(7)?,
-                    total_tokens: row.get(8)?,
-                    latency_ms: row.get(9)?,
-                    status_code: row.get(10)?,
-                    success: row.get::<_, i32>(11)? != 0,
-                    request_body: None,
-                    response_body: None,
-                    reasoning_body: None,
-                    api_key_name: row.get::<_, Option<String>>(12).ok().flatten(),
-                    api_format: row.get::<_, String>(13).unwrap_or_default(),
-                    stream: row.get::<_, i32>(14)? != 0,
-                    cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
-                    prompt_price: 0.0,
-                    completion_price: 0.0,
-                });
-            }
-        }
-        Ok(records)
+    ) -> Result<(u64, u64, u64, u64), DbError> {
+        self.backend.usage_stats_since(since, user_id).await
     }
-    pub fn daily_usage_counts(
+    pub async fn usage_cost_rows_since(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<Vec<UsageRecord>, DbError> {
+        self.backend.usage_cost_rows_since(since, user_id).await
+    }
+    pub async fn query_usage_since(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<Vec<UsageRecord>, DbError> {
+        self.backend.query_usage_since(since, user_id).await
+    }
+    pub async fn daily_usage_counts(
         &self,
         since: &str,
         user_id: Option<&str>,
         tz_offset_seconds: i64,
     ) -> Result<Vec<(String, i64)>, DbError> {
-        let conn = self.conn()?;
-        let mut records = Vec::new();
-        let offset_expr = if tz_offset_seconds >= 0 {
-            format!("datetime(timestamp, '+{} seconds')", tz_offset_seconds)
-        } else {
-            format!("datetime(timestamp, '-{} seconds')", -tz_offset_seconds)
-        };
-        let day_expr = format!("substr({}, 1, 10)", offset_expr);
-        if let Some(uid) = user_id {
-            let sql = format!(
-                "SELECT {} as day, COUNT(*) FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2 GROUP BY day ORDER BY day ASC",
-                day_expr
-            );
-            let mut stmt = conn.prepare(&sql)?;
-            let mut rows = stmt.query(params![uid, since])?;
-            while let Some(row) = rows.next()? {
-                records.push((row.get::<_, String>(0)?, row.get::<_, i64>(1)?));
-            }
-        } else {
-            let sql = format!(
-                "SELECT {} as day, COUNT(*) FROM usage_logs WHERE timestamp >= ?1 GROUP BY day ORDER BY day ASC",
-                day_expr
-            );
-            let mut stmt = conn.prepare(&sql)?;
-            let mut rows = stmt.query(params![since])?;
-            while let Some(row) = rows.next()? {
-                records.push((row.get::<_, String>(0)?, row.get::<_, i64>(1)?));
-            }
-        }
-        Ok(records)
+        self.backend
+            .daily_usage_counts(since, user_id, tz_offset_seconds)
+            .await
     }
-
-    pub fn daily_usage_stats(
+    pub async fn daily_usage_stats(
         &self,
         since: &str,
         user_id: Option<&str>,
         tz_offset_seconds: i64,
     ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError> {
-        let conn = self.conn()?;
-        let mut records = Vec::new();
-        let offset_expr = if tz_offset_seconds >= 0 {
-            format!("datetime(timestamp, '+{} seconds')", tz_offset_seconds)
-        } else {
-            format!("datetime(timestamp, '-{} seconds')", -tz_offset_seconds)
-        };
-        let day_expr = format!("substr({}, 1, 10)", offset_expr);
-        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(uid) = user_id {
-            (
-                format!(
-                    "SELECT {} as day, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(total_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(latency_ms),0) FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2 GROUP BY day ORDER BY day ASC",
-                    day_expr
-                ),
-                vec![Box::new(uid.to_string()), Box::new(since.to_string())],
-            )
-        } else {
-            (
-                format!(
-                    "SELECT {} as day, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(total_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(latency_ms),0) FROM usage_logs WHERE timestamp >= ?1 GROUP BY day ORDER BY day ASC",
-                    day_expr
-                ),
-                vec![Box::new(since.to_string())],
-            )
-        };
-        let params_ref: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        let mut stmt = conn.prepare(&sql)?;
-        let mut rows = stmt.query(params_ref.as_slice())?;
-        while let Some(row) = rows.next()? {
-            records.push((
-                row.get::<_, String>(0)?,
-                row.get::<_, u64>(1)?,
-                row.get::<_, u64>(2)?,
-                row.get::<_, u64>(3)?,
-                row.get::<_, u64>(4)?,
-                row.get::<_, u64>(5)?,
-                row.get::<_, u64>(6)?,
-            ));
-        }
-        Ok(records)
+        self.backend
+            .daily_usage_stats(since, user_id, tz_offset_seconds)
+            .await
     }
-
-    pub fn model_activity(
+    pub async fn model_activity(
         &self,
         since: &str,
         user_id: Option<&str>,
     ) -> Result<Vec<(String, u64, u64, u64, u64, u64)>, DbError> {
-        let conn = self.conn()?;
-        let mut records = Vec::new();
-        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(uid) = user_id {
-            ("SELECT model, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END),0) FROM usage_logs WHERE timestamp >= ?1 AND user_id = ?2 GROUP BY model ORDER BY COUNT(*) DESC".into(),
-             vec![Box::new(since.to_string()), Box::new(uid.to_string())])
-        } else {
-            ("SELECT model, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END),0) FROM usage_logs WHERE timestamp >= ?1 GROUP BY model ORDER BY COUNT(*) DESC".into(),
-             vec![Box::new(since.to_string())])
-        };
-        let mut stmt = conn.prepare(&sql)?;
-        let params: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        let mut rows = stmt.query(params.as_slice())?;
-        while let Some(row) = rows.next()? {
-            records.push((
-                row.get::<_, String>(0)?,
-                row.get::<_, u64>(1)?,
-                row.get::<_, u64>(2)?,
-                row.get::<_, u64>(3)?,
-                row.get::<_, u64>(4)?,
-                row.get::<_, u64>(5)?,
-            ));
-        }
-        Ok(records)
+        self.backend.model_activity(since, user_id).await
     }
 
-    pub fn period_summary(
+    // ── Billing / Period ─────────────────────────────────────────────────
+    pub async fn period_summary(
         &self,
         year: i32,
         month: u32,
         user_id: Option<&str>,
     ) -> Result<(f64, u64, u64), DbError> {
-        let conn = self.conn()?;
-        let start = format!("{}-{:02}-01T00:00:00", year, month);
-        let end = if month == 12 {
-            format!("{}-01-01T00:00:00", year + 1)
-        } else {
-            format!("{}-{:02}-01T00:00:00", year, month + 1)
-        };
-        let sql = format!(
-            "SELECT COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0), COUNT(*), COALESCE(SUM(total_tokens), 0) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{}",
-            if user_id.is_some() { " AND user_id = ?3" } else { "" }
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let result = if let Some(uid) = user_id {
-            stmt.query_row(params![start, end, uid], |row| {
-                Ok((row.get::<_, f64>(0)?, row.get::<_, u64>(1)?, row.get::<_, u64>(2)?))
-            })
-        } else {
-            stmt.query_row(params![start, end], |row| {
-                Ok((row.get::<_, f64>(0)?, row.get::<_, u64>(1)?, row.get::<_, u64>(2)?))
-            })
-        };
-        result.map_err(|e| DbError(e.to_string()))
+        self.backend.period_summary(year, month, user_id).await
     }
-
-    pub fn period_model_breakdown(
+    pub async fn period_model_breakdown(
         &self,
         year: i32,
         month: u32,
         user_id: Option<&str>,
     ) -> Result<Vec<(String, f64)>, DbError> {
-        let conn = self.conn()?;
-        let start = format!("{}-{:02}-01T00:00:00", year, month);
-        let end = if month == 12 {
-            format!("{}-01-01T00:00:00", year + 1)
-        } else {
-            format!("{}-{:02}-01T00:00:00", year, month + 1)
-        };
-        let sql = format!(
-            "SELECT model, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{} GROUP BY model ORDER BY 2 DESC",
-            if user_id.is_some() { " AND user_id = ?3" } else { "" }
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let mut records = Vec::new();
-        if let Some(uid) = user_id {
-            let mut rows = stmt.query(params![start, end, uid])?;
-            while let Some(row) = rows.next()? {
-                records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?));
-            }
-        } else {
-            let mut rows = stmt.query(params![start, end])?;
-            while let Some(row) = rows.next()? {
-                records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?));
-            }
-        }
-        Ok(records)
+        self.backend.period_model_breakdown(year, month, user_id).await
     }
-
-    pub fn period_channel_breakdown(
+    pub async fn period_channel_breakdown(
         &self,
         year: i32,
         month: u32,
         user_id: Option<&str>,
     ) -> Result<Vec<(String, f64)>, DbError> {
-        let conn = self.conn()?;
-        let start = format!("{}-{:02}-01T00:00:00", year, month);
-        let end = if month == 12 {
-            format!("{}-01-01T00:00:00", year + 1)
-        } else {
-            format!("{}-{:02}-01T00:00:00", year, month + 1)
-        };
-        let sql = format!(
-            "SELECT channel_id, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{} GROUP BY channel_id ORDER BY 2 DESC",
-            if user_id.is_some() { " AND user_id = ?3" } else { "" }
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let mut records = Vec::new();
-        if let Some(uid) = user_id {
-            let mut rows = stmt.query(params![start, end, uid])?;
-            while let Some(row) = rows.next()? {
-                records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?));
-            }
-        } else {
-            let mut rows = stmt.query(params![start, end])?;
-            while let Some(row) = rows.next()? {
-                records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?));
-            }
-        }
-        Ok(records)
+        self.backend.period_channel_breakdown(year, month, user_id).await
     }
-
-    pub fn daily_deductions(
+    pub async fn daily_deductions(
         &self,
         year: i32,
         month: u32,
         user_id: Option<&str>,
     ) -> Result<Vec<(String, f64, u64)>, DbError> {
-        let conn = self.conn()?;
-        let start = format!("{}-{:02}-01T00:00:00", year, month);
-        let end = if month == 12 {
-            format!("{}-01-01T00:00:00", year + 1)
-        } else {
-            format!("{}-{:02}-01T00:00:00", year, month + 1)
-        };
-        let sql = format!(
-            "SELECT SUBSTR(timestamp, 1, 10) as day, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0), COUNT(*) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{} GROUP BY day ORDER BY day DESC",
-            if user_id.is_some() { " AND user_id = ?3" } else { "" }
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let mut records = Vec::new();
-        if let Some(uid) = user_id {
-            let mut rows = stmt.query(params![start, end, uid])?;
-            while let Some(row) = rows.next()? {
-                records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?, row.get::<_, u64>(2)?));
-            }
-        } else {
-            let mut rows = stmt.query(params![start, end])?;
-            while let Some(row) = rows.next()? {
-                records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?, row.get::<_, u64>(2)?));
-            }
-        }
-        Ok(records)
+        self.backend.daily_deductions(year, month, user_id).await
     }
-
-    pub fn count_daily_deductions(&self, year: i32, month: u32, user_id: Option<&str>) -> Result<usize, DbError> {
-        let conn = self.conn()?;
-        let start = format!("{}-{:02}-01T00:00:00", year, month);
-        let end = if month == 12 {
-            format!("{}-01-01T00:00:00", year + 1)
-        } else {
-            format!("{}-{:02}-01T00:00:00", year, month + 1)
-        };
-        let sql = format!(
-            "SELECT COUNT(DISTINCT SUBSTR(timestamp, 1, 10)) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{}",
-            if user_id.is_some() { " AND user_id = ?3" } else { "" }
-        );
-        if let Some(uid) = user_id {
-            conn.query_row(&sql, params![start, end, uid], |row| row.get(0))
-                .map_err(|e| DbError(e.to_string()))
-        } else {
-            conn.query_row(&sql, params![start, end], |row| row.get(0))
-                .map_err(|e| DbError(e.to_string()))
-        }
+    pub async fn count_daily_deductions(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+    ) -> Result<usize, DbError> {
+        self.backend.count_daily_deductions(year, month, user_id).await
     }
-
-    pub fn daily_deductions_paginated(
+    pub async fn daily_deductions_paginated(
         &self,
         year: i32,
         month: u32,
@@ -780,579 +350,28 @@ impl Database {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<(String, f64, u64)>, DbError> {
-        let conn = self.conn()?;
-        let start = format!("{}-{:02}-01T00:00:00", year, month);
-        let end = if month == 12 {
-            format!("{}-01-01T00:00:00", year + 1)
-        } else {
-            format!("{}-{:02}-01T00:00:00", year, month + 1)
-        };
-        let limit_i64 = limit as i64;
-        let offset_i64 = offset as i64;
-        let mut records = Vec::new();
-
-        if let Some(uid) = user_id {
-            let mut stmt = conn.prepare(
-                "SELECT SUBSTR(timestamp, 1, 10) as day, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0), COUNT(*) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2 AND user_id = ?3 GROUP BY day ORDER BY day DESC LIMIT ?4 OFFSET ?5",
-            )?;
-            let mut rows = stmt.query(params![start, end, uid, limit_i64, offset_i64])?;
-            while let Some(row) = rows.next()? {
-                records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?, row.get::<_, u64>(2)?));
-            }
-        } else {
-            let mut stmt = conn.prepare(
-                "SELECT SUBSTR(timestamp, 1, 10) as day, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0), COUNT(*) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2 GROUP BY day ORDER BY day DESC LIMIT ?3 OFFSET ?4",
-            )?;
-            let mut rows = stmt.query(params![start, end, limit_i64, offset_i64])?;
-            while let Some(row) = rows.next()? {
-                records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?, row.get::<_, u64>(2)?));
-            }
-        }
-        Ok(records)
+        self.backend
+            .daily_deductions_paginated(year, month, user_id, limit, offset)
+            .await
+    }
+    pub async fn billing_months(&self) -> Result<Vec<String>, DbError> {
+        self.backend.billing_months().await
+    }
+    pub async fn period_summary_all(&self) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
+        self.backend.period_summary_all().await
+    }
+    pub async fn lookup_model_pricing(&self, model_name: &str) -> Result<(f64, f64), DbError> {
+        self.backend.lookup_model_pricing(model_name).await
     }
 
-    pub fn billing_months(&self) -> Result<Vec<String>, DbError> {
-        let conn = self.conn()?;
-        let mut stmt = conn.prepare("SELECT DISTINCT SUBSTR(timestamp, 1, 7) AS month FROM usage_logs ORDER BY month DESC")?;
-        let mut rows = stmt.query([])?;
-        let mut months = Vec::new();
-        while let Some(row) = rows.next()? {
-            months.push(row.get::<_, String>(0)?);
-        }
-        Ok(months)
+    // ── Wallet ───────────────────────────────────────────────────────────
+    pub async fn get_wallet_balance(&self, user_id: &str) -> Result<(f64, f64), DbError> {
+        self.backend.get_wallet_balance(user_id).await
     }
-
-    pub fn period_summary_all(&self) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
-        let conn = self.conn()?;
-        let mut stmt = conn.prepare(
-            "SELECT SUBSTR(timestamp, 1, 7) AS month, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0), COUNT(*), COALESCE(SUM(total_tokens), 0) FROM usage_logs GROUP BY month ORDER BY month DESC"
-        )?;
-        let mut rows = stmt.query([])?;
-        let mut records = Vec::new();
-        while let Some(row) = rows.next()? {
-            records.push((
-                row.get::<_, String>(0)?,
-                row.get::<_, f64>(1)?,
-                row.get::<_, u64>(2)?,
-                row.get::<_, u64>(3)?,
-            ));
-        }
-        Ok(records)
+    pub async fn update_wallet_balance(&self, user_id: &str, balance: f64) -> Result<(), DbError> {
+        self.backend.update_wallet_balance(user_id, balance).await
     }
-
-    pub fn query_usage(
-        &self,
-        limit: usize,
-        offset: usize,
-        filter: &UsageFilter,
-    ) -> Result<Vec<crate::domain::usage::UsageRecord>, DbError> {
-        use crate::domain::usage::UsageRecord;
-        let conn = self.conn()?;
-
-        let mut conditions = Vec::new();
-        let mut param_vals: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-
-        if let Some(ref uid) = filter.user_id {
-            conditions.push(format!("user_id = ?{}", param_vals.len() + 1));
-            param_vals.push(Box::new(uid.clone()));
-        }
-        if let Some(ref m) = filter.model {
-            conditions.push(format!("model LIKE ?{}", param_vals.len() + 1));
-            param_vals.push(Box::new(format!("%{}%", m)));
-        }
-        if let Some(ref k) = filter.api_key_name {
-            conditions.push(format!("api_key_name LIKE ?{}", param_vals.len() + 1));
-            param_vals.push(Box::new(format!("%{}%", k)));
-        }
-        if let Some(ref f) = filter.api_format {
-            conditions.push(format!("api_format = ?{}", param_vals.len() + 1));
-            param_vals.push(Box::new(f.clone()));
-        }
-        if let Some(ref sd) = filter.start_date {
-            conditions.push(format!("timestamp >= ?{}", param_vals.len() + 1));
-            param_vals.push(Box::new(sd.clone()));
-        }
-        if let Some(ref ed) = filter.end_date {
-            conditions.push(format!("timestamp <= ?{}", param_vals.len() + 1));
-            param_vals.push(Box::new(ed.clone()));
-        }
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", conditions.join(" AND "))
-        };
-
-        let limit_idx = param_vals.len() + 1;
-        let offset_idx = param_vals.len() + 2;
-
-        let sql = format!(
-            "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price FROM usage_logs {} ORDER BY id DESC LIMIT ?{} OFFSET ?{}",
-            where_clause, limit_idx, offset_idx
-        );
-
-        let mut stmt = conn.prepare(&sql)?;
-        let limit_i64 = limit as i64;
-        let offset_i64 = offset as i64;
-        let mut params: Vec<&dyn rusqlite::types::ToSql> = Vec::with_capacity(param_vals.len() + 2);
-        for p in &param_vals {
-            params.push(p.as_ref());
-        }
-        params.push(&limit_i64);
-        params.push(&offset_i64);
-
-        let mut records = Vec::new();
-        let mut rows = stmt.query(params.as_slice())?;
-        while let Some(row) = rows.next()? {
-            records.push(UsageRecord {
-                timestamp: row.get(0)?,
-                request_id: row.get(1)?,
-                user_id: row.get(2)?,
-                user_name: row.get(3)?,
-                channel_id: row.get(4)?,
-                model: row.get(5)?,
-                prompt_tokens: row.get(6)?,
-                completion_tokens: row.get(7)?,
-                total_tokens: row.get(8)?,
-                latency_ms: row.get(9)?,
-                status_code: row.get(10)?,
-                success: row.get::<_, i32>(11)? != 0,
-                request_body: None,
-                response_body: None,
-                reasoning_body: None,
-                api_key_name: row.get::<_, Option<String>>(12).ok().flatten(),
-                api_format: row.get::<_, String>(13).unwrap_or_default(),
-                stream: row.get::<_, i32>(14)? != 0,
-                cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
-                prompt_price: row.get::<_, f64>(16)?,
-                completion_price: row.get::<_, f64>(17)?,
-            });
-        }
-        Ok(records)
-    }
-
-    pub fn get_usage_detail(
-        &self,
-        request_id: &str,
-    ) -> Result<Option<crate::domain::usage::UsageRecord>, DbError> {
-        let conn = self.conn()?;
-        let mut stmt = conn.prepare(
-            "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price
-             FROM usage_logs WHERE request_id = ?1",
-        )?;
-        let mut rows = stmt.query(rusqlite::params![request_id])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(crate::domain::usage::UsageRecord {
-                timestamp: row.get(0)?,
-                request_id: row.get(1)?,
-                user_id: row.get(2)?,
-                user_name: row.get(3)?,
-                channel_id: row.get(4)?,
-                model: row.get(5)?,
-                prompt_tokens: row.get(6)?,
-                completion_tokens: row.get(7)?,
-                total_tokens: row.get(8)?,
-                latency_ms: row.get(9)?,
-                status_code: row.get(10)?,
-                success: row.get::<_, i32>(11)? != 0,
-                request_body: row.get(12)?,
-                response_body: row.get(13)?,
-                reasoning_body: row.get(14)?,
-                api_key_name: row.get(15)?,
-                api_format: row.get(16)?,
-                stream: row.get::<_, i32>(17)? != 0,
-                cache_hit_input_tokens: row.get::<_, i64>(18)? as u64,
-                prompt_price: row.get::<_, f64>(19)?,
-                completion_price: row.get::<_, f64>(20)?,
-            }))
-        } else {
-            Ok(None)
-        }
-    }
-
-    // Channels
-    pub fn list_channels(&self) -> Result<Vec<Channel>, DbError> {
-        channels::list(&*self.conn()?)
-    }
-    #[allow(dead_code)]
-    pub fn get_channel(&self, id: &str) -> Result<Option<Channel>, DbError> {
-        channels::get(&*self.conn()?, id)
-    }
-    pub fn create_channel(&self, ch: &Channel) -> Result<(), DbError> {
-        channels::create(&*self.conn()?, ch)
-    }
-    pub fn update_channel(&self, ch: &Channel) -> Result<(), DbError> {
-        channels::update(&*self.conn()?, ch)
-    }
-    pub fn delete_channel(&self, id: &str) -> Result<(), DbError> {
-        channels::delete(&*self.conn()?, id)
-    }
-    pub fn get_endpoint(&self, id: i64) -> Result<Option<Endpoint>, DbError> {
-        channels::get_endpoint(&*self.conn()?, id)
-    }
-    pub fn update_endpoint_enabled(&self, id: i64, enabled: bool) -> Result<(), DbError> {
-        channels::update_endpoint_enabled(&*self.conn()?, id, enabled)
-    }
-
-    // Models
-    pub fn list_models(&self) -> Result<Vec<Model>, DbError> {
-        models::list(&*self.conn()?)
-    }
-    #[allow(dead_code)]
-    pub fn get_model(&self, id: &str) -> Result<Option<Model>, DbError> {
-        models::get(&*self.conn()?, id)
-    }
-    pub fn create_model(&self, m: &Model) -> Result<(), DbError> {
-        models::create(&*self.conn()?, m)
-    }
-    pub fn update_model(&self, m: &Model) -> Result<(), DbError> {
-        models::update(&*self.conn()?, m)
-    }
-    pub fn delete_model(&self, id: &str) -> Result<(), DbError> {
-        models::delete(&*self.conn()?, id)
-    }
-
-    // Routing rules
-    pub fn list_rules(&self) -> Result<Vec<RoutingRule>, DbError> {
-        rules::list(&*self.conn()?)
-    }
-    pub fn create_rule(&self, r: &RoutingRule) -> Result<(), DbError> {
-        rules::create(&*self.conn()?, r)
-    }
-    pub fn update_rule(&self, r: &RoutingRule) -> Result<(), DbError> {
-        rules::update(&*self.conn()?, r)
-    }
-    pub fn delete_rule(&self, name: &str) -> Result<(), DbError> {
-        rules::delete(&*self.conn()?, name)
-    }
-
-    // Subscriptions
-    pub fn list_published_models(&self) -> Result<Vec<Model>, DbError> {
-        let conn = self.conn()?;
-        let mut stmt = conn.prepare("SELECT id, name, model_pattern, prompt_price, completion_price, cache_read_price, cache_write_price, image_input_price, audio_input_price, audio_output_price, published, context_length, category FROM models WHERE published = 1 ORDER BY id")?;
-        let mut models: Vec<Model> = stmt
-            .query_map([], |row| {
-                Ok(Model {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    model_pattern: row.get(2)?,
-                    pricing: Pricing {
-                        prompt_price: row.get(3)?,
-                        completion_price: row.get(4)?,
-                        cache_read_price: row.get(5)?,
-                        cache_write_price: row.get(6)?,
-                        image_input_price: row.get(7)?,
-                        audio_input_price: row.get(8)?,
-                        audio_output_price: row.get(9)?,
-                    },
-                    channels: Vec::new(),
-                    published: true,
-                    context_length: row.get(11)?,
-                    category: row.get::<_, String>(12).unwrap_or_default(),
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-
-        models::load_bindings(&conn, &mut models)?;
-        Ok(models)
-    }
-
-    pub fn set_model_published(&self, id: &str, published: bool) -> Result<(), DbError> {
-        let conn = self.conn()?;
-        conn.execute(
-            "UPDATE models SET published = ?1 WHERE id = ?2",
-            params![published as i32, id],
-        )?;
-        Ok(())
-    }
-
-    pub fn set_model_pricing(&self, id: &str, pricing: &Pricing) -> Result<(), DbError> {
-        models::update_pricing(&*self.conn()?, id, pricing)
-    }
-
-    pub fn set_model_context_length(&self, id: &str, context_length: i64) -> Result<(), DbError> {
-        let conn = self.conn()?;
-        conn.execute(
-            "UPDATE models SET context_length = ?1 WHERE id = ?2",
-            params![context_length, id],
-        )?;
-        Ok(())
-    }
-
-    pub fn subscribe_user(&self, user_id: &str, model_id: &str) -> Result<(), DbError> {
-        let conn = self.conn()?;
-        conn.execute(
-            "INSERT OR IGNORE INTO user_subscriptions (user_id, model_id, created_at) VALUES (?1, ?2, ?3)",
-            params![user_id, model_id, chrono::Utc::now().to_rfc3339()],
-        )?;
-        Ok(())
-    }
-
-    pub fn unsubscribe_user(&self, user_id: &str, model_id: &str) -> Result<(), DbError> {
-        let conn = self.conn()?;
-        conn.execute(
-            "DELETE FROM user_subscriptions WHERE user_id = ?1 AND model_id = ?2",
-            params![user_id, model_id],
-        )?;
-        Ok(())
-    }
-
-    pub fn delete_subscriptions_by_model(&self, model_id: &str) -> Result<(), DbError> {
-        let conn = self.conn()?;
-        conn.execute(
-            "DELETE FROM user_subscriptions WHERE model_id = ?1",
-            params![model_id],
-        )?;
-        Ok(())
-    }
-
-    pub fn list_subscribed_model_ids(&self, user_id: &str) -> Result<Vec<String>, DbError> {
-        let conn = self.conn()?;
-        let mut stmt =
-            conn.prepare("SELECT model_id FROM user_subscriptions WHERE user_id = ?1")?;
-        let ids = stmt
-            .query_map(params![user_id], |row| row.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(ids)
-    }
-
-    pub fn list_subscriptions(&self, user_id: &str) -> Result<Vec<Model>, DbError> {
-        let conn = self.conn()?;
-        let mut stmt = conn.prepare(
-            "SELECT m.id, m.name, m.model_pattern, m.prompt_price, m.completion_price, m.cache_read_price, m.cache_write_price, m.image_input_price, m.audio_input_price, m.audio_output_price, m.published, m.context_length, m.category
-             FROM models m INNER JOIN user_subscriptions s ON m.id = s.model_id
-             WHERE s.user_id = ?1 ORDER BY m.id",
-        )?;
-        let mut models: Vec<Model> = stmt
-            .query_map(params![user_id], |row| {
-                Ok(Model {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    model_pattern: row.get(2)?,
-                    pricing: Pricing {
-                        prompt_price: row.get(3)?,
-                        completion_price: row.get(4)?,
-                        cache_read_price: row.get(5)?,
-                        cache_write_price: row.get(6)?,
-                        image_input_price: row.get(7)?,
-                        audio_input_price: row.get(8)?,
-                        audio_output_price: row.get(9)?,
-                    },
-                    channels: Vec::new(),
-                    published: row.get::<_, i32>(10)? != 0,
-                    context_length: row.get(11)?,
-                    category: row.get::<_, String>(12).unwrap_or_default(),
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-
-        models::load_bindings(&conn, &mut models)?;
-        Ok(models)
-    }
-
-    /// Delete usage log records older than the given cutoff timestamp.
-    /// Returns the number of deleted rows.
-    /// Get a balancer setting by key.
-    pub fn get_setting(&self, key: &str) -> Result<Option<String>, DbError> {
-        let conn = self.conn()?;
-        let result = conn
-            .query_row(
-                "SELECT value FROM balancer_settings WHERE key = ?1",
-                params![key],
-                |row| row.get::<_, String>(0),
-            )
-            .ok();
-        Ok(result)
-    }
-
-    /// Set a balancer setting (upsert).
-    pub fn set_setting(&self, key: &str, value: &str) -> Result<(), DbError> {
-        let conn = self.conn()?;
-        conn.execute(
-            "INSERT OR REPLACE INTO balancer_settings (key, value) VALUES (?1, ?2)",
-            params![key, value],
-        )?;
-        Ok(())
-    }
-
-    pub fn get_gateway_config(&self) -> Result<crate::config::types::GatewayRuntimeConfig, DbError> {
-        match self.get_setting("gateway_config")? {
-            Some(json) => serde_json::from_str(&json)
-                .map_err(|e| DbError(format!("Invalid gateway config JSON: {}", e))),
-            None => Ok(crate::config::types::GatewayRuntimeConfig::default()),
-        }
-    }
-
-    pub fn set_gateway_config(&self, config: &crate::config::types::GatewayRuntimeConfig) -> Result<(), DbError> {
-        let json = serde_json::to_string(config)
-            .map_err(|e| DbError(format!("Failed to serialize gateway config: {}", e)))?;
-        self.set_setting("gateway_config", &json)
-    }
-
-    pub fn purge_usage_logs(&self, cutoff: &str) -> Result<usize, DbError> {
-        let conn = self.conn()?;
-        let count = conn.execute(
-            "DELETE FROM usage_logs WHERE timestamp < ?1",
-            rusqlite::params![cutoff],
-        )?;
-        Ok(count)
-    }
-
-    pub fn usage_stats_since(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<(u64, u64, u64, u64), DbError> {
-        let conn = self.conn()?;
-        let (total, success, latency, total_tok): (u64, u64, u64, u64) = if let Some(uid) = user_id
-        {
-            conn.query_row(
-                "SELECT COUNT(*), COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END),0), COALESCE(SUM(latency_ms),0), COALESCE(SUM(total_tokens),0)
-                 FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2",
-                params![uid, since],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )?
-        } else {
-            conn.query_row(
-                "SELECT COUNT(*), COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END),0), COALESCE(SUM(latency_ms),0), COALESCE(SUM(total_tokens),0)
-                 FROM usage_logs WHERE timestamp >= ?1",
-                params![since],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )?
-        };
-        Ok((total, success, latency, total_tok))
-    }
-
-    pub fn usage_cost_rows_since(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<Vec<UsageRecord>, DbError> {
-        let conn = self.conn()?;
-        let mut records = Vec::new();
-        if let Some(uid) = user_id {
-            let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price
-                 FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2 ORDER BY id ASC",
-            )?;
-            let mut rows = stmt.query(params![uid, since])?;
-            while let Some(row) = rows.next()? {
-                records.push(UsageRecord {
-                    timestamp: row.get(0)?,
-                    request_id: row.get(1)?,
-                    user_id: row.get(2)?,
-                    user_name: row.get(3)?,
-                    channel_id: row.get(4)?,
-                    model: row.get(5)?,
-                    prompt_tokens: row.get(6)?,
-                    completion_tokens: row.get(7)?,
-                    total_tokens: row.get(8)?,
-                    latency_ms: row.get(9)?,
-                    status_code: row.get(10)?,
-                    success: row.get::<_, i32>(11)? != 0,
-                    request_body: None,
-                    response_body: None,
-                    reasoning_body: None,
-                    api_key_name: row.get::<_, Option<String>>(12).ok().flatten(),
-                    api_format: row.get::<_, String>(13).unwrap_or_default(),
-                    stream: row.get::<_, i32>(14)? != 0,
-                    cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
-                    prompt_price: row.get::<_, f64>(16)?,
-                    completion_price: row.get::<_, f64>(17)?,
-                });
-            }
-        } else {
-            let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price
-                 FROM usage_logs WHERE timestamp >= ?1 ORDER BY id ASC",
-            )?;
-            let mut rows = stmt.query(params![since])?;
-            while let Some(row) = rows.next()? {
-                records.push(UsageRecord {
-                    timestamp: row.get(0)?,
-                    request_id: row.get(1)?,
-                    user_id: row.get(2)?,
-                    user_name: row.get(3)?,
-                    channel_id: row.get(4)?,
-                    model: row.get(5)?,
-                    prompt_tokens: row.get(6)?,
-                    completion_tokens: row.get(7)?,
-                    total_tokens: row.get(8)?,
-                    latency_ms: row.get(9)?,
-                    status_code: row.get(10)?,
-                    success: row.get::<_, i32>(11)? != 0,
-                    request_body: None,
-                    response_body: None,
-                    reasoning_body: None,
-                    api_key_name: row.get::<_, Option<String>>(12).ok().flatten(),
-                    api_format: row.get::<_, String>(13).unwrap_or_default(),
-                    stream: row.get::<_, i32>(14)? != 0,
-                    cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
-                    prompt_price: row.get::<_, f64>(16)?,
-                    completion_price: row.get::<_, f64>(17)?,
-                });
-            }
-        }
-        Ok(records)
-    }
-
-    pub fn lookup_model_pricing(&self, model_name: &str) -> Result<(f64, f64), DbError> {
-        let conn = self.conn()?;
-        // Try exact match first
-        let result = conn.query_row(
-            "SELECT prompt_price, completion_price FROM models WHERE name = ?1",
-            params![model_name],
-            |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
-        );
-        match result {
-            Ok(p) => Ok(p),
-            Err(_) => {
-                // Try pattern match (glob)
-                let mut stmt = conn.prepare(
-                    "SELECT prompt_price, completion_price, model_pattern FROM models"
-                )?;
-                let rows = stmt.query_map([], |row| {
-                    Ok((
-                        row.get::<_, f64>(0)?,
-                        row.get::<_, f64>(1)?,
-                        row.get::<_, String>(2)?,
-                    ))
-                })?;
-                for row in rows {
-                    let (p, c, pattern) = row?;
-                    if pattern.ends_with('*') {
-                        let prefix = &pattern[..pattern.len() - 1];
-                        if model_name.starts_with(prefix) {
-                            return Ok((p, c));
-                        }
-                    }
-                    if pattern == model_name {
-                        return Ok((p, c));
-                    }
-                }
-                Ok((0.0, 0.0))
-            }
-        }
-    }
-
-    // ── Wallet ─────────────────────────────────────────────────────────
-
-    pub fn get_wallet_balance(&self, user_id: &str) -> Result<(f64, f64), DbError> {
-        let conn = self.conn()?;
-        conn.query_row(
-            "SELECT balance, frozen FROM users WHERE id = ?1",
-            params![user_id],
-            |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
-        ).map_err(|e| DbError(e.to_string()))
-    }
-
-    pub fn update_wallet_balance(&self, user_id: &str, balance: f64) -> Result<(), DbError> {
-        let conn = self.conn()?;
-        conn.execute("UPDATE users SET balance = ?1 WHERE id = ?2", params![balance, user_id])?;
-        Ok(())
-    }
-
-    pub fn add_wallet_transaction(
+    pub async fn add_wallet_transaction(
         &self,
         id: &str,
         user_id: &str,
@@ -1364,349 +383,24 @@ impl Database {
         status: &str,
         note: &str,
     ) -> Result<(), DbError> {
-        let conn = self.conn()?;
-        conn.execute(
-            "INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![id, user_id, tx_type, amount, balance_before, balance_after, method, status, note, chrono::Utc::now().to_rfc3339()],
-        )?;
-        Ok(())
+        self.backend
+            .add_wallet_transaction(
+                id, user_id, tx_type, amount, balance_before, balance_after, method, status, note,
+            )
+            .await
     }
-
-    pub fn get_wallet_transactions(
+    pub async fn get_wallet_transactions(
         &self,
         user_id: &str,
         page: usize,
         size: usize,
     ) -> Result<Vec<WalletTransactionRow>, DbError> {
-        let conn = self.conn()?;
-        let offset = (page.saturating_sub(1)) * size;
-        let mut stmt = conn.prepare(
-            "SELECT id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at
-             FROM wallet_transactions WHERE user_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
-        )?;
-        let rows = stmt.query_map(params![user_id, size as i64, offset as i64], |row| {
-            Ok(WalletTransactionRow {
-                id: row.get(0)?,
-                user_id: row.get(1)?,
-                tx_type: row.get(2)?,
-                amount: row.get(3)?,
-                balance_before: row.get(4)?,
-                balance_after: row.get(5)?,
-                method: row.get(6)?,
-                status: row.get(7)?,
-                note: row.get(8)?,
-                created_at: row.get(9)?,
-            })
-        })?;
-        let mut transactions = Vec::new();
-        for row in rows {
-            transactions.push(row?);
-        }
-        Ok(transactions)
+        self.backend.get_wallet_transactions(user_id, page, size).await
     }
-
-    pub fn count_wallet_transactions(&self, user_id: &str) -> Result<usize, DbError> {
-        let conn = self.conn()?;
-        conn.query_row(
-            "SELECT COUNT(*) FROM wallet_transactions WHERE user_id = ?1",
-            params![user_id],
-            |row| row.get(0),
-        ).map_err(|e| DbError(e.to_string()))
+    pub async fn count_wallet_transactions(&self, user_id: &str) -> Result<usize, DbError> {
+        self.backend.count_wallet_transactions(user_id).await
     }
-
-    pub fn create_recharge_key(&self, key: &str, amount: f64, created_by: &str, expires_at: Option<&str>) -> Result<(), DbError> {
-        let conn = self.conn()?;
-        conn.execute(
-            "INSERT INTO recharge_keys (key, amount, created_by, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![key, amount, created_by, chrono::Utc::now().to_rfc3339(), expires_at],
-        )?;
-        Ok(())
-    }
-
-    pub fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<f64, DbError> {
-        let conn = self.conn()?;
-        let (amount, used_by, expires_at, revoked): (f64, Option<String>, Option<String>, i64) = conn.query_row(
-            "SELECT amount, used_by, expires_at, revoked FROM recharge_keys WHERE key = ?1",
-            params![key],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get::<_, i64>(3).unwrap_or(0))),
-        ).map_err(|_| DbError("Invalid recharge key".to_string()))?;
-
-        if used_by.is_some() {
-            return Err(DbError("Recharge key already used".to_string()));
-        }
-        if revoked != 0 {
-            return Err(DbError("Recharge key has been revoked".to_string()));
-        }
-        if let Some(exp) = &expires_at {
-            if let Ok(exp_time) = chrono::DateTime::parse_from_rfc3339(exp) {
-                if chrono::Utc::now() > exp_time {
-                    return Err(DbError("Recharge key has expired".to_string()));
-                }
-            }
-        }
-
-        // Mark key as used
-        conn.execute(
-            "UPDATE recharge_keys SET used_by = ?1, used_at = ?2 WHERE key = ?3",
-            params![user_id, chrono::Utc::now().to_rfc3339(), key],
-        )?;
-
-        // Add balance
-        let (balance, _): (f64, f64) = conn.query_row(
-            "SELECT balance, frozen FROM users WHERE id = ?1",
-            params![user_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).map_err(|_| DbError("User not found".to_string()))?;
-
-        let new_balance = balance + amount;
-        conn.execute("UPDATE users SET balance = ?1 WHERE id = ?2", params![new_balance, user_id])?;
-
-        // Record transaction
-        conn.execute(
-            "INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![
-                uuid::Uuid::new_v4().to_string(), user_id, "recharge", amount,
-                balance, new_balance, "recharge_key", "completed",
-                format!("Key recharge: {}", key),
-                chrono::Utc::now().to_rfc3339(),
-            ],
-        )?;
-
-        Ok(amount)
-    }
-
-    pub fn revoke_recharge_key(&self, key: &str) -> Result<(), DbError> {
-        let conn = self.conn()?;
-        let rows = conn.execute(
-            "UPDATE recharge_keys SET revoked = 1 WHERE key = ?1 AND used_by IS NULL AND (revoked IS NULL OR revoked = 0)",
-            params![key],
-        )?;
-        if rows == 0 {
-            return Err(DbError("Key not found or already used/revoked".to_string()));
-        }
-        Ok(())
-    }
-
-    pub fn list_recharge_keys(&self) -> Result<Vec<RechargeKeyRow>, DbError> {
-        let conn = self.conn()?;
-        let mut stmt = conn.prepare(
-            "SELECT key, amount, used_by, used_at, created_by, created_at, expires_at, revoked FROM recharge_keys ORDER BY created_at DESC",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(RechargeKeyRow {
-                key: row.get(0)?,
-                amount: row.get(1)?,
-                used_by: row.get(2)?,
-                used_at: row.get(3)?,
-                created_by: row.get(4)?,
-                created_at: row.get(5)?,
-                expires_at: row.get(6)?,
-                revoked: row.get::<_, i64>(7).unwrap_or(0) != 0,
-            })
-        })?;
-        let mut keys = Vec::new();
-        for row in rows {
-            keys.push(row?);
-        }
-        Ok(keys)
-    }
-
-    pub fn list_recharge_keys_paginated(&self, limit: usize, offset: usize) -> Result<Vec<RechargeKeyRow>, DbError> {
-        let conn = self.conn()?;
-        let mut stmt = conn.prepare(
-            "SELECT key, amount, used_by, used_at, created_by, created_at, expires_at, revoked FROM recharge_keys ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
-        )?;
-        let rows = stmt.query_map(params![limit as i64, offset as i64], |row| {
-            Ok(RechargeKeyRow {
-                key: row.get(0)?,
-                amount: row.get(1)?,
-                used_by: row.get(2)?,
-                used_at: row.get(3)?,
-                created_by: row.get(4)?,
-                created_at: row.get(5)?,
-                expires_at: row.get(6)?,
-                revoked: row.get::<_, i64>(7).unwrap_or(0) != 0,
-            })
-        })?;
-        let mut keys = Vec::new();
-        for row in rows {
-            keys.push(row?);
-        }
-        Ok(keys)
-    }
-
-    pub fn count_recharge_keys_filtered(
-        &self,
-        search: Option<&str>,
-        status: Option<&str>,
-        user_search: Option<&str>,
-    ) -> Result<usize, DbError> {
-        let now = &chrono::Utc::now().to_rfc3339();
-        let (where_clause, param_values) = self.build_recharge_key_filter(search, status, user_search, now);
-        let sql = format!("SELECT COUNT(*) FROM recharge_keys {}", where_clause);
-        let conn = self.conn()?;
-        let mut stmt = conn.prepare(&sql)?;
-        let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
-        stmt.query_row(params_refs.as_slice(), |row| row.get(0))
-            .map_err(|e| DbError(e.to_string()))
-    }
-
-    pub fn list_recharge_keys_filtered(
-        &self,
-        limit: usize,
-        offset: usize,
-        search: Option<&str>,
-        status: Option<&str>,
-        user_search: Option<&str>,
-    ) -> Result<Vec<RechargeKeyRow>, DbError> {
-        let now = &chrono::Utc::now().to_rfc3339();
-        let (where_clause, param_values) = self.build_recharge_key_filter(search, status, user_search, now);
-        let sql = format!(
-            "SELECT key, amount, used_by, used_at, created_by, created_at, expires_at, revoked FROM recharge_keys {} ORDER BY created_at DESC LIMIT ?{} OFFSET ?{}",
-            where_clause,
-            param_values.len() + 1,
-            param_values.len() + 2,
-        );
-        let conn = self.conn()?;
-        let mut stmt = conn.prepare(&sql)?;
-        let limit_i64 = limit as i64;
-        let offset_i64 = offset as i64;
-        let mut params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
-        params_refs.push(&limit_i64);
-        params_refs.push(&offset_i64);
-        let rows = stmt.query_map(params_refs.as_slice(), |row| {
-            Ok(RechargeKeyRow {
-                key: row.get(0)?,
-                amount: row.get(1)?,
-                used_by: row.get(2)?,
-                used_at: row.get(3)?,
-                created_by: row.get(4)?,
-                created_at: row.get(5)?,
-                expires_at: row.get(6)?,
-                revoked: row.get::<_, i64>(7).unwrap_or(0) != 0,
-            })
-        })?;
-        let mut keys = Vec::new();
-        for row in rows {
-            keys.push(row?);
-        }
-        Ok(keys)
-    }
-
-    fn build_recharge_key_filter(
-        &self,
-        search: Option<&str>,
-        status: Option<&str>,
-        user_search: Option<&str>,
-        now: &str,
-    ) -> (String, Vec<Box<dyn rusqlite::types::ToSql>>) {
-        let mut conditions: Vec<String> = Vec::new();
-        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-
-        if let Some(s) = search.filter(|s| !s.is_empty()) {
-            conditions.push(format!("key LIKE ?{}", params.len() + 1));
-            params.push(Box::new(format!("%{}%", s)));
-        }
-        if let Some(u) = user_search.filter(|u| !u.is_empty()) {
-            conditions.push(format!("(used_by LIKE ?{} OR created_by LIKE ?{})", params.len() + 1, params.len() + 1));
-            params.push(Box::new(format!("%{}%", u)));
-        }
-        match status {
-            Some("active") => {
-                let idx = params.len() + 1;
-                conditions.push("used_by IS NULL".into());
-                conditions.push(format!("(revoked IS NULL OR revoked = 0)"));
-                conditions.push(format!("(expires_at IS NULL OR expires_at > ?{})", idx));
-                params.push(Box::new(now.to_string()));
-            }
-            Some("used") => {
-                conditions.push("used_by IS NOT NULL".into());
-            }
-            Some("expired") => {
-                let idx = params.len() + 1;
-                conditions.push("used_by IS NULL".into());
-                conditions.push("(revoked IS NULL OR revoked = 0)".into());
-                conditions.push("expires_at IS NOT NULL".into());
-                conditions.push(format!("expires_at < ?{}", idx));
-                params.push(Box::new(now.to_string()));
-            }
-            Some("revoked") => {
-                conditions.push("revoked = 1".into());
-            }
-            _ => {}
-        }
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", conditions.join(" AND "))
-        };
-        (where_clause, params)
-    }
-
-    pub fn get_total_consumed(&self, user_id: &str) -> Result<f64, DbError> {
-        let conn = self.conn()?;
-        Ok(conn.query_row(
-            "SELECT COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0)
-             FROM usage_logs WHERE user_id = ?1",
-            params![user_id],
-            |row| row.get::<_, f64>(0),
-        ).unwrap_or(0.0))
-    }
-
-    pub fn get_total_recharged(&self, user_id: &str) -> Result<f64, DbError> {
-        let conn = self.conn()?;
-        conn.query_row(
-            "SELECT COALESCE(SUM(amount), 0) FROM wallet_transactions WHERE user_id = ?1 AND type = 'recharge' AND status = 'completed'",
-            params![user_id],
-            |row| row.get::<_, f64>(0),
-        ).map_err(|e| DbError(e.to_string()))
-    }
-
-    pub fn get_wallet_estimated_days(&self, user_id: &str) -> Result<Option<f64>, DbError> {
-        let conn = self.conn()?;
-        let thirty_days_ago = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
-        let total_cost: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0)
-             FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2",
-            params![user_id, thirty_days_ago],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
-
-        let balance: f64 = conn.query_row(
-            "SELECT balance FROM users WHERE id = ?1",
-            params![user_id],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
-
-        let daily_avg = total_cost / 30.0;
-        if daily_avg <= 0.0 {
-            return Ok(None);
-        }
-        Ok(Some(balance / daily_avg))
-    }
-
-    /// Get a page of user balances — used by the periodic inspection task
-    /// to sync gate status to Redis.  Pagination avoids holding the SQLite
-    /// mutex for too long on large user tables.
-    pub fn get_balances_page(&self, limit: usize, offset: usize) -> Result<Vec<(String, f64, f64)>, DbError> {
-        let conn = self.conn()?;
-        let mut stmt = conn.prepare("SELECT id, balance, frozen FROM users LIMIT ?1 OFFSET ?2")?;
-        let rows = stmt.query_map(params![limit as i64, offset as i64], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?, row.get::<_, f64>(2)?))
-        })?;
-        let mut balances = Vec::new();
-        for row in rows {
-            balances.push(row?);
-        }
-        Ok(balances)
-    }
-
-    /// List wallet transactions grouped by date with date-based pagination.
-    /// Returns (transactions, total_distinct_dates).
-    pub fn list_wallet_tx_by_dates(
+    pub async fn list_wallet_tx_by_dates(
         &self,
         user_id: Option<&str>,
         page: usize,
@@ -1715,136 +409,103 @@ impl Database {
         until: Option<&str>,
         tx_type: Option<&str>,
     ) -> Result<(Vec<WalletTransactionRow>, usize), DbError> {
-        let conn = self.conn()?;
-        // Build WHERE clause
-        let mut where_clauses = Vec::new();
-        let mut param_values: Vec<String> = Vec::new();
-        if let Some(uid) = user_id {
-            where_clauses.push("user_id = ?".to_string());
-            param_values.push(uid.to_string());
-        }
-        if let Some(s) = since {
-            where_clauses.push("created_at >= ?".to_string());
-            param_values.push(s.to_string());
-        }
-        if let Some(u) = until {
-            where_clauses.push("created_at <= ?".to_string());
-            param_values.push(u.to_string());
-        }
-        if let Some(t) = tx_type {
-            where_clauses.push("type = ?".to_string());
-            param_values.push(t.to_string());
-        }
-        let where_sql = if where_clauses.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", where_clauses.join(" AND "))
-        };
-
-        // 1. Count distinct dates
-        let count_sql = format!("SELECT COUNT(DISTINCT substr(created_at,1,10)) FROM wallet_transactions{where_sql}");
-        let mut stmt = conn.prepare(&count_sql)?;
-        let params: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
-        let total_dates: usize = stmt.query_row(params.as_slice(), |row| row.get(0))
-            .map_err(|e| DbError(e.to_string()))?;
-
-        // 2. Query paginated distinct dates
-        let offset = (page.saturating_sub(1)) * size;
-        let mut date_params = param_values.clone();
-        let dates_sql = format!(
-            "SELECT DISTINCT substr(created_at,1,10) as tx_date FROM wallet_transactions{where_sql} ORDER BY tx_date DESC LIMIT ? OFFSET ?"
-        );
-        date_params.push(size.to_string());
-        date_params.push(offset.to_string());
-        let mut stmt = conn.prepare(&dates_sql)?;
-        let date_params_refs: Vec<&dyn rusqlite::types::ToSql> = date_params.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
-        let dates: Vec<String> = stmt.query_map(date_params_refs.as_slice(), |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| DbError(e.to_string()))?;
-
-        if dates.is_empty() {
-            return Ok((Vec::new(), total_dates));
-        }
-
-        // 3. Fetch all transactions for those dates
-        let placeholders: Vec<String> = dates.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
-        let mut tx_params = param_values.clone();
-        tx_params.extend(dates.iter().cloned());
-        let tx_sql = format!(
-            "SELECT id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at \
-             FROM wallet_transactions{where_sql} AND substr(created_at,1,10) IN ({}) \
-             ORDER BY created_at DESC",
-            placeholders.join(",")
-        );
-        let tx_params_refs: Vec<&dyn rusqlite::types::ToSql> = tx_params.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
-        let mut stmt = conn.prepare(&tx_sql)?;
-        let mut rows = Vec::new();
-        for row in stmt.query_map(tx_params_refs.as_slice(), map_wallet_tx)? {
-            rows.push(row?);
-        }
-
-        Ok((rows, total_dates))
+        self.backend
+            .list_wallet_tx_by_dates(user_id, page, size, since, until, tx_type)
+            .await
     }
-}
+    pub async fn get_total_consumed(&self, user_id: &str) -> Result<f64, DbError> {
+        self.backend.get_total_consumed(user_id).await
+    }
+    pub async fn get_total_recharged(&self, user_id: &str) -> Result<f64, DbError> {
+        self.backend.get_total_recharged(user_id).await
+    }
+    pub async fn get_wallet_estimated_days(&self, user_id: &str) -> Result<Option<f64>, DbError> {
+        self.backend.get_wallet_estimated_days(user_id).await
+    }
 
-pub fn insert_usage_row_with_pricing(conn: &Connection, record: &UsageRecord, prompt_price: f64, completion_price: f64) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
-        params![
-            record.timestamp,
-            record.request_id,
-            record.user_id,
-            record.user_name,
-            record.channel_id,
-            record.model,
-            record.prompt_tokens,
-            record.completion_tokens,
-            record.total_tokens,
-            record.latency_ms,
-            record.status_code,
-            record.success as i32,
-            record.request_body,
-            record.response_body,
-            record.reasoning_body,
-            record.api_key_name,
-            record.api_format,
-            record.stream as i32,
-            record.cache_hit_input_tokens,
-            prompt_price,
-            completion_price,
-        ],
-    )?;
-    Ok(())
-}
+    // ── Recharge Keys ────────────────────────────────────────────────────
+    pub async fn create_recharge_key(
+        &self,
+        key: &str,
+        amount: f64,
+        created_by: &str,
+        expires_at: Option<&str>,
+    ) -> Result<(), DbError> {
+        self.backend
+            .create_recharge_key(key, amount, created_by, expires_at)
+            .await
+    }
+    pub async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<f64, DbError> {
+        self.backend.redeem_recharge_key(key, user_id).await
+    }
+    pub async fn revoke_recharge_key(&self, key: &str) -> Result<(), DbError> {
+        self.backend.revoke_recharge_key(key).await
+    }
+    pub async fn list_recharge_keys(&self) -> Result<Vec<RechargeKeyRow>, DbError> {
+        self.backend.list_recharge_keys().await
+    }
+    pub async fn list_recharge_keys_paginated(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<RechargeKeyRow>, DbError> {
+        self.backend.list_recharge_keys_paginated(limit, offset).await
+    }
+    pub async fn count_recharge_keys_filtered(
+        &self,
+        search: Option<&str>,
+        status: Option<&str>,
+        user_search: Option<&str>,
+    ) -> Result<usize, DbError> {
+        self.backend
+            .count_recharge_keys_filtered(search, status, user_search)
+            .await
+    }
+    pub async fn list_recharge_keys_filtered(
+        &self,
+        limit: usize,
+        offset: usize,
+        search: Option<&str>,
+        status: Option<&str>,
+        user_search: Option<&str>,
+    ) -> Result<Vec<RechargeKeyRow>, DbError> {
+        self.backend
+            .list_recharge_keys_filtered(limit, offset, search, status, user_search)
+            .await
+    }
 
-pub fn insert_usage_row(conn: &Connection, record: &UsageRecord) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
-        params![
-            record.timestamp,
-            record.request_id,
-            record.user_id,
-            record.user_name,
-            record.channel_id,
-            record.model,
-            record.prompt_tokens,
-            record.completion_tokens,
-            record.total_tokens,
-            record.latency_ms,
-            record.status_code,
-            record.success as i32,
-            record.request_body,
-            record.response_body,
-            record.reasoning_body,
-            record.api_key_name,
-            record.api_format,
-            record.stream as i32,
-            record.cache_hit_input_tokens,
-            record.prompt_price,
-            record.completion_price,
-        ],
-    )?;
-    Ok(())
+    // ── Settings ─────────────────────────────────────────────────────────
+    pub async fn get_setting(&self, key: &str) -> Result<Option<String>, DbError> {
+        self.backend.get_setting(key).await
+    }
+    pub async fn set_setting(&self, key: &str, value: &str) -> Result<(), DbError> {
+        self.backend.set_setting(key, value).await
+    }
+    pub async fn get_gateway_config(&self) -> Result<GatewayRuntimeConfig, DbError> {
+        self.backend.get_gateway_config().await
+    }
+    pub async fn set_gateway_config(
+        &self,
+        config: &GatewayRuntimeConfig,
+    ) -> Result<(), DbError> {
+        self.backend.set_gateway_config(config).await
+    }
+    pub async fn get_balances_page(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<(String, f64, f64)>, DbError> {
+        self.backend.get_balances_page(limit, offset).await
+    }
+
+    // ── Batch Operations ────────────────────────────────────────────────
+    pub async fn batch_insert_usage_with_billing(
+        &self,
+        batch: &[UsageRecord],
+        billing_enabled: bool,
+    ) -> Result<Vec<(String, f64, f64)>, DbError> {
+        self.backend
+            .batch_insert_usage_with_billing(batch, billing_enabled)
+            .await
+    }
 }

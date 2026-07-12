@@ -55,27 +55,38 @@ async fn main() {
 
     let addr = format!("{}:{}", raw_config.server.host, raw_config.server.port);
 
+    let db_type = raw_config.database.db_type.clone();
     let db_path = raw_config.database.path.clone();
+    let pg_url = if raw_config.database.pg_url.is_empty() {
+        let user = std::env::var("DB_USER").unwrap_or_else(|_| "postgres".to_string());
+        let password = std::env::var("DB_PASSWORD").unwrap_or_else(|_| "postgres123".to_string());
+        let db_name = std::env::var("DB_NAME").unwrap_or_else(|_| "aigateway".to_string());
+        let host = std::env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string());
+        let port = std::env::var("DB_PORT").unwrap_or_else(|_| "5432".to_string());
+        format!("postgres://{}:{}@{}:{}/{}", user, password, host, port, db_name)
+    } else {
+        raw_config.database.pg_url.clone()
+    };
     let jwt_secret = loader::resolve_jwt_secret(&raw_config);
     let config = Arc::new(RwLock::new(raw_config));
 
-    let db = Arc::new(Database::new(&db_path));
+    let db = Arc::new(Database::new(&db_type, &db_path, &pg_url).await);
 
     // Initialize database
-    if let Err(e) = db.migrate() {
+    if let Err(e) = db.migrate().await {
         tracing::error!("Failed to initialize database: {}", e);
         std::process::exit(1);
     }
 
     // Seed from config YAML if database is empty
-    if let Err(e) = loader::seed_from_config(&config_path, &db) {
+    if let Err(e) = loader::seed_from_config(&config_path, &db).await {
         tracing::error!("Failed to seed database: {}", e);
         std::process::exit(1);
     }
 
     // Initialize services
-    let auth = Arc::new(AuthService::new(db.clone()));
-    let routing = Arc::new(RoutingService::new(db.clone()));
+    let auth = Arc::new(AuthService::new(db.clone()).await);
+    let routing = Arc::new(RoutingService::new(db.clone()).await);
     let providers = Arc::new(ProviderRegistry::new());
     let rate_limiter = Arc::new(RateLimiter::new());
     rate_limiter.start_cleanup_task();
@@ -108,7 +119,7 @@ async fn main() {
         if days > 0 {
             let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
             let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%S").to_string();
-            match db.purge_usage_logs(&cutoff_str) {
+            match db.purge_usage_logs(&cutoff_str).await {
                 Ok(count) => {
                     tracing::info!("Purged {} usage log records older than {} days", count, days)
                 }
@@ -118,12 +129,12 @@ async fn main() {
     }
 
     // Load allow_private_ips setting from DB (default: true)
-    let allow_private = db.get_setting("allow_private_ips").ok().flatten();
+    let allow_private = db.get_setting("allow_private_ips").await.ok().flatten();
     provider::set_allow_private_ips(allow_private.as_deref() != Some("false"));
 
     // Load runtime gateway config (timeouts, etc.)
     let gateway_config = Arc::new(RwLock::new(
-        db.get_gateway_config().unwrap_or_default(),
+        db.get_gateway_config().await.unwrap_or_default(),
     ));
 
     // Initialize Redis cache (noop when disabled)
@@ -165,7 +176,7 @@ async fn main() {
                 tokio::time::sleep(Duration::from_secs(10)).await;
                 let mut offset = 0usize;
                 loop {
-                    let page = match db.get_balances_page(PAGE_SIZE, offset) {
+                    let page = match db.get_balances_page(PAGE_SIZE, offset).await {
                         Ok(b) => b,
                         Err(e) => {
                             tracing::warn!("Inspection: failed to read balances page: {}", e);

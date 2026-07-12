@@ -49,12 +49,35 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DatabaseConfig {
+    #[serde(default = "default_db_type")]
+    pub db_type: String,
     #[serde(default = "default_db_path")]
     pub path: String,
+    #[serde(default = "default_pg_url")]
+    pub pg_url: String,
     #[serde(default = "default_retention_days")]
     pub retention_days: u64,
+}
+
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            db_type: default_db_type(),
+            path: default_db_path(),
+            pg_url: default_pg_url(),
+            retention_days: default_retention_days(),
+        }
+    }
+}
+
+fn default_db_type() -> String {
+    "postgres".to_string()
+}
+
+fn default_pg_url() -> String {
+    String::new()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

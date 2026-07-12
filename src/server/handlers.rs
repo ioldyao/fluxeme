@@ -147,6 +147,7 @@ async fn check_wallet_balance(
     }
     // Final fallback — read from SQLite directly
     let (balance, frozen) = state.db.get_wallet_balance(user_id)
+        .await
         .map_err(|e| GatewayError::Internal(e.0))?;
     if balance - frozen < 0.0001 {
         return Err(GatewayError::PaymentRequired("Insufficient balance".into()));
@@ -1164,7 +1165,7 @@ pub async fn chat_completions(
         check_wallet_balance(&*state, &user.user_id).await?;
     }
 
-    let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model)?;
+    let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model).await?;
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
@@ -1267,7 +1268,7 @@ pub async fn messages(
         check_wallet_balance(&*state, &user.user_id).await?;
     }
 
-    let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model)?;
+    let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model).await?;
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
@@ -1341,7 +1342,7 @@ async fn relay_to_upstream(
         check_wallet_balance(state, &user.user_id).await?;
     }
 
-    let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model)?;
+    let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model).await?;
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
@@ -1532,7 +1533,7 @@ pub async fn list_models(
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<Value>, GatewayError> {
     let user = state.auth.authenticate(&headers)?;
-    let subs = state.db.list_subscriptions(&user.user_id).unwrap_or_default();
+    let subs = state.db.list_subscriptions(&user.user_id).await.unwrap_or_default();
     let subscribed: std::collections::HashSet<String> = subs.iter().map(|m| m.id.clone()).collect();
 
     let mut models: Vec<Value> = state.routing.list_display_models()

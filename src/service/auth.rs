@@ -13,19 +13,19 @@ pub struct AuthService {
 }
 
 impl AuthService {
-    pub fn new(db: Arc<Database>) -> Self {
+    pub async fn new(db: Arc<Database>) -> Self {
         let svc = Self {
             db,
             users: RwLock::new(HashMap::new()),
             api_keys: RwLock::new(HashMap::new()),
         };
-        svc.reload();
+        svc.reload().await;
         svc
     }
 
     /// Reload all caches from database. Called after admin modifies users/keys.
-    pub fn reload(&self) {
-        match self.db.all_api_keys() {
+    pub async fn reload(&self) {
+        match self.db.all_api_keys().await {
             Ok(pairs) => {
                 let mut map = HashMap::new();
                 for (user, key) in &pairs {
@@ -36,7 +36,7 @@ impl AuthService {
             Err(e) => tracing::error!("Failed to load API keys: {}", e),
         }
 
-        match self.db.list_users() {
+        match self.db.list_users().await {
             Ok(users) => {
                 let map: HashMap<_, _> = users.into_iter().map(|u| (u.id.clone(), u)).collect();
                 *self.users.write().unwrap() = map;

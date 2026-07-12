@@ -56,7 +56,7 @@ impl HealthService {
 
     /// Check a single channel by ID. Returns per-endpoint health results.
     pub async fn check_channel(&self, channel_id: &str) -> Result<ChannelHealthResult, String> {
-        let channels = self.db.list_channels().map_err(|e| e.0)?;
+        let channels = self.db.list_channels().await.map_err(|e| e.0)?;
         let ch = channels.iter().find(|c| c.id == channel_id)
             .ok_or_else(|| format!("Channel '{}' not found", channel_id))?;
 
@@ -88,7 +88,7 @@ impl HealthService {
     /// Query all channel endpoints' /v1/models and update context_length for matching models.
     /// Returns (total_models_updated, channel_count_checked).
     pub async fn check_all_channels(&self) -> Result<(usize, usize), String> {
-        let channels = self.db.list_channels().map_err(|e| e.0)?;
+        let channels = self.db.list_channels().await.map_err(|e| e.0)?;
         let mut total_updated = 0;
         let mut channels_checked = 0;
 
@@ -112,7 +112,7 @@ impl HealthService {
     /// Fetch raw upstream model list from a channel's endpoint.
     /// Returns deduplicated model info, keeping the max max_model_len across endpoints.
     pub async fn list_upstream_models(&self, channel_id: &str) -> Result<Vec<UpstreamModelInfo>, String> {
-        let channels = self.db.list_channels().map_err(|e| e.0)?;
+        let channels = self.db.list_channels().await.map_err(|e| e.0)?;
         let ch = channels.iter()
             .find(|c| c.id == channel_id)
             .ok_or_else(|| format!("Channel '{}' not found", channel_id))?;
@@ -167,8 +167,8 @@ impl HealthService {
         let body = self.fetch_upstream_models(url, api_key).await?;
 
         // Get all gateway models to match against
-        let models = self.db.list_published_models().map_err(|e| e.0)?;
-        let all_models = self.db.list_models().map_err(|e| e.0)?;
+        let models = self.db.list_published_models().await.map_err(|e| e.0)?;
+        let all_models = self.db.list_models().await.map_err(|e| e.0)?;
 
         let mut updated = 0;
         for upstream in &body {
@@ -179,7 +179,7 @@ impl HealthService {
                 if match_pattern(&upstream.id, &m.model_pattern) {
                     let current = m.context_length.unwrap_or(0);
                     if len > current {
-                        self.db.set_model_context_length(&m.id, len).map_err(|e| e.0)?;
+                        self.db.set_model_context_length(&m.id, len).await.map_err(|e| e.0)?;
                         updated += 1;
                     }
                 }

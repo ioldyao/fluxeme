@@ -90,7 +90,7 @@ pub fn resolve_jwt_secret(cfg: &AppConfig) -> String {
 }
 
 /// Seed database from config YAML if database is empty.
-pub fn seed_from_config(
+pub async fn seed_from_config(
     config_path: &str,
     db: &Database,
 ) -> Result<(), String> {
@@ -250,7 +250,7 @@ pub fn seed_from_config(
             token_version: 0,
             role: "user".to_string(),
         };
-        if let Err(e) = db.create_user(&user) {
+        if let Err(e) = db.create_user(&user).await {
             tracing::warn!("Seed user {}: {}", t.id, e);
         }
         for k in &t.keys {
@@ -263,7 +263,7 @@ pub fn seed_from_config(
                 spend_limit: None,
                 allowed_models: None,
             };
-            if let Err(e) = db.create_api_key(&ak) {
+            if let Err(e) = db.create_api_key(&ak).await {
                 tracing::warn!("Seed api_key for {}: {}", t.id, e);
             }
         }
@@ -291,7 +291,7 @@ pub fn seed_from_config(
                     })
                     .collect(),
             };
-            if let Err(e) = db.create_channel(&channel) {
+            if let Err(e) = db.create_channel(&channel).await {
                 tracing::warn!("Seed channel {}: {}", c.id, e);
             }
         }
@@ -326,7 +326,7 @@ pub fn seed_from_config(
                 context_length: None,
                 category: String::default(),
             };
-            if let Err(e) = db.create_model(&model) {
+            if let Err(e) = db.create_model(&model).await {
                 tracing::warn!("Seed model {}: {}", m.id, e);
             }
         }
@@ -340,7 +340,7 @@ pub fn seed_from_config(
                 model_pattern: r.model_pattern.clone(),
                 channel_id: r.channel_id.clone(),
             };
-            if let Err(e) = db.create_rule(&rule) {
+            if let Err(e) = db.create_rule(&rule).await {
                 tracing::warn!("Seed rule {}: {}", r.name, e);
             }
         }

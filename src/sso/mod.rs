@@ -205,7 +205,7 @@ impl SsoModule {
             .unwrap_or_else(|| sub.clone());
 
         // Create user if not exists
-        if db.get_user(&sub).unwrap_or(None).is_none() {
+        if db.get_user(&sub).await.unwrap_or(None).is_none() {
             let user = User {
                 id: sub.clone(),
                 name: user_name.clone(),
@@ -215,7 +215,7 @@ impl SsoModule {
                 token_version: 0,
                 role: "user".to_string(),
             };
-            db.create_user(&user)
+            db.create_user(&user).await
                 .map_err(|e| AdminError::internal(format!("Failed to create user: {e}")))?;
         }
 
