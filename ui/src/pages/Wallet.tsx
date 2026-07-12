@@ -137,7 +137,7 @@ export default function WalletPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const lowBalance = overview && (overview.balance <= 0 || (estimated?.days != null && estimated.days < 7));
+  const lowBalance = overview && (overview.balance <= 0 || (estimated?.days != null && estimated.days < 10));
 
   return (
     <div>
