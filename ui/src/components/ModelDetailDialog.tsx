@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -169,6 +169,14 @@ export function ModelDetailDialog({ model, open, onOpenChange }: Props) {
 
   if (!model) return null;
 
+  const hasAnthropic = model.channels?.some(c => c.provider === 'anthropic') ?? false;
+
+  useEffect(() => {
+    if (!hasAnthropic && format === 'anthropic') {
+      setFormat('openai');
+    }
+  }, [model?.id, hasAnthropic, format]);
+
   const code = buildCode(model, format, lang);
 
   const handleCopy = async () => {
@@ -240,7 +248,7 @@ export function ModelDetailDialog({ model, open, onOpenChange }: Props) {
               <Tabs value={format} onValueChange={(v) => setFormat(v as ApiFormat)}>
                 <TabsList>
                   <TabsTrigger value="openai">OpenAI</TabsTrigger>
-                  <TabsTrigger value="anthropic">Anthropic</TabsTrigger>
+                  {hasAnthropic && <TabsTrigger value="anthropic">Anthropic</TabsTrigger>}
                 </TabsList>
               </Tabs>
 

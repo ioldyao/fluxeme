@@ -58,6 +58,9 @@ pub struct ModelChannel {
     pub channel_id: String,
     #[serde(default = "default_priority")]
     pub priority: i32,
+    /// Populated on read by joining with channels.provider.
+    #[serde(default)]
+    pub provider: String,
 }
 
 fn default_priority() -> i32 {

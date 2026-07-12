@@ -58,6 +58,7 @@ export interface Pricing {
 export interface ModelChannel {
   channel_id: string;
   priority: number;
+  provider?: string;
 }
 
 export interface Model {

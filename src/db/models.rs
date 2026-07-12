@@ -30,7 +30,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Model>, crate::db::DbError> {
 
     // Single batch query for all bindings
     let mut bstmt = conn.prepare(
-        "SELECT model_id, channel_id, priority FROM model_channels ORDER BY model_id, priority",
+        "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, '') FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id ORDER BY mc.model_id, mc.priority",
     )?;
     let binding_rows = bstmt
         .query_map([], |row| {
@@ -40,6 +40,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Model>, crate::db::DbError> {
                     model_id: row.get(0)?,
                     channel_id: row.get(1)?,
                     priority: row.get(2)?,
+                    provider: row.get::<_, String>(3).unwrap_or_default(),
                 },
             ))
         })?
@@ -128,13 +129,14 @@ pub(super) fn list_bindings(
     model_id: &str,
 ) -> Result<Vec<ModelChannel>, crate::db::DbError> {
     let mut stmt = conn.prepare(
-        "SELECT model_id, channel_id, priority FROM model_channels WHERE model_id = ?1 ORDER BY priority",
+        "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, '') FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id WHERE mc.model_id = ?1 ORDER BY mc.priority",
     )?;
     let rows = stmt.query_map(params![model_id], |row| {
         Ok(ModelChannel {
             model_id: row.get(0)?,
             channel_id: row.get(1)?,
             priority: row.get(2)?,
+            provider: row.get::<_, String>(3).unwrap_or_default(),
         })
     })?;
     let mut bindings = Vec::new();
@@ -153,7 +155,7 @@ pub fn load_bindings(
         return Ok(());
     }
     let mut stmt = conn.prepare(
-        "SELECT model_id, channel_id, priority FROM model_channels ORDER BY model_id, priority",
+        "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, '') FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id ORDER BY mc.model_id, mc.priority",
     )?;
     let rows = stmt
         .query_map([], |row| {
@@ -163,6 +165,7 @@ pub fn load_bindings(
                     model_id: row.get(0)?,
                     channel_id: row.get(1)?,
                     priority: row.get(2)?,
+                    provider: row.get::<_, String>(3).unwrap_or_default(),
                 },
             ))
         })?

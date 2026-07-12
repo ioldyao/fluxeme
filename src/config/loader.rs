@@ -371,6 +371,7 @@ pub fn seed_from_config(
                         model_id: m.id.clone(),
                         channel_id: mc.channel_id.clone(),
                         priority: mc.priority,
+                        provider: String::new(),
                     })
                     .collect(),
                 published: false,
