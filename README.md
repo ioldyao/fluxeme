@@ -27,8 +27,8 @@ A reverse proxy gateway for large language model APIs. Provides a unified OpenAI
 ### Docker Compose (recommended)
 
 ```bash
-cp config/config.yaml config/config.local.yaml
-# Edit config/config.local.yaml as needed
+cp .env.example .env
+# Edit .env and config/config.yaml as needed
 docker compose up -d
 ```
 
@@ -62,8 +62,8 @@ Edit `config/config.yaml`. Key settings:
 | `admin.password` | Admin login password | `admin123` |
 | `database.path` | SQLite database path | `data/gateway.db` |
 | `jwt_secret` | JWT signing secret | `${GATEWAY_JWT_SECRET}` |
-| `cache.enabled` | Enable Redis cache | `false` |
-| `cache.redis_url` | Redis connection URL | `redis://127.0.0.1:6379` |
+| `cache.enabled` | Enable Redis cache | `true` |
+| `cache.redis_url` | Redis connection URL（支持 `${VAR}` 环境变量） | `redis://127.0.0.1:6379` |
 
 Environment variables in config (`${VAR_NAME}`) are resolved from `.env` or environment.
 

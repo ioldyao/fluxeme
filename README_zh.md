@@ -27,8 +27,8 @@
 ### Docker Compose（推荐）
 
 ```bash
-cp config/config.yaml config/config.local.yaml
-# 按需修改配置
+cp .env.example .env
+# 按需修改 .env 和 config/config.yaml
 docker compose up -d
 ```
 
@@ -62,8 +62,8 @@ cd ui && pnpm run build
 | `admin.password` | 管理员密码 | `admin123` |
 | `database.path` | 数据库路径 | `data/gateway.db` |
 | `jwt_secret` | JWT 签名密钥 | `${GATEWAY_JWT_SECRET}` |
-| `cache.enabled` | 启用缓存 | `false` |
-| `cache.redis_url` | Redis 连接地址 | `redis://127.0.0.1:6379` |
+| `cache.enabled` | 启用缓存 | `true` |
+| `cache.redis_url` | Redis 连接地址（支持 `${VAR}` 环境变量） | `redis://127.0.0.1:6379` |
 
 配置文件中的 `${VAR_NAME}` 会自动从 `.env` 文件或环境变量中读取。
 
