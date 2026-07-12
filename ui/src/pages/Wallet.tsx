@@ -45,12 +45,20 @@ export default function WalletPage() {
   );
   const totalPages = Math.max(1, Math.ceil((txData?.total ?? 0) / PAGE_SIZE));
 
+  const toLocalDate = (utcStr: string) => {
+    const d = new Date(utcStr);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
   // Group transactions by day with aggregates
   const dayGroups = useMemo(() => {
     if (!txData?.items) return [];
     const groups: Record<string, typeof txData.items> = {};
     for (const tx of txData.items) {
-      const day = tx.created_at.split('T')[0];
+      const day = toLocalDate(tx.created_at);
       if (!groups[day]) groups[day] = [];
       groups[day].push(tx);
     }
@@ -361,12 +369,12 @@ export default function WalletPage() {
                       </span>
                       <div className="flex items-center gap-3 text-xs ml-4">
                         {day.deductionCount > 0 && (
-                          <button
+                          <span
                             onClick={(e) => { e.stopPropagation(); navigate(`/usage?date=${day.date}`); }}
                             className="text-destructive hover:underline cursor-pointer"
                           >
                             {t('wallet.groupDeduction', { count: day.deductionCount, amount: fmt(day.deductionTotal) })}
-                          </button>
+                          </span>
                         )}
                         {day.rechargeCount > 0 && (
                           <span className="text-green-600">

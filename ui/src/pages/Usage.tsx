@@ -86,8 +86,10 @@ export default function Usage() {
       const start = new Date(Date.now() - 30 * 86400000);
       return { start_date: start.toISOString() };
     }
-    // Custom date from URL: dateFilter is YYYY-MM-DD
-    return { start_date: `${dateFilter}T00:00:00`, end_date: `${dateFilter}T23:59:59` };
+    // Custom date from URL: dateFilter is YYYY-MM-DD — convert local date to UTC range
+    const startLocal = new Date(`${dateFilter}T00:00:00`);
+    const endLocal = new Date(`${dateFilter}T23:59:59`);
+    return { start_date: startLocal.toISOString(), end_date: endLocal.toISOString() };
   }, [dateFilter]);
   const isCustomDate = dateFilter.length === 10 && dateFilter.includes('-');
 
