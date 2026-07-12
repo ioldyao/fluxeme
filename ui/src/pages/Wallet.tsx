@@ -94,7 +94,7 @@ export default function WalletPage() {
   const [rechargeAmt, setRechargeAmt] = useState('');
   const [keyInput, setKeyInput] = useState('');
   const [createKeyAmt, setCreateKeyAmt] = useState('');
-  const [newKey, setNewKey] = useState<string | null>(null);
+  const [newKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const fmt = (usd: number) => {
