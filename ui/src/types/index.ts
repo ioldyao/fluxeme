@@ -97,6 +97,7 @@ export interface UsageRecord {
   api_key_name?: string | null;
   api_format?: string;
   stream: boolean;
+  cache_hit_input_tokens: number;
 }
 
 export interface DashboardStats {

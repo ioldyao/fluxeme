@@ -202,6 +202,7 @@ const en: Record<string, string> = {
   'table.prompt': 'Prompt',
   'table.completion': 'Completion',
   'table.total': 'Total',
+  'table.cacheHit': 'Prompt (cache hit)',
   'table.cost': 'Cost',
   'empty.noUsers': 'No users configured.',
   'empty.noChannels': 'No channels configured.',

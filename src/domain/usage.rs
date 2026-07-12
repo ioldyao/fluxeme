@@ -20,4 +20,5 @@ pub struct UsageRecord {
     pub api_key_name: Option<String>,
     pub api_format: String,
     pub stream: bool,
+    pub cache_hit_input_tokens: u64,
 }

@@ -130,6 +130,10 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                 <div className="font-medium font-mono">{record.prompt_tokens.toLocaleString()}</div>
               </div>
               <div className="rounded-lg border p-3 space-y-1">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('table.cacheHit')}</div>
+                <div className="font-medium font-mono">{record.cache_hit_input_tokens > 0 ? record.cache_hit_input_tokens.toLocaleString() : '—'}</div>
+              </div>
+              <div className="rounded-lg border p-3 space-y-1">
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('usage.completionTokens')}</div>
                 <div className="font-medium font-mono">{record.completion_tokens.toLocaleString()}</div>
               </div>

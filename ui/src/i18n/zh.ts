@@ -202,6 +202,7 @@ const zh: Record<string, string> = {
   'table.prompt': '输入',
   'table.completion': '输出',
   'table.total': '合计',
+  'table.cacheHit': '输入(缓存命中)',
   'table.cost': '费用',
   'empty.noUsers': '暂无用户',
   'empty.noChannels': '暂无渠道',

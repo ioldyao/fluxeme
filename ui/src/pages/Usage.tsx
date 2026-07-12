@@ -129,6 +129,7 @@ export default function Usage() {
                         <th className="text-left py-3 px-4">{t('table.model')}</th>
                         <th className="text-left py-3 px-4">{t('usage.apiFormat')}</th>
                         <th className="text-right py-3 px-4">{t('table.prompt')}</th>
+                        <th className="text-right py-3 px-4">{t('table.cacheHit')}</th>
                         <th className="text-right py-3 px-4">{t('table.completion')}</th>
                         <th className="text-right py-3 px-4">{t('table.total')}</th>
                         {role === 'admin' && <th className="text-right py-3 px-4">{t('table.cost')}</th>}
@@ -161,6 +162,7 @@ export default function Usage() {
                           </td>
                           <td className="py-3 px-4 font-mono text-xs">{r.api_format ?? '—'}</td>
                           <td className="py-3 px-4 text-right">{r.prompt_tokens}</td>
+                          <td className="py-3 px-4 text-right text-muted-foreground">{r.cache_hit_input_tokens > 0 ? r.cache_hit_input_tokens : '—'}</td>
                           <td className="py-3 px-4 text-right">{r.completion_tokens}</td>
                           <td className="py-3 px-4 text-right font-medium">{r.total_tokens}</td>
                           {role === 'admin' && <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, modelPricing[r.model], currency, rate)}</td>}

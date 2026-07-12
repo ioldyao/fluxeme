@@ -230,7 +230,9 @@ fn extract_sse_content(data: &str) -> (String, String) {
         if let Ok(val) = serde_json::from_str::<Value>(json_str) {
             // OpenAI format: choices[0].delta.{reasoning_content, content}
             if let Some(delta) = val.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("delta")) {
-                if let Some(text) = delta.get("reasoning_content").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                if let Some(text) = delta.get("reasoning") // normalized name (from normalize_sse_reasoning)
+                    .or_else(|| delta.get("reasoning_content"))
+                    .and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
                     reasoning.push_str(text);
                 }
                 if let Some(text) = delta.get("content").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
@@ -261,9 +263,10 @@ fn extract_sse_content(data: &str) -> (String, String) {
 /// Scans forward, taking the max for each token type — handles both
 /// OpenAI (final chunk has all usage) and Anthropic (message_start has
 /// prompt_tokens, message_delta has completion_tokens).
-fn parse_sse_usage(data: &str) -> (u64, u64) {
+fn parse_sse_usage(data: &str) -> (u64, u64, u64) {
     let mut p_tokens = 0u64;
     let mut c_tokens = 0u64;
+    let mut cache_hit = 0u64;
     for line in data.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed == "data: [DONE]" || trimmed.starts_with("event: ") {
@@ -271,14 +274,20 @@ fn parse_sse_usage(data: &str) -> (u64, u64) {
         }
         let json_str = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
         if let Ok(val) = serde_json::from_str::<Value>(json_str) {
-            // OpenAI format: {usage: {prompt_tokens, completion_tokens}}
+            // OpenAI format: {usage: {prompt_tokens, completion_tokens, prompt_tokens_details: {cached_tokens}}}
             if let Some(usage) = val.get("usage") {
+                if usage.is_null() { continue; }
                 let p = usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                 let c = usage.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                 if p > p_tokens { p_tokens = p; }
                 if c > c_tokens { c_tokens = c; }
+                if let Some(details) = usage.get("prompt_tokens_details") {
+                    if let Some(cached) = details.get("cached_tokens").and_then(|v| v.as_u64()) {
+                        if cached > cache_hit { cache_hit = cached; }
+                    }
+                }
             }
-            // Anthropic message_start: {type: "message_start", message: {usage: {input_tokens, output_tokens}}}
+            // Anthropic message_start: {type: "message_start", message: {usage: {input_tokens, output_tokens, cache_read_input_tokens}}}
             if val.get("type").and_then(|t| t.as_str()) == Some("message_start") {
                 if let Some(msg) = val.get("message") {
                     if let Some(usage) = msg.get("usage") {
@@ -287,6 +296,9 @@ fn parse_sse_usage(data: &str) -> (u64, u64) {
                         }
                         if let Some(c) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
                             if c > c_tokens { c_tokens = c; }
+                        }
+                        if let Some(cached) = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()) {
+                            if cached > cache_hit { cache_hit = cached; }
                         }
                     }
                 }
@@ -301,7 +313,7 @@ fn parse_sse_usage(data: &str) -> (u64, u64) {
             }
         }
     }
-    (p_tokens, c_tokens)
+    (p_tokens, c_tokens, cache_hit)
 }
 
 // ── SSE buffering stream ────────────────────────────────────────────
@@ -456,7 +468,21 @@ impl<S> UsageTrackingStream<S> {
         self.recorded = true;
 
         let latency_ms = self.start.elapsed().as_millis() as u64;
-        let (p_tokens, c_tokens) = parse_sse_usage(&self.resp_buf);
+        let (mut p_tokens, mut c_tokens, cache_hit) = parse_sse_usage(&self.resp_buf);
+
+        // For cancelled streams (status 499): if SSE has content but no usage
+        // data arrived (usage is only in the final chunk), estimate from text
+        // length. Rough: ~4 chars/token for English, ~2 for CJK.
+        if !completed && p_tokens == 0 && c_tokens == 0 {
+            let (reasoning, content) = extract_sse_content(&self.resp_buf);
+            let total_content = reasoning.len() + content.len();
+            if total_content > 0 {
+                if let Some(ref body) = self.req_body {
+                    p_tokens = (body.len() / 4).max(1) as u64;
+                }
+                c_tokens = (total_content / 3).max(1) as u64;
+            }
+        }
 
         self.usage.record(UsageRecord {
             timestamp: Utc::now().to_rfc3339(),
@@ -468,6 +494,7 @@ impl<S> UsageTrackingStream<S> {
             prompt_tokens: p_tokens,
             completion_tokens: c_tokens,
             total_tokens: p_tokens + c_tokens,
+            cache_hit_input_tokens: cache_hit,
             latency_ms,
             status_code: if completed { 200 } else { 499 },
             success: completed,
@@ -483,11 +510,12 @@ impl<S> UsageTrackingStream<S> {
                 })
             },
             response_body: {
-                let (_, content) = extract_sse_content(&self.resp_buf);
-                Some(if content.len() > 102400 {
-                    content.chars().take(102400).collect()
+                let (reasoning, content) = extract_sse_content(&self.resp_buf);
+                let text = if content.is_empty() { reasoning } else { content };
+                Some(if text.len() > 102400 {
+                    text.chars().take(102400).collect()
                 } else {
-                    content
+                    text
                 })
             },
             stream: true,
@@ -627,7 +655,7 @@ async fn handle_streaming(
         }
         Err(e) => {
             let latency_ms = start.elapsed().as_millis() as u64;
-            let (p_tokens, c_tokens) = parse_sse_usage("");
+            let (p_tokens, c_tokens, cache_hit) = parse_sse_usage("");
             state.usage.record(UsageRecord {
                 timestamp: Utc::now().to_rfc3339(),
                 request_id,
@@ -638,6 +666,7 @@ async fn handle_streaming(
                 prompt_tokens: p_tokens,
                 completion_tokens: c_tokens,
                 total_tokens: p_tokens + c_tokens,
+                cache_hit_input_tokens: cache_hit,
                 latency_ms,
                 status_code: 502,
                 success: false,
@@ -712,7 +741,7 @@ async fn handle_messages_streaming(
         }
         Err(e) => {
             let latency_ms = start.elapsed().as_millis() as u64;
-            let (p_tokens, c_tokens) = parse_sse_usage("");
+            let (p_tokens, c_tokens, cache_hit) = parse_sse_usage("");
             state.usage.record(UsageRecord {
                 timestamp: Utc::now().to_rfc3339(),
                 request_id,
@@ -723,6 +752,7 @@ async fn handle_messages_streaming(
                 prompt_tokens: p_tokens,
                 completion_tokens: c_tokens,
                 total_tokens: p_tokens + c_tokens,
+                cache_hit_input_tokens: cache_hit,
                 latency_ms,
                 status_code: 502,
                 success: false,
@@ -770,6 +800,7 @@ async fn handle_non_streaming(
 
                 let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
                 let completion_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0);
+                let cache_hit = resp["usage"]["prompt_tokens_details"]["cached_tokens"].as_u64().unwrap_or(0);
 
                 let reasoning = resp.get("choices")
                     .and_then(|c| c.get(0))
@@ -790,10 +821,11 @@ async fn handle_non_streaming(
                     prompt_tokens,
                     completion_tokens,
                     total_tokens: prompt_tokens + completion_tokens,
+                    cache_hit_input_tokens: cache_hit,
                     latency_ms,
                     status_code: 200,
                     success: true,
-                    request_body: req_body,
+                    request_body: req_body.clone(),
                     response_body: serde_json::to_string(&resp).ok(),
                     reasoning_body: reasoning,
                     api_key_name: Some(api_key_name),
@@ -845,6 +877,7 @@ async fn handle_non_streaming(
                     prompt_tokens: 0,
                     completion_tokens: 0,
                     total_tokens: 0,
+                    cache_hit_input_tokens: 0,
                     latency_ms,
                     status_code: 502,
                     success: false,
@@ -873,6 +906,7 @@ async fn handle_non_streaming(
         prompt_tokens: 0,
         completion_tokens: 0,
         total_tokens: 0,
+        cache_hit_input_tokens: 0,
         latency_ms,
         status_code: 502,
         success: false,
@@ -916,6 +950,7 @@ async fn handle_messages_non_streaming(
 
                 let prompt_tokens = resp["usage"]["input_tokens"].as_u64().unwrap_or(0);
                 let completion_tokens = resp["usage"]["output_tokens"].as_u64().unwrap_or(0);
+                let cache_hit = resp["usage"]["cache_read_input_tokens"].as_u64().unwrap_or(0);
 
                 let reasoning = resp.get("content")
                     .and_then(|c| c.as_array())
@@ -944,6 +979,7 @@ async fn handle_messages_non_streaming(
                     prompt_tokens,
                     completion_tokens,
                     total_tokens: prompt_tokens + completion_tokens,
+                    cache_hit_input_tokens: cache_hit,
                     latency_ms,
                     status_code: 200,
                     success: true,
@@ -985,6 +1021,7 @@ async fn handle_messages_non_streaming(
                     prompt_tokens: 0,
                     completion_tokens: 0,
                     total_tokens: 0,
+                    cache_hit_input_tokens: 0,
                     latency_ms,
                     status_code: 502,
                     success: false,
@@ -1012,6 +1049,7 @@ async fn handle_messages_non_streaming(
         prompt_tokens: 0,
         completion_tokens: 0,
         total_tokens: 0,
+        cache_hit_input_tokens: 0,
         latency_ms,
         status_code: 502,
         success: false,
@@ -1235,6 +1273,7 @@ async fn relay_to_upstream(
                 normalize_reasoning_inner(&mut resp);
                 let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
                 let completion_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0);
+                let cache_hit = resp["usage"]["prompt_tokens_details"]["cached_tokens"].as_u64().unwrap_or(0);
 
                 let reasoning = resp.get("choices")
                     .and_then(|c| c.get(0))
@@ -1255,6 +1294,7 @@ async fn relay_to_upstream(
                     prompt_tokens,
                     completion_tokens,
                     total_tokens: prompt_tokens + completion_tokens,
+                    cache_hit_input_tokens: cache_hit,
                     latency_ms,
                     status_code: 200,
                     success: true,
@@ -1296,6 +1336,7 @@ async fn relay_to_upstream(
                     prompt_tokens: 0,
                     completion_tokens: 0,
                     total_tokens: 0,
+                    cache_hit_input_tokens: 0,
                     latency_ms,
                     status_code: 502,
                     success: false,
@@ -1322,6 +1363,7 @@ async fn relay_to_upstream(
         prompt_tokens: 0,
         completion_tokens: 0,
         total_tokens: 0,
+        cache_hit_input_tokens: 0,
         latency_ms,
         status_code: 502,
         success: false,
