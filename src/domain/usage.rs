@@ -1,5 +1,13 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Default, Clone)]
+pub struct UsageFilter {
+    pub user_id: Option<String>,
+    pub model: Option<String>,
+    pub api_key_name: Option<String>,
+    pub api_format: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageRecord {
     pub timestamp: String,

@@ -6,6 +6,9 @@ interface UsageParams {
   limit?: number;
   offset?: number;
   user_id?: string;
+  model?: string;
+  api_key?: string;
+  api_format?: string;
 }
 
 interface UsageResponse {
@@ -18,6 +21,9 @@ export function useUsage(params: UsageParams = {}) {
   if (params.limit) searchParams.set('limit', String(params.limit));
   if (params.offset) searchParams.set('offset', String(params.offset));
   if (params.user_id) searchParams.set('user_id', params.user_id);
+  if (params.model) searchParams.set('model', params.model);
+  if (params.api_key) searchParams.set('api_key', params.api_key);
+  if (params.api_format) searchParams.set('api_format', params.api_format);
   const qs = searchParams.toString();
 
   // Serialize to prevent object-reference instability causing infinite refetch

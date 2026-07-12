@@ -14,6 +14,7 @@ use crate::domain::channel::Channel;
 use crate::domain::model::Model;
 use crate::domain::model::Pricing;
 use crate::domain::routing::RoutingRule;
+use crate::domain::usage::UsageFilter;
 use crate::domain::user::{ApiKey, SessionInfo, User};
 use crate::ratelimit::RateLimiter;
 use crate::config::types::GatewayRuntimeConfig;
@@ -1487,6 +1488,9 @@ struct UsageQuery {
     limit: Option<usize>,
     offset: Option<usize>,
     user_id: Option<String>,
+    model: Option<String>,
+    api_key: Option<String>,
+    api_format: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1506,15 +1510,22 @@ async fn get_usage(
     let offset = q.offset.unwrap_or(0);
 
     // Regular users can only see their own usage
-    let user_filter = if session.role == "user" {
+    let user_filter: Option<String> = if session.role == "user" {
         Some(session.user_id.clone())
     } else {
         q.user_id
     };
 
+    let filter = UsageFilter {
+        user_id: user_filter,
+        model: q.model,
+        api_key_name: q.api_key,
+        api_format: q.api_format,
+    };
+
     let total = state
         .usage
-        .count_filtered(user_filter.as_deref())
+        .count_filtered(&filter)
         .map_err(|e| {
             tracing::error!("Usage count failed: {}", e);
             AdminError::internal("Internal server error")
@@ -1522,7 +1533,7 @@ async fn get_usage(
 
     let records = state
         .usage
-        .query(limit, offset, user_filter.as_deref())
+        .query(limit, offset, &filter)
         .map_err(|e| {
             tracing::error!("Usage query failed: {}", e);
             AdminError::internal("Internal server error")

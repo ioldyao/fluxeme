@@ -11,6 +11,7 @@ use rusqlite::{params, Connection};
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, Pricing};
 use crate::domain::routing::RoutingRule;
+use crate::domain::usage::UsageFilter;
 use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
 
@@ -309,14 +310,35 @@ impl Database {
             |row| row.get(0),
         )?)
     }
-    pub fn count_usage_filtered(&self, user_id: Option<&str>) -> Result<usize, DbError> {
+    pub fn count_usage_filtered(&self, filter: &UsageFilter) -> Result<usize, DbError> {
         let conn = self.conn()?;
-        if let Some(uid) = user_id {
-            Ok(conn.query_row(
-                "SELECT COUNT(*) FROM usage_logs WHERE user_id = ?1",
-                [uid],
-                |row| row.get(0),
-            )?)
+
+        let mut conditions = Vec::new();
+        let mut param_vals: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(ref uid) = filter.user_id {
+            conditions.push(format!("user_id = ?{}", param_vals.len() + 1));
+            param_vals.push(Box::new(uid.clone()));
+        }
+        if let Some(ref m) = filter.model {
+            conditions.push(format!("model LIKE ?{}", param_vals.len() + 1));
+            param_vals.push(Box::new(format!("%{}%", m)));
+        }
+        if let Some(ref k) = filter.api_key_name {
+            conditions.push(format!("api_key_name LIKE ?{}", param_vals.len() + 1));
+            param_vals.push(Box::new(format!("%{}%", k)));
+        }
+        if let Some(ref f) = filter.api_format {
+            conditions.push(format!("api_format = ?{}", param_vals.len() + 1));
+            param_vals.push(Box::new(f.clone()));
+        }
+
+        if !conditions.is_empty() {
+            let where_clause = conditions.join(" AND ");
+            let sql = format!("SELECT COUNT(*) FROM usage_logs WHERE {}", where_clause);
+            let mut stmt = conn.prepare(&sql)?;
+            let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_vals.iter().map(|p| p.as_ref()).collect();
+            Ok(stmt.query_row(params_refs.as_slice(), |row| row.get(0))?)
         } else {
             Ok(conn.query_row("SELECT COUNT(*) FROM usage_logs", [], |row| row.get(0))?)
         }
@@ -480,70 +502,79 @@ impl Database {
         &self,
         limit: usize,
         offset: usize,
-        user_id: Option<&str>,
+        filter: &UsageFilter,
     ) -> Result<Vec<crate::domain::usage::UsageRecord>, DbError> {
         use crate::domain::usage::UsageRecord;
         let conn = self.conn()?;
-        let mut records = Vec::new();
 
-        if let Some(uid) = user_id {
-            let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens
-                 FROM usage_logs WHERE user_id = ?1 ORDER BY id DESC LIMIT ?2 OFFSET ?3",
-            )?;
-            let mut rows = stmt.query(rusqlite::params![uid, limit as i64, offset as i64])?;
-            while let Some(row) = rows.next()? {
-                records.push(UsageRecord {
-                    timestamp: row.get(0)?,
-                    request_id: row.get(1)?,
-                    user_id: row.get(2)?,
-                    user_name: row.get(3)?,
-                    channel_id: row.get(4)?,
-                    model: row.get(5)?,
-                    prompt_tokens: row.get(6)?,
-                    completion_tokens: row.get(7)?,
-                    total_tokens: row.get(8)?,
-                    latency_ms: row.get(9)?,
-                    status_code: row.get(10)?,
-                    success: row.get::<_, i32>(11)? != 0,
-                    request_body: None,
-                    response_body: None,
-                    reasoning_body: None,
-                    api_key_name: row.get::<_, Option<String>>(12).ok().flatten(),
-                    api_format: row.get::<_, String>(13).unwrap_or_default(),
-                    stream: row.get::<_, i32>(14)? != 0,
-                    cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
-                });
-            }
+        let mut conditions = Vec::new();
+        let mut param_vals: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(ref uid) = filter.user_id {
+            conditions.push(format!("user_id = ?{}", param_vals.len() + 1));
+            param_vals.push(Box::new(uid.clone()));
+        }
+        if let Some(ref m) = filter.model {
+            conditions.push(format!("model LIKE ?{}", param_vals.len() + 1));
+            param_vals.push(Box::new(format!("%{}%", m)));
+        }
+        if let Some(ref k) = filter.api_key_name {
+            conditions.push(format!("api_key_name LIKE ?{}", param_vals.len() + 1));
+            param_vals.push(Box::new(format!("%{}%", k)));
+        }
+        if let Some(ref f) = filter.api_format {
+            conditions.push(format!("api_format = ?{}", param_vals.len() + 1));
+            param_vals.push(Box::new(f.clone()));
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
         } else {
-            let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens
-                 FROM usage_logs ORDER BY id DESC LIMIT ?1 OFFSET ?2",
-            )?;
-            let mut rows = stmt.query(rusqlite::params![limit as i64, offset as i64])?;
-            while let Some(row) = rows.next()? {
-                records.push(UsageRecord {
-                    timestamp: row.get(0)?,
-                    request_id: row.get(1)?,
-                    user_id: row.get(2)?,
-                    user_name: row.get(3)?,
-                    channel_id: row.get(4)?,
-                    model: row.get(5)?,
-                    prompt_tokens: row.get(6)?,
-                    completion_tokens: row.get(7)?,
-                    total_tokens: row.get(8)?,
-                    latency_ms: row.get(9)?,
-                    status_code: row.get(10)?,
-                    success: row.get::<_, i32>(11)? != 0,
-                    request_body: None,
-                    response_body: None,
-                    reasoning_body: None,
-                    api_key_name: row.get::<_, Option<String>>(12).ok().flatten(),
-                    api_format: row.get::<_, String>(13).unwrap_or_default(),
-                    stream: row.get::<_, i32>(14)? != 0,
-                    cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
-                });
-            }
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        let limit_idx = param_vals.len() + 1;
+        let offset_idx = param_vals.len() + 2;
+
+        let sql = format!(
+            "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens FROM usage_logs {} ORDER BY id DESC LIMIT ?{} OFFSET ?{}",
+            where_clause, limit_idx, offset_idx
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let limit_i64 = limit as i64;
+        let offset_i64 = offset as i64;
+        let mut params: Vec<&dyn rusqlite::types::ToSql> = Vec::with_capacity(param_vals.len() + 2);
+        for p in &param_vals {
+            params.push(p.as_ref());
+        }
+        params.push(&limit_i64);
+        params.push(&offset_i64);
+
+        let mut records = Vec::new();
+        let mut rows = stmt.query(params.as_slice())?;
+        while let Some(row) = rows.next()? {
+            records.push(UsageRecord {
+                timestamp: row.get(0)?,
+                request_id: row.get(1)?,
+                user_id: row.get(2)?,
+                user_name: row.get(3)?,
+                channel_id: row.get(4)?,
+                model: row.get(5)?,
+                prompt_tokens: row.get(6)?,
+                completion_tokens: row.get(7)?,
+                total_tokens: row.get(8)?,
+                latency_ms: row.get(9)?,
+                status_code: row.get(10)?,
+                success: row.get::<_, i32>(11)? != 0,
+                request_body: None,
+                response_body: None,
+                reasoning_body: None,
+                api_key_name: row.get::<_, Option<String>>(12).ok().flatten(),
+                api_format: row.get::<_, String>(13).unwrap_or_default(),
+                stream: row.get::<_, i32>(14)? != 0,
+                cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
+            });
         }
         Ok(records)
     }

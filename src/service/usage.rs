@@ -5,6 +5,7 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
 
 use crate::db::Database;
+use crate::domain::usage::UsageFilter;
 use crate::domain::usage::UsageRecord;
 
 #[derive(Clone)]
@@ -27,9 +28,9 @@ impl UsageService {
         }
     }
 
-    pub fn query(&self, limit: usize, offset: usize, user_id: Option<&str>) -> Result<Vec<UsageRecord>, String> {
+    pub fn query(&self, limit: usize, offset: usize, filter: &UsageFilter) -> Result<Vec<UsageRecord>, String> {
         self.db
-            .query_usage(limit, offset, user_id)
+            .query_usage(limit, offset, filter)
             .map_err(|e| e.0)
     }
 
@@ -41,8 +42,8 @@ impl UsageService {
         self.db.count_usage_by_user(user_id).map_err(|e| e.0)
     }
 
-    pub fn count_filtered(&self, user_id: Option<&str>) -> Result<usize, String> {
-        self.db.count_usage_filtered(user_id).map_err(|e| e.0)
+    pub fn count_filtered(&self, filter: &UsageFilter) -> Result<usize, String> {
+        self.db.count_usage_filtered(filter).map_err(|e| e.0)
     }
 
     pub fn get_detail(&self, request_id: &str) -> Result<Option<crate::domain::usage::UsageRecord>, String> {

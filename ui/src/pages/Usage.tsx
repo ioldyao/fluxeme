@@ -13,7 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, RefreshCw, CheckCircle2, XCircle, BarChart3, List, Radio, RadioIcon } from 'lucide-react';
+import { Search, RefreshCw, CheckCircle2, XCircle, BarChart3, List, Radio, RadioIcon, Filter, ChevronDown, ChevronRight, X } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -25,9 +25,20 @@ export default function Usage() {
   const { role } = useAuth();
   const [limit, setLimit] = useState(50);
   const [offset, setOffset] = useState(0);
+  const [showFilters, setShowFilters] = useState(false);
   const [userFilter, setUserFilter] = useState('');
+  const [modelFilter, setModelFilter] = useState('');
+  const [apiKeyFilter, setApiKeyFilter] = useState('');
+  const [apiFormatFilter, setApiFormatFilter] = useState('');
   const [detailId, setDetailId] = useState<string | null>(null);
-  const params = { limit, offset, ...(role === 'admin' && userFilter ? { user_id: userFilter } : {}) };
+  const filtersActive = !!(role === 'admin' && userFilter) || modelFilter || apiKeyFilter || apiFormatFilter;
+  const params = {
+    limit, offset,
+    ...(role === 'admin' && userFilter ? { user_id: userFilter } : {}),
+    ...(modelFilter ? { model: modelFilter } : {}),
+    ...(apiKeyFilter ? { api_key: apiKeyFilter } : {}),
+    ...(apiFormatFilter ? { api_format: apiFormatFilter } : {}),
+  };
   const { data: usage, isLoading, isError, refetch } = useUsage(params);
   const records = usage?.records ?? [];
   const total = usage?.total ?? 0;
@@ -80,16 +91,14 @@ export default function Usage() {
         </TabsList>
 
         <TabsContent value="list" className="space-y-4">
-          <div className="flex gap-2">
-            {role === 'admin' && (
-              <div className="relative flex-1 max-w-xs">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-                <Input
-                  className="pl-9" placeholder={t('usage.allUsers')}
-                  value={userFilter} onChange={(e) => setUserFilter(e.target.value)}
-                />
-              </div>
-            )}
+          {/* Collapsible filter bar */}
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setShowFilters(!showFilters)}>
+              <Filter className="size-4 mr-1" />
+              {t('usage.filter')}
+              {filtersActive && <span className="ml-1.5 size-2 rounded-full bg-primary" />}
+              {showFilters ? <ChevronDown className="size-3 ml-1" /> : <ChevronRight className="size-3 ml-1" />}
+            </Button>
             <div className="flex items-center gap-2 ml-auto">
               <span className="text-xs text-muted-foreground whitespace-nowrap">{t('common.pageSize')}</span>
               <Select value={String(limit)} onValueChange={(v) => { setLimit(Number(v)); setOffset(0); }}>
@@ -105,6 +114,40 @@ export default function Usage() {
               </Select>
             </div>
           </div>
+
+          {/* Filter inputs */}
+          {showFilters && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 p-3 rounded-lg border bg-muted/30">
+              {role === 'admin' && (
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+                  <Input
+                    className="pl-9" placeholder={t('usage.allUsers')}
+                    value={userFilter} onChange={(e) => { setUserFilter(e.target.value); setOffset(0); }}
+                  />
+                </div>
+              )}
+              <Input
+                placeholder={t('usage.filterModel')}
+                value={modelFilter} onChange={(e) => { setModelFilter(e.target.value); setOffset(0); }}
+              />
+              <Input
+                placeholder={t('usage.filterApiKey')}
+                value={apiKeyFilter} onChange={(e) => { setApiKeyFilter(e.target.value); setOffset(0); }}
+              />
+              <Select value={apiFormatFilter} onValueChange={(v) => { setApiFormatFilter(v); setOffset(0); }}>
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder={t('usage.filterApiFormat')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">All</SelectItem>
+                  <SelectItem value="openai">OpenAI</SelectItem>
+                  <SelectItem value="anthropic">Anthropic</SelectItem>
+                  <SelectItem value="relay">Relay</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <Card>
             <CardContent className="p-0">
