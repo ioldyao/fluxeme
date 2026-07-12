@@ -399,6 +399,19 @@ const en: Record<string, string> = {
   'wallet.alertThreshold': 'Alert Threshold',
   'wallet.alertBelowThreshold': 'Balance below threshold',
   'wallet.alertOk': 'Balance is sufficient',
+
+  // Transaction filters
+  'wallet.filterToday': 'Today',
+  'wallet.filter7d': '7 Days',
+  'wallet.filter30d': '30 Days',
+  'wallet.filterAll': 'All',
+  'wallet.filterAllTypes': 'All Types',
+  'wallet.txTotal': '{{total}} records',
+  'wallet.groupDeduction': '{{amount}} ({{count}} txns)',
+  'wallet.groupRecharge': '{{amount}} ({{count}} txns)',
+  'wallet.prevPage': 'Prev',
+  'wallet.nextPage': 'Next',
+
   'bills.title': 'Bills',
   'bills.subtitle': 'Usage details and invoices',
   'bills.balance': 'Balance',

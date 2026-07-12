@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useWalletOverview, useWalletTransactions, useRecharge, useRedeemKey, useCreateRechargeKey, useRechargeKeys, useEstimatedDays } from '@/api/wallet';
 import { useCurrency } from '@/store/currency';
@@ -14,7 +14,67 @@ export default function WalletPage() {
   const isAdmin = role === 'admin';
 
   const { data: overview, isLoading: loadingOv } = useWalletOverview();
-  const { data: txData, isLoading: loadingTx } = useWalletTransactions(1, 100);
+
+  // ── Transaction filter state ──
+  const [dateRange, setDateRange] = useState('7d'); // 'today' | '7d' | '30d' | 'all'
+  const [txType, setTxType] = useState(''); // '' | 'recharge' | 'deduction'
+  const [txPage, setTxPage] = useState(1);
+  const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
+  const PAGE_SIZE = 50;
+
+  const dateParams = useMemo(() => {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    switch (dateRange) {
+      case 'today': return { since: todayStart.toISOString(), until: undefined as string | undefined };
+      case '7d': return { since: new Date(todayStart.getTime() - 7 * 86400000).toISOString(), until: undefined };
+      case '30d': return { since: new Date(todayStart.getTime() - 30 * 86400000).toISOString(), until: undefined };
+      default: return {};
+    }
+  }, [dateRange]);
+
+  const { data: txData, isLoading: loadingTx } = useWalletTransactions(
+    txPage, PAGE_SIZE,
+    {
+      since: dateParams.since,
+      until: dateParams.until,
+      tx_type: txType || undefined,
+    },
+  );
+  const totalPages = Math.max(1, Math.ceil((txData?.total ?? 0) / PAGE_SIZE));
+
+  // Group transactions by day with aggregates
+  const dayGroups = useMemo(() => {
+    if (!txData?.items) return [];
+    const groups: Record<string, typeof txData.items> = {};
+    for (const tx of txData.items) {
+      const day = tx.created_at.split('T')[0];
+      if (!groups[day]) groups[day] = [];
+      groups[day].push(tx);
+    }
+    return Object.entries(groups)
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([date, items]) => {
+        const rechargeItems = items.filter(i => i.tx_type === 'recharge');
+        const deductionItems = items.filter(i => i.tx_type !== 'recharge');
+        return {
+          date,
+          items,
+          rechargeTotal: rechargeItems.reduce((s, i) => s + Math.abs(i.amount), 0),
+          deductionTotal: deductionItems.reduce((s, i) => s + Math.abs(i.amount), 0),
+          rechargeCount: rechargeItems.length,
+          deductionCount: deductionItems.length,
+        };
+      });
+  }, [txData?.items]);
+
+  const toggleDay = (day: string) => {
+    setExpandedDays(prev => {
+      const next = new Set(prev);
+      if (next.has(day)) next.delete(day); else next.add(day);
+      return next;
+    });
+  };
   const { data: estimated } = useEstimatedDays();
   const { data: keys } = useRechargeKeys();
   const recharge = useRecharge();
@@ -31,7 +91,7 @@ export default function WalletPage() {
   const fmt = (usd: number) => {
     const v = currency === 'cny' ? usd * rate : usd;
     const s = currency === 'cny' ? '¥' : '$';
-    return `${s}${v.toFixed(2)}`;
+    return `${s}${v.toFixed(6)}`;
   };
 
   const cardStyle = 'rounded-xl border p-5 space-y-2';
@@ -241,50 +301,146 @@ export default function WalletPage() {
             <h3 className="font-semibold text-sm">{t('wallet.consumption')}</h3>
             <span className="text-xs text-muted-foreground">{t('wallet.consumptionSub')}</span>
           </div>
-          {txData && txData.items.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-xs text-muted-foreground">
-                    <th className="text-left px-5 py-3 font-medium">{t('wallet.txTime')}</th>
-                    <th className="text-left px-5 py-3 font-medium">{t('wallet.txType')}</th>
-                    <th className="text-right px-5 py-3 font-medium">{t('wallet.txAmount')}</th>
-                    <th className="text-right px-5 py-3 font-medium">{t('wallet.txBefore')}</th>
-                    <th className="text-right px-5 py-3 font-medium">{t('wallet.txAfter')}</th>
-                    <th className="text-left px-5 py-3 font-medium">{t('wallet.txMethod')}</th>
-                    <th className="text-left px-5 py-3 font-medium">{t('wallet.txStatus')}</th>
-                    <th className="text-left px-5 py-3 font-medium">{t('wallet.txNote')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {txData.items.map((tx) => (
-                    <tr key={tx.id} className="border-b last:border-0">
-                      <td className="px-5 py-3 text-muted-foreground whitespace-nowrap">
-                        {new Date(tx.created_at).toLocaleString(i18n.language === 'zh' ? 'zh-CN' : 'en-US')}
-                      </td>
-                      <td className="px-5 py-3">
-                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                          tx.tx_type === 'recharge' ? 'bg-green-500/10 text-green-600' : 'bg-destructive/10 text-destructive'
-                        }`}>
-                          {tx.tx_type === 'recharge' ? t('wallet.type.recharge') : t('wallet.type.deduction')}
-                        </span>
-                      </td>
-                      <td className={`px-5 py-3 text-right font-mono ${tx.amount >= 0 ? 'text-green-600' : 'text-destructive'}`}>
-                        {tx.amount >= 0 ? '+' : ''}{fmt(Math.abs(tx.amount))}
-                      </td>
-                      <td className="px-5 py-3 text-right font-mono text-muted-foreground">{fmt(tx.balance_before)}</td>
-                      <td className="px-5 py-3 text-right font-mono text-muted-foreground">{fmt(tx.balance_after)}</td>
-                      <td className="px-5 py-3 text-muted-foreground">{tx.method}</td>
-                      <td className="px-5 py-3">
-                        <span className={`text-xs ${tx.status === 'completed' ? 'text-green-600' : 'text-muted-foreground'}`}>
-                          {tx.status}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3 text-muted-foreground max-w-[200px] truncate">{tx.note}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+          {/* ── Filter bar ── */}
+          <div className="border-b px-5 py-2.5 flex items-center gap-3 flex-wrap">
+            {/* Date range tabs */}
+            <div className="flex items-center gap-1 text-xs">
+              {(['today', '7d', '30d', 'all'] as const).map((key) => (
+                <button
+                  key={key}
+                  onClick={() => { setDateRange(key); setTxPage(1); }}
+                  className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                    dateRange === key
+                      ? 'bg-brand text-white'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                  }`}
+                >
+                  {key === 'today' ? t('wallet.filterToday') : key === '7d' ? t('wallet.filter7d') : key === '30d' ? t('wallet.filter30d') : t('wallet.filterAll')}
+                </button>
+              ))}
+            </div>
+            <span className="text-muted-foreground/40">|</span>
+            {/* Type filter */}
+            <select
+              value={txType}
+              onChange={(e) => { setTxType(e.target.value); setTxPage(1); }}
+              className="h-7 rounded-md border bg-background px-2 text-xs"
+            >
+              <option value="">{t('wallet.filterAllTypes')}</option>
+              <option value="recharge">{t('wallet.type.recharge')}</option>
+              <option value="deduction">{t('wallet.type.deduction')}</option>
+            </select>
+            {txData && (
+              <span className="text-xs text-muted-foreground ml-auto">
+                {t('wallet.txTotal', { total: txData.total })}
+              </span>
+            )}
+          </div>
+
+          {/* ── Daily grouped transactions ── */}
+          {dayGroups.length > 0 ? (
+            <div>
+              {dayGroups.map((day) => {
+                const isExpanded = expandedDays.has(day.date);
+                return (
+                  <div key={day.date} className="border-b last:border-0">
+                    {/* Day header — click to expand/collapse */}
+                    <button
+                      onClick={() => toggleDay(day.date)}
+                      className="w-full flex items-center gap-3 px-5 py-3 hover:bg-muted/30 transition-colors text-left"
+                    >
+                      <span className={`text-xs transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                      <span className="font-semibold text-sm">
+                        {new Date(day.date).toLocaleDateString(i18n.language === 'zh' ? 'zh-CN' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </span>
+                      <div className="flex items-center gap-3 text-xs ml-4">
+                        {day.deductionCount > 0 && (
+                          <span className="text-destructive">
+                            {t('wallet.groupDeduction', { count: day.deductionCount, amount: fmt(day.deductionTotal) })}
+                          </span>
+                        )}
+                        {day.rechargeCount > 0 && (
+                          <span className="text-green-600">
+                            {t('wallet.groupRecharge', { count: day.rechargeCount, amount: fmt(day.rechargeTotal) })}
+                          </span>
+                        )}
+                      </div>
+                    </button>
+
+                    {/* Expanded transaction rows */}
+                    {isExpanded && (
+                      <div className="overflow-x-auto border-t">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b text-xs text-muted-foreground bg-muted/20">
+                              <th className="text-left px-5 py-2 font-medium">{t('wallet.txTime')}</th>
+                              <th className="text-left px-5 py-2 font-medium">{t('wallet.txType')}</th>
+                              <th className="text-right px-5 py-2 font-medium">{t('wallet.txAmount')}</th>
+                              <th className="text-right px-5 py-2 font-medium">{t('wallet.txBefore')}</th>
+                              <th className="text-right px-5 py-2 font-medium">{t('wallet.txAfter')}</th>
+                              <th className="text-left px-5 py-2 font-medium">{t('wallet.txMethod')}</th>
+                              <th className="text-left px-5 py-2 font-medium">{t('wallet.txStatus')}</th>
+                              <th className="text-left px-5 py-2 font-medium">{t('wallet.txNote')}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {day.items.map((tx) => (
+                              <tr key={tx.id} className="border-b last:border-0">
+                                <td className="px-5 py-2.5 text-muted-foreground whitespace-nowrap text-xs">
+                                  {new Date(tx.created_at).toLocaleString(i18n.language === 'zh' ? 'zh-CN' : 'en-US')}
+                                </td>
+                                <td className="px-5 py-2.5">
+                                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                                    tx.tx_type === 'recharge' ? 'bg-green-500/10 text-green-600' : 'bg-destructive/10 text-destructive'
+                                  }`}>
+                                    {tx.tx_type === 'recharge' ? t('wallet.type.recharge') : t('wallet.type.deduction')}
+                                  </span>
+                                </td>
+                                <td className={`px-5 py-2.5 text-right font-mono text-xs ${tx.amount >= 0 ? 'text-green-600' : 'text-destructive'}`}>
+                                  {tx.amount >= 0 ? '+' : ''}{fmt(Math.abs(tx.amount))}
+                                </td>
+                                <td className="px-5 py-2.5 text-right font-mono text-xs text-muted-foreground">{fmt(tx.balance_before)}</td>
+                                <td className="px-5 py-2.5 text-right font-mono text-xs text-muted-foreground">{fmt(tx.balance_after)}</td>
+                                <td className="px-5 py-2.5 text-muted-foreground text-xs">{tx.method}</td>
+                                <td className="px-5 py-2.5 text-xs">
+                                  <span className={`text-xs ${tx.status === 'completed' ? 'text-green-600' : 'text-muted-foreground'}`}>
+                                    {tx.status}
+                                  </span>
+                                </td>
+                                <td className="px-5 py-2.5 text-muted-foreground text-xs max-w-[180px] truncate">{tx.note}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* ── Pagination ── */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-center gap-2 px-5 py-3 border-t">
+                  <button
+                    onClick={() => setTxPage(p => Math.max(1, p - 1))}
+                    disabled={txPage <= 1}
+                    className="px-3 py-1 text-xs rounded-md border hover:bg-accent disabled:opacity-30"
+                  >
+                    {t('wallet.prevPage')}
+                  </button>
+                  <span className="text-xs text-muted-foreground">
+                    {txPage} / {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setTxPage(p => Math.min(totalPages, p + 1))}
+                    disabled={txPage >= totalPages}
+                    className="px-3 py-1 text-xs rounded-md border hover:bg-accent disabled:opacity-30"
+                  >
+                    {t('wallet.nextPage')}
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="p-8 text-center text-muted-foreground text-sm">

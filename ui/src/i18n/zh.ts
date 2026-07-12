@@ -399,6 +399,19 @@ const zh: Record<string, string> = {
   'wallet.alertThreshold': '预警阈值',
   'wallet.alertBelowThreshold': '余额低于阈值',
   'wallet.alertOk': '余额充足',
+
+  // Transaction filters
+  'wallet.filterToday': '今天',
+  'wallet.filter7d': '近7天',
+  'wallet.filter30d': '近30天',
+  'wallet.filterAll': '全部',
+  'wallet.filterAllTypes': '全部类型',
+  'wallet.txTotal': '共 {{total}} 条',
+  'wallet.groupDeduction': '消费 {{amount}}（{{count}} 笔）',
+  'wallet.groupRecharge': '充值 {{amount}}（{{count}} 笔）',
+  'wallet.prevPage': '上一页',
+  'wallet.nextPage': '下一页',
+
   'bills.title': '账单',
   'bills.subtitle': '消费记录和明细',
   'bills.balance': '当前余额',

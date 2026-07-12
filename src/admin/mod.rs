@@ -701,6 +701,9 @@ async fn wallet_list_keys(
 struct WalletTxQuery {
     page: Option<usize>,
     size: Option<usize>,
+    since: Option<String>,
+    until: Option<String>,
+    tx_type: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -729,10 +732,14 @@ async fn wallet_transactions(
 ) -> Result<Json<WalletTxResp>, AdminError> {
     let session = require_session(&state.admin, &headers)?;
     let page = q.page.unwrap_or(1);
-    let size = q.size.unwrap_or(20).min(100);
+    let size = q.size.unwrap_or(50).min(100);
     let uid_filter: Option<&str> = if session.role == "admin" { None } else { Some(&session.user_id) };
-    let total = state.db.count_all_wallet_transactions(uid_filter).map_err(|e| AdminError::internal(e.0))?;
-    let rows = state.db.list_wallet_transactions(uid_filter, page, size).map_err(|e| AdminError::internal(e.0))?;
+    let total = state.db.count_all_wallet_transactions(
+        uid_filter, q.since.as_deref(), q.until.as_deref(), q.tx_type.as_deref(),
+    ).map_err(|e| AdminError::internal(e.0))?;
+    let rows = state.db.list_wallet_transactions(
+        uid_filter, page, size, q.since.as_deref(), q.until.as_deref(), q.tx_type.as_deref(),
+    ).map_err(|e| AdminError::internal(e.0))?;
     let items = rows.into_iter().map(|r| WalletTxItem {
         id: r.id,
         tx_type: r.tx_type,

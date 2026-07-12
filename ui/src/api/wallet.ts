@@ -42,10 +42,19 @@ export function useWalletOverview() {
   });
 }
 
-export function useWalletTransactions(page: number, size: number) {
+export function useWalletTransactions(
+  page: number,
+  size: number,
+  filters?: { since?: string; until?: string; tx_type?: string },
+) {
+  const params = new URLSearchParams({ page: String(page), size: String(size) });
+  if (filters?.since) params.set('since', filters.since);
+  if (filters?.until) params.set('until', filters.until);
+  if (filters?.tx_type) params.set('tx_type', filters.tx_type);
+
   return useQuery({
-    queryKey: ['wallet', 'transactions', page, size],
-    queryFn: () => api<WalletTxResponse>(`/wallet/transactions?page=${page}&size=${size}`),
+    queryKey: ['wallet', 'transactions', page, size, filters],
+    queryFn: () => api<WalletTxResponse>(`/wallet/transactions?${params}`),
   });
 }
 

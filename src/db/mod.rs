@@ -1445,50 +1445,80 @@ impl Database {
         Ok(balances)
     }
 
-    /// Count total wallet transactions for a user (admin sees all).
-    pub fn count_all_wallet_transactions(&self, user_id: Option<&str>) -> Result<usize, DbError> {
+    /// Count wallet transactions with optional user, date-range, and type filters.
+    pub fn count_all_wallet_transactions(
+        &self,
+        user_id: Option<&str>,
+        since: Option<&str>,
+        until: Option<&str>,
+        tx_type: Option<&str>,
+    ) -> Result<usize, DbError> {
         let conn = self.conn()?;
+        let mut sql = String::from("SELECT COUNT(*) FROM wallet_transactions WHERE 1=1");
+        let mut param_values: Vec<String> = Vec::new();
         if let Some(uid) = user_id {
-            conn.query_row(
-                "SELECT COUNT(*) FROM wallet_transactions WHERE user_id = ?1",
-                params![uid],
-                |row| row.get(0),
-            ).map_err(|e| DbError(e.to_string()))
-        } else {
-            conn.query_row(
-                "SELECT COUNT(*) FROM wallet_transactions",
-                [],
-                |row| row.get(0),
-            ).map_err(|e| DbError(e.to_string()))
+            sql.push_str(" AND user_id = ?");
+            param_values.push(uid.to_string());
         }
+        if let Some(s) = since {
+            sql.push_str(" AND created_at >= ?");
+            param_values.push(s.to_string());
+        }
+        if let Some(u) = until {
+            sql.push_str(" AND created_at <= ?");
+            param_values.push(u.to_string());
+        }
+        if let Some(t) = tx_type {
+            sql.push_str(" AND type = ?");
+            param_values.push(t.to_string());
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+        stmt.query_row(params.as_slice(), |row| row.get(0))
+            .map_err(|e| DbError(e.to_string()))
     }
 
-    /// List wallet transactions (admin sees all; regular user sees own).
+    /// List wallet transactions with optional user, date-range, and type filters.
     pub fn list_wallet_transactions(
         &self,
         user_id: Option<&str>,
         page: usize,
         size: usize,
+        since: Option<&str>,
+        until: Option<&str>,
+        tx_type: Option<&str>,
     ) -> Result<Vec<WalletTransactionRow>, DbError> {
         let conn = self.conn()?;
         let offset = (page.saturating_sub(1)) * size;
-        let mut rows = Vec::new();
+        let mut sql = String::from(
+            "SELECT id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at
+             FROM wallet_transactions WHERE 1=1",
+        );
+        let mut param_values: Vec<String> = Vec::new();
         if let Some(uid) = user_id {
-            let mut stmt = conn.prepare(
-                "SELECT id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at
-                 FROM wallet_transactions WHERE user_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
-            )?;
-            for row in stmt.query_map(params![uid, size as i64, offset as i64], map_wallet_tx)? {
-                rows.push(row?);
-            }
-        } else {
-            let mut stmt = conn.prepare(
-                "SELECT id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at
-                 FROM wallet_transactions ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
-            )?;
-            for row in stmt.query_map(params![size as i64, offset as i64], map_wallet_tx)? {
-                rows.push(row?);
-            }
+            sql.push_str(" AND user_id = ?");
+            param_values.push(uid.to_string());
+        }
+        if let Some(s) = since {
+            sql.push_str(" AND created_at >= ?");
+            param_values.push(s.to_string());
+        }
+        if let Some(u) = until {
+            sql.push_str(" AND created_at <= ?");
+            param_values.push(u.to_string());
+        }
+        if let Some(t) = tx_type {
+            sql.push_str(" AND type = ?");
+            param_values.push(t.to_string());
+        }
+        sql.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+        param_values.push(size.to_string());
+        param_values.push(offset.to_string());
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+        let mut rows = Vec::new();
+        for row in stmt.query_map(params.as_slice(), map_wallet_tx)? {
+            rows.push(row?);
         }
         Ok(rows)
     }
