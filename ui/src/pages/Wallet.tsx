@@ -54,6 +54,7 @@ export default function WalletPage() {
         toast.success(t('wallet.redeemSuccess', { amount: fmt(res.amount) }));
         setKeyInput('');
       },
+      onError: (err) => toast.error(err instanceof Error ? err.message : t('toast.failed')),
     });
   };
 

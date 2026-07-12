@@ -1238,7 +1238,7 @@ impl Database {
     pub fn get_wallet_balance(&self, user_id: &str) -> Result<(f64, f64), DbError> {
         let conn = self.conn()?;
         conn.query_row(
-            "SELECT balance, frozen FROM users WHERE user_id = ?1",
+            "SELECT balance, frozen FROM users WHERE id = ?1",
             params![user_id],
             |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
         ).map_err(|e| DbError(e.to_string()))
@@ -1246,7 +1246,7 @@ impl Database {
 
     pub fn update_wallet_balance(&self, user_id: &str, balance: f64) -> Result<(), DbError> {
         let conn = self.conn()?;
-        conn.execute("UPDATE users SET balance = ?1 WHERE user_id = ?2", params![balance, user_id])?;
+        conn.execute("UPDATE users SET balance = ?1 WHERE id = ?2", params![balance, user_id])?;
         Ok(())
     }
 
@@ -1342,13 +1342,13 @@ impl Database {
 
         // Add balance
         let (balance, _): (f64, f64) = conn.query_row(
-            "SELECT balance, frozen FROM users WHERE user_id = ?1",
+            "SELECT balance, frozen FROM users WHERE id = ?1",
             params![user_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).map_err(|_| DbError("User not found".to_string()))?;
 
         let new_balance = balance + amount;
-        conn.execute("UPDATE users SET balance = ?1 WHERE user_id = ?2", params![new_balance, user_id])?;
+        conn.execute("UPDATE users SET balance = ?1 WHERE id = ?2", params![new_balance, user_id])?;
 
         // Record transaction
         conn.execute(
@@ -1417,7 +1417,7 @@ impl Database {
         ).unwrap_or(0.0);
 
         let balance: f64 = conn.query_row(
-            "SELECT balance FROM users WHERE user_id = ?1",
+            "SELECT balance FROM users WHERE id = ?1",
             params![user_id],
             |row| row.get(0),
         ).unwrap_or(0.0);
