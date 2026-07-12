@@ -171,12 +171,16 @@ export function ModelDetailDialog({ model, open, onOpenChange }: Props) {
   if (!model) return null;
 
   const hasAnthropic = model.channels?.some(c => c.provider === 'anthropic') ?? false;
+  const hasOpenAi = model.channels?.some(c => c.provider !== 'anthropic') ?? true;
 
   useEffect(() => {
     if (!hasAnthropic && format === 'anthropic') {
       setFormat('openai');
     }
-  }, [model?.id, hasAnthropic, format]);
+    if (!hasOpenAi && format === 'openai') {
+      setFormat('anthropic');
+    }
+  }, [model?.id, hasAnthropic, hasOpenAi, format]);
 
   const code = buildCode(model, format, lang);
 
@@ -248,7 +252,7 @@ export function ModelDetailDialog({ model, open, onOpenChange }: Props) {
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <Tabs value={format} onValueChange={(v) => setFormat(v as ApiFormat)}>
                 <TabsList>
-                  <TabsTrigger value="openai">OpenAI</TabsTrigger>
+                  {hasOpenAi && <TabsTrigger value="openai">OpenAI</TabsTrigger>}
                   {hasAnthropic && <TabsTrigger value="anthropic">Anthropic</TabsTrigger>}
                 </TabsList>
               </Tabs>
