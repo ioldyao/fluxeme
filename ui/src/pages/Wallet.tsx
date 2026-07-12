@@ -5,7 +5,7 @@ import { useWalletOverview, useWalletTransactions, useRecharge, useRedeemKey, us
 import { useCurrency } from '@/store/currency';
 import { useAuth } from '@/store/auth';
 import { PageHeader } from '@/components/PageHeader';
-import { Wallet, CreditCard, KeyRound, Receipt, AlertTriangle, Copy, Check, Loader2, RefreshCw } from 'lucide-react';
+import { Wallet, CreditCard, KeyRound, Receipt, AlertTriangle, Copy, Check, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function WalletPage() {
@@ -15,7 +15,7 @@ export default function WalletPage() {
   const { role } = useAuth();
   const isAdmin = role === 'admin';
 
-  const { data: overview, isLoading: loadingOv } = useWalletOverview();
+  const { data: overview } = useWalletOverview();
 
   // ── Transaction filter state ──
   const [dateRange, setDateRange] = useState('today'); // 'today' | '7d' | '30d' | 'all'
@@ -88,7 +88,6 @@ export default function WalletPage() {
   const [createKeyAmt, setCreateKeyAmt] = useState('');
   const [newKey, setNewKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [threshold, setThreshold] = useState('');
 
   const fmt = (usd: number) => {
     const v = currency === 'cny' ? usd * rate : usd;

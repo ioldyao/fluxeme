@@ -359,7 +359,7 @@ function TimeoutField({
 }: {
   label: string;
   hint: string;
-  value: number;
+  value: number | boolean;
   disabled: boolean;
   onChange: (v: string) => void;
 }) {

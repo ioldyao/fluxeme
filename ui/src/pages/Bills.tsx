@@ -25,10 +25,10 @@ export default function Bills() {
   const { data: allMonths } = usePeriodSummaryAll();
 
   const fmt = (usd: number) => {
-    if (usd === 0) return '¥0.00';
+    if (usd === 0) return '¥0.000000';
     const v = currency === 'cny' ? usd * rate : usd;
     const s = currency === 'cny' ? '¥' : '$';
-    return `${s}${v.toFixed(2)}`;
+    return `${s}${v.toFixed(6)}`;
   };
 
   const cardStyle = 'rounded-xl border p-5 space-y-2';

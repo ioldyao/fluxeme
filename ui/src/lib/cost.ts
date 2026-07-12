@@ -18,7 +18,7 @@ export function formatCost(
   if (usd === 0) return '—';
   const value = currency === 'cny' ? usd * rate : usd;
   const symbol = currency === 'cny' ? '¥' : '$';
-  return `${symbol}${value.toFixed(4)}`;
+  return `${symbol}${value.toFixed(6)}`;
 }
 
 /** Use stored pricing from the usage record if available, falling back to model lookup. */
