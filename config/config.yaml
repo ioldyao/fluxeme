@@ -11,7 +11,7 @@ jwt_secret: ${GATEWAY_JWT_SECRET}
 # Cache / Redis
 cache:
   enabled: true
-  redis_url: "redis://127.0.0.1:6379"
+  redis_url: "redis://:${REDIS_PASSWORD}@127.0.0.1:6379"
 
 # SSO / 统一身份认证 (OIDC)
 sso:
