@@ -19,6 +19,8 @@ import { cn } from '@/lib/utils';
 import { api } from '@/api/client';
 import type { Model, UpstreamModel } from '@/types';
 
+const CATEGORY_ORDER = ['chat', 'reasoning', 'tools', 'web', 'vision', 'rerank', 'embedding'];
+
 export default function Models() {
   const { t } = useTranslation();
   const { data: models, isLoading, isError, refetch } = useModels();
@@ -203,7 +205,7 @@ export default function Models() {
                           : '-'}
                       </td>
                       <td className="py-3 px-4 text-xs">
-                        {(m.category?.split(',').filter(Boolean) ?? []).map((cat) => t(`model.category.${cat}`, { defaultValue: cat })).join(', ') || '-'}
+                        {(m.category?.split(',').filter(Boolean).sort((a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b)) ?? []).map((cat) => t(`model.category.${cat}`, { defaultValue: cat })).join(', ') || '-'}
                       </td>
                       <td className="py-3 px-4 text-right text-xs font-mono">{formatCtx(m.context_length)}</td>
                       <td className="py-3 px-4 text-right text-xs">

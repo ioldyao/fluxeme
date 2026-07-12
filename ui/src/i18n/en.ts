@@ -218,7 +218,7 @@ const en: Record<string, string> = {
   'model.publish': 'Publish',
   'model.syncUpstream': 'Sync Upstream',
   'model.healthCheck': 'Health Check',
-  'model.category': 'Category',
+  'model.category': 'Modality',
   'model.context': 'Context',
   'model.publishCol': 'Publish',
   'model.healthCheckResult': '{{channels}} channels checked, {{models}} models updated',

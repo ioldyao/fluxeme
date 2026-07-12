@@ -218,7 +218,7 @@ const zh: Record<string, string> = {
   'model.publish': '发布',
   'model.syncUpstream': '同步上游',
   'model.healthCheck': '健康检查',
-  'model.category': '分类',
+  'model.category': '模态类型',
   'model.context': '上下文',
   'model.publishCol': '发布',
   'model.healthCheckResult': '{{channels}} 个渠道检查完成, {{models}} 个模型已更新',
