@@ -7,11 +7,11 @@ services:
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: aigateway
+      POSTGRES_DB: ${DB_NAME:-aigateway}
     volumes:
       - psql-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d aigateway"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME:-aigateway}"]
       interval: 5s
       timeout: 3s
       retries: 5
