@@ -317,13 +317,13 @@ async fn admin_login(
         let info = SessionInfo {
             user_id: u.id.clone(),
             user_name: u.name.clone(),
-            role: "user".to_string(),
+            role: u.role.clone(),
             token_version: u.token_version,
         };
         let token = state.admin.encode_token(&info)?;
         return Ok(Json(serde_json::json!({
             "token": token,
-            "role": "user",
+            "role": u.role,
             "user_id": u.id,
             "user_name": u.name,
             "timezone": u.timezone,
