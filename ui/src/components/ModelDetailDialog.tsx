@@ -15,7 +15,24 @@ interface Props {
   model: Model | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  provider?: string;
 }
+
+const ICON_BASE = '/icons';
+const PROVIDER_ICON: Record<string, string> = {
+  'OpenAI': 'openai',
+  'Anthropic': 'anthropic',
+  'Google': 'gemini-color',
+  'Meta': 'meta-color',
+  'DeepSeek': 'deepseek-color',
+  'Mistral': 'mistral-color',
+  'Qwen': 'qwen-color',
+  'Zhipu': 'zhipu-color',
+  'Kimi': 'kimi-color',
+  '01.AI': 'zeroone-color',
+  'Cohere': 'cohere-color',
+  'Black Forest': 'bfl',
+};
 
 type ApiFormat = 'openai' | 'anthropic';
 type Lang = 'curl' | 'python' | 'typescript' | 'javascript';
@@ -162,7 +179,7 @@ function formatCtx(v: number | null | undefined): string {
   return v.toLocaleString();
 }
 
-export function ModelDetailDialog({ model, open, onOpenChange }: Props) {
+export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props) {
   const { t } = useTranslation();
   const [format, setFormat] = useState<ApiFormat>('openai');
   const [lang, setLang] = useState<Lang>('curl');
@@ -198,9 +215,16 @@ export function ModelDetailDialog({ model, open, onOpenChange }: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="!max-w-[80vw] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <span>{model.name}</span>
-            <span className="text-xs font-mono text-muted-foreground">{model.model_pattern}</span>
+          <DialogTitle>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                {provider && PROVIDER_ICON[provider] && (
+                  <img src={`${ICON_BASE}/${PROVIDER_ICON[provider]}.svg`} alt={provider} className="size-5 rounded-full" />
+                )}
+                <span>{model.name}</span>
+              </div>
+              <p className="text-xs font-mono text-muted-foreground">{model.model_pattern}</p>
+            </div>
           </DialogTitle>
         </DialogHeader>
 

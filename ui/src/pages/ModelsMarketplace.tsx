@@ -335,6 +335,7 @@ function ModelCard({
 
       <ModelDetailDialog
         model={model}
+        provider={model._provider}
         open={detailOpen}
         onOpenChange={setDetailOpen}
       />
