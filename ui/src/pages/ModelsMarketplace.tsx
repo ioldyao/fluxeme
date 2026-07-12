@@ -15,13 +15,15 @@ import type { Model } from '@/types';
 
 function inferProvider(pattern: string): string {
   const p = pattern.toLowerCase();
-  if (/^(gpt-|o[1-9]-|dall-e-|whisper-|tts-|text-)/.test(p)) return 'OpenAI';
+  if (/^(gpt-|o[1-9]-|dall-e-|whisper-|tts-|text-|realtime-)/.test(p)) return 'OpenAI';
   if (/^claude-/.test(p)) return 'Anthropic';
-  if (/^gemini-/.test(p)) return 'Google';
+  if (/^gemini-/.test(p)) return 'Gemini';
   if (/^llama-/.test(p)) return 'Meta';
   if (/^deepseek-/.test(p)) return 'DeepSeek';
   if (/^mistral-/.test(p)) return 'Mistral';
-  if (/^qwen/.test(p)) return 'Alibaba';
+  if (/^qwen/.test(p)) return 'Qwen';
+  if (/^glm/.test(p)) return 'Zhipu';
+  if (/^kimi-/.test(p)) return 'Kimi';
   if (/^yi-/.test(p)) return '01.AI';
   if (/^command-/.test(p)) return 'Cohere';
   if (/^flux-/.test(p)) return 'Black Forest';
@@ -33,11 +35,13 @@ const CATEGORY_KEYS = ['chat', 'reasoning', 'tools', 'web', 'vision', 'rerank', 
 const PROVIDER_ICON: Record<string, string> = {
   OpenAI: 'openai',
   Anthropic: 'anthropic',
-  Google: 'gemini-color',
+  Gemini: 'gemini-color',
   Meta: 'meta-color',
   DeepSeek: 'deepseek-color',
   Mistral: 'mistral-color',
-  Alibaba: 'alibaba-color',
+  Qwen: 'qwen-color',
+  Zhipu: 'zhipu-color',
+  Kimi: 'kimi-color',
   '01.AI': 'zeroone-color',
   Cohere: 'cohere-color',
   'Black Forest': 'bfl',
