@@ -498,6 +498,28 @@ impl Database {
         Ok(records)
     }
 
+    pub fn model_activity(
+        &self,
+        since: &str,
+    ) -> Result<Vec<(String, u64, u64, u64, u64, u64)>, DbError> {
+        let conn = self.conn()?;
+        let mut records = Vec::new();
+        let sql = "SELECT model, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END),0) FROM usage_logs WHERE timestamp >= ?1 GROUP BY model ORDER BY COUNT(*) DESC";
+        let mut stmt = conn.prepare(sql)?;
+        let mut rows = stmt.query(rusqlite::params![since])?;
+        while let Some(row) = rows.next()? {
+            records.push((
+                row.get::<_, String>(0)?,
+                row.get::<_, u64>(1)?,
+                row.get::<_, u64>(2)?,
+                row.get::<_, u64>(3)?,
+                row.get::<_, u64>(4)?,
+                row.get::<_, u64>(5)?,
+            ));
+        }
+        Ok(records)
+    }
+
     pub fn query_usage(
         &self,
         limit: usize,

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from './client';
-import type { UsageRecord, DailyAggregate } from '@/types';
+import type { UsageRecord, DailyAggregate, ModelActivity } from '@/types';
 
 interface UsageParams {
   limit?: number;
@@ -48,6 +48,14 @@ export function useUsageAggregate(days: number = 14) {
   return useQuery({
     queryKey: ['usage', 'aggregate', days],
     queryFn: () => api<DailyAggregate[]>(`/usage/aggregate?days=${days}`),
+    refetchInterval: 60_000,
+  });
+}
+
+export function useModelActivity(days: number = 7) {
+  return useQuery({
+    queryKey: ['usage', 'model-activity', days],
+    queryFn: () => api<ModelActivity[]>(`/usage/model-activity?days=${days}`),
     refetchInterval: 60_000,
   });
 }

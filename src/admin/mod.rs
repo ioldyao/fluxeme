@@ -1656,6 +1656,43 @@ async fn usage_aggregate(
     ))
 }
 
+// ── Model Activity ────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct ModelActivity {
+    model: String,
+    total_requests: u64,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    success_count: u64,
+    failure_count: u64,
+}
+
+async fn model_activity(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<UsageAggregateQuery>,
+) -> Result<Json<Vec<ModelActivity>>, AdminError> {
+    let days = q.days.unwrap_or(7) as i64;
+    let since = since_local_days_ago(days, 0);
+    let records = state
+        .db
+        .model_activity(&since)
+        .map_err(|e| AdminError::internal(e.to_string()))?;
+    Ok(Json(
+        records
+            .into_iter()
+            .map(|(model, total, pt, ct, sc, fc)| ModelActivity {
+                model,
+                total_requests: total,
+                prompt_tokens: pt,
+                completion_tokens: ct,
+                success_count: sc,
+                failure_count: fc,
+            })
+            .collect(),
+    ))
+}
+
 // ── Health Check ──────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -1955,6 +1992,7 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route("/admin/api/usage", axum::routing::get(get_usage))
         .route("/admin/api/usage/daily", axum::routing::get(daily_usage))
         .route("/admin/api/usage/aggregate", axum::routing::get(usage_aggregate))
+        .route("/admin/api/usage/model-activity", axum::routing::get(model_activity))
         .route(
             "/admin/api/usage/{request_id}",
             axum::routing::get(get_usage_detail),

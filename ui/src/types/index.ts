@@ -133,6 +133,15 @@ export interface DailyUsage {
   count: number;
 }
 
+export interface ModelActivity {
+  model: string;
+  total_requests: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  success_count: number;
+  failure_count: number;
+}
+
 export interface DailyAggregate {
   date: string;
   count: number;

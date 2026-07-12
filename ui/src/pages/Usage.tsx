@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
 import { useCurrency } from '@/store/currency';
 import { formatCost } from '@/lib/cost';
-import { useUsage, useUsageAggregate } from '@/api/usage';
+import { useUsage, useUsageAggregate, useModelActivity } from '@/api/usage';
 import { api } from '@/api/client';
 import { UsageLogDetail } from '@/components/UsageLogDetail';
 import { PageHeader } from '@/components/PageHeader';
@@ -20,10 +20,31 @@ import {
   LineChart, Line, Legend,
 } from 'recharts';
 
+function ChartTooltip({ active, payload, label, formatter }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-lg border bg-popover px-3 py-2 text-xs shadow-md">
+      {label && <p className="mb-1 font-medium text-popover-foreground">{label}</p>}
+      {payload.map((entry: any, i: number) => {
+        const formatted = formatter?.(entry.value, entry.name) ?? (
+          typeof entry.value === 'number' ? entry.value.toLocaleString() : entry.value
+        );
+        return (
+          <div key={i} className="flex items-center gap-2 text-muted-foreground">
+            <span className="size-2 rounded-full" style={{ background: entry.color }} />
+            <span>{entry.name}</span>
+            <span className="ml-auto font-mono font-medium text-popover-foreground">{formatted}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function Usage() {
   const { t } = useTranslation();
   const { role } = useAuth();
-  const [limit, setLimit] = useState(50);
+  const [limit, setLimit] = useState(20);
   const [offset, setOffset] = useState(0);
   const [showFilters, setShowFilters] = useState(false);
   const [userFilter, setUserFilter] = useState('');
@@ -52,8 +73,9 @@ export default function Usage() {
   });
   const { currency, rate } = useCurrency();
   const [chartTab, setChartTab] = useState('list');
-  const [chartDays, setChartDays] = useState(14);
+  const [chartDays, setChartDays] = useState(7);
   const { data: aggregate, isLoading: aggLoading } = useUsageAggregate(chartDays);
+  const { data: modelActivity } = useModelActivity(chartDays);
 
   const modelPricing = useMemo(() => {
     if (!models) return {};
@@ -272,19 +294,12 @@ export default function Usage() {
                 <CardHeader><CardTitle className="text-base">{t('dash.requests')}</CardTitle></CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={250}>
-                    <BarChart data={aggregate}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="date" fontSize={11} stroke="hsl(var(--muted-foreground))" />
-                      <YAxis fontSize={11} stroke="hsl(var(--muted-foreground))" />
-                      <Tooltip
-                        contentStyle={{
-                          background: 'hsl(var(--popover))',
-                          border: '1px solid hsl(var(--border))',
-                          borderRadius: 'var(--radius)',
-                          fontSize: 13,
-                        }}
-                      />
-                      <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name={t('dash.requests')} />
+                    <BarChart data={aggregate} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                      <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} />
+                      <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} width={50} />
+                      <Tooltip content={<ChartTooltip />} />
+                      <Bar dataKey="count" fill="var(--chart-1)" radius={[4, 4, 0, 0]} name={t('dash.requests')} />
                     </BarChart>
                   </ResponsiveContainer>
                 </CardContent>
@@ -294,21 +309,17 @@ export default function Usage() {
                 <CardHeader><CardTitle className="text-base">{t('usage.totalTokens')}</CardTitle></CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={250}>
-                    <BarChart data={aggregate}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="date" fontSize={11} stroke="hsl(var(--muted-foreground))" />
-                      <YAxis fontSize={11} stroke="hsl(var(--muted-foreground))" />
-                      <Tooltip
-                        contentStyle={{
-                          background: 'hsl(var(--popover))',
-                          border: '1px solid hsl(var(--border))',
-                          borderRadius: 'var(--radius)',
-                          fontSize: 13,
-                        }}
+                    <BarChart data={aggregate} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                      <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} />
+                      <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} width={50} />
+                      <Tooltip content={<ChartTooltip />} />
+                      <Legend
+                        wrapperStyle={{ paddingTop: 8 }}
+                        formatter={(value: string) => <span style={{ color: 'hsl(var(--foreground))', fontSize: 12 }}>{value}</span>}
                       />
-                      <Legend />
-                      <Bar dataKey="prompt_tokens" stackId="tokens" fill="hsl(215, 80%, 60%)" radius={[0, 0, 0, 0]} name={t('dash.prompt')} />
-                      <Bar dataKey="completion_tokens" stackId="tokens" fill="hsl(140, 60%, 50%)" radius={[4, 4, 0, 0]} name={t('dash.completion')} />
+                      <Bar dataKey="prompt_tokens" stackId="tokens" fill="var(--chart-2)" radius={[0, 0, 0, 0]} name={t('dash.prompt')} />
+                      <Bar dataKey="completion_tokens" stackId="tokens" fill="var(--chart-3)" radius={[4, 4, 0, 0]} name={t('dash.completion')} />
                     </BarChart>
                   </ResponsiveContainer>
                 </CardContent>
@@ -318,24 +329,62 @@ export default function Usage() {
                 <CardHeader><CardTitle className="text-base">{t('dash.successRate')}</CardTitle></CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={200}>
-                    <LineChart data={aggregate.map(d => ({ ...d, successRate: d.count > 0 ? +(d.success_count / d.count * 100).toFixed(1) : 100 }))}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="date" fontSize={11} stroke="hsl(var(--muted-foreground))" />
-                      <YAxis domain={[0, 100]} unit="%" fontSize={11} stroke="hsl(var(--muted-foreground))" />
-                      <Tooltip
-                        contentStyle={{
-                          background: 'hsl(var(--popover))',
-                          border: '1px solid hsl(var(--border))',
-                          borderRadius: 'var(--radius)',
-                          fontSize: 13,
-                        }}
-                        formatter={(value: number) => [`${value}%`, t('dash.successRate')]}
-                      />
-                      <Line type="monotone" dataKey="successRate" stroke="hsl(140, 60%, 50%)" strokeWidth={2} dot={false} name={t('dash.successRate')} />
+                    <LineChart data={aggregate.map(d => ({ ...d, successRate: d.count > 0 ? +(d.success_count / d.count * 100).toFixed(1) : 100 }))} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                      <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} />
+                      <YAxis domain={[0, 100]} unit="%" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} width={40} />
+                      <Tooltip content={<ChartTooltip formatter={(value: number) => `${value}%`} />} />
+                      <Line type="monotone" dataKey="successRate" stroke="hsl(142, 65%, 55%)" strokeWidth={2} dot={false} name={t('dash.successRate')} />
                     </LineChart>
                   </ResponsiveContainer>
                 </CardContent>
               </Card>
+
+              {modelActivity && modelActivity.length > 0 && (
+                <>
+                  {/* Model Activity — nav group engraved section header */}
+                  <div className="px-1 pb-1">
+                    <span className="text-sm font-semibold uppercase tracking-widest text-muted-foreground/35 select-none">
+                      {t('usage.modelActivity')}
+                    </span>
+                  </div>
+
+                  {/* Two bar charts side by side */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <Card>
+                      <CardHeader><CardTitle className="text-base">{t('usage.modelUsage')}</CardTitle></CardHeader>
+                      <CardContent>
+                        <ResponsiveContainer width="100%" height={250}>
+                          <BarChart data={modelActivity} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                            <XAxis dataKey="model" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />
+                            <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} width={45} />
+                            <Tooltip content={<ChartTooltip />} />
+                            <Bar dataKey="prompt_tokens" stackId="tokens" fill="var(--chart-2)" name={t('dash.prompt')} />
+                            <Bar dataKey="completion_tokens" stackId="tokens" fill="var(--chart-3)" name={t('dash.completion')} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardHeader><CardTitle className="text-base">{t('usage.modelSuccessRate')}</CardTitle></CardHeader>
+                      <CardContent>
+                        <ResponsiveContainer width="100%" height={250}>
+                          <BarChart data={modelActivity} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                            <XAxis dataKey="model" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />
+                            <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} width={45} />
+                            <Tooltip content={<ChartTooltip />} />
+                            <Bar dataKey="success_count" stackId="status" fill="hsl(142, 65%, 55%)" name={t('usage.success')} />
+                            <Bar dataKey="failure_count" stackId="status" fill="hsl(0, 70%, 55%)" name={t('usage.failure')} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </>
+              )}
             </>
           ) : (
             <Card>
