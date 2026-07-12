@@ -47,7 +47,7 @@ const PROVIDER_ICON: Record<string, string> = {
   'Black Forest': 'bfl',
 };
 
-const ICON_BASE = 'https://unpkg.com/@lobehub/icons-static-svg@latest/icons';
+const ICON_BASE = '/icons';
 
 export default function ModelsMarketplace() {
   const { t } = useTranslation();
