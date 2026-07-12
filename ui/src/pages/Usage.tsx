@@ -20,8 +20,10 @@ import {
   LineChart, Line, Legend,
 } from 'recharts';
 
-function ChartTooltip({ active, payload, label, formatter }: any) {
+function ChartTooltip({ active, payload, label, formatter, showTotal }: any) {
+  const { t } = useTranslation();
   if (!active || !payload?.length) return null;
+  const total = showTotal ? payload.reduce((sum: number, e: any) => sum + (e.value ?? 0), 0) : null;
   return (
     <div className="rounded-lg border bg-popover px-3 py-2 text-xs shadow-md">
       {label && <p className="mb-1 font-medium text-popover-foreground">{label}</p>}
@@ -37,6 +39,12 @@ function ChartTooltip({ active, payload, label, formatter }: any) {
           </div>
         );
       })}
+      {total !== null && (
+        <div className="mt-1.5 pt-1.5 border-t flex items-center gap-2 text-muted-foreground">
+          <span className="font-medium">{t('dash.total')}</span>
+          <span className="ml-auto font-mono font-medium text-popover-foreground">{total.toLocaleString()}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -359,7 +367,7 @@ export default function Usage() {
                             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                             <XAxis dataKey="model" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />
                             <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} width={55} tickFormatter={(v: number) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${(v / 1_000).toFixed(1)}K` : `${v}`} />
-                            <Tooltip content={<ChartTooltip />} />
+                            <Tooltip content={<ChartTooltip showTotal />} />
                             <Bar dataKey="prompt_tokens" stackId="tokens" fill="var(--chart-2)" radius={[0, 0, 0, 0]} name={t('dash.prompt')} />
                             <Bar dataKey="completion_tokens" stackId="tokens" fill="var(--chart-3)" radius={[4, 4, 0, 0]} name={t('dash.completion')} />
                           </BarChart>
