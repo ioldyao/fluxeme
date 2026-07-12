@@ -6,6 +6,8 @@ pub struct UsageFilter {
     pub model: Option<String>,
     pub api_key_name: Option<String>,
     pub api_format: Option<String>,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

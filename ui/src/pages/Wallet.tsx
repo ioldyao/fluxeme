@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useWalletOverview, useWalletTransactions, useRecharge, useRedeemKey, useCreateRechargeKey, useRechargeKeys, useEstimatedDays } from '@/api/wallet';
 import { useCurrency } from '@/store/currency';
@@ -8,6 +9,7 @@ import { Wallet, CreditCard, KeyRound, Receipt, AlertTriangle, Copy, Check, Load
 import { toast } from 'sonner';
 
 export default function WalletPage() {
+  const navigate = useNavigate();
   const { t, i18n } = useTranslation();
   const { currency, rate } = useCurrency();
   const { role } = useAuth();
@@ -16,7 +18,7 @@ export default function WalletPage() {
   const { data: overview, isLoading: loadingOv } = useWalletOverview();
 
   // ── Transaction filter state ──
-  const [dateRange, setDateRange] = useState('7d'); // 'today' | '7d' | '30d' | 'all'
+  const [dateRange, setDateRange] = useState('today'); // 'today' | '7d' | '30d' | 'all'
   const [txType, setTxType] = useState(''); // '' | 'recharge' | 'deduction'
   const [txPage, setTxPage] = useState(1);
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
@@ -356,9 +358,12 @@ export default function WalletPage() {
                       </span>
                       <div className="flex items-center gap-3 text-xs ml-4">
                         {day.deductionCount > 0 && (
-                          <span className="text-destructive">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); navigate(`/usage?date=${day.date}`); }}
+                            className="text-destructive hover:underline cursor-pointer"
+                          >
                             {t('wallet.groupDeduction', { count: day.deductionCount, amount: fmt(day.deductionTotal) })}
-                          </span>
+                          </button>
                         )}
                         {day.rechargeCount > 0 && (
                           <span className="text-green-600">
@@ -385,7 +390,7 @@ export default function WalletPage() {
                             </tr>
                           </thead>
                           <tbody>
-                            {day.items.map((tx) => (
+                            {day.items.filter(tx => tx.tx_type === 'recharge').map((tx) => (
                               <tr key={tx.id} className="border-b last:border-0">
                                 <td className="px-5 py-2.5 text-muted-foreground whitespace-nowrap text-xs">
                                   {new Date(tx.created_at).toLocaleString(i18n.language === 'zh' ? 'zh-CN' : 'en-US')}

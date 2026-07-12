@@ -1888,6 +1888,8 @@ struct UsageQuery {
     model: Option<String>,
     api_key: Option<String>,
     api_format: Option<String>,
+    start_date: Option<String>,
+    end_date: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1918,6 +1920,8 @@ async fn get_usage(
         model: q.model,
         api_key_name: q.api_key,
         api_format: q.api_format,
+        start_date: q.start_date,
+        end_date: q.end_date,
     };
 
     let total = state

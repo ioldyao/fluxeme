@@ -9,6 +9,8 @@ interface UsageParams {
   model?: string;
   api_key?: string;
   api_format?: string;
+  start_date?: string;
+  end_date?: string;
 }
 
 interface UsageResponse {
@@ -24,6 +26,8 @@ export function useUsage(params: UsageParams = {}) {
   if (params.model) searchParams.set('model', params.model);
   if (params.api_key) searchParams.set('api_key', params.api_key);
   if (params.api_format) searchParams.set('api_format', params.api_format);
+  if (params.start_date) searchParams.set('start_date', params.start_date);
+  if (params.end_date) searchParams.set('end_date', params.end_date);
   const qs = searchParams.toString();
 
   // Serialize to prevent object-reference instability causing infinite refetch

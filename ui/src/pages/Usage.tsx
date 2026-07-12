@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
 import { useCurrency } from '@/store/currency';
@@ -60,13 +61,39 @@ export default function Usage() {
   const [apiKeyFilter, setApiKeyFilter] = useState('');
   const [apiFormatFilter, setApiFormatFilter] = useState('');
   const [detailId, setDetailId] = useState<string | null>(null);
-  const filtersActive = !!(role === 'admin' && userFilter) || modelFilter || apiKeyFilter || apiFormatFilter;
+
+  // ── Date filter (supports ?date=YYYY-MM-DD from wallet navigation) ──
+  const [searchParams] = useSearchParams();
+  const urlDate = searchParams.get('date');
+  const [dateFilter, setDateFilter] = useState(urlDate || 'all');
+  const dateParams = useMemo(() => {
+    if (dateFilter === 'all') return {};
+    if (dateFilter === 'today') {
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      return { start_date: start.toISOString(), end_date: now.toISOString() };
+    }
+    if (dateFilter === '7d') {
+      const start = new Date(Date.now() - 7 * 86400000);
+      return { start_date: start.toISOString() };
+    }
+    if (dateFilter === '30d') {
+      const start = new Date(Date.now() - 30 * 86400000);
+      return { start_date: start.toISOString() };
+    }
+    // Custom date from URL: dateFilter is YYYY-MM-DD
+    return { start_date: `${dateFilter}T00:00:00`, end_date: `${dateFilter}T23:59:59` };
+  }, [dateFilter]);
+  const isCustomDate = dateFilter.length === 10 && dateFilter.includes('-');
+
+  const filtersActive = !!(role === 'admin' && userFilter) || modelFilter || apiKeyFilter || apiFormatFilter || dateFilter !== 'all';
   const params = {
     limit, offset,
     ...(role === 'admin' && userFilter ? { user_id: userFilter } : {}),
     ...(modelFilter ? { model: modelFilter } : {}),
     ...(apiKeyFilter ? { api_key: apiKeyFilter } : {}),
     ...(apiFormatFilter ? { api_format: apiFormatFilter } : {}),
+    ...dateParams,
   };
   const { data: usage, isLoading, isError, refetch } = useUsage(params);
   const records = usage?.records ?? [];
@@ -176,6 +203,30 @@ export default function Usage() {
                   <SelectItem value="relay">Relay</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+          )}
+
+          {/* Date range filter tabs */}
+          {showFilters && (
+            <div className="flex items-center gap-1 text-xs">
+              {(['today', '7d', '30d', 'all'] as const).map((key) => (
+                <button
+                  key={key}
+                  onClick={() => { setDateFilter(key); setOffset(0); }}
+                  className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                    (!isCustomDate && dateFilter === key)
+                      ? 'bg-brand text-white'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                  }`}
+                >
+                  {key === 'today' ? t('usage.dateToday') : key === '7d' ? t('usage.date7d') : key === '30d' ? t('usage.date30d') : t('usage.dateAll')}
+                </button>
+              ))}
+              {isCustomDate && (
+                <span className="px-2.5 py-1 rounded-md bg-brand text-white font-medium">
+                  {dateFilter}
+                </span>
+              )}
             </div>
           )}
 

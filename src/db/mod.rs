@@ -396,6 +396,14 @@ impl Database {
             conditions.push(format!("api_format = ?{}", param_vals.len() + 1));
             param_vals.push(Box::new(f.clone()));
         }
+        if let Some(ref sd) = filter.start_date {
+            conditions.push(format!("timestamp >= ?{}", param_vals.len() + 1));
+            param_vals.push(Box::new(sd.clone()));
+        }
+        if let Some(ref ed) = filter.end_date {
+            conditions.push(format!("timestamp <= ?{}", param_vals.len() + 1));
+            param_vals.push(Box::new(ed.clone()));
+        }
 
         if !conditions.is_empty() {
             let where_clause = conditions.join(" AND ");
@@ -773,6 +781,14 @@ impl Database {
         if let Some(ref f) = filter.api_format {
             conditions.push(format!("api_format = ?{}", param_vals.len() + 1));
             param_vals.push(Box::new(f.clone()));
+        }
+        if let Some(ref sd) = filter.start_date {
+            conditions.push(format!("timestamp >= ?{}", param_vals.len() + 1));
+            param_vals.push(Box::new(sd.clone()));
+        }
+        if let Some(ref ed) = filter.end_date {
+            conditions.push(format!("timestamp <= ?{}", param_vals.len() + 1));
+            param_vals.push(Box::new(ed.clone()));
         }
 
         let where_clause = if conditions.is_empty() {
