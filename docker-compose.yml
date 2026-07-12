@@ -16,6 +16,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - GATEWAY_CONFIG=/app/config/config.yaml
+      - GATEWAY_JWT_SECRET=${GATEWAY_JWT_SECRET}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
     depends_on:
       redis:
