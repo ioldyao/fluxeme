@@ -52,6 +52,8 @@ pub struct RechargeKeyRow {
     pub used_at: Option<String>,
     pub created_by: String,
     pub created_at: String,
+    pub expires_at: Option<String>,
+    pub revoked: bool,
 }
 
 fn map_wallet_tx(row: &rusqlite::Row<'_>) -> rusqlite::Result<WalletTransactionRow> {
@@ -281,6 +283,9 @@ impl Database {
                 value TEXT NOT NULL
             );",
         );
+        // Backward compat: add expires_at and revoked to recharge_keys
+        let _ = conn.execute_batch("ALTER TABLE recharge_keys ADD COLUMN expires_at TEXT;");
+        let _ = conn.execute_batch("ALTER TABLE recharge_keys ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0;");
         Ok(())
     }
 
@@ -1389,25 +1394,35 @@ impl Database {
         ).map_err(|e| DbError(e.to_string()))
     }
 
-    pub fn create_recharge_key(&self, key: &str, amount: f64, created_by: &str) -> Result<(), DbError> {
+    pub fn create_recharge_key(&self, key: &str, amount: f64, created_by: &str, expires_at: Option<&str>) -> Result<(), DbError> {
         let conn = self.conn()?;
         conn.execute(
-            "INSERT INTO recharge_keys (key, amount, created_by, created_at) VALUES (?1, ?2, ?3, ?4)",
-            params![key, amount, created_by, chrono::Utc::now().to_rfc3339()],
+            "INSERT INTO recharge_keys (key, amount, created_by, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![key, amount, created_by, chrono::Utc::now().to_rfc3339(), expires_at],
         )?;
         Ok(())
     }
 
     pub fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<f64, DbError> {
         let conn = self.conn()?;
-        let (amount, used_by): (f64, Option<String>) = conn.query_row(
-            "SELECT amount, used_by FROM recharge_keys WHERE key = ?1",
+        let (amount, used_by, expires_at, revoked): (f64, Option<String>, Option<String>, i64) = conn.query_row(
+            "SELECT amount, used_by, expires_at, revoked FROM recharge_keys WHERE key = ?1",
             params![key],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get::<_, i64>(3).unwrap_or(0))),
         ).map_err(|_| DbError("Invalid recharge key".to_string()))?;
 
         if used_by.is_some() {
             return Err(DbError("Recharge key already used".to_string()));
+        }
+        if revoked != 0 {
+            return Err(DbError("Recharge key has been revoked".to_string()));
+        }
+        if let Some(exp) = &expires_at {
+            if let Ok(exp_time) = chrono::DateTime::parse_from_rfc3339(exp) {
+                if chrono::Utc::now() > exp_time {
+                    return Err(DbError("Recharge key has expired".to_string()));
+                }
+            }
         }
 
         // Mark key as used
@@ -1441,10 +1456,22 @@ impl Database {
         Ok(amount)
     }
 
+    pub fn revoke_recharge_key(&self, key: &str) -> Result<(), DbError> {
+        let conn = self.conn()?;
+        let rows = conn.execute(
+            "UPDATE recharge_keys SET revoked = 1 WHERE key = ?1 AND used_by IS NULL AND (revoked IS NULL OR revoked = 0)",
+            params![key],
+        )?;
+        if rows == 0 {
+            return Err(DbError("Key not found or already used/revoked".to_string()));
+        }
+        Ok(())
+    }
+
     pub fn list_recharge_keys(&self) -> Result<Vec<RechargeKeyRow>, DbError> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(
-            "SELECT key, amount, used_by, used_at, created_by, created_at FROM recharge_keys ORDER BY created_at DESC",
+            "SELECT key, amount, used_by, used_at, created_by, created_at, expires_at, revoked FROM recharge_keys ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(RechargeKeyRow {
@@ -1454,6 +1481,8 @@ impl Database {
                 used_at: row.get(3)?,
                 created_by: row.get(4)?,
                 created_at: row.get(5)?,
+                expires_at: row.get(6)?,
+                revoked: row.get::<_, i64>(7).unwrap_or(0) != 0,
             })
         })?;
         let mut keys = Vec::new();
@@ -1463,16 +1492,10 @@ impl Database {
         Ok(keys)
     }
 
-    pub fn count_recharge_keys(&self) -> Result<usize, DbError> {
-        let conn = self.conn()?;
-        conn.query_row("SELECT COUNT(*) FROM recharge_keys", [], |row| row.get(0))
-            .map_err(|e| DbError(e.to_string()))
-    }
-
     pub fn list_recharge_keys_paginated(&self, limit: usize, offset: usize) -> Result<Vec<RechargeKeyRow>, DbError> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(
-            "SELECT key, amount, used_by, used_at, created_by, created_at FROM recharge_keys ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+            "SELECT key, amount, used_by, used_at, created_by, created_at, expires_at, revoked FROM recharge_keys ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt.query_map(params![limit as i64, offset as i64], |row| {
             Ok(RechargeKeyRow {
@@ -1482,6 +1505,8 @@ impl Database {
                 used_at: row.get(3)?,
                 created_by: row.get(4)?,
                 created_at: row.get(5)?,
+                expires_at: row.get(6)?,
+                revoked: row.get::<_, i64>(7).unwrap_or(0) != 0,
             })
         })?;
         let mut keys = Vec::new();
@@ -1489,6 +1514,115 @@ impl Database {
             keys.push(row?);
         }
         Ok(keys)
+    }
+
+    pub fn count_recharge_keys_filtered(
+        &self,
+        search: Option<&str>,
+        status: Option<&str>,
+        user_search: Option<&str>,
+    ) -> Result<usize, DbError> {
+        let now = &chrono::Utc::now().to_rfc3339();
+        let (where_clause, param_values) = self.build_recharge_key_filter(search, status, user_search, now);
+        let sql = format!("SELECT COUNT(*) FROM recharge_keys {}", where_clause);
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+        stmt.query_row(params_refs.as_slice(), |row| row.get(0))
+            .map_err(|e| DbError(e.to_string()))
+    }
+
+    pub fn list_recharge_keys_filtered(
+        &self,
+        limit: usize,
+        offset: usize,
+        search: Option<&str>,
+        status: Option<&str>,
+        user_search: Option<&str>,
+    ) -> Result<Vec<RechargeKeyRow>, DbError> {
+        let now = &chrono::Utc::now().to_rfc3339();
+        let (where_clause, param_values) = self.build_recharge_key_filter(search, status, user_search, now);
+        let sql = format!(
+            "SELECT key, amount, used_by, used_at, created_by, created_at, expires_at, revoked FROM recharge_keys {} ORDER BY created_at DESC LIMIT ?{} OFFSET ?{}",
+            where_clause,
+            param_values.len() + 1,
+            param_values.len() + 2,
+        );
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(&sql)?;
+        let limit_i64 = limit as i64;
+        let offset_i64 = offset as i64;
+        let mut params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+        params_refs.push(&limit_i64);
+        params_refs.push(&offset_i64);
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
+            Ok(RechargeKeyRow {
+                key: row.get(0)?,
+                amount: row.get(1)?,
+                used_by: row.get(2)?,
+                used_at: row.get(3)?,
+                created_by: row.get(4)?,
+                created_at: row.get(5)?,
+                expires_at: row.get(6)?,
+                revoked: row.get::<_, i64>(7).unwrap_or(0) != 0,
+            })
+        })?;
+        let mut keys = Vec::new();
+        for row in rows {
+            keys.push(row?);
+        }
+        Ok(keys)
+    }
+
+    fn build_recharge_key_filter(
+        &self,
+        search: Option<&str>,
+        status: Option<&str>,
+        user_search: Option<&str>,
+        now: &str,
+    ) -> (String, Vec<Box<dyn rusqlite::types::ToSql>>) {
+        let mut conditions: Vec<String> = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(s) = search.filter(|s| !s.is_empty()) {
+            conditions.push(format!("key LIKE ?{}", params.len() + 1));
+            params.push(Box::new(format!("%{}%", s)));
+        }
+        if let Some(u) = user_search.filter(|u| !u.is_empty()) {
+            conditions.push(format!("(used_by LIKE ?{} OR created_by LIKE ?{})", params.len() + 1, params.len() + 1));
+            params.push(Box::new(format!("%{}%", u)));
+        }
+        match status {
+            Some("active") => {
+                let idx = params.len() + 1;
+                conditions.push("used_by IS NULL".into());
+                conditions.push(format!("(revoked IS NULL OR revoked = 0)"));
+                conditions.push(format!("(expires_at IS NULL OR expires_at > ?{})", idx));
+                params.push(Box::new(now.to_string()));
+            }
+            Some("used") => {
+                conditions.push("used_by IS NOT NULL".into());
+            }
+            Some("expired") => {
+                let idx = params.len() + 1;
+                conditions.push("used_by IS NULL".into());
+                conditions.push("(revoked IS NULL OR revoked = 0)".into());
+                conditions.push("expires_at IS NOT NULL".into());
+                conditions.push(format!("expires_at < ?{}", idx));
+                params.push(Box::new(now.to_string()));
+            }
+            Some("revoked") => {
+                conditions.push("revoked = 1".into());
+            }
+            _ => {}
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        (where_clause, params)
     }
 
     pub fn get_total_consumed(&self, user_id: &str) -> Result<f64, DbError> {

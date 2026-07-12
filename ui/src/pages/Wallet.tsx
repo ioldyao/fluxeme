@@ -1,12 +1,21 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useWalletOverview, useWalletTransactions, useRecharge, useRedeemKey, useCreateRechargeKey, useRechargeKeys, useEstimatedDays } from '@/api/wallet';
+import { useWalletOverview, useWalletTransactions, useRecharge, useRedeemKey, useCreateRechargeKey, useRechargeKeys, useRevokeKey, useEstimatedDays } from '@/api/wallet';
 import { useCurrency } from '@/store/currency';
 import { useAuth } from '@/store/auth';
 import { PageHeader } from '@/components/PageHeader';
 import { Wallet, CreditCard, KeyRound, Receipt, AlertTriangle, Copy, Check, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+
+function useDebounce<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(id);
+  }, [value, delay]);
+  return debounced;
+}
 
 export default function WalletPage() {
   const navigate = useNavigate();
@@ -78,6 +87,15 @@ export default function WalletPage() {
       });
   }, [txData?.items]);
 
+  // ── Key filter state ──
+  const [keySearch, setKeySearch] = useState('');
+  const [keyStatus, setKeyStatus] = useState('');
+  const [keyUserSearch, setKeyUserSearch] = useState('');
+  const [createKeyExpiry, setCreateKeyExpiry] = useState('');
+  const debouncedKeySearch = useDebounce(keySearch, 300);
+  const debouncedKeyUser = useDebounce(keyUserSearch, 300);
+  const revokeKey = useRevokeKey();
+
   const toggleDay = (day: string) => {
     setExpandedDays(prev => {
       const next = new Set(prev);
@@ -88,7 +106,11 @@ export default function WalletPage() {
   const { data: estimated } = useEstimatedDays();
   const [keyPage, setKeyPage] = useState(1);
   const KEY_PAGE_SIZE = 20;
-  const { data: keysData } = useRechargeKeys(keyPage, KEY_PAGE_SIZE);
+  const { data: keysData } = useRechargeKeys(keyPage, KEY_PAGE_SIZE, {
+    search: debouncedKeySearch || undefined,
+    status: keyStatus || undefined,
+    used_by: debouncedKeyUser || undefined,
+  });
   const keys = keysData?.items;
   const keyTotal = keysData?.total ?? 0;
   const keyTotalPages = Math.max(1, Math.ceil(keyTotal / KEY_PAGE_SIZE));
@@ -130,15 +152,25 @@ export default function WalletPage() {
   const handleCreateKey = () => {
     const amt = Number(createKeyAmt);
     if (!amt || amt <= 0) return;
-    createKey.mutate(amt, {
+    const expires_at = createKeyExpiry ? new Date(createKeyExpiry).toISOString() : undefined;
+    createKey.mutate({ amount: amt, expires_at }, {
       onSuccess: (res) => {
         setNewKey(res.key);
         setCreateKeyAmt('');
+        setCreateKeyExpiry('');
         toast.success(t('wallet.createKeySuccess'));
       },
       onError: (err: Error) => {
         toast.error(err.message);
       },
+    });
+  };
+
+  const handleRevokeKey = (key: string) => {
+    if (!window.confirm(t('wallet.revokeConfirm', { key: key.substring(0, 8) + '...' }))) return;
+    revokeKey.mutate(key, {
+      onSuccess: () => toast.success(t('wallet.revokeSuccess')),
+      onError: (err: Error) => toast.error(err.message),
     });
   };
 
@@ -269,6 +301,15 @@ export default function WalletPage() {
                   {createKey.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                   {t('wallet.createKeyBtn')}
                 </button>
+              </div>
+              <div className="mt-2">
+                <label className="text-xs text-muted-foreground">{t('wallet.createKeyExpiresLabel')}</label>
+                <input
+                  type="datetime-local"
+                  value={createKeyExpiry}
+                  onChange={(e) => setCreateKeyExpiry(e.target.value)}
+                  className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-sm"
+                />
               </div>
               {newKey && (
                 <div className="mt-3 flex items-center gap-2 p-2 rounded-md bg-muted">
@@ -471,7 +512,7 @@ export default function WalletPage() {
       </div>
 
       {/* Admin: recharge key management */}
-      {isAdmin && keys && keys.length > 0 && (
+      {isAdmin && (
         <div className="px-6 mb-8">
           <div className="rounded-xl border">
             <div className="border-b px-5 py-3 flex items-center gap-2">
@@ -479,33 +520,100 @@ export default function WalletPage() {
               <h3 className="font-semibold text-sm">{t('wallet.createKey')}</h3>
               <span className="text-xs text-muted-foreground ml-auto">{t('wallet.txTotal', { total: keyTotal })}</span>
             </div>
+
+            {/* ── Filter bar ── */}
+            <div className="border-b px-5 py-2.5 flex items-center gap-3 flex-wrap">
+              <input
+                type="text"
+                placeholder={t('wallet.filterByKey')}
+                value={keySearch}
+                onChange={(e) => { setKeySearch(e.target.value); setKeyPage(1); }}
+                className="h-7 w-40 rounded-md border bg-background px-2 text-xs"
+              />
+              <input
+                type="text"
+                placeholder={t('wallet.filterByUser')}
+                value={keyUserSearch}
+                onChange={(e) => { setKeyUserSearch(e.target.value); setKeyPage(1); }}
+                className="h-7 w-40 rounded-md border bg-background px-2 text-xs"
+              />
+              <select
+                value={keyStatus}
+                onChange={(e) => { setKeyStatus(e.target.value); setKeyPage(1); }}
+                className="h-7 rounded-md border bg-background px-2 text-xs"
+              >
+                <option value="">{t('wallet.filterAllTypes')}</option>
+                <option value="active">{t('wallet.statusActive')}</option>
+                <option value="used">{t('wallet.statusUsed')}</option>
+                <option value="expired">{t('wallet.statusExpired')}</option>
+                <option value="revoked">{t('wallet.statusRevoked')}</option>
+              </select>
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-xs text-muted-foreground">
                     <th className="text-left px-5 py-3 font-medium">Key</th>
+                    <th className="text-left px-5 py-3 font-medium">{t('wallet.keyStatus')}</th>
                     <th className="text-right px-5 py-3 font-medium">{t('wallet.txAmount')}</th>
-                    <th className="text-left px-5 py-3 font-medium">Used By</th>
-                    <th className="text-left px-5 py-3 font-medium">Used At</th>
-                    <th className="text-left px-5 py-3 font-medium">Created By</th>
-                    <th className="text-left px-5 py-3 font-medium">Created At</th>
+                    <th className="text-left px-5 py-3 font-medium">{t('wallet.usedBy')}</th>
+                    <th className="text-left px-5 py-3 font-medium">{t('wallet.usedAt')}</th>
+                    <th className="text-left px-5 py-3 font-medium">{t('wallet.keyExpires')}</th>
+                    <th className="text-left px-5 py-3 font-medium">{t('wallet.createdBy')}</th>
+                    <th className="text-left px-5 py-3 font-medium">{t('wallet.createdAt')}</th>
+                    <th className="text-left px-5 py-3 font-medium">{t('wallet.txAction')}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {keys.map((k) => (
-                    <tr key={k.key} className="border-b last:border-0">
-                      <td className="px-5 py-3 font-mono text-xs">{k.key.substring(0, 8)}...</td>
-                      <td className="px-5 py-3 text-right font-mono">{fmt(k.amount)}</td>
-                      <td className="px-5 py-3">{k.used_by || '—'}</td>
-                      <td className="px-5 py-3 text-muted-foreground">
-                        {k.used_at ? new Date(k.used_at).toLocaleDateString() : '—'}
-                      </td>
-                      <td className="px-5 py-3">{k.created_by}</td>
-                      <td className="px-5 py-3 text-muted-foreground">
-                        {new Date(k.created_at).toLocaleDateString()}
+                  {keys && keys.length > 0 ? keys.map((k) => {
+                    const now = new Date();
+                    const isUsed = !!k.used_by;
+                    const isExpired = !isUsed && !!k.expires_at && new Date(k.expires_at) < now;
+                    const isRevoked = k.revoked;
+                    const statusClass = isUsed ? 'bg-gray-500/10 text-gray-500' : isExpired ? 'bg-yellow-500/10 text-yellow-600' : isRevoked ? 'bg-destructive/10 text-destructive' : 'bg-green-500/10 text-green-600';
+                    const statusLabel = isUsed ? t('wallet.statusUsed') : isExpired ? t('wallet.statusExpired') : isRevoked ? t('wallet.statusRevoked') : t('wallet.statusActive');
+                    const isActive = !isUsed && !isExpired && !isRevoked;
+                    return (
+                      <tr key={k.key} className="border-b last:border-0">
+                        <td className="px-5 py-3 font-mono text-xs">{k.key.substring(0, 8)}...</td>
+                        <td className="px-5 py-3">
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${statusClass}`}>
+                            {statusLabel}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3 text-right font-mono">{fmt(k.amount)}</td>
+                        <td className="px-5 py-3">{k.used_by || '—'}</td>
+                        <td className="px-5 py-3 text-muted-foreground text-xs">
+                          {k.used_at ? new Date(k.used_at).toLocaleString() : '—'}
+                        </td>
+                        <td className="px-5 py-3 text-muted-foreground text-xs">
+                          {k.expires_at ? new Date(k.expires_at).toLocaleDateString() : t('wallet.keyNeverExpires')}
+                        </td>
+                        <td className="px-5 py-3">{k.created_by}</td>
+                        <td className="px-5 py-3 text-muted-foreground text-xs">
+                          {new Date(k.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="px-5 py-3">
+                          {isActive && (
+                            <button
+                              onClick={() => handleRevokeKey(k.key)}
+                              disabled={revokeKey.isPending}
+                              className="text-xs px-2 py-1 rounded-md border border-destructive/30 text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                            >
+                              {t('wallet.revokeKey')}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  }) : (
+                    <tr>
+                      <td colSpan={9} className="px-5 py-8 text-center text-muted-foreground text-sm">
+                        {t('wallet.empty')}
                       </td>
                     </tr>
-                  ))}
+                  )}
                 </tbody>
               </table>
             </div>

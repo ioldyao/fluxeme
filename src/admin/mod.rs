@@ -625,12 +625,14 @@ struct RechargeResp {
 #[derive(Deserialize)]
 struct WalletCreateKeyReq {
     amount: f64,
+    expires_at: Option<String>,
 }
 
 #[derive(Serialize)]
 struct CreateKeyResp {
     key: String,
     amount: f64,
+    expires_at: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -662,8 +664,8 @@ async fn wallet_create_key(
         return Err(AdminError::bad_request("Amount must be positive"));
     }
     let key = uuid::Uuid::new_v4().to_string();
-    state.db.create_recharge_key(&key, req.amount, &session.user_id).map_err(|e| AdminError::internal(e.0))?;
-    Ok(Json(CreateKeyResp { key, amount: req.amount }))
+    state.db.create_recharge_key(&key, req.amount, &session.user_id, req.expires_at.as_deref()).map_err(|e| AdminError::internal(e.0))?;
+    Ok(Json(CreateKeyResp { key, amount: req.amount, expires_at: req.expires_at }))
 }
 
 async fn wallet_redeem_key(
@@ -688,6 +690,14 @@ async fn wallet_redeem_key(
 struct KeyListQuery {
     limit: Option<usize>,
     offset: Option<usize>,
+    search: Option<String>,
+    status: Option<String>,
+    used_by: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RevokeKeyReq {
+    key: String,
 }
 
 const DEFAULT_KEY_PAGE_SIZE: usize = 20;
@@ -700,9 +710,28 @@ async fn wallet_list_keys(
     let _session = require_session(&state.admin, &headers)?;
     let limit = q.limit.unwrap_or(DEFAULT_KEY_PAGE_SIZE);
     let offset = q.offset.unwrap_or(0);
-    let total = state.db.count_recharge_keys().map_err(|e| AdminError::internal(e.0))?;
-    let items = state.db.list_recharge_keys_paginated(limit, offset).map_err(|e| AdminError::internal(e.0))?;
+    let total = state.db.count_recharge_keys_filtered(
+        q.search.as_deref(),
+        q.status.as_deref(),
+        q.used_by.as_deref(),
+    ).map_err(|e| AdminError::internal(e.0))?;
+    let items = state.db.list_recharge_keys_filtered(
+        limit, offset,
+        q.search.as_deref(),
+        q.status.as_deref(),
+        q.used_by.as_deref(),
+    ).map_err(|e| AdminError::internal(e.0))?;
     Ok(Json(serde_json::json!({ "items": items, "total": total })))
+}
+
+async fn wallet_revoke_key(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<RevokeKeyReq>,
+) -> Result<Json<serde_json::Value>, AdminError> {
+    let _session = require_admin(&state.admin, &headers)?;
+    state.db.revoke_recharge_key(&req.key).map_err(|e| AdminError::bad_request(e.0))?;
+    Ok(Json(serde_json::json!({ "success": true })))
 }
 
 #[derive(Deserialize)]
@@ -2424,6 +2453,7 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route("/admin/api/wallet/create-key", axum::routing::post(wallet_create_key))
         .route("/admin/api/wallet/redeem-key", axum::routing::post(wallet_redeem_key))
         .route("/admin/api/wallet/keys", axum::routing::get(wallet_list_keys))
+        .route("/admin/api/wallet/revoke-key", axum::routing::post(wallet_revoke_key))
         .route("/admin/api/wallet/transactions", axum::routing::get(wallet_transactions))
         .route("/admin/api/wallet/estimated-days", axum::routing::get(wallet_estimated_days))
         // Health check

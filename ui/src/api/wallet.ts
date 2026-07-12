@@ -32,6 +32,8 @@ export interface RechargeKeyRow {
   used_at: string | null;
   created_by: string;
   created_at: string;
+  expires_at: string | null;
+  revoked: boolean;
 }
 
 export function useWalletOverview() {
@@ -63,14 +65,21 @@ export interface RechargeKeyResponse {
   total: number;
 }
 
-export function useRechargeKeys(page?: number, size?: number) {
+export function useRechargeKeys(
+  page?: number,
+  size?: number,
+  filters?: { search?: string; status?: string; used_by?: string },
+) {
   const params = new URLSearchParams();
   if (page != null && size != null) {
     params.set('limit', String(size));
     params.set('offset', String((page - 1) * size));
   }
+  if (filters?.search) params.set('search', filters.search);
+  if (filters?.status) params.set('status', filters.status);
+  if (filters?.used_by) params.set('used_by', filters.used_by);
   return useQuery({
-    queryKey: ['wallet', 'keys', page, size],
+    queryKey: ['wallet', 'keys', page, size, filters],
     queryFn: () => api<RechargeKeyResponse>(`/wallet/keys?${params}`),
     staleTime: 10_000,
   });
@@ -101,10 +110,24 @@ export function useRecharge() {
 export function useCreateRechargeKey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (amount: number) =>
-      api<{ key: string; amount: number }>('/wallet/create-key', {
+    mutationFn: (data: { amount: number; expires_at?: string }) =>
+      api<{ key: string; amount: number; expires_at?: string }>('/wallet/create-key', {
         method: 'POST',
-        body: { amount },
+        body: data,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['wallet', 'keys'] });
+    },
+  });
+}
+
+export function useRevokeKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (key: string) =>
+      api<{ success: boolean }>('/wallet/revoke-key', {
+        method: 'POST',
+        body: { key },
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['wallet', 'keys'] });
