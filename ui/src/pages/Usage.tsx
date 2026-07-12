@@ -358,10 +358,10 @@ export default function Usage() {
                           <BarChart data={modelActivity} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
                             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                             <XAxis dataKey="model" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />
-                            <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} width={45} />
+                            <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} width={55} tickFormatter={(v: number) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${(v / 1_000).toFixed(1)}K` : `${v}`} />
                             <Tooltip content={<ChartTooltip />} />
-                            <Bar dataKey="prompt_tokens" stackId="tokens" fill="var(--chart-2)" name={t('dash.prompt')} />
-                            <Bar dataKey="completion_tokens" stackId="tokens" fill="var(--chart-3)" name={t('dash.completion')} />
+                            <Bar dataKey="prompt_tokens" stackId="tokens" fill="var(--chart-2)" radius={[0, 0, 0, 0]} name={t('dash.prompt')} />
+                            <Bar dataKey="completion_tokens" stackId="tokens" fill="var(--chart-3)" radius={[4, 4, 0, 0]} name={t('dash.completion')} />
                           </BarChart>
                         </ResponsiveContainer>
                       </CardContent>
