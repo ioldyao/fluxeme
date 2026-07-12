@@ -312,7 +312,7 @@ export default function Usage() {
                     <BarChart data={aggregate} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                       <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} />
-                      <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} width={50} />
+                      <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} width={50} tickFormatter={(v: number) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${(v / 1_000).toFixed(1)}K` : `${v}`} />
                       <Tooltip content={<ChartTooltip />} />
                       <Legend
                         wrapperStyle={{ paddingTop: 8 }}
