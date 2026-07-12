@@ -3,9 +3,19 @@ import { initReactI18next } from 'react-i18next';
 import zh from './zh';
 import en from './en';
 
-const lang = typeof window !== 'undefined'
-  ? localStorage.getItem('lang') || (navigator.language.startsWith('zh') ? 'zh' : 'en')
-  : 'zh';
+function getInitialLang(): string {
+  if (typeof window === 'undefined') return 'zh';
+  try {
+    const stored = localStorage.getItem('lang');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed?.state?.lang) return parsed.state.lang;
+    }
+  } catch {}
+  return navigator.language.startsWith('zh') ? 'zh' : 'en';
+}
+
+const lang = getInitialLang();
 
 i18n.use(initReactI18next).init({
   resources: {
