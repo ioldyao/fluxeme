@@ -13,7 +13,7 @@ export default function MyModels() {
   const { data: models, isLoading, isError, refetch } = useSubscriptions();
   const unsubscribe = useUnsubscribeModel();
   const testConnection = useTestModelConnection();
-  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testingIds, setTestingIds] = useState<Record<string, boolean>>({});
   const [results, setResults] = useState<Record<string, ModelTestResult>>({});
 
   const formatCtx = (v: number | null | undefined) => {
@@ -31,10 +31,10 @@ export default function MyModels() {
   };
 
   const handleTestConnection = (modelId: string) => {
-    setTestingId(modelId);
+    setTestingIds((prev) => ({ ...prev, [modelId]: true }));
     testConnection.mutate(modelId, {
       onSuccess: (res) => {
-        setTestingId(null);
+        setTestingIds((prev) => ({ ...prev, [modelId]: false }));
         setResults((prev) => ({ ...prev, [modelId]: res }));
         if (res.success) {
           toast.success(`连接成功 (${res.latency_ms}ms)`);
@@ -43,7 +43,7 @@ export default function MyModels() {
         }
       },
       onError: (err) => {
-        setTestingId(null);
+        setTestingIds((prev) => ({ ...prev, [modelId]: false }));
         toast.error(err.message);
       },
     });
@@ -128,10 +128,10 @@ export default function MyModels() {
                       variant="ghost"
                       size="sm"
                       onClick={() => handleTestConnection(model.id)}
-                      disabled={testingId === model.id}
+                      disabled={testingIds[model.id]}
                       title="测试连接"
                     >
-                      {testingId === model.id ? (
+                      {testingIds[model.id] ? (
                         <Loader2 className="size-4 animate-spin" />
                       ) : (
                         <Link2 className="size-4" />
