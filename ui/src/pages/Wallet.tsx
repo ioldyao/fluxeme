@@ -347,12 +347,16 @@ export default function WalletPage() {
                 const isExpanded = expandedDays.has(day.date);
                 return (
                   <div key={day.date} className="border-b last:border-0">
-                    {/* Day header — click to expand/collapse */}
+                    {/* Day header — click to expand/collapse (only if has recharge rows) */}
                     <button
-                      onClick={() => toggleDay(day.date)}
+                      onClick={() => day.rechargeCount > 0 && toggleDay(day.date)}
                       className="w-full flex items-center gap-3 px-5 py-3 hover:bg-muted/30 transition-colors text-left"
                     >
-                      <span className={`text-xs transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                      {day.rechargeCount > 0 ? (
+                        <span className={`text-xs transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                      ) : (
+                        <span className="text-xs text-transparent">▶</span>
+                      )}
                       <span className="font-semibold text-sm">
                         {new Date(day.date).toLocaleDateString(i18n.language === 'zh' ? 'zh-CN' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                       </span>

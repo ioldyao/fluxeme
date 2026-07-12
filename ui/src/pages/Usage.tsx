@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
@@ -66,6 +66,11 @@ export default function Usage() {
   const [searchParams] = useSearchParams();
   const urlDate = searchParams.get('date');
   const [dateFilter, setDateFilter] = useState(urlDate || 'all');
+  useEffect(() => {
+    if (urlDate && urlDate !== dateFilter) {
+      setDateFilter(urlDate);
+    }
+  }, [urlDate]); // eslint-disable-line react-hooks/exhaustive-deps
   const dateParams = useMemo(() => {
     if (dateFilter === 'all') return {};
     if (dateFilter === 'today') {
