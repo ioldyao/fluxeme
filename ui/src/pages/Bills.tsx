@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useBillingSummary, usePeriodSummary, useDeductions, useBillingMonths, usePeriodSummaryAll } from '@/api/billing';
 import { useCurrency } from '@/store/currency';
@@ -18,7 +18,13 @@ export default function Bills() {
   const active = months[safeSel] ?? { year: 0, month: 0 };
   const { data: summary } = useBillingSummary();
   const { data: period } = usePeriodSummary(active.year, active.month);
-  const { data: deductions } = useDeductions(active.year, active.month);
+  const [dedPage, setDedPage] = useState(1);
+  const DED_PAGE_SIZE = 15;
+  useEffect(() => { setDedPage(1); }, [sel]);
+  const { data: deductionsData } = useDeductions(active.year, active.month, dedPage, DED_PAGE_SIZE);
+  const deductions = deductionsData?.items;
+  const dedTotal = deductionsData?.total ?? 0;
+  const dedTotalPages = Math.max(1, Math.ceil(dedTotal / DED_PAGE_SIZE));
   const { currency, rate } = useCurrency();
   const [open, setOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
@@ -186,27 +192,51 @@ export default function Bills() {
           <div className="border-b px-5 py-3 flex items-center gap-2">
             <TrendingDown className="h-4 w-4 text-muted-foreground" />
             <h3 className="font-semibold text-sm">{t('bills.deductions')}</h3>
+            <span className="text-xs text-muted-foreground ml-auto">{t('wallet.txTotal', { total: dedTotal })}</span>
           </div>
           {deductions && deductions.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-xs text-muted-foreground">
-                    <th className="text-left px-5 py-3 font-medium">{t('bills.deductionTime')}</th>
-                    <th className="text-right px-5 py-3 font-medium">{t('bills.deductionAmount')}</th>
-                    <th className="text-left px-5 py-3 font-medium">{t('bills.deductionMethod')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {deductions.map((d) => (
-                    <tr key={d.time} className="border-b last:border-0">
-                      <td className="px-5 py-3 text-muted-foreground">{new Date(d.time).toLocaleDateString()}</td>
-                      <td className="px-5 py-3 text-right font-mono text-red-500">{fmt(d.amount)}</td>
-                      <td className="px-5 py-3">{d.method}</td>
+            <div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-xs text-muted-foreground">
+                      <th className="text-left px-5 py-3 font-medium">{t('bills.deductionTime')}</th>
+                      <th className="text-right px-5 py-3 font-medium">{t('bills.deductionAmount')}</th>
+                      <th className="text-left px-5 py-3 font-medium">{t('bills.deductionMethod')}</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {deductions.map((d) => (
+                      <tr key={d.time} className="border-b last:border-0">
+                        <td className="px-5 py-3 text-muted-foreground">{new Date(d.time).toLocaleDateString()}</td>
+                        <td className="px-5 py-3 text-right font-mono text-red-500">{fmt(d.amount)}</td>
+                        <td className="px-5 py-3">{d.method}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {dedTotalPages > 1 && (
+                <div className="flex items-center justify-center gap-2 px-5 py-3 border-t">
+                  <button
+                    onClick={() => setDedPage(p => Math.max(1, p - 1))}
+                    disabled={dedPage <= 1}
+                    className="px-3 py-1 text-xs rounded-md border hover:bg-accent disabled:opacity-30"
+                  >
+                    {t('wallet.prevPage')}
+                  </button>
+                  <span className="text-xs text-muted-foreground">
+                    {dedPage} / {dedTotalPages}
+                  </span>
+                  <button
+                    onClick={() => setDedPage(p => Math.min(dedTotalPages, p + 1))}
+                    disabled={dedPage >= dedTotalPages}
+                    className="px-3 py-1 text-xs rounded-md border hover:bg-accent disabled:opacity-30"
+                  >
+                    {t('wallet.nextPage')}
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="p-8 text-center text-muted-foreground text-sm">{t('bills.noDeductions')}</div>

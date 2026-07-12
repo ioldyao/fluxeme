@@ -725,6 +725,66 @@ impl Database {
         Ok(records)
     }
 
+    pub fn count_daily_deductions(&self, year: i32, month: u32, user_id: Option<&str>) -> Result<usize, DbError> {
+        let conn = self.conn()?;
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let sql = format!(
+            "SELECT COUNT(DISTINCT SUBSTR(timestamp, 1, 10)) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{}",
+            if user_id.is_some() { " AND user_id = ?3" } else { "" }
+        );
+        if let Some(uid) = user_id {
+            conn.query_row(&sql, params![start, end, uid], |row| row.get(0))
+                .map_err(|e| DbError(e.to_string()))
+        } else {
+            conn.query_row(&sql, params![start, end], |row| row.get(0))
+                .map_err(|e| DbError(e.to_string()))
+        }
+    }
+
+    pub fn daily_deductions_paginated(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<(String, f64, u64)>, DbError> {
+        let conn = self.conn()?;
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let limit_i64 = limit as i64;
+        let offset_i64 = offset as i64;
+        let mut records = Vec::new();
+
+        if let Some(uid) = user_id {
+            let mut stmt = conn.prepare(
+                "SELECT SUBSTR(timestamp, 1, 10) as day, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0), COUNT(*) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2 AND user_id = ?3 GROUP BY day ORDER BY day DESC LIMIT ?4 OFFSET ?5",
+            )?;
+            let mut rows = stmt.query(params![start, end, uid, limit_i64, offset_i64])?;
+            while let Some(row) = rows.next()? {
+                records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?, row.get::<_, u64>(2)?));
+            }
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT SUBSTR(timestamp, 1, 10) as day, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0), COUNT(*) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2 GROUP BY day ORDER BY day DESC LIMIT ?3 OFFSET ?4",
+            )?;
+            let mut rows = stmt.query(params![start, end, limit_i64, offset_i64])?;
+            while let Some(row) = rows.next()? {
+                records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?, row.get::<_, u64>(2)?));
+            }
+        }
+        Ok(records)
+    }
+
     pub fn billing_months(&self) -> Result<Vec<String>, DbError> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare("SELECT DISTINCT SUBSTR(timestamp, 1, 7) AS month FROM usage_logs ORDER BY month DESC")?;
@@ -1387,6 +1447,34 @@ impl Database {
             "SELECT key, amount, used_by, used_at, created_by, created_at FROM recharge_keys ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
+            Ok(RechargeKeyRow {
+                key: row.get(0)?,
+                amount: row.get(1)?,
+                used_by: row.get(2)?,
+                used_at: row.get(3)?,
+                created_by: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?;
+        let mut keys = Vec::new();
+        for row in rows {
+            keys.push(row?);
+        }
+        Ok(keys)
+    }
+
+    pub fn count_recharge_keys(&self) -> Result<usize, DbError> {
+        let conn = self.conn()?;
+        conn.query_row("SELECT COUNT(*) FROM recharge_keys", [], |row| row.get(0))
+            .map_err(|e| DbError(e.to_string()))
+    }
+
+    pub fn list_recharge_keys_paginated(&self, limit: usize, offset: usize) -> Result<Vec<RechargeKeyRow>, DbError> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT key, amount, used_by, used_at, created_by, created_at FROM recharge_keys ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+        )?;
+        let rows = stmt.query_map(params![limit as i64, offset as i64], |row| {
             Ok(RechargeKeyRow {
                 key: row.get(0)?,
                 amount: row.get(1)?,

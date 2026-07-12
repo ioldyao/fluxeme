@@ -502,29 +502,44 @@ struct DeductionRecord {
     method: String,
 }
 
+#[derive(Deserialize)]
+struct DeductionQuery {
+    year: Option<i32>,
+    month: Option<u32>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+const DEFAULT_DEDUCTION_PAGE_SIZE: usize = 15;
+
 async fn billing_deductions(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Query(q): Query<PeriodQuery>,
-) -> Result<Json<Vec<DeductionRecord>>, AdminError> {
+    Query(q): Query<DeductionQuery>,
+) -> Result<Json<serde_json::Value>, AdminError> {
     let session = require_session(&state.admin, &headers)?;
     let now = chrono::Utc::now();
     let year = q.year.unwrap_or_else(|| now.year());
     let month = q.month.unwrap_or_else(|| now.month());
+    let limit = q.limit.unwrap_or(DEFAULT_DEDUCTION_PAGE_SIZE);
+    let offset = q.offset.unwrap_or(0);
     let user_filter: Option<&str> = if session.role == "admin" {
         None
     } else {
         Some(&session.user_id)
     };
 
-    let records = state.db.daily_deductions(year, month, user_filter)
+    let total = state.db.count_daily_deductions(year, month, user_filter)
         .map_err(|e| AdminError::internal(e.0))?;
-
-    Ok(Json(records.into_iter().map(|(day, amount, _count)| DeductionRecord {
+    let records = state.db.daily_deductions_paginated(year, month, user_filter, limit, offset)
+        .map_err(|e| AdminError::internal(e.0))?;
+    let items: Vec<DeductionRecord> = records.into_iter().map(|(day, amount, _count)| DeductionRecord {
         time: format!("{}T00:00:00", day),
         amount: -((amount * 100.0).round() / 100.0),
         method: "按量计费".to_string(),
-    }).collect()))
+    }).collect();
+
+    Ok(Json(serde_json::json!({ "items": items, "total": total })))
 }
 
 async fn billing_topups(
@@ -638,28 +653,56 @@ async fn wallet_recharge(
 }
 
 async fn wallet_create_key(
-    State(_state): State<Arc<AppState>>,
-    _headers: HeaderMap,
-    _req: Json<WalletCreateKeyReq>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<WalletCreateKeyReq>,
 ) -> Result<Json<CreateKeyResp>, AdminError> {
-    return Err(AdminError::bad_request("Recharge is under development"));
+    let session = require_session(&state.admin, &headers)?;
+    if req.amount <= 0.0 {
+        return Err(AdminError::bad_request("Amount must be positive"));
+    }
+    let key = uuid::Uuid::new_v4().to_string();
+    state.db.create_recharge_key(&key, req.amount, &session.user_id).map_err(|e| AdminError::internal(e.0))?;
+    Ok(Json(CreateKeyResp { key, amount: req.amount }))
 }
 
 async fn wallet_redeem_key(
-    State(_state): State<Arc<AppState>>,
-    _headers: HeaderMap,
-    _req: Json<RedeemKeyReq>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<RedeemKeyReq>,
 ) -> Result<Json<RedeemKeyResp>, AdminError> {
-    return Err(AdminError::bad_request("Recharge is under development"));
+    let session = require_session(&state.admin, &headers)?;
+    let amount = state.db.redeem_recharge_key(&req.key, &session.user_id).map_err(|e| AdminError::bad_request(e.0))?;
+    let (balance, frozen) = state.db.get_wallet_balance(&session.user_id).map_err(|e| AdminError::internal(e.0))?;
+
+    // Sync to Redis gate cache
+    let status = compute_gate_status(balance, frozen);
+    if let Err(e) = state.cache.set_gate_and_balance(&session.user_id, status, balance).await {
+        tracing::warn!(user_id = &session.user_id, "Failed to sync redeem to Redis: {}", e);
+    }
+
+    Ok(Json(RedeemKeyResp { amount, balance }))
 }
+
+#[derive(Deserialize)]
+struct KeyListQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+const DEFAULT_KEY_PAGE_SIZE: usize = 20;
 
 async fn wallet_list_keys(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<Vec<crate::db::RechargeKeyRow>>, AdminError> {
+    Query(q): Query<KeyListQuery>,
+) -> Result<Json<serde_json::Value>, AdminError> {
     let _session = require_session(&state.admin, &headers)?;
-    let keys = state.db.list_recharge_keys().map_err(|e| AdminError::internal(e.0))?;
-    Ok(Json(keys))
+    let limit = q.limit.unwrap_or(DEFAULT_KEY_PAGE_SIZE);
+    let offset = q.offset.unwrap_or(0);
+    let total = state.db.count_recharge_keys().map_err(|e| AdminError::internal(e.0))?;
+    let items = state.db.list_recharge_keys_paginated(limit, offset).map_err(|e| AdminError::internal(e.0))?;
+    Ok(Json(serde_json::json!({ "items": items, "total": total })))
 }
 
 #[derive(Deserialize)]

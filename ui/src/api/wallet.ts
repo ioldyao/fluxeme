@@ -58,10 +58,20 @@ export function useWalletTransactions(
   });
 }
 
-export function useRechargeKeys() {
+export interface RechargeKeyResponse {
+  items: RechargeKeyRow[];
+  total: number;
+}
+
+export function useRechargeKeys(page?: number, size?: number) {
+  const params = new URLSearchParams();
+  if (page != null && size != null) {
+    params.set('limit', String(size));
+    params.set('offset', String((page - 1) * size));
+  }
   return useQuery({
-    queryKey: ['wallet', 'keys'],
-    queryFn: () => api<RechargeKeyRow[]>('/wallet/keys'),
+    queryKey: ['wallet', 'keys', page, size],
+    queryFn: () => api<RechargeKeyResponse>(`/wallet/keys?${params}`),
     staleTime: 10_000,
   });
 }

@@ -86,7 +86,12 @@ export default function WalletPage() {
     });
   };
   const { data: estimated } = useEstimatedDays();
-  const { data: keys } = useRechargeKeys();
+  const [keyPage, setKeyPage] = useState(1);
+  const KEY_PAGE_SIZE = 20;
+  const { data: keysData } = useRechargeKeys(keyPage, KEY_PAGE_SIZE);
+  const keys = keysData?.items;
+  const keyTotal = keysData?.total ?? 0;
+  const keyTotalPages = Math.max(1, Math.ceil(keyTotal / KEY_PAGE_SIZE));
   const recharge = useRecharge();
   const redeem = useRedeemKey();
   const createKey = useCreateRechargeKey();
@@ -94,7 +99,7 @@ export default function WalletPage() {
   const [rechargeAmt, setRechargeAmt] = useState('');
   const [keyInput, setKeyInput] = useState('');
   const [createKeyAmt, setCreateKeyAmt] = useState('');
-  const [newKey] = useState<string | null>(null);
+  const [newKey, setNewKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const fmt = (usd: number) => {
@@ -110,11 +115,31 @@ export default function WalletPage() {
   };
 
   const handleRedeem = () => {
-    toast.info(t('wallet.devInProgress'));
+    if (!keyInput.trim()) return;
+    redeem.mutate(keyInput.trim(), {
+      onSuccess: (res) => {
+        toast.success(t('wallet.redeemSuccess', { amount: fmt(res.amount) }));
+        setKeyInput('');
+      },
+      onError: (err: Error) => {
+        toast.error(err.message);
+      },
+    });
   };
 
   const handleCreateKey = () => {
-    toast.info(t('wallet.devInProgress'));
+    const amt = Number(createKeyAmt);
+    if (!amt || amt <= 0) return;
+    createKey.mutate(amt, {
+      onSuccess: (res) => {
+        setNewKey(res.key);
+        setCreateKeyAmt('');
+        toast.success(t('wallet.createKeySuccess'));
+      },
+      onError: (err: Error) => {
+        toast.error(err.message);
+      },
+    });
   };
 
   const copyKey = async (key: string) => {
@@ -452,6 +477,7 @@ export default function WalletPage() {
             <div className="border-b px-5 py-3 flex items-center gap-2">
               <KeyRound className="h-4 w-4 text-muted-foreground" />
               <h3 className="font-semibold text-sm">{t('wallet.createKey')}</h3>
+              <span className="text-xs text-muted-foreground ml-auto">{t('wallet.txTotal', { total: keyTotal })}</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -483,6 +509,27 @@ export default function WalletPage() {
                 </tbody>
               </table>
             </div>
+            {keyTotalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 px-5 py-3 border-t">
+                <button
+                  onClick={() => setKeyPage(p => Math.max(1, p - 1))}
+                  disabled={keyPage <= 1}
+                  className="px-3 py-1 text-xs rounded-md border hover:bg-accent disabled:opacity-30"
+                >
+                  {t('wallet.prevPage')}
+                </button>
+                <span className="text-xs text-muted-foreground">
+                  {keyPage} / {keyTotalPages}
+                </span>
+                <button
+                  onClick={() => setKeyPage(p => Math.min(keyTotalPages, p + 1))}
+                  disabled={keyPage >= keyTotalPages}
+                  className="px-3 py-1 text-xs rounded-md border hover:bg-accent disabled:opacity-30"
+                >
+                  {t('wallet.nextPage')}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

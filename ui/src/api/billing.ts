@@ -33,10 +33,20 @@ export function usePeriodSummary(year: number, month: number) {
   });
 }
 
-export function useDeductions(year: number, month: number) {
+export interface DeductionResponse {
+  items: DeductionRecord[];
+  total: number;
+}
+
+export function useDeductions(year: number, month: number, page?: number, size?: number) {
+  const params = new URLSearchParams({ year: String(year), month: String(month) });
+  if (page != null && size != null) {
+    params.set('limit', String(size));
+    params.set('offset', String((page - 1) * size));
+  }
   return useQuery({
-    queryKey: ['billing', 'deductions', year, month],
-    queryFn: () => api<DeductionRecord[]>(`/billing/deductions?year=${year}&month=${month}`),
+    queryKey: ['billing', 'deductions', year, month, page, size],
+    queryFn: () => api<DeductionResponse>(`/billing/deductions?${params}`),
   });
 }
 

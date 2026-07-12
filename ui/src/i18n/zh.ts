@@ -385,6 +385,7 @@ const zh: Record<string, string> = {
   'wallet.createKeySub': '生成新的充值 Key（管理员）',
   'wallet.createKeyBtn': '生成 Key',
   'wallet.keyCopied': 'Key 已复制到剪贴板',
+  'wallet.createKeySuccess': '充值 Key 创建成功',
   'wallet.devInProgress': '充值功能开发中，敬请期待',
   'wallet.consumption': '消费流水',
   'wallet.consumptionSub': '交易记录',

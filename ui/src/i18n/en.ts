@@ -385,6 +385,7 @@ const en: Record<string, string> = {
   'wallet.createKeySub': 'Generate a new recharge key (admin)',
   'wallet.createKeyBtn': 'Generate Key',
   'wallet.keyCopied': 'Key copied to clipboard',
+  'wallet.createKeySuccess': 'Recharge key created successfully',
   'wallet.devInProgress': 'Recharge is under development, coming soon',
   'wallet.consumption': 'Consumption Flow',
   'wallet.consumptionSub': 'Transaction history',
