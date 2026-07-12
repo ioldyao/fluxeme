@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import type { Model } from '@/types';
 
 const GATEWAY_BASE = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080';
+const CATEGORY_ORDER = ['chat', 'reasoning', 'tools', 'web', 'vision', 'rerank', 'embedding'];
 
 interface Props {
   model: Model | null;
@@ -212,7 +213,7 @@ export function ModelDetailDialog({ model, open, onOpenChange }: Props) {
               <div className="rounded-lg border bg-muted/20 px-3 py-2.5">
                 <p className="text-[10px] text-muted-foreground mb-0.5">{t('marketplace.capabilities')}</p>
                 <div className="flex flex-wrap gap-1 mt-0.5">
-                  {model.category.split(',').filter(Boolean).map((cat) => (
+                  {model.category.split(',').filter(Boolean).sort((a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b)).map((cat) => (
                     <Badge key={cat} variant="secondary" className="text-[10px] px-1.5 py-0">
                       {t(`model.category.${cat}`, { defaultValue: cat })}
                     </Badge>
