@@ -19,4 +19,5 @@ pub struct UsageRecord {
     pub reasoning_body: Option<String>,
     pub api_key_name: Option<String>,
     pub api_format: String,
+    pub stream: bool,
 }

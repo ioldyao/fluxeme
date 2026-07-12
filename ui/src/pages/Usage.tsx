@@ -13,7 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, RefreshCw, CheckCircle2, XCircle, BarChart3, List } from 'lucide-react';
+import { Search, RefreshCw, CheckCircle2, XCircle, BarChart3, List, Radio, RadioIcon } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -145,7 +145,20 @@ export default function Usage() {
                           <td className="py-3 px-4 font-mono text-xs">{r.request_id.substring(0, 8)}</td>
                           <td className="py-3 px-4">{r.user_name}</td>
                           <td className="py-3 px-4">{r.api_key_name}</td>
-                          <td className="py-3 px-4">{r.model}</td>
+                          <td className="py-3 px-4">
+                            <span className="inline-flex items-center gap-1">
+                              <span>{r.model}</span>
+                              {r.stream ? (
+                                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-yellow-600 bg-yellow-50 dark:text-yellow-400 dark:bg-yellow-950 px-1.5 py-0.5 rounded">
+                                  <Radio className="h-2.5 w-2.5" />stream
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-950 px-1.5 py-0.5 rounded">
+                                  <RadioIcon className="h-2.5 w-2.5" />sync
+                                </span>
+                              )}
+                            </span>
+                          </td>
                           <td className="py-3 px-4 font-mono text-xs">{r.api_format ?? '—'}</td>
                           <td className="py-3 px-4 text-right">{r.prompt_tokens}</td>
                           <td className="py-3 px-4 text-right">{r.completion_tokens}</td>

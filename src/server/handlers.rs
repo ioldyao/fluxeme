@@ -490,6 +490,7 @@ impl<S> UsageTrackingStream<S> {
                     content
                 })
             },
+            stream: true,
         });
     }
 }
@@ -645,6 +646,7 @@ async fn handle_streaming(
                 reasoning_body: None,
                 api_key_name: Some(api_key_name),
                 api_format: "openai".to_string(),
+                stream: true,
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -729,6 +731,7 @@ async fn handle_messages_streaming(
                 reasoning_body: None,
                 api_key_name: Some(api_key_name),
                 api_format: "anthropic".to_string(),
+                stream: true,
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -795,6 +798,7 @@ async fn handle_non_streaming(
                     reasoning_body: reasoning,
                     api_key_name: Some(api_key_name),
                     api_format: "openai".to_string(),
+                    stream: false,
                 });
 
                 // Cache the response for non-streaming requests
@@ -849,6 +853,7 @@ async fn handle_non_streaming(
                     reasoning_body: None,
                     api_key_name: None,
                     api_format: "openai".to_string(),
+                    stream: false,
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Upstream request failed");
                 return Err(GatewayError::Upstream(e.0));
@@ -876,6 +881,7 @@ async fn handle_non_streaming(
         reasoning_body: None,
         api_key_name: None,
         api_format: "openai".to_string(),
+        stream: false,
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -946,6 +952,7 @@ async fn handle_messages_non_streaming(
                     reasoning_body: reasoning,
                     api_key_name: Some(api_key_name),
                     api_format: "anthropic".to_string(),
+                    stream: false,
                 });
 
                 return Ok(Json(resp).into_response());
@@ -986,6 +993,7 @@ async fn handle_messages_non_streaming(
                     reasoning_body: None,
                     api_key_name: None,
                     api_format: "anthropic".to_string(),
+                    stream: false,
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Messages upstream request failed");
                 return Err(GatewayError::Upstream(e.0));
@@ -1012,6 +1020,7 @@ async fn handle_messages_non_streaming(
         reasoning_body: None,
         api_key_name: None,
         api_format: "anthropic".to_string(),
+        stream: false,
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -1254,6 +1263,7 @@ async fn relay_to_upstream(
                     reasoning_body: reasoning,
                     api_key_name: Some(user.api_key_name.clone()),
                     api_format: "relay".to_string(),
+                    stream: false,
                 });
 
                 return Ok(Json(resp).into_response());
@@ -1294,6 +1304,7 @@ async fn relay_to_upstream(
                     reasoning_body: None,
                     api_key_name: Some(user.api_key_name.clone()),
                     api_format: "relay".to_string(),
+                    stream: false,
                 });
                 return Err(GatewayError::from(e));
             }
@@ -1319,6 +1330,7 @@ async fn relay_to_upstream(
         reasoning_body: None,
         api_key_name: Some(user.api_key_name),
         api_format: "relay".to_string(),
+        stream: false,
     });
     Err(GatewayError::Upstream(err_msg))
 }
