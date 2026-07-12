@@ -1,7 +1,7 @@
 include .env
 export
 
-.PHONY: up down logs restart
+.PHONY: up down logs restart build
 
 up:
 ifeq ($(DB_TYPE),docker)
@@ -20,3 +20,10 @@ logs:
 	docker compose -f docker-compose.yml logs -f
 
 restart: down up
+
+build:
+	docker compose build $(filter-out build,$(MAKECMDGOALS))
+
+# Allow build target to receive extra docker compose build flags (e.g. --no-cache)
+%:
+	@true
