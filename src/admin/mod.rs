@@ -17,6 +17,7 @@ use crate::domain::routing::RoutingRule;
 use crate::domain::usage::UsageFilter;
 use crate::domain::user::{ApiKey, SessionInfo, User};
 use crate::ratelimit::RateLimiter;
+use crate::cache::compute_gate_status;
 use crate::config::types::GatewayRuntimeConfig;
 use crate::server::AppState;
 
@@ -616,13 +617,20 @@ async fn wallet_recharge(
         return Err(AdminError::bad_request("Amount must be positive"));
     }
     let user_id = &session.user_id;
-    let (balance, _frozen) = state.db.get_wallet_balance(user_id).map_err(|e| AdminError::internal(e.0))?;
+    let (balance, frozen) = state.db.get_wallet_balance(user_id).map_err(|e| AdminError::internal(e.0))?;
     let new_balance = balance + req.amount;
     state.db.update_wallet_balance(user_id, new_balance).map_err(|e| AdminError::internal(e.0))?;
     let tx_id = uuid::Uuid::new_v4().to_string();
     state.db.add_wallet_transaction(
         &tx_id, user_id, "recharge", req.amount, balance, new_balance, "manual", "completed", "Manual top-up",
     ).map_err(|e| AdminError::internal(e.0))?;
+
+    // Sync to Redis gate cache
+    let status = compute_gate_status(new_balance, frozen);
+    if let Err(e) = state.cache.set_gate_and_balance(user_id, status, new_balance).await {
+        tracing::warn!(user_id, "Failed to sync recharge to Redis: {}", e);
+    }
+
     Ok(Json(RechargeResp { transaction_id: tx_id, amount: req.amount, balance: new_balance }))
 }
 
@@ -669,7 +677,14 @@ async fn wallet_redeem_key(
 ) -> Result<Json<RedeemKeyResp>, AdminError> {
     let session = require_session(&state.admin, &headers)?;
     let amount = state.db.redeem_recharge_key(&req.key, &session.user_id).map_err(|e| AdminError::bad_request(e.0))?;
-    let (balance, _) = state.db.get_wallet_balance(&session.user_id).map_err(|e| AdminError::internal(e.0))?;
+    let (balance, frozen) = state.db.get_wallet_balance(&session.user_id).map_err(|e| AdminError::internal(e.0))?;
+
+    // Sync to Redis gate cache
+    let status = compute_gate_status(balance, frozen);
+    if let Err(e) = state.cache.set_gate_and_balance(&session.user_id, status, balance).await {
+        tracing::warn!(user_id = &session.user_id, "Failed to sync redeem to Redis: {}", e);
+    }
+
     Ok(Json(RedeemKeyResp { amount, balance }))
 }
 

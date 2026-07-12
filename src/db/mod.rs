@@ -1429,6 +1429,22 @@ impl Database {
         Ok(Some(balance / daily_avg))
     }
 
+    /// Get a page of user balances — used by the periodic inspection task
+    /// to sync gate status to Redis.  Pagination avoids holding the SQLite
+    /// mutex for too long on large user tables.
+    pub fn get_balances_page(&self, limit: usize, offset: usize) -> Result<Vec<(String, f64, f64)>, DbError> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare("SELECT id, balance, frozen FROM users LIMIT ?1 OFFSET ?2")?;
+        let rows = stmt.query_map(params![limit as i64, offset as i64], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?, row.get::<_, f64>(2)?))
+        })?;
+        let mut balances = Vec::new();
+        for row in rows {
+            balances.push(row?);
+        }
+        Ok(balances)
+    }
+
     /// Count total wallet transactions for a user (admin sees all).
     pub fn count_all_wallet_transactions(&self, user_id: Option<&str>) -> Result<usize, DbError> {
         let conn = self.conn()?;

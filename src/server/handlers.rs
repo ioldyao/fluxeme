@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::balancer::LoadBalancer;
+use crate::cache::GateStatus;
 use crate::config::types::EndpointConfig;
 use crate::domain::usage::UsageRecord;
 use crate::provider::{is_retryable_error, ErrorKind};
@@ -32,6 +33,7 @@ pub enum GatewayError {
     BadRequest(String),
     Upstream(String),
     Internal(String),
+    PaymentRequired(String),
 }
 
 impl GatewayError {
@@ -43,6 +45,7 @@ impl GatewayError {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::Upstream(_) => StatusCode::BAD_GATEWAY,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::PaymentRequired(_) => StatusCode::PAYMENT_REQUIRED,
         }
     }
 
@@ -53,7 +56,8 @@ impl GatewayError {
             | Self::Route(m)
             | Self::BadRequest(m)
             | Self::Upstream(m)
-            | Self::Internal(m) => m,
+            | Self::Internal(m)
+            | Self::PaymentRequired(m) => m,
         }
     }
 }
@@ -108,6 +112,46 @@ fn trim_model(body: &mut Value) -> Result<String, GatewayError> {
     }
     body["model"] = Value::String(s.clone());
     Ok(s)
+}
+
+/// Check whether the user's wallet balance is sufficient for this request.
+///
+/// Three-tier check:
+///   1. Redis gate_status (fast path)
+///   2. In-memory gate cache (populated by inspection task, avoids SQLite
+///      mutex contention during Redis outages)
+///   3. SQLite `get_wallet_balance` (source of truth, final fallback)
+async fn check_wallet_balance(
+    state: &AppState,
+    user_id: &str,
+) -> Result<(), GatewayError> {
+    match state.cache.get_gate_status(user_id).await {
+        Ok(Some(GateStatus::Blocked)) => {
+            return Err(GatewayError::PaymentRequired("Insufficient balance".into()));
+        }
+        Ok(Some(_)) => return Ok(()), // ok or low — pass through
+        Ok(None) => {} // fall through to local cache
+        Err(e) => {
+            tracing::warn!(user_id, "Gate status read error, trying local cache: {}", e);
+        }
+    }
+    // Second fallback — in-memory gate cache (no Redis, no SQLite mutex)
+    {
+        let guard = state.gate_cache.read().await;
+        if let Some(status) = guard.get(user_id) {
+            return match status {
+                GateStatus::Blocked => Err(GatewayError::PaymentRequired("Insufficient balance".into())),
+                _ => Ok(()),
+            };
+        }
+    }
+    // Final fallback — read from SQLite directly
+    let (balance, frozen) = state.db.get_wallet_balance(user_id)
+        .map_err(|e| GatewayError::Internal(e.0))?;
+    if balance - frozen < 0.0001 {
+        return Err(GatewayError::PaymentRequired("Insufficient balance".into()));
+    }
+    Ok(())
 }
 
 /// Non-standard reasoning field names from various providers to normalize.
@@ -1111,6 +1155,15 @@ pub async fn chat_completions(
         state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens(&body))?;
     }
 
+    // ── Concurrency cap per user (bounds TOCTOU between gate check and deduction) ──
+    let _permit = state.concurrency.try_acquire(&user.user_id).await
+        .map_err(|_| GatewayError::RateLimit("Too many concurrent requests".into()))?;
+
+    // ── Wallet balance check (Redis gate_status → local cache → SQLite) ──
+    if state.gateway_config.read().unwrap().billing_enabled {
+        check_wallet_balance(&*state, &user.user_id).await?;
+    }
+
     let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model)?;
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
@@ -1205,6 +1258,15 @@ pub async fn messages(
         state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body))?;
     }
 
+    // ── Concurrency cap per user (bounds TOCTOU between gate check and deduction) ──
+    let _permit = state.concurrency.try_acquire(&user.user_id).await
+        .map_err(|_| GatewayError::RateLimit("Too many concurrent requests".into()))?;
+
+    // ── Wallet balance check (Redis gate_status → local cache → SQLite) ──
+    if state.gateway_config.read().unwrap().billing_enabled {
+        check_wallet_balance(&*state, &user.user_id).await?;
+    }
+
     let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model)?;
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
@@ -1268,6 +1330,15 @@ async fn relay_to_upstream(
     if let Some((rpm, tpm)) = user.rate_limits {
         state.rate_limiter.check_rpm(&user.user_id, rpm)?;
         state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens(&body))?;
+    }
+
+    // ── Concurrency cap per user (bounds TOCTOU between gate check and deduction) ──
+    let _permit = state.concurrency.try_acquire(&user.user_id).await
+        .map_err(|_| GatewayError::RateLimit("Too many concurrent requests".into()))?;
+
+    // ── Wallet balance check (Redis gate_status → local cache → SQLite) ──
+    if state.gateway_config.read().unwrap().billing_enabled {
+        check_wallet_balance(state, &user.user_id).await?;
     }
 
     let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model)?;

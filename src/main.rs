@@ -10,9 +10,15 @@ mod server;
 mod service;
 mod sso;
 
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
+use tokio::sync::RwLock as AsyncRwLock;
 use tracing_subscriber::EnvFilter;
+
+use crate::cache::GateStatus;
+use crate::server::PerUserSemaphore;
 
 use crate::admin::AdminModule;
 use crate::cache::RedisCache;
@@ -80,7 +86,6 @@ async fn main() {
     // Initialize services
     let auth = Arc::new(AuthService::new(db.clone()));
     let routing = Arc::new(RoutingService::new(db.clone()));
-    let (usage, usage_handle) = UsageService::new(db.clone());
     let providers = Arc::new(ProviderRegistry::new());
     let rate_limiter = Arc::new(RateLimiter::new());
     rate_limiter.start_cleanup_task();
@@ -151,6 +156,60 @@ async fn main() {
         },
     );
 
+    // Initialize usage service (background writer for usage logs + billing deductions)
+    let (usage, usage_handle) = UsageService::new(db.clone(), cache.clone());
+
+    // In-memory gate cache (populated by inspection, read by handler when Redis is down)
+    let gate_cache: Arc<AsyncRwLock<HashMap<String, GateStatus>>> = Arc::new(AsyncRwLock::new(HashMap::new()));
+    // Per-user concurrency limiter (caps in-flight requests per user to 5)
+    let concurrency = Arc::new(PerUserSemaphore::new(5));
+
+    // Periodic inspection task: sync user gate status from SQLite to Redis + local cache.
+    // Uses pagination to avoid holding the SQLite mutex for too long.
+    {
+        let db = db.clone();
+        let cache = cache.clone();
+        let gate_cache = gate_cache.clone();
+        tokio::spawn(async move {
+            const PAGE_SIZE: usize = 100;
+            loop {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                let mut offset = 0usize;
+                loop {
+                    let page = match db.get_balances_page(PAGE_SIZE, offset) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::warn!("Inspection: failed to read balances page: {}", e);
+                            break;
+                        }
+                    };
+                    if page.is_empty() {
+                        break;
+                    }
+                    // Batch-update both Redis and local cache for the page
+                    let mut local_updates = Vec::with_capacity(page.len());
+                    for (user_id, balance, frozen) in &page {
+                        let status = crate::cache::compute_gate_status(*balance, *frozen);
+                        if let Err(e) = cache.set_gate_and_balance(user_id, status, *balance).await {
+                            tracing::warn!(user_id, "Inspection: failed to update Redis: {}", e);
+                        }
+                        local_updates.push((user_id.clone(), status));
+                    }
+                    // Bulk-write local cache (single write lock acquisition per page)
+                    {
+                        let mut guard = gate_cache.write().await;
+                        for (user_id, status) in &local_updates {
+                            guard.insert(user_id.clone(), *status);
+                        }
+                    }
+                    offset += PAGE_SIZE;
+                    // Brief yield between pages to reduce SQLite lock contention
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            }
+        });
+    }
+
     let state = Arc::new(AppState {
         config,
         auth,
@@ -164,6 +223,8 @@ async fn main() {
         sso,
         gateway_config,
         cache,
+        gate_cache,
+        concurrency,
     });
 
     let app = build_router(state);

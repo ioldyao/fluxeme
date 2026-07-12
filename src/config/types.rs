@@ -150,6 +150,8 @@ pub struct GatewayRuntimeConfig {
     pub handler_timeout_secs: u64,
     #[serde(default = "default_cache_ttl")]
     pub cache_ttl_secs: u64,
+    #[serde(default)]
+    pub billing_enabled: bool,
 }
 
 fn default_connect_timeout() -> u64 { 10 }
@@ -174,6 +176,7 @@ impl Default for GatewayRuntimeConfig {
             max_retries: default_max_retries(),
             handler_timeout_secs: default_handler_timeout(),
             cache_ttl_secs: default_cache_ttl(),
+            billing_enabled: false,
         }
     }
 }

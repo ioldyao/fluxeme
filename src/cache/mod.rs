@@ -1,10 +1,58 @@
 use sha2::{Digest, Sha256};
 
+/// Gate status for a user — used by the billing system to decide whether
+/// to accept or reject a request *before* it hits the upstream provider.
+///
+/// The status is stored in Redis at `gate_status:{user_id}` and is written
+/// by the background deduction writer and a periodic inspection task.
+/// SQLite is the source of truth; Redis is a read-optimized cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateStatus {
+    /// Balance is healthy — requests should pass through.
+    Ok,
+    /// Balance is low but not yet exhausted — requests pass through,
+    /// UI may show a warning.
+    Low,
+    /// Balance exhausted (balance - frozen <= 0) — handler rejects
+    /// with 402 Payment Required.
+    Blocked,
+}
+
+impl GateStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Low => "low",
+            Self::Blocked => "blocked",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "blocked" => Self::Blocked,
+            "low" => Self::Low,
+            _ => Self::Ok,
+        }
+    }
+}
+
+/// Compute gate status from a wallet balance and frozen amount.
+pub fn compute_gate_status(balance: f64, frozen: f64) -> GateStatus {
+    if balance - frozen < 0.0001 {
+        GateStatus::Blocked
+    } else {
+        GateStatus::Ok
+    }
+}
+
 /// Redis-backed exact-response cache with mandatory tenant isolation.
 ///
 /// Every key is prefixed with the tenant/user ID so that different tenants
 /// physically occupy separate keys — there is no shared-namespace look-up
 /// that could accidentally return another tenant's cached response.
+///
+/// Also provides gate-status methods for the billing system (see
+/// `get_gate_status`, `set_gate_status`, `set_balance`).
 ///
 /// When the cache is disabled (`enabled: false` in config) the `noop()`
 /// sentinel is used — all operations return `None` / `Ok(())` without
@@ -76,6 +124,73 @@ impl RedisCache {
 
     pub fn default_ttl(&self) -> u64 {
         self.default_ttl_secs
+    }
+
+    // ── Billing gate status ─────────────────────────────────────────
+
+    /// Read the gate status for a user from Redis.
+    ///
+    /// Returns `None` when no status has been set (e.g., first request,
+    /// or cache disabled) — the caller should fall back to SQLite.
+    pub async fn get_gate_status(&self, user_id: &str) -> Result<Option<GateStatus>, String> {
+        let mut con = match self.con.clone() {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+        let key = format!("gate_status:{}", user_id);
+        let val: Option<String> = redis::Cmd::get(&key)
+            .query_async(&mut con)
+            .await
+            .map_err(|e| format!("Redis GET gate_status error: {}", e))?;
+        Ok(val.as_deref().map(GateStatus::from_str))
+    }
+
+    /// Set the gate status for a user in Redis (persistent, no TTL).
+    pub async fn set_gate_status(&self, user_id: &str, status: GateStatus) -> Result<(), String> {
+        let mut con = match self.con.clone() {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        let key = format!("gate_status:{}", user_id);
+        redis::Cmd::set(&key, status.as_str())
+            .query_async::<()>(&mut con)
+            .await
+            .map_err(|e| format!("Redis SET gate_status error: {}", e))
+    }
+
+    /// Write the current balance to Redis for fast read by the inspection
+    /// task (persistent, no TTL).
+    pub async fn set_balance(&self, user_id: &str, balance: f64) -> Result<(), String> {
+        let mut con = match self.con.clone() {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        let key = format!("balance:{}", user_id);
+        redis::Cmd::set(&key, balance.to_string())
+            .query_async::<()>(&mut con)
+            .await
+            .map_err(|e| format!("Redis SET balance error: {}", e))
+    }
+
+    /// Atomically update gate_status and balance for a user in one shot.
+    pub async fn set_gate_and_balance(
+        &self,
+        user_id: &str,
+        status: GateStatus,
+        balance: f64,
+    ) -> Result<(), String> {
+        let mut con = match self.con.clone() {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        let gate_key = format!("gate_status:{}", user_id);
+        let bal_key = format!("balance:{}", user_id);
+        redis::pipe()
+            .set(&gate_key, status.as_str())
+            .set(&bal_key, balance.to_string())
+            .query_async::<()>(&mut con)
+            .await
+            .map_err(|e| format!("Redis pipeline SET error: {}", e))
     }
 }
 

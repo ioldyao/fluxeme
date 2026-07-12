@@ -200,6 +200,7 @@ export interface GatewayRuntimeConfig {
   max_retries: number;
   handler_timeout_secs: number;
   cache_ttl_secs: number;
+  billing_enabled: boolean;
 }
 
 export interface BillingSummary {

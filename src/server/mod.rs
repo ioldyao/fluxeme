@@ -1,21 +1,75 @@
 pub mod handlers;
 
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use axum::Router;
 use axum::http::HeaderValue;
+use tokio::sync::OwnedSemaphorePermit;
+use tokio::sync::Semaphore;
+use tokio::sync::RwLock as AsyncRwLock;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{CorsLayer, AllowOrigin};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::cache::RedisCache;
+use crate::cache::{GateStatus, RedisCache};
 use crate::config::types::{AppConfig, GatewayRuntimeConfig};
 use crate::provider::ProviderRegistry;
 use crate::ratelimit::RateLimiter;
 use crate::service::{AuthService, HealthService, RoutingService, UsageService};
 use crate::sso::SsoModule;
+
+/// Per-user concurrency limiter for bounding TOCTOU exposure between
+/// the Redis gate-status check and the actual wallet deduction.
+///
+/// Uses a semaphore per user so in-flight requests release their slot
+/// automatically when the permit is dropped (no manual release needed).
+pub struct PerUserSemaphore {
+    inner: AsyncRwLock<HashMap<String, Arc<Semaphore>>>,
+    max_permits: u32,
+}
+
+impl PerUserSemaphore {
+    pub fn new(max_permits: u32) -> Self {
+        Self {
+            inner: AsyncRwLock::new(HashMap::new()),
+            max_permits,
+        }
+    }
+
+    /// Try to acquire a permit for the given user.
+    /// Returns `Err` if the user already has `max_permits` in-flight requests.
+    pub async fn try_acquire(&self, user_id: &str) -> Result<OwnedSemaphorePermit, ()> {
+        let semaphore = {
+            let read = self.inner.read().await;
+            read.get(user_id).cloned()
+        };
+
+        let semaphore = match semaphore {
+            Some(s) => s,
+            None => {
+                let mut write = self.inner.write().await;
+                // Double-check after acquiring write lock
+                write.get(user_id).cloned().unwrap_or_else(|| {
+                    let s = Arc::new(Semaphore::new(self.max_permits as usize));
+                    write.insert(user_id.to_string(), s.clone());
+                    s
+                })
+            }
+        };
+
+        semaphore.try_acquire_owned().map_err(|_| ())
+    }
+
+    /// Remove semaphores with all permits available (no in-flight requests).
+    pub async fn cleanup(&self) {
+        let mut write = self.inner.write().await;
+        let max = self.max_permits as usize;
+        write.retain(|_, s| s.available_permits() < max);
+    }
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -34,6 +88,12 @@ pub struct AppState {
     /// (single-instance; multi-instance deployments would need a refresh loop).
     pub gateway_config: Arc<RwLock<GatewayRuntimeConfig>>,
     pub cache: Arc<RedisCache>,
+    /// In-memory gate-status cache used as second fallback when Redis is
+    /// unavailable (avoids SQLite mutex contention during Redis outages).
+    pub gate_cache: Arc<AsyncRwLock<HashMap<String, GateStatus>>>,
+    /// Per-user concurrency limiter — caps in-flight requests per user
+    /// to bound the TOCTOU window between gate check and deduction.
+    pub concurrency: Arc<PerUserSemaphore>,
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
