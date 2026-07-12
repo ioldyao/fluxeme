@@ -121,6 +121,7 @@ export default function MyModels() {
                     )}
                     <div className="text-xs text-muted-foreground">
                       P: ${model.pricing.prompt_price}/1K · C: ${model.pricing.completion_price}/1K
+                      {model.pricing.cache_read_price > 0 && <> · Cache: ${model.pricing.cache_read_price}/1K</>}
                     </div>
                   </div>
                   <div className="flex items-center gap-1">

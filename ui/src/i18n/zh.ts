@@ -333,7 +333,7 @@ const zh: Record<string, string> = {
   'pricing.model': '模型',
   'pricing.inputPrice': '输入价格',
   'pricing.outputPrice': '输出价格',
-  'pricing.cacheRead': '缓存读取',
+  'pricing.cacheRead': '缓存命中',
   'pricing.cacheWrite': '缓存写入',
   'pricing.image': '图像输入',
   'pricing.audioInput': '音频输入',

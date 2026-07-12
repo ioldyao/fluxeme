@@ -333,7 +333,7 @@ const en: Record<string, string> = {
   'pricing.model': 'Model',
   'pricing.inputPrice': 'Input Price',
   'pricing.outputPrice': 'Output Price',
-  'pricing.cacheRead': 'Cache Read',
+  'pricing.cacheRead': 'Cache Hit',
   'pricing.cacheWrite': 'Cache Write',
   'pricing.image': 'Image Input',
   'pricing.audioInput': 'Audio Input',
