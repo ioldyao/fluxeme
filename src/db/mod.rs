@@ -30,6 +30,38 @@ impl From<rusqlite::Error> for DbError {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct WalletTransactionRow {
+    pub id: String,
+    pub user_id: String,
+    pub tx_type: String,
+    pub amount: f64,
+    pub balance_before: f64,
+    pub balance_after: f64,
+    pub method: String,
+    pub status: String,
+    pub note: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RechargeKeyRow {
+    pub key: String,
+    pub amount: f64,
+    pub used_by: Option<String>,
+    pub used_at: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+}
+
+fn map_wallet_tx(row: &rusqlite::Row<'_>) -> rusqlite::Result<WalletTransactionRow> {
+    Ok(WalletTransactionRow {
+        id: row.get(0)?, user_id: row.get(1)?, tx_type: row.get(2)?,
+        amount: row.get(3)?, balance_before: row.get(4)?, balance_after: row.get(5)?,
+        method: row.get(6)?, status: row.get(7)?, note: row.get(8)?, created_at: row.get(9)?,
+    })
+}
+
 pub struct Database {
     conn: Mutex<Connection>,
 }
@@ -213,6 +245,35 @@ impl Database {
         // Backward compat: add timezone column to users
         let _ = conn
             .execute_batch("ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC';");
+        // Backward compat: add balance columns to users
+        let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN balance REAL NOT NULL DEFAULT 0.0;");
+        let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN frozen REAL NOT NULL DEFAULT 0.0;");
+        // Wallet transactions table
+        let _ = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS wallet_transactions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                amount REAL NOT NULL,
+                balance_before REAL NOT NULL DEFAULT 0.0,
+                balance_after REAL NOT NULL DEFAULT 0.0,
+                method TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'completed',
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );",
+        );
+        // Recharge keys table
+        let _ = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS recharge_keys (
+                key TEXT PRIMARY KEY,
+                amount REAL NOT NULL,
+                used_by TEXT,
+                used_at TEXT,
+                created_by TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );",
+        );
         // Balancer settings table
         let _ = conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS balancer_settings (
@@ -1170,6 +1231,250 @@ impl Database {
                 Ok((0.0, 0.0))
             }
         }
+    }
+
+    // ── Wallet ─────────────────────────────────────────────────────────
+
+    pub fn get_wallet_balance(&self, user_id: &str) -> Result<(f64, f64), DbError> {
+        let conn = self.conn()?;
+        conn.query_row(
+            "SELECT balance, frozen FROM users WHERE user_id = ?1",
+            params![user_id],
+            |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
+        ).map_err(|e| DbError(e.to_string()))
+    }
+
+    pub fn update_wallet_balance(&self, user_id: &str, balance: f64) -> Result<(), DbError> {
+        let conn = self.conn()?;
+        conn.execute("UPDATE users SET balance = ?1 WHERE user_id = ?2", params![balance, user_id])?;
+        Ok(())
+    }
+
+    pub fn add_wallet_transaction(
+        &self,
+        id: &str,
+        user_id: &str,
+        tx_type: &str,
+        amount: f64,
+        balance_before: f64,
+        balance_after: f64,
+        method: &str,
+        status: &str,
+        note: &str,
+    ) -> Result<(), DbError> {
+        let conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![id, user_id, tx_type, amount, balance_before, balance_after, method, status, note, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_wallet_transactions(
+        &self,
+        user_id: &str,
+        page: usize,
+        size: usize,
+    ) -> Result<Vec<WalletTransactionRow>, DbError> {
+        let conn = self.conn()?;
+        let offset = (page.saturating_sub(1)) * size;
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at
+             FROM wallet_transactions WHERE user_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
+        )?;
+        let rows = stmt.query_map(params![user_id, size as i64, offset as i64], |row| {
+            Ok(WalletTransactionRow {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                tx_type: row.get(2)?,
+                amount: row.get(3)?,
+                balance_before: row.get(4)?,
+                balance_after: row.get(5)?,
+                method: row.get(6)?,
+                status: row.get(7)?,
+                note: row.get(8)?,
+                created_at: row.get(9)?,
+            })
+        })?;
+        let mut transactions = Vec::new();
+        for row in rows {
+            transactions.push(row?);
+        }
+        Ok(transactions)
+    }
+
+    pub fn count_wallet_transactions(&self, user_id: &str) -> Result<usize, DbError> {
+        let conn = self.conn()?;
+        conn.query_row(
+            "SELECT COUNT(*) FROM wallet_transactions WHERE user_id = ?1",
+            params![user_id],
+            |row| row.get(0),
+        ).map_err(|e| DbError(e.to_string()))
+    }
+
+    pub fn create_recharge_key(&self, key: &str, amount: f64, created_by: &str) -> Result<(), DbError> {
+        let conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO recharge_keys (key, amount, created_by, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![key, amount, created_by, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<f64, DbError> {
+        let conn = self.conn()?;
+        let (amount, used_by): (f64, Option<String>) = conn.query_row(
+            "SELECT amount, used_by FROM recharge_keys WHERE key = ?1",
+            params![key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).map_err(|_| DbError("Invalid recharge key".to_string()))?;
+
+        if used_by.is_some() {
+            return Err(DbError("Recharge key already used".to_string()));
+        }
+
+        // Mark key as used
+        conn.execute(
+            "UPDATE recharge_keys SET used_by = ?1, used_at = ?2 WHERE key = ?3",
+            params![user_id, chrono::Utc::now().to_rfc3339(), key],
+        )?;
+
+        // Add balance
+        let (balance, _): (f64, f64) = conn.query_row(
+            "SELECT balance, frozen FROM users WHERE user_id = ?1",
+            params![user_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).map_err(|_| DbError("User not found".to_string()))?;
+
+        let new_balance = balance + amount;
+        conn.execute("UPDATE users SET balance = ?1 WHERE user_id = ?2", params![new_balance, user_id])?;
+
+        // Record transaction
+        conn.execute(
+            "INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                uuid::Uuid::new_v4().to_string(), user_id, "recharge", amount,
+                balance, new_balance, "recharge_key", "completed",
+                format!("Key recharge: {}", key),
+                chrono::Utc::now().to_rfc3339(),
+            ],
+        )?;
+
+        Ok(amount)
+    }
+
+    pub fn list_recharge_keys(&self) -> Result<Vec<RechargeKeyRow>, DbError> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT key, amount, used_by, used_at, created_by, created_at FROM recharge_keys ORDER BY created_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(RechargeKeyRow {
+                key: row.get(0)?,
+                amount: row.get(1)?,
+                used_by: row.get(2)?,
+                used_at: row.get(3)?,
+                created_by: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?;
+        let mut keys = Vec::new();
+        for row in rows {
+            keys.push(row?);
+        }
+        Ok(keys)
+    }
+
+    pub fn get_total_consumed(&self, user_id: &str) -> Result<f64, DbError> {
+        let conn = self.conn()?;
+        Ok(conn.query_row(
+            "SELECT COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0)
+             FROM usage_logs WHERE user_id = ?1",
+            params![user_id],
+            |row| row.get::<_, f64>(0),
+        ).unwrap_or(0.0))
+    }
+
+    pub fn get_total_recharged(&self, user_id: &str) -> Result<f64, DbError> {
+        let conn = self.conn()?;
+        conn.query_row(
+            "SELECT COALESCE(SUM(amount), 0) FROM wallet_transactions WHERE user_id = ?1 AND type = 'recharge' AND status = 'completed'",
+            params![user_id],
+            |row| row.get::<_, f64>(0),
+        ).map_err(|e| DbError(e.to_string()))
+    }
+
+    pub fn get_wallet_estimated_days(&self, user_id: &str) -> Result<Option<f64>, DbError> {
+        let conn = self.conn()?;
+        let thirty_days_ago = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+        let total_cost: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0)
+             FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2",
+            params![user_id, thirty_days_ago],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+
+        let balance: f64 = conn.query_row(
+            "SELECT balance FROM users WHERE user_id = ?1",
+            params![user_id],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+
+        let daily_avg = total_cost / 30.0;
+        if daily_avg <= 0.0 {
+            return Ok(None);
+        }
+        Ok(Some(balance / daily_avg))
+    }
+
+    /// Count total wallet transactions for a user (admin sees all).
+    pub fn count_all_wallet_transactions(&self, user_id: Option<&str>) -> Result<usize, DbError> {
+        let conn = self.conn()?;
+        if let Some(uid) = user_id {
+            conn.query_row(
+                "SELECT COUNT(*) FROM wallet_transactions WHERE user_id = ?1",
+                params![uid],
+                |row| row.get(0),
+            ).map_err(|e| DbError(e.to_string()))
+        } else {
+            conn.query_row(
+                "SELECT COUNT(*) FROM wallet_transactions",
+                [],
+                |row| row.get(0),
+            ).map_err(|e| DbError(e.to_string()))
+        }
+    }
+
+    /// List wallet transactions (admin sees all; regular user sees own).
+    pub fn list_wallet_transactions(
+        &self,
+        user_id: Option<&str>,
+        page: usize,
+        size: usize,
+    ) -> Result<Vec<WalletTransactionRow>, DbError> {
+        let conn = self.conn()?;
+        let offset = (page.saturating_sub(1)) * size;
+        let mut rows = Vec::new();
+        if let Some(uid) = user_id {
+            let mut stmt = conn.prepare(
+                "SELECT id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at
+                 FROM wallet_transactions WHERE user_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
+            )?;
+            for row in stmt.query_map(params![uid, size as i64, offset as i64], map_wallet_tx)? {
+                rows.push(row?);
+            }
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at
+                 FROM wallet_transactions ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+            )?;
+            for row in stmt.query_map(params![size as i64, offset as i64], map_wallet_tx)? {
+                rows.push(row?);
+            }
+        }
+        Ok(rows)
     }
 }
 

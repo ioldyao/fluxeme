@@ -572,6 +572,180 @@ async fn billing_period_summary_all(
     }).collect()))
 }
 
+// ── Wallet ──────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct WalletOverview {
+    balance: f64,
+    frozen: f64,
+    total_consumed: f64,
+    total_recharged: f64,
+}
+
+async fn wallet_overview(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<WalletOverview>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+    let user_id = &session.user_id;
+    let (balance, frozen) = state.db.get_wallet_balance(user_id).map_err(|e| AdminError::internal(e.0))?;
+    let total_consumed = state.db.get_total_consumed(user_id).map_err(|e| AdminError::internal(e.0))?;
+    let total_recharged = state.db.get_total_recharged(user_id).map_err(|e| AdminError::internal(e.0))?;
+    Ok(Json(WalletOverview { balance, frozen, total_consumed, total_recharged }))
+}
+
+#[derive(Deserialize)]
+struct RechargeReq {
+    amount: f64,
+}
+
+#[derive(Serialize)]
+struct RechargeResp {
+    transaction_id: String,
+    amount: f64,
+    balance: f64,
+}
+
+async fn wallet_recharge(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<RechargeReq>,
+) -> Result<Json<RechargeResp>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+    if req.amount <= 0.0 {
+        return Err(AdminError::bad_request("Amount must be positive"));
+    }
+    let user_id = &session.user_id;
+    let (balance, _frozen) = state.db.get_wallet_balance(user_id).map_err(|e| AdminError::internal(e.0))?;
+    let new_balance = balance + req.amount;
+    state.db.update_wallet_balance(user_id, new_balance).map_err(|e| AdminError::internal(e.0))?;
+    let tx_id = uuid::Uuid::new_v4().to_string();
+    state.db.add_wallet_transaction(
+        &tx_id, user_id, "recharge", req.amount, balance, new_balance, "manual", "completed", "Manual top-up",
+    ).map_err(|e| AdminError::internal(e.0))?;
+    Ok(Json(RechargeResp { transaction_id: tx_id, amount: req.amount, balance: new_balance }))
+}
+
+#[derive(Deserialize)]
+struct WalletCreateKeyReq {
+    amount: f64,
+}
+
+#[derive(Serialize)]
+struct CreateKeyResp {
+    key: String,
+    amount: f64,
+}
+
+async fn wallet_create_key(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<WalletCreateKeyReq>,
+) -> Result<Json<CreateKeyResp>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+    if req.amount <= 0.0 {
+        return Err(AdminError::bad_request("Amount must be positive"));
+    }
+    let key = uuid::Uuid::new_v4().to_string();
+    state.db.create_recharge_key(&key, req.amount, &session.user_id).map_err(|e| AdminError::internal(e.0))?;
+    Ok(Json(CreateKeyResp { key, amount: req.amount }))
+}
+
+#[derive(Deserialize)]
+struct RedeemKeyReq {
+    key: String,
+}
+
+#[derive(Serialize)]
+struct RedeemKeyResp {
+    amount: f64,
+    balance: f64,
+}
+
+async fn wallet_redeem_key(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<RedeemKeyReq>,
+) -> Result<Json<RedeemKeyResp>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+    let amount = state.db.redeem_recharge_key(&req.key, &session.user_id).map_err(|e| AdminError::bad_request(e.0))?;
+    let (balance, _) = state.db.get_wallet_balance(&session.user_id).map_err(|e| AdminError::internal(e.0))?;
+    Ok(Json(RedeemKeyResp { amount, balance }))
+}
+
+async fn wallet_list_keys(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::db::RechargeKeyRow>>, AdminError> {
+    let _session = require_session(&state.admin, &headers)?;
+    let keys = state.db.list_recharge_keys().map_err(|e| AdminError::internal(e.0))?;
+    Ok(Json(keys))
+}
+
+#[derive(Deserialize)]
+struct WalletTxQuery {
+    page: Option<usize>,
+    size: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct WalletTxResp {
+    items: Vec<WalletTxItem>,
+    total: usize,
+}
+
+#[derive(Serialize)]
+struct WalletTxItem {
+    id: String,
+    tx_type: String,
+    amount: f64,
+    balance_before: f64,
+    balance_after: f64,
+    method: String,
+    status: String,
+    note: String,
+    created_at: String,
+}
+
+async fn wallet_transactions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<WalletTxQuery>,
+) -> Result<Json<WalletTxResp>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+    let page = q.page.unwrap_or(1);
+    let size = q.size.unwrap_or(20).min(100);
+    let uid_filter: Option<&str> = if session.role == "admin" { None } else { Some(&session.user_id) };
+    let total = state.db.count_all_wallet_transactions(uid_filter).map_err(|e| AdminError::internal(e.0))?;
+    let rows = state.db.list_wallet_transactions(uid_filter, page, size).map_err(|e| AdminError::internal(e.0))?;
+    let items = rows.into_iter().map(|r| WalletTxItem {
+        id: r.id,
+        tx_type: r.tx_type,
+        amount: r.amount,
+        balance_before: r.balance_before,
+        balance_after: r.balance_after,
+        method: r.method,
+        status: r.status,
+        note: r.note,
+        created_at: r.created_at,
+    }).collect();
+    Ok(Json(WalletTxResp { items, total }))
+}
+
+#[derive(Serialize)]
+struct EstimatedDaysResp {
+    days: Option<f64>,
+}
+
+async fn wallet_estimated_days(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<EstimatedDaysResp>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+    let days = state.db.get_wallet_estimated_days(&session.user_id).map_err(|e| AdminError::internal(e.0))?;
+    Ok(Json(EstimatedDaysResp { days }))
+}
+
 async fn dashboard_aggregations(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -2210,6 +2384,14 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route("/admin/api/billing/invoices", axum::routing::get(billing_invoices))
         .route("/admin/api/billing/months", axum::routing::get(billing_months))
         .route("/admin/api/billing/period-summary-all", axum::routing::get(billing_period_summary_all))
+        // Wallet
+        .route("/admin/api/wallet/overview", axum::routing::get(wallet_overview))
+        .route("/admin/api/wallet/recharge", axum::routing::post(wallet_recharge))
+        .route("/admin/api/wallet/create-key", axum::routing::post(wallet_create_key))
+        .route("/admin/api/wallet/redeem-key", axum::routing::post(wallet_redeem_key))
+        .route("/admin/api/wallet/keys", axum::routing::get(wallet_list_keys))
+        .route("/admin/api/wallet/transactions", axum::routing::get(wallet_transactions))
+        .route("/admin/api/wallet/estimated-days", axum::routing::get(wallet_estimated_days))
         // Health check
         .route(
             "/admin/api/health-check/models",
