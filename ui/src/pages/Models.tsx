@@ -205,7 +205,18 @@ export default function Models() {
                           : '-'}
                       </td>
                       <td className="py-3 px-4 text-xs">
-                        {(m.category?.split(',').filter(Boolean).sort((a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b)) ?? []).map((cat) => t(`model.category.${cat}`, { defaultValue: cat })).join(', ') || '-'}
+                        {(() => {
+                          const cats = m.category?.split(',').filter(Boolean).sort((a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b)) ?? [];
+                          return cats.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {cats.map((cat) => (
+                                <span key={cat} className="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-muted text-muted-foreground">
+                                  {t(`model.category.${cat}`, { defaultValue: cat })}
+                                </span>
+                              ))}
+                            </div>
+                          ) : '-';
+                        })()}
                       </td>
                       <td className="py-3 px-4 text-right text-xs font-mono">{formatCtx(m.context_length)}</td>
                       <td className="py-3 px-4 text-right text-xs">

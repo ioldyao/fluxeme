@@ -28,16 +28,6 @@ function inferProvider(pattern: string): string {
   return '';
 }
 
-const CATEGORY_COLORS: Record<string, string> = {
-  chat: 'default',
-  reasoning: 'success',
-  tools: 'warning',
-  web: 'secondary',
-  vision: 'muted',
-  rerank: 'default',
-  embedding: 'secondary',
-};
-
 const CATEGORY_KEYS = ['chat', 'reasoning', 'tools', 'web', 'vision', 'rerank', 'embedding'] as const;
 
 export default function ModelsMarketplace() {
@@ -252,9 +242,9 @@ function ModelCard({
               <div className="flex items-center gap-2 mt-1">
                 <p className="text-xs text-muted-foreground">{model._provider || t('marketplace.provider')}</p>
                 {(model.category?.split(',').filter(Boolean).sort((a, b) => CATEGORY_KEYS.indexOf(a as any) - CATEGORY_KEYS.indexOf(b as any)) ?? []).map((cat) => (
-                  <Badge key={cat} variant={CATEGORY_COLORS[cat] as any} className="text-[10px] px-1.5 py-0">
+                  <span key={cat} className="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-muted text-muted-foreground">
                     {t(`model.category.${cat}`, { defaultValue: cat })}
-                  </Badge>
+                  </span>
                 ))}
               </div>
             </div>
