@@ -250,6 +250,7 @@ impl Database {
         // Backward compat: add balance columns to users
         let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN balance REAL NOT NULL DEFAULT 0.0;");
         let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN frozen REAL NOT NULL DEFAULT 0.0;");
+        let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0;");
         // Wallet transactions table
         let _ = conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS wallet_transactions (

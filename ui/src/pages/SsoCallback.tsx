@@ -12,6 +12,8 @@ export default function SsoCallback() {
     const hash = window.location.hash.slice(1);
     const params = new URLSearchParams(hash);
     const token = params.get('token');
+    window.location.hash = "";
+    window.history.replaceState(null, "", window.location.pathname);
 
     if (!token) {
       setError('SSO 登录失败：未收到认证令牌');

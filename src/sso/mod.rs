@@ -212,6 +212,7 @@ impl SsoModule {
                 password_hash: None,
                 rate_limits: None,
                 timezone: "UTC".to_string(),
+                token_version: 0,
             };
             db.create_user(&user)
                 .map_err(|e| AdminError::internal(format!("Failed to create user: {e}")))?;
@@ -221,6 +222,7 @@ impl SsoModule {
             user_id: sub.clone(),
             user_name: user_name.clone(),
             role: "user".to_string(),
+            token_version: 0,
         };
 
         admin.encode_token(&info)

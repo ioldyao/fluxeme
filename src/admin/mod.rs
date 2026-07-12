@@ -33,6 +33,9 @@ struct JwtClaims {
     name: String,
     /// "admin" or "user"
     role: String,
+    /// token version for session revocation
+    #[serde(default)]
+    ver: i64,
     /// expiration timestamp (UTC)
     exp: usize,
     /// issued at timestamp (UTC)
@@ -43,14 +46,16 @@ struct JwtClaims {
 
 pub struct AdminModule {
     secret: String,
-    rate_limiter: RateLimiter,
+    rate_limiter: Arc<RateLimiter>,
 }
 
 impl AdminModule {
     pub fn new(secret: &str) -> Self {
+        let rl = Arc::new(RateLimiter::new());
+        rl.start_cleanup_task();
         Self {
             secret: secret.to_string(),
-            rate_limiter: RateLimiter::new(),
+            rate_limiter: rl,
         }
     }
 
@@ -59,6 +64,7 @@ impl AdminModule {
             sub: info.user_id.clone(),
             name: info.user_name.clone(),
             role: info.role.clone(),
+            ver: info.token_version,
             exp: (Utc::now() + Duration::seconds(SESSION_TTL_SECS)).timestamp() as usize,
             iat: Utc::now().timestamp() as usize,
         };
@@ -84,6 +90,7 @@ impl AdminModule {
             user_id: data.claims.sub,
             user_name: data.claims.name,
             role: data.claims.role,
+            token_version: data.claims.ver,
         })
     }
 }
@@ -92,9 +99,25 @@ impl Clone for AdminModule {
     fn clone(&self) -> Self {
         Self {
             secret: self.secret.clone(),
-            rate_limiter: self.rate_limiter.clone(),
+            rate_limiter: Arc::clone(&self.rate_limiter),
         }
     }
+}
+
+fn validate_password(pw: &str) -> Result<(), AdminError> {
+    if pw.len() < 8 {
+        return Err(AdminError::bad_request("Password must be at least 8 characters"));
+    }
+    if !pw.chars().any(|c| c.is_uppercase()) {
+        return Err(AdminError::bad_request("Password must contain an uppercase letter"));
+    }
+    if !pw.chars().any(|c| c.is_lowercase()) {
+        return Err(AdminError::bad_request("Password must contain a lowercase letter"));
+    }
+    if !pw.chars().any(|c| c.is_ascii_digit()) {
+        return Err(AdminError::bad_request("Password must contain a digit"));
+    }
+    Ok(())
 }
 
 // ── Auth helpers ──────────────────────────────────────────────────
@@ -253,6 +276,7 @@ async fn admin_login(
                 user_id: cfg.admin.username.clone(),
                 user_name: "管理员".to_string(),
                 role: "admin".to_string(),
+                token_version: 0,
             };
             let token = state.admin.encode_token(&info)?;
             let tz = state
@@ -275,26 +299,15 @@ async fn admin_login(
         .get_user_with_password(&req.username)
         .map_err(db_err)?;
 
-    if let Some(u) = user {
+    let mut password_matched = false;
+    if let Some(ref u) = user {
         if let Some(ref hash) = u.password_hash {
             if !hash.is_empty() {
                 match bcrypt::verify(&req.password, hash) {
                     Ok(true) => {
-                        let info = SessionInfo {
-                            user_id: u.id.clone(),
-                            user_name: u.name.clone(),
-                            role: "user".to_string(),
-                        };
-                        let token = state.admin.encode_token(&info)?;
-                        return Ok(Json(serde_json::json!({
-                            "token": token,
-                            "role": "user",
-                            "user_id": u.id,
-                            "user_name": u.name,
-                            "timezone": u.timezone,
-                        })));
+                        password_matched = true;
                     }
-                    Ok(false) => { /* wrong password - fall through */ }
+                    Ok(false) => { /* wrong password */ }
                     Err(e) => {
                         tracing::error!("bcrypt verify error for user {}: {}", u.id, e);
                         return Err(AdminError::internal("Authentication error"));
@@ -302,6 +315,27 @@ async fn admin_login(
                 }
             }
         }
+    } else {
+        // Constant-time dummy to prevent user enumeration via timing
+        let _ = bcrypt::verify(&req.password, "$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36PQm4sEPhMNPfFhpYN76Oe");
+    }
+
+    if password_matched {
+        let u = user.unwrap();
+        let info = SessionInfo {
+            user_id: u.id.clone(),
+            user_name: u.name.clone(),
+            role: "user".to_string(),
+            token_version: u.token_version,
+        };
+        let token = state.admin.encode_token(&info)?;
+        return Ok(Json(serde_json::json!({
+            "token": token,
+            "role": "user",
+            "user_id": u.id,
+            "user_name": u.name,
+            "timezone": u.timezone,
+        })));
     }
 
     Err(AdminError::unauthorized("Invalid credentials"))
@@ -969,14 +1003,7 @@ async fn change_my_password(
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers)?;
 
-    if req.new_password.is_empty() {
-        return Err(AdminError::bad_request("New password cannot be empty"));
-    }
-    if req.new_password.len() < 6 {
-        return Err(AdminError::bad_request(
-            "Password must be at least 6 characters",
-        ));
-    }
+    validate_password(&req.new_password)?;
 
     // Verify current password
     let user = state
@@ -1026,6 +1053,7 @@ async fn change_my_password(
         password_hash: Some(new_hash),
         rate_limits: existing.rate_limits,
         timezone: existing.timezone,
+        token_version: existing.token_version + 1,
     };
     state.db.update_user(&updated).map_err(db_err)?;
 
@@ -1289,6 +1317,7 @@ async fn create_user(
         if pw.is_empty() {
             None
         } else {
+            validate_password(pw)?;
             Some(bcrypt::hash(pw, 10).map_err(|e| AdminError::internal(e.to_string()))?)
         }
     } else {
@@ -1301,6 +1330,7 @@ async fn create_user(
         password_hash,
         rate_limits: req.rate_limits,
         timezone: "UTC".to_string(),
+        token_version: 0,
     };
 
     state.db.create_user(&user).map_err(db_err)?;
@@ -1353,6 +1383,7 @@ async fn update_user(
         },
         rate_limits: req.rate_limits.or(existing.rate_limits),
         timezone: existing.timezone,
+        token_version: existing.token_version,
     };
 
     state.db.update_user(&user).map_err(db_err)?;
@@ -1985,7 +2016,7 @@ async fn get_usage_detail(
     headers: HeaderMap,
     Path(request_id): Path<String>,
 ) -> Result<Json<crate::domain::usage::UsageRecord>, AdminError> {
-    let _session = require_session(&state.admin, &headers)?;
+    let session = require_session(&state.admin, &headers)?;
 
     let record = state
         .usage
@@ -1995,6 +2026,10 @@ async fn get_usage_detail(
             AdminError::internal("Internal server error")
         })?
         .ok_or_else(|| AdminError::not_found("Usage record not found"))?;
+
+    if session.role != "admin" && record.user_id != session.user_id {
+        return Err(AdminError::not_found("Usage record not found"));
+    }
 
     Ok(Json(record))
 }

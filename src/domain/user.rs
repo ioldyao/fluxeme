@@ -10,6 +10,8 @@ pub struct User {
     pub password_hash: Option<String>,
     #[serde(default)]
     pub timezone: String,
+    #[serde(default)]
+    pub token_version: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,4 +56,6 @@ pub struct SessionInfo {
     pub user_id: String,
     pub user_name: String,
     pub role: String, // "admin" or "user"
+    #[serde(default)]
+    pub token_version: i64,
 }
