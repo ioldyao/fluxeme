@@ -192,8 +192,8 @@ export function ModelDetailDialog({ model, open, onOpenChange }: Props) {
         </DialogHeader>
 
         <div className="space-y-6">
-          {/* Model Info */}
-          <div className="grid grid-cols-2 gap-3">
+          {/* Model Info + Pricing — 3 columns */}
+          <div className="grid grid-cols-3 gap-3">
             {model.context_length != null && model.context_length > 0 && (
               <div className="rounded-lg border bg-muted/20 px-3 py-2.5">
                 <p className="text-[10px] text-muted-foreground mb-0.5">{t('model.context')}</p>
@@ -212,28 +212,26 @@ export function ModelDetailDialog({ model, open, onOpenChange }: Props) {
                 </div>
               </div>
             )}
-          </div>
-
-          {/* Pricing Detail */}
-          <section className="space-y-2">
-            <h3 className="text-sm font-semibold">{t('pricing.title')}</h3>
-            <div className="rounded-lg border divide-y text-xs">
-              <div className="flex items-center justify-between px-4 py-2.5">
-                <span className="text-muted-foreground">{t('marketplace.input')}</span>
-                <span className="font-mono font-medium">${model.pricing.prompt_price}/1K</span>
-              </div>
-              <div className="flex items-center justify-between px-4 py-2.5">
-                <span className="text-muted-foreground">{t('marketplace.output')}</span>
-                <span className="font-mono font-medium">${model.pricing.completion_price}/1K</span>
-              </div>
-              {model.pricing.cache_read_price > 0 && (
-                <div className="flex items-center justify-between px-4 py-2.5">
-                  <span className="text-muted-foreground">{t('pricing.cacheRead')}</span>
-                  <span className="font-mono font-medium">${model.pricing.cache_read_price}/1K</span>
+            <div className="rounded-lg border bg-muted/20 px-3 py-2.5">
+              <p className="text-[10px] text-muted-foreground mb-0.5">{t('pricing.title')}</p>
+              <div className="space-y-0.5 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground">{t('marketplace.input')}</span>
+                  <span className="font-mono font-medium">${model.pricing.prompt_price}/1K</span>
                 </div>
-              )}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground">{t('marketplace.output')}</span>
+                  <span className="font-mono font-medium">${model.pricing.completion_price}/1K</span>
+                </div>
+                {model.pricing.cache_read_price > 0 && (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground">{t('pricing.cacheRead')}</span>
+                    <span className="font-mono font-medium">${model.pricing.cache_read_price}/1K</span>
+                  </div>
+                )}
+              </div>
             </div>
-          </section>
+          </div>
 
           <section className="space-y-3">
             <h3 className="text-sm font-semibold">API 调用示例</h3>
