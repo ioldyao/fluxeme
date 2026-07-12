@@ -30,6 +30,21 @@ function inferProvider(pattern: string): string {
 
 const CATEGORY_KEYS = ['chat', 'reasoning', 'tools', 'web', 'vision', 'rerank', 'embedding'] as const;
 
+const PROVIDER_ICON: Record<string, string> = {
+  OpenAI: 'openai',
+  Anthropic: 'anthropic',
+  Google: 'gemini-color',
+  Meta: 'meta-color',
+  DeepSeek: 'deepseek-color',
+  Mistral: 'mistral-color',
+  Alibaba: 'alibaba-color',
+  '01.AI': 'zeroone-color',
+  Cohere: 'cohere-color',
+  'Black Forest': 'bfl',
+};
+
+const ICON_BASE = 'https://unpkg.com/@lobehub/icons-static-svg@latest/icons';
+
 export default function ModelsMarketplace() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -231,8 +246,16 @@ function ModelCard({
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-              <Cpu className="size-5" />
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              {PROVIDER_ICON[model._provider] ? (
+                <img
+                  src={`${ICON_BASE}/${PROVIDER_ICON[model._provider]}.svg`}
+                  alt={model._provider}
+                  className="size-6"
+                />
+              ) : (
+                <Cpu className="size-5 text-muted-foreground" />
+              )}
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
