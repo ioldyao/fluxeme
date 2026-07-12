@@ -1,20 +1,24 @@
 # AI Gateway
 
-A reverse proxy gateway for large language model APIs. Provides a unified OpenAI-compatible endpoint that routes requests to upstream providers with channel management, load balancing, usage tracking, and rate limiting.
+A reverse proxy gateway for large language model APIs. Provides a unified OpenAI-compatible endpoint that routes requests to upstream providers with channel management, load balancing, usage tracking, rate limiting, and a full-featured admin UI with wallet/billing management.
 
 [中文文档](./README_zh.md)
 
 ## Features
 
 - **Unified API** — Single endpoint compatible with OpenAI and Anthropic API formats
-- **Channel Management** — Route requests to multiple upstream providers with weight-based load balancing
-- **Model Marketplace** — Browse, subscribe, and manage models through the admin UI
-- **API Key Management** — Multi-key support with user binding
-- **Usage Tracking** — Token counting, cost calculation, and aggregate charts
+- **Channel Management** — Route requests to multiple upstream providers with weight-based load balancing and health checks
+- **Model Marketplace** — Browse, subscribe, and publish models through the admin UI
+- **API Key Management** — Multi-key support with user binding and granular permissions
+- **Usage Tracking** — Token counting, cost calculation, aggregate charts, and detailed usage logs with deduplication
 - **Rate Limiting** — Per-key and per-user rate limits
+- **Wallet & Billing** — Balance management, recharge (manual and key-based), transaction history, low-balance alerts, and estimated days remaining
+- **Recharge Key Management** — Create, revoke, and filter recharge keys with optional expiry and usage tracking
+- **User Management** — Admin panel for user creation, role assignment, and activity monitoring
+- **Custom Routing Rules** — Define routing logic per model or API key
 - **Redis Caching** — Exact cache for non-streaming requests
-- **Health Checks** — Monitor upstream model connectivity
 - **SSO** — OIDC-based single sign-on
+- **Health Checks** — Monitor upstream model connectivity and channel status
 
 ## Quick Start
 
@@ -26,7 +30,7 @@ cp config/config.yaml config/config.local.yaml
 docker compose up -d
 ```
 
-The gateway will be available at `http://localhost:8080`.
+The gateway and admin UI will be available at `http://localhost:8080`.
 
 ### Manual Build
 
@@ -35,10 +39,13 @@ The gateway will be available at `http://localhost:8080`.
 cargo build --release
 ./target/release/ai-gateway
 
-# Frontend (separate terminal)
+# Frontend development (separate terminal)
 cd ui
 pnpm install
-pnpm run dev
+pnpm run dev    # Serves on :5173 with hot reload, proxies API to :8080
+
+# Build frontend for production (output to ../web/)
+cd ui && pnpm run build
 ```
 
 ## Configuration
