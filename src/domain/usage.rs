@@ -29,4 +29,6 @@ pub struct UsageRecord {
     pub api_format: String,
     pub stream: bool,
     pub cache_hit_input_tokens: u64,
+    pub prompt_price: f64,
+    pub completion_price: f64,
 }

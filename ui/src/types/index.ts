@@ -99,6 +99,8 @@ export interface UsageRecord {
   api_format?: string;
   stream: boolean;
   cache_hit_input_tokens: number;
+  prompt_price: number;
+  completion_price: number;
 }
 
 export interface DashboardStats {

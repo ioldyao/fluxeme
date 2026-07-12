@@ -465,14 +465,18 @@ async fn dashboard_aggregations(
     let mut total_cost_24h = 0.0_f64;
     let mut model_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for r in &records {
-        let price = lookup_price(&r.model, &pricing, &prefix_prices);
-        let cost = (r.prompt_tokens as f64 / 1000.0 * price.0)
-            + (r.completion_tokens as f64 / 1000.0 * price.1);
+        let (pp, cp) = if r.prompt_price > 0.0 || r.completion_price > 0.0 {
+            (r.prompt_price, r.completion_price)
+        } else {
+            lookup_price(&r.model, &pricing, &prefix_prices)
+        };
+        let cost = (r.prompt_tokens as f64 / 1000.0 * pp)
+            + (r.completion_tokens as f64 / 1000.0 * cp);
         total_cost_24h += cost;
         *model_counts.entry(r.model.clone()).or_default() += 1;
     }
 
-    // All-time cost: load only token + model columns from aggregated query
+    // All-time cost: load records with stored pricing
     let all_records = state
         .usage
         .cost_rows_since("1970-01-01T00:00:00", user_filter)
@@ -480,9 +484,13 @@ async fn dashboard_aggregations(
     let total_cost: f64 = all_records
         .iter()
         .map(|r| {
-            let price = lookup_price(&r.model, &pricing, &prefix_prices);
-            (r.prompt_tokens as f64 / 1000.0 * price.0)
-                + (r.completion_tokens as f64 / 1000.0 * price.1)
+            let (pp, cp) = if r.prompt_price > 0.0 || r.completion_price > 0.0 {
+                (r.prompt_price, r.completion_price)
+            } else {
+                lookup_price(&r.model, &pricing, &prefix_prices)
+            };
+            (r.prompt_tokens as f64 / 1000.0 * pp)
+                + (r.completion_tokens as f64 / 1000.0 * cp)
         })
         .sum();
 

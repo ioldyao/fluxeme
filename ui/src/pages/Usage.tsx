@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
 import { useCurrency } from '@/store/currency';
-import { formatCost } from '@/lib/cost';
+import { formatCost, getRecordPricing } from '@/lib/cost';
 import { useUsage, useUsageAggregate, useModelActivity } from '@/api/usage';
 import { api } from '@/api/client';
 import { UsageLogDetail } from '@/components/UsageLogDetail';
@@ -238,7 +238,7 @@ export default function Usage() {
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.cache_hit_input_tokens > 0 ? r.cache_hit_input_tokens : '—'}</td>
                           <td className="py-3 px-4 text-right">{r.completion_tokens}</td>
                           <td className="py-3 px-4 text-right font-medium">{r.total_tokens}</td>
-                          {role === 'admin' && <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, modelPricing[r.model], currency, rate)}</td>}
+                          {role === 'admin' && <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, getRecordPricing(r, modelPricing), currency, rate)}</td>}
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>
                           <td className="py-3 px-4 text-center">
                             {r.success ? (

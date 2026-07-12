@@ -20,3 +20,14 @@ export function formatCost(
   const symbol = currency === 'cny' ? '¥' : '$';
   return `${symbol}${value.toFixed(4)}`;
 }
+
+/** Use stored pricing from the usage record if available, falling back to model lookup. */
+export function getRecordPricing(
+  r: { prompt_price?: number; completion_price?: number; model?: string },
+  modelPricing: Record<string, { prompt_price: number; completion_price: number } | undefined>,
+): { prompt_price: number; completion_price: number } | undefined {
+  if ((r.prompt_price ?? 0) > 0 || (r.completion_price ?? 0) > 0) {
+    return { prompt_price: r.prompt_price ?? 0, completion_price: r.completion_price ?? 0 };
+  }
+  return r.model ? (modelPricing[r.model] ?? undefined) : undefined;
+}

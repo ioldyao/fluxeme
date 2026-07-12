@@ -519,6 +519,8 @@ impl<S> UsageTrackingStream<S> {
                 })
             },
             stream: true,
+            prompt_price: 0.0,
+            completion_price: 0.0,
         });
     }
 }
@@ -676,6 +678,8 @@ async fn handle_streaming(
                 api_key_name: Some(api_key_name),
                 api_format: "openai".to_string(),
                 stream: true,
+                prompt_price: 0.0,
+                completion_price: 0.0,
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -762,6 +766,8 @@ async fn handle_messages_streaming(
                 api_key_name: Some(api_key_name),
                 api_format: "anthropic".to_string(),
                 stream: true,
+                prompt_price: 0.0,
+                completion_price: 0.0,
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -831,6 +837,8 @@ async fn handle_non_streaming(
                     api_key_name: Some(api_key_name),
                     api_format: "openai".to_string(),
                     stream: false,
+                    prompt_price: 0.0,
+                    completion_price: 0.0,
                 });
 
                 // Cache the response for non-streaming requests
@@ -887,6 +895,8 @@ async fn handle_non_streaming(
                     api_key_name: None,
                     api_format: "openai".to_string(),
                     stream: false,
+                    prompt_price: 0.0,
+                    completion_price: 0.0,
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Upstream request failed");
                 return Err(GatewayError::Upstream(e.0));
@@ -916,6 +926,8 @@ async fn handle_non_streaming(
         api_key_name: None,
         api_format: "openai".to_string(),
         stream: false,
+        prompt_price: 0.0,
+        completion_price: 0.0,
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -989,6 +1001,8 @@ async fn handle_messages_non_streaming(
                     api_key_name: Some(api_key_name),
                     api_format: "anthropic".to_string(),
                     stream: false,
+                    prompt_price: 0.0,
+                    completion_price: 0.0,
                 });
 
                 return Ok(Json(resp).into_response());
@@ -1031,6 +1045,8 @@ async fn handle_messages_non_streaming(
                     api_key_name: None,
                     api_format: "anthropic".to_string(),
                     stream: false,
+                    prompt_price: 0.0,
+                    completion_price: 0.0,
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Messages upstream request failed");
                 return Err(GatewayError::Upstream(e.0));
@@ -1059,6 +1075,8 @@ async fn handle_messages_non_streaming(
         api_key_name: None,
         api_format: "anthropic".to_string(),
         stream: false,
+        prompt_price: 0.0,
+        completion_price: 0.0,
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -1304,6 +1322,8 @@ async fn relay_to_upstream(
                     api_key_name: Some(user.api_key_name.clone()),
                     api_format: "relay".to_string(),
                     stream: false,
+                    prompt_price: 0.0,
+                    completion_price: 0.0,
                 });
 
                 return Ok(Json(resp).into_response());
@@ -1346,6 +1366,8 @@ async fn relay_to_upstream(
                     api_key_name: Some(user.api_key_name.clone()),
                     api_format: "relay".to_string(),
                     stream: false,
+                    prompt_price: 0.0,
+                    completion_price: 0.0,
                 });
                 return Err(GatewayError::from(e));
             }
@@ -1373,6 +1395,8 @@ async fn relay_to_upstream(
         api_key_name: Some(user.api_key_name),
         api_format: "relay".to_string(),
         stream: false,
+        prompt_price: 0.0,
+        completion_price: 0.0,
     });
     Err(GatewayError::Upstream(err_msg))
 }

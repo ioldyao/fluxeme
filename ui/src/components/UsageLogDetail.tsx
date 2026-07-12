@@ -4,7 +4,7 @@ import { usePublicModels } from '@/api/models';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { CheckCircle2, XCircle, Radio, RadioIcon } from 'lucide-react';
 import { useCurrency } from '@/store/currency';
-import { formatCost } from '@/lib/cost';
+import { formatCost, getRecordPricing } from '@/lib/cost';
 import type { Model } from '@/types';
 
 interface Props {
@@ -68,7 +68,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
   const { currency, rate } = useCurrency();
   const streaming = record ? isStreaming(record) : false;
   const matchedModel = record ? findModel(record.model) : undefined;
-  const costStr = record ? formatCost(record.prompt_tokens, record.completion_tokens, matchedModel?.pricing, currency, rate) : null;
+  const costStr = record ? formatCost(record.prompt_tokens, record.completion_tokens, getRecordPricing(record, { [record.model]: matchedModel?.pricing }), currency, rate) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

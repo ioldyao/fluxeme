@@ -98,7 +98,13 @@ async fn background_writer(db: Arc<Database>, mut rx: Receiver<UsageRecord>) {
                 return;
             }
             for r in &batch {
-                if let Err(e) = crate::db::insert_usage_row(&conn, r) {
+                // Look up and store pricing snapshot if not already set by handler
+                let (pp, cp) = if r.prompt_price == 0.0 && r.completion_price == 0.0 {
+                    db.lookup_model_pricing(&r.model).unwrap_or((0.0, 0.0))
+                } else {
+                    (r.prompt_price, r.completion_price)
+                };
+                if let Err(e) = crate::db::insert_usage_row_with_pricing(&conn, r, pp, cp) {
                     tracing::error!("Failed to insert usage record: {}", e);
                     let _ = conn.execute("ROLLBACK", []);
                     return;

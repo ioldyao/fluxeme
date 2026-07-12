@@ -207,6 +207,9 @@ impl Database {
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN stream INTEGER NOT NULL DEFAULT 0;");
         // Backward compat: add cache_hit_input_tokens column to usage_logs
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0;");
+        // Backward compat: add pricing snapshot columns to usage_logs
+        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN prompt_price REAL NOT NULL DEFAULT 0.0;");
+        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN completion_price REAL NOT NULL DEFAULT 0.0;");
         // Backward compat: add timezone column to users
         let _ = conn
             .execute_batch("ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC';");
@@ -378,6 +381,8 @@ impl Database {
                     api_format: row.get::<_, String>(13).unwrap_or_default(),
                     stream: row.get::<_, i32>(14)? != 0,
                     cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
+                    prompt_price: 0.0,
+                    completion_price: 0.0,
                 });
             }
         } else {
@@ -407,6 +412,8 @@ impl Database {
                     api_format: row.get::<_, String>(13).unwrap_or_default(),
                     stream: row.get::<_, i32>(14)? != 0,
                     cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
+                    prompt_price: 0.0,
+                    completion_price: 0.0,
                 });
             }
         }
@@ -559,7 +566,7 @@ impl Database {
         let offset_idx = param_vals.len() + 2;
 
         let sql = format!(
-            "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens FROM usage_logs {} ORDER BY id DESC LIMIT ?{} OFFSET ?{}",
+            "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price FROM usage_logs {} ORDER BY id DESC LIMIT ?{} OFFSET ?{}",
             where_clause, limit_idx, offset_idx
         );
 
@@ -596,6 +603,8 @@ impl Database {
                 api_format: row.get::<_, String>(13).unwrap_or_default(),
                 stream: row.get::<_, i32>(14)? != 0,
                 cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
+                prompt_price: row.get::<_, f64>(16)?,
+                completion_price: row.get::<_, f64>(17)?,
             });
         }
         Ok(records)
@@ -607,7 +616,7 @@ impl Database {
     ) -> Result<Option<crate::domain::usage::UsageRecord>, DbError> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(
-            "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format, stream, cache_hit_input_tokens
+            "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price
              FROM usage_logs WHERE request_id = ?1",
         )?;
         let mut rows = stmt.query(rusqlite::params![request_id])?;
@@ -632,6 +641,8 @@ impl Database {
                 api_format: row.get(16)?,
                 stream: row.get::<_, i32>(17)? != 0,
                 cache_hit_input_tokens: row.get::<_, i64>(18)? as u64,
+                prompt_price: row.get::<_, f64>(19)?,
+                completion_price: row.get::<_, f64>(20)?,
             }))
         } else {
             Ok(None)
@@ -900,7 +911,7 @@ impl Database {
         let mut records = Vec::new();
         if let Some(uid) = user_id {
             let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price
                  FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2 ORDER BY id ASC",
             )?;
             let mut rows = stmt.query(params![uid, since])?;
@@ -925,11 +936,13 @@ impl Database {
                     api_format: row.get::<_, String>(13).unwrap_or_default(),
                     stream: row.get::<_, i32>(14)? != 0,
                     cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
+                    prompt_price: row.get::<_, f64>(16)?,
+                    completion_price: row.get::<_, f64>(17)?,
                 });
             }
         } else {
             let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price
                  FROM usage_logs WHERE timestamp >= ?1 ORDER BY id ASC",
             )?;
             let mut rows = stmt.query(params![since])?;
@@ -954,17 +967,58 @@ impl Database {
                     api_format: row.get::<_, String>(13).unwrap_or_default(),
                     stream: row.get::<_, i32>(14)? != 0,
                     cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
+                    prompt_price: row.get::<_, f64>(16)?,
+                    completion_price: row.get::<_, f64>(17)?,
                 });
             }
         }
         Ok(records)
     }
+
+    pub fn lookup_model_pricing(&self, model_name: &str) -> Result<(f64, f64), DbError> {
+        let conn = self.conn()?;
+        // Try exact match first
+        let result = conn.query_row(
+            "SELECT prompt_price, completion_price FROM models WHERE name = ?1",
+            params![model_name],
+            |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
+        );
+        match result {
+            Ok(p) => Ok(p),
+            Err(_) => {
+                // Try pattern match (glob)
+                let mut stmt = conn.prepare(
+                    "SELECT prompt_price, completion_price, model_pattern FROM models"
+                )?;
+                let rows = stmt.query_map([], |row| {
+                    Ok((
+                        row.get::<_, f64>(0)?,
+                        row.get::<_, f64>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?;
+                for row in rows {
+                    let (p, c, pattern) = row?;
+                    if pattern.ends_with('*') {
+                        let prefix = &pattern[..pattern.len() - 1];
+                        if model_name.starts_with(prefix) {
+                            return Ok((p, c));
+                        }
+                    }
+                    if pattern == model_name {
+                        return Ok((p, c));
+                    }
+                }
+                Ok((0.0, 0.0))
+            }
+        }
+    }
 }
 
-pub fn insert_usage_row(conn: &Connection, record: &UsageRecord) -> Result<(), rusqlite::Error> {
+pub fn insert_usage_row_with_pricing(conn: &Connection, record: &UsageRecord, prompt_price: f64, completion_price: f64) -> Result<(), rusqlite::Error> {
     conn.execute(
-        "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format, stream, cache_hit_input_tokens)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+        "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
         params![
             record.timestamp,
             record.request_id,
@@ -985,6 +1039,39 @@ pub fn insert_usage_row(conn: &Connection, record: &UsageRecord) -> Result<(), r
             record.api_format,
             record.stream as i32,
             record.cache_hit_input_tokens,
+            prompt_price,
+            completion_price,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn insert_usage_row(conn: &Connection, record: &UsageRecord) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+        params![
+            record.timestamp,
+            record.request_id,
+            record.user_id,
+            record.user_name,
+            record.channel_id,
+            record.model,
+            record.prompt_tokens,
+            record.completion_tokens,
+            record.total_tokens,
+            record.latency_ms,
+            record.status_code,
+            record.success as i32,
+            record.request_body,
+            record.response_body,
+            record.reasoning_body,
+            record.api_key_name,
+            record.api_format,
+            record.stream as i32,
+            record.cache_hit_input_tokens,
+            record.prompt_price,
+            record.completion_price,
         ],
     )?;
     Ok(())
