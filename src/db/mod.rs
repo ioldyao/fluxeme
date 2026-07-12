@@ -583,12 +583,20 @@ impl Database {
     pub fn model_activity(
         &self,
         since: &str,
+        user_id: Option<&str>,
     ) -> Result<Vec<(String, u64, u64, u64, u64, u64)>, DbError> {
         let conn = self.conn()?;
         let mut records = Vec::new();
-        let sql = "SELECT model, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END),0) FROM usage_logs WHERE timestamp >= ?1 GROUP BY model ORDER BY COUNT(*) DESC";
-        let mut stmt = conn.prepare(sql)?;
-        let mut rows = stmt.query(rusqlite::params![since])?;
+        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(uid) = user_id {
+            ("SELECT model, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END),0) FROM usage_logs WHERE timestamp >= ?1 AND user_id = ?2 GROUP BY model ORDER BY COUNT(*) DESC".into(),
+             vec![Box::new(since.to_string()), Box::new(uid.to_string())])
+        } else {
+            ("SELECT model, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END),0) FROM usage_logs WHERE timestamp >= ?1 GROUP BY model ORDER BY COUNT(*) DESC".into(),
+             vec![Box::new(since.to_string())])
+        };
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut rows = stmt.query(params.as_slice())?;
         while let Some(row) = rows.next()? {
             records.push((
                 row.get::<_, String>(0)?,

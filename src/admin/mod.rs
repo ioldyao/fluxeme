@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -271,7 +272,11 @@ async fn admin_login(
     // First check: admin credentials from config (super admin)
     {
         let cfg = state.config.read().unwrap();
-        if req.username == cfg.admin.username && req.password == cfg.admin.password {
+        static ADMIN_PW_HASH: OnceLock<String> = OnceLock::new();
+        let admin_hash = ADMIN_PW_HASH.get_or_init(|| {
+            bcrypt::hash(&cfg.admin.password, 10).expect("Failed to hash admin password")
+        });
+        if req.username == cfg.admin.username && bcrypt::verify(&req.password, admin_hash).unwrap_or(false) {
             let info = SessionInfo {
                 user_id: cfg.admin.username.clone(),
                 user_name: "管理员".to_string(),
@@ -596,7 +601,7 @@ async fn billing_months(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<String>>, AdminError> {
-    let _session = require_session(&state.admin, &headers)?;
+    let _session = require_admin(&state.admin, &headers)?;
     state.db.billing_months().map_err(|e| AdminError::internal(e.0)).map(Json)
 }
 
@@ -612,7 +617,7 @@ async fn billing_period_summary_all(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<MonthSummary>>, AdminError> {
-    let _session = require_session(&state.admin, &headers)?;
+    let _session = require_admin(&state.admin, &headers)?;
     let records = state.db.period_summary_all().map_err(|e| AdminError::internal(e.0))?;
     Ok(Json(records.into_iter().map(|(month, cost, req, tok)| MonthSummary {
         month,
@@ -741,7 +746,7 @@ async fn wallet_list_keys(
     headers: HeaderMap,
     Query(q): Query<KeyListQuery>,
 ) -> Result<Json<serde_json::Value>, AdminError> {
-    let _session = require_session(&state.admin, &headers)?;
+    let _session = require_admin(&state.admin, &headers)?;
     let limit = q.limit.unwrap_or(DEFAULT_KEY_PAGE_SIZE);
     let offset = q.offset.unwrap_or(0);
     let total = state.db.count_recharge_keys_filtered(
@@ -2151,9 +2156,14 @@ async fn model_activity(
     let tz = state.db.get_user_timezone(&session.user_id).map_err(db_err)?;
     let offset = tz_offset_seconds(Some(&tz));
     let since = since_local_days_ago(days, offset);
+    let user_filter: Option<&str> = if session.role == "admin" {
+        q.user_id.as_deref()
+    } else {
+        Some(&session.user_id)
+    };
     let records = state
         .db
-        .model_activity(&since)
+        .model_activity(&since, user_filter)
         .map_err(|e| AdminError::internal(e.to_string()))?;
     Ok(Json(
         records

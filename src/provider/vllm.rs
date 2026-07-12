@@ -21,7 +21,7 @@ impl VllmAdapter {
         path: &str,
         body: Value,
     ) -> Result<Value, ProviderError> {
-        super::validate_endpoint_url(&endpoint.url)?;
+        super::validate_endpoint_url(&endpoint.url).await?;
         let client = shared_client();
 
         let base = endpoint.url.trim_end_matches('/');
@@ -122,7 +122,7 @@ impl ProviderAdapter for VllmAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<StreamResult, ProviderError> {
-        super::validate_endpoint_url(&endpoint.url)?;
+        super::validate_endpoint_url(&endpoint.url).await?;
         let client = shared_client();
 
         let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");

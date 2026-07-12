@@ -56,8 +56,8 @@ impl GatewayError {
             | Self::Route(m)
             | Self::BadRequest(m)
             | Self::Upstream(m)
-            | Self::Internal(m)
             | Self::PaymentRequired(m) => m,
+            Self::Internal(_) => "Internal server error",
         }
     }
 }

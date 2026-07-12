@@ -2,7 +2,7 @@ pub mod openai;
 pub mod anthropic;
 pub mod vllm;
 
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -167,7 +167,7 @@ pub trait ProviderAdapter: Send + Sync {
 }
 
 /// Global flag to allow private IP addresses (disables SSRF protection).
-static ALLOW_PRIVATE_IPS: AtomicBool = AtomicBool::new(true);
+static ALLOW_PRIVATE_IPS: AtomicBool = AtomicBool::new(false);
 
 /// Set whether private IPs are allowed.
 pub fn set_allow_private_ips(allow: bool) {
@@ -176,7 +176,7 @@ pub fn set_allow_private_ips(allow: bool) {
 }
 
 /// Validate that an endpoint URL doesn't resolve to a private/reserved IP (SSRF protection).
-pub fn validate_endpoint_url(url_str: &str) -> Result<(), ProviderError> {
+pub async fn validate_endpoint_url(url_str: &str) -> Result<(), ProviderError> {
     if ALLOW_PRIVATE_IPS.load(Ordering::Relaxed) {
         return Ok(());
     }
@@ -199,24 +199,26 @@ pub fn validate_endpoint_url(url_str: &str) -> Result<(), ProviderError> {
         return Ok(());
     }
 
-    // Resolve hostname to IP addresses
-    let addr_iter = format!("{}:0", host).to_socket_addrs().map_err(|_| {
-        ProviderError::new(
+    // Resolve hostname to IP addresses (async to avoid blocking the runtime)
+    let addr_str = format!("{}:0", host);
+    let result = tokio::net::lookup_host(&addr_str).await;
+    match result {
+        Ok(addrs) => {
+            for addr in addrs {
+                if is_private_ip(&addr.ip()) {
+                    return Err(ProviderError::new(
+                        "SSRF blocked: endpoint resolves to a private or reserved IP address",
+                        ErrorKind::Other,
+                    ));
+                }
+            }
+            Ok(())
+        }
+        Err(_) => Err(ProviderError::new(
             format!("Failed to resolve endpoint host: {}", host),
             ErrorKind::Other,
-        )
-    })?;
-
-    for addr in addr_iter {
-        if is_private_ip(&addr.ip()) {
-            return Err(ProviderError::new(
-                "SSRF blocked: endpoint resolves to a private or reserved IP address",
-                ErrorKind::Other,
-            ));
-        }
+        )),
     }
-
-    Ok(())
 }
 
 fn is_private_ip(ip: &IpAddr) -> bool {

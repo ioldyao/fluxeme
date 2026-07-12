@@ -127,10 +127,9 @@ async fn main() {
         }
     }
 
-    // Load allow_private_ips setting from DB
-    if let Ok(Some(v)) = db.get_setting("allow_private_ips") {
-        provider::set_allow_private_ips(v == "true");
-    }
+    // Load allow_private_ips setting from DB (default: false)
+    let allow_private = db.get_setting("allow_private_ips").ok().flatten();
+    provider::set_allow_private_ips(allow_private.as_deref() == Some("true"));
 
     // Load runtime gateway config (timeouts, etc.)
     let gateway_config = Arc::new(RwLock::new(
