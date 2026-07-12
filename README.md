@@ -29,10 +29,19 @@ A reverse proxy gateway for large language model APIs. Provides a unified OpenAI
 ```bash
 cp .env.example .env
 # Edit .env and config/config.yaml as needed
-docker compose up -d
+
+# Start all services (DB_TYPE=docker → also starts PostgreSQL)
+make up
 ```
 
 The gateway and admin UI will be available at `http://localhost:8080`.
+
+```bash
+# Other commands
+make down     # Stop all services
+make logs     # Tail logs
+make restart  # Restart all services
+```
 
 ### Manual Build
 

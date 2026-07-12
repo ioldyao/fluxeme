@@ -29,10 +29,18 @@
 ```bash
 cp .env.example .env
 # 按需修改 .env 和 config/config.yaml
-docker compose up -d
+
+# 启动所有服务（DB_TYPE=docker 时会同时启动 PostgreSQL）
+make up
 ```
 
 访问 `http://localhost:8080` 进入管理后台。
+
+```bash
+make down     # 停止所有服务
+make logs     # 查看日志
+make restart  # 重启所有服务
+```
 
 ### 手动构建
 
