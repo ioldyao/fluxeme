@@ -656,6 +656,35 @@ impl Database {
         Ok(records)
     }
 
+    pub fn billing_months(&self) -> Result<Vec<String>, DbError> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare("SELECT DISTINCT SUBSTR(timestamp, 1, 7) AS month FROM usage_logs ORDER BY month DESC")?;
+        let mut rows = stmt.query([])?;
+        let mut months = Vec::new();
+        while let Some(row) = rows.next()? {
+            months.push(row.get::<_, String>(0)?);
+        }
+        Ok(months)
+    }
+
+    pub fn period_summary_all(&self) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT SUBSTR(timestamp, 1, 7) AS month, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0), COUNT(*), COALESCE(SUM(total_tokens), 0) FROM usage_logs GROUP BY month ORDER BY month DESC"
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut records = Vec::new();
+        while let Some(row) = rows.next()? {
+            records.push((
+                row.get::<_, String>(0)?,
+                row.get::<_, f64>(1)?,
+                row.get::<_, u64>(2)?,
+                row.get::<_, u64>(3)?,
+            ));
+        }
+        Ok(records)
+    }
+
     pub fn query_usage(
         &self,
         limit: usize,

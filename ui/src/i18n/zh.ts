@@ -365,7 +365,8 @@ const zh: Record<string, string> = {
   'bills.totalConsumed': '总消耗额度',
   'bills.apiRequests': 'API 请求',
   'bills.totalRequests': '总请求数',
-  'bills.periodTitle': '账单周期: {{year}}年{{month}}月',
+  'bills.periodLabel': '账单周期',
+  'bills.periodTitle': '{{year}}年{{month}}月',
   'bills.totalCost': '总消费',
   'bills.requests': '请求数',
   'bills.totalTokens': '总 Token 数',
@@ -378,5 +379,7 @@ const zh: Record<string, string> = {
   'bills.noDeductions': '暂无扣费记录',
   'bills.rechargeInvoices': '充值 / 发票',
   'bills.noData': '暂无数据',
+  'bills.compareTooltip': '多周期对比',
+  'bills.compareTitle': '多周期对比（年度消费趋势）',
 };
 export default zh;

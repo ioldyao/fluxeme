@@ -542,6 +542,36 @@ async fn billing_invoices(
     Ok(Json(vec![]))
 }
 
+async fn billing_months(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<String>>, AdminError> {
+    let _session = require_session(&state.admin, &headers)?;
+    state.db.billing_months().map_err(|e| AdminError::internal(e.0)).map(Json)
+}
+
+#[derive(Serialize)]
+struct MonthSummary {
+    month: String,
+    total_cost: f64,
+    total_requests: u64,
+    total_tokens: u64,
+}
+
+async fn billing_period_summary_all(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<MonthSummary>>, AdminError> {
+    let _session = require_session(&state.admin, &headers)?;
+    let records = state.db.period_summary_all().map_err(|e| AdminError::internal(e.0))?;
+    Ok(Json(records.into_iter().map(|(month, cost, req, tok)| MonthSummary {
+        month,
+        total_cost: (cost * 100.0).round() / 100.0,
+        total_requests: req,
+        total_tokens: tok,
+    }).collect()))
+}
+
 async fn dashboard_aggregations(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -2178,6 +2208,8 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route("/admin/api/billing/deductions", axum::routing::get(billing_deductions))
         .route("/admin/api/billing/topups", axum::routing::get(billing_topups))
         .route("/admin/api/billing/invoices", axum::routing::get(billing_invoices))
+        .route("/admin/api/billing/months", axum::routing::get(billing_months))
+        .route("/admin/api/billing/period-summary-all", axum::routing::get(billing_period_summary_all))
         // Health check
         .route(
             "/admin/api/health-check/models",

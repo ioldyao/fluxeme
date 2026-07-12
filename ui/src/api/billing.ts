@@ -39,3 +39,26 @@ export function useDeductions(year: number, month: number) {
     queryFn: () => api<DeductionRecord[]>(`/billing/deductions?year=${year}&month=${month}`),
   });
 }
+
+export function useBillingMonths() {
+  return useQuery({
+    queryKey: ['billing', 'months'],
+    queryFn: () => api<string[]>('/billing/months'),
+    staleTime: 60_000,
+  });
+}
+
+export function usePeriodSummaryAll() {
+  return useQuery({
+    queryKey: ['billing', 'period-summary-all'],
+    queryFn: () => api<MonthSummary[]>('/billing/period-summary-all'),
+    staleTime: 60_000,
+  });
+}
+
+export interface MonthSummary {
+  month: string;
+  total_cost: number;
+  total_requests: number;
+  total_tokens: number;
+}

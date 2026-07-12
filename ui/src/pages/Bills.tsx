@@ -1,18 +1,28 @@
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useBillingSummary, usePeriodSummary, useDeductions } from '@/api/billing';
+import { useBillingSummary, usePeriodSummary, useDeductions, useBillingMonths, usePeriodSummaryAll } from '@/api/billing';
 import { useCurrency } from '@/store/currency';
 import { PageHeader } from '@/components/PageHeader';
-import { Wallet, Receipt, Activity, TrendingDown, Download } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Wallet, Receipt, Activity, TrendingDown, ChevronDown, BarChart3 } from 'lucide-react';
 
 export default function Bills() {
-  const { t } = useTranslation();
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1;
+  const { t, i18n } = useTranslation();
+  const { data: rawMonths } = useBillingMonths();
+  const months = useMemo(() => (rawMonths ?? []).map((m) => {
+    const [y, mo] = m.split('-').map(Number);
+    return { label: `${y}年${mo}月`, year: y, month: mo };
+  }), [rawMonths]);
+  const [sel, setSel] = useState(0);
+  const safeSel = sel < months.length ? sel : 0;
+  const active = months[safeSel] ?? { year: 0, month: 0 };
   const { data: summary } = useBillingSummary();
-  const { data: period } = usePeriodSummary(year, month);
-  const { data: deductions } = useDeductions(year, month);
+  const { data: period } = usePeriodSummary(active.year, active.month);
+  const { data: deductions } = useDeductions(active.year, active.month);
   const { currency, rate } = useCurrency();
+  const [open, setOpen] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const { data: allMonths } = usePeriodSummaryAll();
 
   const fmt = (usd: number) => {
     if (usd === 0) return '¥0.00';
@@ -58,12 +68,46 @@ export default function Bills() {
       {/* Period summary */}
       <div className="px-6 mb-8">
         <div className="rounded-xl border">
-          <div className="border-b px-5 py-3 flex items-center justify-between">
-            <h3 className="font-semibold text-sm">{t('bills.periodTitle', { year, month })}</h3>
+          <div className="border-b px-5 py-3 flex items-center justify-between relative">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">{t('bills.periodLabel')}</span>
+              <button
+                onClick={() => setOpen(!open)}
+                className="flex items-center gap-1 text-sm font-semibold hover:text-foreground transition-colors"
+              >
+                {active.label}
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+              </button>
+              <button
+                onClick={() => setCompareOpen(true)}
+                className="ml-1 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+                title={t('bills.compareTooltip')}
+              >
+                <BarChart3 className="h-4 w-4" />
+              </button>
+            </div>
             {period && (
               <span className="text-xs text-muted-foreground">
                 {fmt(period.total_cost)}
               </span>
+            )}
+            {open && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+                <div className="absolute top-full left-0 mt-1 z-20 w-44 rounded-lg border bg-popover p-1 shadow-md">
+                  {months.map((m, i) => (
+                    <button
+                      key={i}
+                      onClick={() => { setSel(i); setOpen(false); }}
+                      className={`w-full text-left px-3 py-1.5 text-sm rounded-md transition-colors ${
+                        i === safeSel ? 'bg-accent font-medium' : 'hover:bg-accent/50'
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </>
             )}
           </div>
           {period ? (
@@ -177,6 +221,32 @@ export default function Bills() {
           <div className="p-6 text-center text-muted-foreground text-sm">{t('bills.noData')}</div>
         </div>
       </div>
+
+      {/* Period comparison dialog */}
+      <Dialog open={compareOpen} onOpenChange={setCompareOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t('bills.compareTitle')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-1">
+            {allMonths?.map((m) => {
+              const label = i18n.language === 'zh' ? `${m.month.replace('-', '年')}月` : m.month;
+              return (
+                <div key={m.month} className="flex items-center justify-between px-3 py-2.5 rounded-lg hover:bg-accent/50 transition-colors">
+                  <span className="font-medium text-sm">{label}</span>
+                  <div className="flex items-center gap-4 text-sm">
+                    <span className="font-mono">{fmt(m.total_cost)}</span>
+                    <span className="text-muted-foreground">{m.total_requests.toLocaleString()} 次</span>
+                  </div>
+                </div>
+              );
+            })}
+            {allMonths?.length === 0 && (
+              <div className="p-8 text-center text-muted-foreground text-sm">{t('bills.noData')}</div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

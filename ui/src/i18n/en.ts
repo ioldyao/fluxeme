@@ -365,7 +365,8 @@ const en: Record<string, string> = {
   'bills.totalConsumed': 'Total consumed',
   'bills.apiRequests': 'API Requests',
   'bills.totalRequests': 'Total requests',
-  'bills.periodTitle': 'Billing Period: {{month}}/{{year}}',
+  'bills.periodLabel': 'Billing Period',
+  'bills.periodTitle': '{{month}}/{{year}}',
   'bills.totalCost': 'Total Cost',
   'bills.requests': 'Requests',
   'bills.totalTokens': 'Total Tokens',
@@ -378,5 +379,7 @@ const en: Record<string, string> = {
   'bills.noDeductions': 'No deduction records',
   'bills.rechargeInvoices': 'Recharge & Invoices',
   'bills.noData': 'No data yet',
+  'bills.compareTooltip': 'Compare periods',
+  'bills.compareTitle': 'Period Comparison',
 };
 export default en;
