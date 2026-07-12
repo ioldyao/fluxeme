@@ -47,6 +47,7 @@ export default function ModelsMarketplace() {
   const { data: subscriptions } = useSubscriptions();
   const subscribe = useSubscribeModel();
   const unsubscribe = useUnsubscribeModel();
+  const [pendingId, setPendingId] = useState<string | null>(null);
   const [author, setAuthor] = useState<string | null>(null);
   const [serviceProvider, setServiceProvider] = useState<string | null>(null);
   const [modality, setModality] = useState<string | null>(null);
@@ -77,13 +78,18 @@ export default function ModelsMarketplace() {
   }, [models, author, serviceProvider, modality, query]);
 
   const handleToggle = (modelId: string, isSubscribed: boolean) => {
+    setPendingId(modelId);
     const opts = {
       onSuccess: () => {
+        setPendingId(null);
         toast.success(isSubscribed ? t('marketplace.unsubSuccess') : t('marketplace.subSuccess'));
         refetch();
         queryClient.invalidateQueries({ queryKey: ['me', 'subscriptions'] });
       },
-      onError: (err: Error) => toast.error(err.message),
+      onError: (err: Error) => {
+        setPendingId(null);
+        toast.error(err.message);
+      },
     };
     if (isSubscribed) {
       unsubscribe.mutate(modelId, opts);
@@ -92,7 +98,7 @@ export default function ModelsMarketplace() {
     }
   };
 
-  const pending = subscribe.isPending || unsubscribe.isPending;
+  const isPending = (id: string) => pendingId === id;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -172,7 +178,7 @@ export default function ModelsMarketplace() {
                     key={model.id}
                     model={model}
                     isSubscribed={isSubscribed}
-                    pending={pending}
+                    pending={isPending(model.id)}
                     onToggle={handleToggle}
                   />
                 );
