@@ -167,7 +167,7 @@ pub trait ProviderAdapter: Send + Sync {
 }
 
 /// Global flag to allow private IP addresses (disables SSRF protection).
-static ALLOW_PRIVATE_IPS: AtomicBool = AtomicBool::new(false);
+static ALLOW_PRIVATE_IPS: AtomicBool = AtomicBool::new(true);
 
 /// Set whether private IPs are allowed.
 pub fn set_allow_private_ips(allow: bool) {

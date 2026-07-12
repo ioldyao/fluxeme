@@ -2365,8 +2365,8 @@ async fn get_allow_private_ips(
 ) -> Result<Json<Value>, AdminError> {
     require_admin(&state.admin, &headers)?;
     let value = state.db.get_setting("allow_private_ips").map_err(db_err)?;
-    // Default to false when no setting is stored (matches AtomicBool default)
-    let enabled = value.as_deref() == Some("true");
+    // Default to true when no setting is stored (matches AtomicBool default)
+    let enabled = value.as_deref() != Some("false");
     Ok(Json(serde_json::json!({ "enabled": enabled })))
 }
 
