@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
-import { Cog, Settings, User } from 'lucide-react';
+import { Cog, Settings, User, Wallet, Receipt } from 'lucide-react';
 import { navRoutes } from '@/routes/config';
 
 const NAV_GROUPS: { label: string; items: string[] }[] = [
@@ -62,6 +62,32 @@ export function Sidebar() {
         })}
       </nav>
       <div className="p-3 border-t mt-auto space-y-0.5">
+        <NavLink
+          to="/wallet"
+          className={({ isActive }) =>
+            `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+              isActive
+                ? 'bg-accent text-accent-foreground font-medium'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
+            }`
+          }
+        >
+          <Wallet className="h-4 w-4" />
+          {t('nav.wallet')}
+        </NavLink>
+        <NavLink
+          to="/bills"
+          className={({ isActive }) =>
+            `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+              isActive
+                ? 'bg-accent text-accent-foreground font-medium'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
+            }`
+          }
+        >
+          <Receipt className="h-4 w-4" />
+          {t('nav.bills')}
+        </NavLink>
         <NavLink
           to="/profile"
           className={({ isActive }) =>

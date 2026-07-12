@@ -201,3 +201,9 @@ export interface GatewayRuntimeConfig {
   handler_timeout_secs: number;
   cache_ttl_secs: number;
 }
+
+export interface BillingSummary {
+  total_requests: number;
+  total_cost: number;
+  balance: number;
+}

@@ -527,6 +527,135 @@ impl Database {
         Ok(records)
     }
 
+    pub fn period_summary(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+    ) -> Result<(f64, u64, u64), DbError> {
+        let conn = self.conn()?;
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let sql = format!(
+            "SELECT COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0), COUNT(*), COALESCE(SUM(total_tokens), 0) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{}",
+            if user_id.is_some() { " AND user_id = ?3" } else { "" }
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let result = if let Some(uid) = user_id {
+            stmt.query_row(params![start, end, uid], |row| {
+                Ok((row.get::<_, f64>(0)?, row.get::<_, u64>(1)?, row.get::<_, u64>(2)?))
+            })
+        } else {
+            stmt.query_row(params![start, end], |row| {
+                Ok((row.get::<_, f64>(0)?, row.get::<_, u64>(1)?, row.get::<_, u64>(2)?))
+            })
+        };
+        result.map_err(|e| DbError(e.to_string()))
+    }
+
+    pub fn period_model_breakdown(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, f64)>, DbError> {
+        let conn = self.conn()?;
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let sql = format!(
+            "SELECT model, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{} GROUP BY model ORDER BY 2 DESC",
+            if user_id.is_some() { " AND user_id = ?3" } else { "" }
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut records = Vec::new();
+        if let Some(uid) = user_id {
+            let mut rows = stmt.query(params![start, end, uid])?;
+            while let Some(row) = rows.next()? {
+                records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?));
+            }
+        } else {
+            let mut rows = stmt.query(params![start, end])?;
+            while let Some(row) = rows.next()? {
+                records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?));
+            }
+        }
+        Ok(records)
+    }
+
+    pub fn period_channel_breakdown(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, f64)>, DbError> {
+        let conn = self.conn()?;
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let sql = format!(
+            "SELECT channel_id, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{} GROUP BY channel_id ORDER BY 2 DESC",
+            if user_id.is_some() { " AND user_id = ?3" } else { "" }
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut records = Vec::new();
+        if let Some(uid) = user_id {
+            let mut rows = stmt.query(params![start, end, uid])?;
+            while let Some(row) = rows.next()? {
+                records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?));
+            }
+        } else {
+            let mut rows = stmt.query(params![start, end])?;
+            while let Some(row) = rows.next()? {
+                records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?));
+            }
+        }
+        Ok(records)
+    }
+
+    pub fn daily_deductions(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, f64, u64)>, DbError> {
+        let conn = self.conn()?;
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let sql = format!(
+            "SELECT SUBSTR(timestamp, 1, 10) as day, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0), COUNT(*) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{} GROUP BY day ORDER BY day DESC",
+            if user_id.is_some() { " AND user_id = ?3" } else { "" }
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut records = Vec::new();
+        if let Some(uid) = user_id {
+            let mut rows = stmt.query(params![start, end, uid])?;
+            while let Some(row) = rows.next()? {
+                records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?, row.get::<_, u64>(2)?));
+            }
+        } else {
+            let mut rows = stmt.query(params![start, end])?;
+            while let Some(row) = rows.next()? {
+                records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?, row.get::<_, u64>(2)?));
+            }
+        }
+        Ok(records)
+    }
+
     pub fn query_usage(
         &self,
         limit: usize,

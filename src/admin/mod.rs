@@ -4,7 +4,7 @@ use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::{Json, Router};
-use chrono::{Duration, Offset, TimeZone, Utc};
+use chrono::{Datelike, Duration, Offset, TimeZone, Utc};
 use chrono_tz::Tz;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
@@ -377,6 +377,169 @@ struct DashboardAggregations {
     avg_latency_ms_24h: f64,
     total_tokens_24h: u64,
     top_models_24h: Vec<TopModel>,
+}
+
+#[derive(Serialize)]
+struct BillingSummary {
+    total_requests: u64,
+    total_cost: f64,
+    balance: f64,
+}
+
+async fn billing_summary(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<BillingSummary>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+    let user_filter: Option<&str> = if session.role == "admin" {
+        None
+    } else {
+        Some(&session.user_id)
+    };
+    let records = state
+        .usage
+        .cost_rows_since("1970-01-01T00:00:00", user_filter)
+        .map_err(AdminError::internal)?;
+    let total_cost: f64 = records
+        .iter()
+        .map(|r| {
+            let pp = if r.prompt_price > 0.0 { r.prompt_price } else { 0.0 };
+            let cp = if r.completion_price > 0.0 { r.completion_price } else { 0.0 };
+            (r.prompt_tokens as f64 / 1000.0 * pp)
+                + (r.completion_tokens as f64 / 1000.0 * cp)
+        })
+        .sum();
+    let total_requests = records.len() as u64;
+    Ok(Json(BillingSummary {
+        total_requests,
+        total_cost: (total_cost * 100.0).round() / 100.0,
+        balance: 0.0,
+    }))
+}
+
+#[derive(Deserialize)]
+struct PeriodQuery {
+    year: Option<i32>,
+    month: Option<u32>,
+}
+
+#[derive(Serialize)]
+struct PeriodSummary {
+    year: i32,
+    month: u32,
+    total_cost: f64,
+    total_requests: u64,
+    total_tokens: u64,
+    by_model: Vec<ModelCostShare>,
+    by_channel: Vec<ChannelCostShare>,
+}
+
+#[derive(Serialize)]
+struct ModelCostShare {
+    model: String,
+    cost: f64,
+    percentage: f64,
+}
+
+#[derive(Serialize)]
+struct ChannelCostShare {
+    channel: String,
+    cost: f64,
+    percentage: f64,
+}
+
+async fn billing_period_summary(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<PeriodQuery>,
+) -> Result<Json<PeriodSummary>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+    let now = chrono::Utc::now();
+    let year = q.year.unwrap_or_else(|| now.year());
+    let month = q.month.unwrap_or_else(|| now.month());
+    let user_filter: Option<&str> = if session.role == "admin" {
+        None
+    } else {
+        Some(&session.user_id)
+    };
+
+    let (total_cost, total_requests, total_tokens) = state.db.period_summary(year, month, user_filter)
+        .map_err(|e| AdminError::internal(e.0))?;
+
+    let by_model = state.db.period_model_breakdown(year, month, user_filter)
+        .map_err(|e| AdminError::internal(e.0))?
+        .into_iter()
+        .map(|(model, cost)| {
+            let pct = if total_cost > 0.0 { (cost / total_cost * 100.0 * 10.0).round() / 10.0 } else { 0.0 };
+            ModelCostShare { model, cost: (cost * 100.0).round() / 100.0, percentage: pct }
+        })
+        .collect();
+
+    let by_channel = state.db.period_channel_breakdown(year, month, user_filter)
+        .map_err(|e| AdminError::internal(e.0))?
+        .into_iter()
+        .map(|(channel, cost)| {
+            let pct = if total_cost > 0.0 { (cost / total_cost * 100.0 * 10.0).round() / 10.0 } else { 0.0 };
+            ChannelCostShare { channel, cost: (cost * 100.0).round() / 100.0, percentage: pct }
+        })
+        .collect();
+
+    Ok(Json(PeriodSummary {
+        year, month,
+        total_cost: (total_cost * 100.0).round() / 100.0,
+        total_requests,
+        total_tokens,
+        by_model,
+        by_channel,
+    }))
+}
+
+#[derive(Serialize)]
+struct DeductionRecord {
+    time: String,
+    amount: f64,
+    method: String,
+}
+
+async fn billing_deductions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<PeriodQuery>,
+) -> Result<Json<Vec<DeductionRecord>>, AdminError> {
+    let session = require_session(&state.admin, &headers)?;
+    let now = chrono::Utc::now();
+    let year = q.year.unwrap_or_else(|| now.year());
+    let month = q.month.unwrap_or_else(|| now.month());
+    let user_filter: Option<&str> = if session.role == "admin" {
+        None
+    } else {
+        Some(&session.user_id)
+    };
+
+    let records = state.db.daily_deductions(year, month, user_filter)
+        .map_err(|e| AdminError::internal(e.0))?;
+
+    Ok(Json(records.into_iter().map(|(day, amount, _count)| DeductionRecord {
+        time: format!("{}T00:00:00", day),
+        amount: -((amount * 100.0).round() / 100.0),
+        method: "按量计费".to_string(),
+    }).collect()))
+}
+
+async fn billing_topups(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<String>>, AdminError> {
+    let _session = require_session(&state.admin, &headers)?;
+    Ok(Json(vec![]))
+}
+
+async fn billing_invoices(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<String>>, AdminError> {
+    let _session = require_session(&state.admin, &headers)?;
+    Ok(Json(vec![]))
 }
 
 async fn dashboard_aggregations(
@@ -2009,6 +2172,12 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
             "/admin/api/usage/{request_id}",
             axum::routing::get(get_usage_detail),
         )
+        // Billing
+        .route("/admin/api/billing/summary", axum::routing::get(billing_summary))
+        .route("/admin/api/billing/period-summary", axum::routing::get(billing_period_summary))
+        .route("/admin/api/billing/deductions", axum::routing::get(billing_deductions))
+        .route("/admin/api/billing/topups", axum::routing::get(billing_topups))
+        .route("/admin/api/billing/invoices", axum::routing::get(billing_invoices))
         // Health check
         .route(
             "/admin/api/health-check/models",

@@ -9,6 +9,8 @@ import {
   ScrollText,
   Cog,
   DollarSign,
+  Wallet,
+  Receipt,
 } from 'lucide-react';
 
 export type RouteGuard = 'public' | 'auth' | 'admin';
@@ -36,6 +38,8 @@ export const authRoutes: RouteConfig[] = [
   { path: '/models/mine', Component: lazy(() => import('@/pages/MyModels')), guard: 'auth', label: 'nav.myModels', icon: Braces, nav: true },
   { path: '/api-keys', Component: lazy(() => import('@/pages/ApiKeys')), guard: 'auth', label: 'nav.apiKeys', icon: Key, nav: true },
   { path: '/usage', Component: lazy(() => import('@/pages/Usage')), guard: 'auth', label: 'nav.usage', icon: ScrollText, nav: true },
+  { path: '/wallet', Component: lazy(() => import('@/pages/Wallet')), guard: 'auth', label: 'nav.wallet', icon: Wallet, nav: true },
+  { path: '/bills', Component: lazy(() => import('@/pages/Bills')), guard: 'auth', label: 'nav.bills', icon: Receipt, nav: true },
   { path: '/profile', Component: lazy(() => import('@/pages/Profile')), guard: 'auth' },
   { path: '/settings', Component: lazy(() => import('@/pages/Settings')), guard: 'auth', label: 'nav.settings', icon: Cog, nav: true },
 ];
