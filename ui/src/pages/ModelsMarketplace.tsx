@@ -245,7 +245,7 @@ function ModelCard({
               </div>
               <div className="flex items-center gap-2 mt-1">
                 <p className="text-xs text-muted-foreground">{model._provider || t('marketplace.provider')}</p>
-                {(model.category?.split(',').filter(Boolean) ?? []).map((cat) => (
+                {(model.category?.split(',').filter(Boolean).sort((a, b) => CATEGORY_KEYS.indexOf(a as any) - CATEGORY_KEYS.indexOf(b as any)) ?? []).map((cat) => (
                   <Badge key={cat} variant={CATEGORY_COLORS[cat] as any} className="text-[10px] px-1.5 py-0">
                     {t(`model.category.${cat}`, { defaultValue: cat })}
                   </Badge>

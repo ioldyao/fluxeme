@@ -8,6 +8,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { RefreshCw, Trash2, Loader2, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 
+const CATEGORY_ORDER = ['chat', 'reasoning', 'tools', 'web', 'vision', 'rerank', 'embedding'];
+
 export default function MyModels() {
   const { t } = useTranslation();
   const { data: models, isLoading, isError, refetch } = useSubscriptions();
@@ -107,7 +109,7 @@ export default function MyModels() {
                     </div>
                     {(model.category || model.context_length) && (
                       <div className="flex items-center gap-2 pt-0.5">
-                        {model.category?.split(',').filter(Boolean).map((cat) => (
+                        {model.category?.split(',').filter(Boolean).sort((a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b)).map((cat) => (
                           <span key={cat} className="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-muted text-muted-foreground">
                             {t(`model.category.${cat}`, { defaultValue: cat })}
                           </span>
