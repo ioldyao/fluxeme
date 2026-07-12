@@ -607,33 +607,6 @@ struct RechargeResp {
     balance: f64,
 }
 
-async fn wallet_recharge(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(req): Json<RechargeReq>,
-) -> Result<Json<RechargeResp>, AdminError> {
-    let session = require_session(&state.admin, &headers)?;
-    if req.amount <= 0.0 {
-        return Err(AdminError::bad_request("Amount must be positive"));
-    }
-    let user_id = &session.user_id;
-    let (balance, frozen) = state.db.get_wallet_balance(user_id).map_err(|e| AdminError::internal(e.0))?;
-    let new_balance = balance + req.amount;
-    state.db.update_wallet_balance(user_id, new_balance).map_err(|e| AdminError::internal(e.0))?;
-    let tx_id = uuid::Uuid::new_v4().to_string();
-    state.db.add_wallet_transaction(
-        &tx_id, user_id, "recharge", req.amount, balance, new_balance, "manual", "completed", "Manual top-up",
-    ).map_err(|e| AdminError::internal(e.0))?;
-
-    // Sync to Redis gate cache
-    let status = compute_gate_status(new_balance, frozen);
-    if let Err(e) = state.cache.set_gate_and_balance(user_id, status, new_balance).await {
-        tracing::warn!(user_id, "Failed to sync recharge to Redis: {}", e);
-    }
-
-    Ok(Json(RechargeResp { transaction_id: tx_id, amount: req.amount, balance: new_balance }))
-}
-
 #[derive(Deserialize)]
 struct WalletCreateKeyReq {
     amount: f64,
@@ -643,20 +616,6 @@ struct WalletCreateKeyReq {
 struct CreateKeyResp {
     key: String,
     amount: f64,
-}
-
-async fn wallet_create_key(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(req): Json<WalletCreateKeyReq>,
-) -> Result<Json<CreateKeyResp>, AdminError> {
-    let session = require_session(&state.admin, &headers)?;
-    if req.amount <= 0.0 {
-        return Err(AdminError::bad_request("Amount must be positive"));
-    }
-    let key = uuid::Uuid::new_v4().to_string();
-    state.db.create_recharge_key(&key, req.amount, &session.user_id).map_err(|e| AdminError::internal(e.0))?;
-    Ok(Json(CreateKeyResp { key, amount: req.amount }))
 }
 
 #[derive(Deserialize)]
@@ -670,22 +629,28 @@ struct RedeemKeyResp {
     balance: f64,
 }
 
+async fn wallet_recharge(
+    State(_state): State<Arc<AppState>>,
+    _headers: HeaderMap,
+    _req: Json<RechargeReq>,
+) -> Result<Json<RechargeResp>, AdminError> {
+    return Err(AdminError::bad_request("Recharge is under development"));
+}
+
+async fn wallet_create_key(
+    State(_state): State<Arc<AppState>>,
+    _headers: HeaderMap,
+    _req: Json<WalletCreateKeyReq>,
+) -> Result<Json<CreateKeyResp>, AdminError> {
+    return Err(AdminError::bad_request("Recharge is under development"));
+}
+
 async fn wallet_redeem_key(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(req): Json<RedeemKeyReq>,
+    State(_state): State<Arc<AppState>>,
+    _headers: HeaderMap,
+    _req: Json<RedeemKeyReq>,
 ) -> Result<Json<RedeemKeyResp>, AdminError> {
-    let session = require_session(&state.admin, &headers)?;
-    let amount = state.db.redeem_recharge_key(&req.key, &session.user_id).map_err(|e| AdminError::bad_request(e.0))?;
-    let (balance, frozen) = state.db.get_wallet_balance(&session.user_id).map_err(|e| AdminError::internal(e.0))?;
-
-    // Sync to Redis gate cache
-    let status = compute_gate_status(balance, frozen);
-    if let Err(e) = state.cache.set_gate_and_balance(&session.user_id, status, balance).await {
-        tracing::warn!(user_id = &session.user_id, "Failed to sync redeem to Redis: {}", e);
-    }
-
-    Ok(Json(RedeemKeyResp { amount, balance }))
+    return Err(AdminError::bad_request("Recharge is under development"));
 }
 
 async fn wallet_list_keys(

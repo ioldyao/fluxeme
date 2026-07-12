@@ -106,36 +106,15 @@ export default function WalletPage() {
   const cardStyle = 'rounded-xl border p-5 space-y-2';
 
   const handleRecharge = () => {
-    const amt = parseFloat(rechargeAmt);
-    if (isNaN(amt) || amt <= 0) return;
-    recharge.mutate(amt, {
-      onSuccess: (res) => {
-        toast.success(t('wallet.rechargeSuccess', { amount: fmt(res.amount) }));
-        setRechargeAmt('');
-      },
-    });
+    toast.info(t('wallet.devInProgress'));
   };
 
   const handleRedeem = () => {
-    if (!keyInput.trim()) return;
-    redeem.mutate(keyInput.trim(), {
-      onSuccess: (res) => {
-        toast.success(t('wallet.redeemSuccess', { amount: fmt(res.amount) }));
-        setKeyInput('');
-      },
-      onError: (err) => toast.error(err instanceof Error ? err.message : t('toast.failed')),
-    });
+    toast.info(t('wallet.devInProgress'));
   };
 
   const handleCreateKey = () => {
-    const amt = parseFloat(createKeyAmt);
-    if (isNaN(amt) || amt <= 0) return;
-    createKey.mutate(amt, {
-      onSuccess: (res) => {
-        setNewKey(res.key);
-        setCreateKeyAmt('');
-      },
-    });
+    toast.info(t('wallet.devInProgress'));
   };
 
   const copyKey = async (key: string) => {
