@@ -22,7 +22,7 @@ export interface WalletTransaction {
 
 export interface WalletTxResponse {
   items: WalletTransaction[];
-  total: number;
+  total_dates: number;
 }
 
 export interface RechargeKeyRow {

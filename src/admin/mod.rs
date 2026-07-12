@@ -844,7 +844,7 @@ struct WalletTxQuery {
 #[derive(Serialize)]
 struct WalletTxResp {
     items: Vec<WalletTxItem>,
-    total: usize,
+    total_dates: usize,
 }
 
 #[derive(Serialize)]
@@ -867,12 +867,9 @@ async fn wallet_transactions(
 ) -> Result<Json<WalletTxResp>, AdminError> {
     let session = require_session(&state.admin, &headers)?;
     let page = q.page.unwrap_or(1);
-    let size = q.size.unwrap_or(50).min(100);
+    let size = q.size.unwrap_or(15).min(31);
     let uid_filter: Option<&str> = if session.role == "admin" { None } else { Some(&session.user_id) };
-    let total = state.db.count_all_wallet_transactions(
-        uid_filter, q.since.as_deref(), q.until.as_deref(), q.tx_type.as_deref(),
-    ).map_err(|e| AdminError::internal(e.0))?;
-    let rows = state.db.list_wallet_transactions(
+    let (rows, total_dates) = state.db.list_wallet_tx_by_dates(
         uid_filter, page, size, q.since.as_deref(), q.until.as_deref(), q.tx_type.as_deref(),
     ).map_err(|e| AdminError::internal(e.0))?;
     let items = rows.into_iter().map(|r| WalletTxItem {
@@ -886,7 +883,7 @@ async fn wallet_transactions(
         note: r.note,
         created_at: r.created_at,
     }).collect();
-    Ok(Json(WalletTxResp { items, total }))
+    Ok(Json(WalletTxResp { items, total_dates }))
 }
 
 #[derive(Serialize)]

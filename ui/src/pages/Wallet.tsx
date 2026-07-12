@@ -52,7 +52,7 @@ export default function WalletPage() {
       tx_type: txType || undefined,
     },
   );
-  const totalPages = Math.max(1, Math.ceil((txData?.total ?? 0) / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil((txData?.total_dates ?? 0) / PAGE_SIZE));
 
   const toLocalDate = (utcStr: string) => {
     const d = new Date(utcStr);
@@ -387,7 +387,7 @@ export default function WalletPage() {
             </select>
             {txData && (
               <span className="text-xs text-muted-foreground ml-auto">
-                {t('wallet.txTotal', { total: txData.total })}
+                {t('wallet.txTotal', { total: txData.total_dates })}
               </span>
             )}
           </div>

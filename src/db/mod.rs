@@ -1704,41 +1704,9 @@ impl Database {
         Ok(balances)
     }
 
-    /// Count wallet transactions with optional user, date-range, and type filters.
-    pub fn count_all_wallet_transactions(
-        &self,
-        user_id: Option<&str>,
-        since: Option<&str>,
-        until: Option<&str>,
-        tx_type: Option<&str>,
-    ) -> Result<usize, DbError> {
-        let conn = self.conn()?;
-        let mut sql = String::from("SELECT COUNT(*) FROM wallet_transactions WHERE 1=1");
-        let mut param_values: Vec<String> = Vec::new();
-        if let Some(uid) = user_id {
-            sql.push_str(" AND user_id = ?");
-            param_values.push(uid.to_string());
-        }
-        if let Some(s) = since {
-            sql.push_str(" AND created_at >= ?");
-            param_values.push(s.to_string());
-        }
-        if let Some(u) = until {
-            sql.push_str(" AND created_at <= ?");
-            param_values.push(u.to_string());
-        }
-        if let Some(t) = tx_type {
-            sql.push_str(" AND type = ?");
-            param_values.push(t.to_string());
-        }
-        let mut stmt = conn.prepare(&sql)?;
-        let params: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
-        stmt.query_row(params.as_slice(), |row| row.get(0))
-            .map_err(|e| DbError(e.to_string()))
-    }
-
-    /// List wallet transactions with optional user, date-range, and type filters.
-    pub fn list_wallet_transactions(
+    /// List wallet transactions grouped by date with date-based pagination.
+    /// Returns (transactions, total_distinct_dates).
+    pub fn list_wallet_tx_by_dates(
         &self,
         user_id: Option<&str>,
         page: usize,
@@ -1746,40 +1714,76 @@ impl Database {
         since: Option<&str>,
         until: Option<&str>,
         tx_type: Option<&str>,
-    ) -> Result<Vec<WalletTransactionRow>, DbError> {
+    ) -> Result<(Vec<WalletTransactionRow>, usize), DbError> {
         let conn = self.conn()?;
-        let offset = (page.saturating_sub(1)) * size;
-        let mut sql = String::from(
-            "SELECT id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at
-             FROM wallet_transactions WHERE 1=1",
-        );
+        // Build WHERE clause
+        let mut where_clauses = Vec::new();
         let mut param_values: Vec<String> = Vec::new();
         if let Some(uid) = user_id {
-            sql.push_str(" AND user_id = ?");
+            where_clauses.push("user_id = ?".to_string());
             param_values.push(uid.to_string());
         }
         if let Some(s) = since {
-            sql.push_str(" AND created_at >= ?");
+            where_clauses.push("created_at >= ?".to_string());
             param_values.push(s.to_string());
         }
         if let Some(u) = until {
-            sql.push_str(" AND created_at <= ?");
+            where_clauses.push("created_at <= ?".to_string());
             param_values.push(u.to_string());
         }
         if let Some(t) = tx_type {
-            sql.push_str(" AND type = ?");
+            where_clauses.push("type = ?".to_string());
             param_values.push(t.to_string());
         }
-        sql.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
-        param_values.push(size.to_string());
-        param_values.push(offset.to_string());
-        let mut stmt = conn.prepare(&sql)?;
+        let where_sql = if where_clauses.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", where_clauses.join(" AND "))
+        };
+
+        // 1. Count distinct dates
+        let count_sql = format!("SELECT COUNT(DISTINCT substr(created_at,1,10)) FROM wallet_transactions{where_sql}");
+        let mut stmt = conn.prepare(&count_sql)?;
         let params: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+        let total_dates: usize = stmt.query_row(params.as_slice(), |row| row.get(0))
+            .map_err(|e| DbError(e.to_string()))?;
+
+        // 2. Query paginated distinct dates
+        let offset = (page.saturating_sub(1)) * size;
+        let mut date_params = param_values.clone();
+        let dates_sql = format!(
+            "SELECT DISTINCT substr(created_at,1,10) as tx_date FROM wallet_transactions{where_sql} ORDER BY tx_date DESC LIMIT ? OFFSET ?"
+        );
+        date_params.push(size.to_string());
+        date_params.push(offset.to_string());
+        let mut stmt = conn.prepare(&dates_sql)?;
+        let date_params_refs: Vec<&dyn rusqlite::types::ToSql> = date_params.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+        let dates: Vec<String> = stmt.query_map(date_params_refs.as_slice(), |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| DbError(e.to_string()))?;
+
+        if dates.is_empty() {
+            return Ok((Vec::new(), total_dates));
+        }
+
+        // 3. Fetch all transactions for those dates
+        let placeholders: Vec<String> = dates.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+        let mut tx_params = param_values.clone();
+        tx_params.extend(dates.iter().cloned());
+        let tx_sql = format!(
+            "SELECT id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at \
+             FROM wallet_transactions{where_sql} AND substr(created_at,1,10) IN ({}) \
+             ORDER BY created_at DESC",
+            placeholders.join(",")
+        );
+        let tx_params_refs: Vec<&dyn rusqlite::types::ToSql> = tx_params.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+        let mut stmt = conn.prepare(&tx_sql)?;
         let mut rows = Vec::new();
-        for row in stmt.query_map(params.as_slice(), map_wallet_tx)? {
+        for row in stmt.query_map(tx_params_refs.as_slice(), map_wallet_tx)? {
             rows.push(row?);
         }
-        Ok(rows)
+
+        Ok((rows, total_dates))
     }
 }
 
