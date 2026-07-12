@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -20,6 +19,7 @@ use crate::domain::user::{ApiKey, SessionInfo, User};
 use crate::ratelimit::RateLimiter;
 use crate::cache::compute_gate_status;
 use crate::config::types::GatewayRuntimeConfig;
+use crate::db::Database;
 use crate::server::AppState;
 
 const SESSION_TTL_SECS: i64 = 24 * 3600;
@@ -48,15 +48,17 @@ struct JwtClaims {
 pub struct AdminModule {
     secret: String,
     rate_limiter: Arc<RateLimiter>,
+    db: Arc<Database>,
 }
 
 impl AdminModule {
-    pub fn new(secret: &str) -> Self {
+    pub fn new(secret: &str, db: Arc<Database>) -> Self {
         let rl = Arc::new(RateLimiter::new());
         rl.start_cleanup_task();
         Self {
             secret: secret.to_string(),
             rate_limiter: rl,
+            db,
         }
     }
 
@@ -101,6 +103,7 @@ impl Clone for AdminModule {
         Self {
             secret: self.secret.clone(),
             rate_limiter: Arc::clone(&self.rate_limiter),
+            db: self.db.clone(),
         }
     }
 }
@@ -135,6 +138,18 @@ fn extract_token(headers: &HeaderMap) -> Result<String, AdminError> {
 fn require_session(admin: &AdminModule, headers: &HeaderMap) -> Result<SessionInfo, AdminError> {
     let token = extract_token(headers)?;
     let session = admin.decode_token(&token)?;
+
+    // Verify token_version against DB (session revocation enforcement)
+    let db_user = admin
+        .db
+        .get_user(&session.user_id)
+        .map_err(|e| AdminError::internal(e.to_string()))?
+        .ok_or_else(|| AdminError::unauthorized("User not found"))?;
+    if db_user.token_version != session.token_version {
+        return Err(AdminError::unauthorized(
+            "Session has been revoked. Please log in again.",
+        ));
+    }
 
     // Rate limit: 300 requests/minute per admin session to prevent abuse
     admin
@@ -269,36 +284,7 @@ async fn admin_login(
         .check_rpm(&format!("login:{}", client_ip), 10)
         .map_err(|_| AdminError::too_many_requests("Too many login attempts. Try again later."))?;
 
-    // First check: admin credentials from config (super admin)
-    {
-        let cfg = state.config.read().unwrap();
-        static ADMIN_PW_HASH: OnceLock<String> = OnceLock::new();
-        let admin_hash = ADMIN_PW_HASH.get_or_init(|| {
-            bcrypt::hash(&cfg.admin.password, 10).expect("Failed to hash admin password")
-        });
-        if req.username == cfg.admin.username && bcrypt::verify(&req.password, admin_hash).unwrap_or(false) {
-            let info = SessionInfo {
-                user_id: cfg.admin.username.clone(),
-                user_name: "管理员".to_string(),
-                role: "admin".to_string(),
-                token_version: 0,
-            };
-            let token = state.admin.encode_token(&info)?;
-            let tz = state
-                .db
-                .get_user_timezone(&cfg.admin.username)
-                .unwrap_or_else(|_| "UTC".to_string());
-            return Ok(Json(serde_json::json!({
-                "token": token,
-                "role": "admin",
-                "user_id": cfg.admin.username,
-                "user_name": "管理员",
-                "timezone": tz,
-            })));
-        }
-    }
-
-    // Second check: regular user from database
+    // Authenticate against database (all users including admins)
     let user = state
         .db
         .get_user_with_password(&req.username)
@@ -344,6 +330,79 @@ async fn admin_login(
     }
 
     Err(AdminError::unauthorized("Invalid credentials"))
+}
+
+// ── Setup (first-time admin registration) ─────────────────────────
+
+#[derive(Serialize)]
+struct SetupStatus {
+    setup_required: bool,
+}
+
+async fn setup_status(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<SetupStatus>, AdminError> {
+    let count = state
+        .db
+        .count_admins()
+        .map_err(|e| AdminError::internal(e.to_string()))?;
+    Ok(Json(SetupStatus {
+        setup_required: count == 0,
+    }))
+}
+
+#[derive(Deserialize)]
+struct SetupRegisterReq {
+    username: String,
+    password: String,
+}
+
+async fn setup_register(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SetupRegisterReq>,
+) -> Result<Json<Value>, AdminError> {
+    let count = state
+        .db
+        .count_admins()
+        .map_err(|e| AdminError::internal(e.to_string()))?;
+    if count > 0 {
+        return Err(AdminError::bad_request(
+            "Admin already exists. Please log in.",
+        ));
+    }
+
+    if req.username.is_empty() {
+        return Err(AdminError::bad_request("Username is required"));
+    }
+    validate_password(&req.password)?;
+
+    if state
+        .db
+        .get_user(&req.username)
+        .map_err(db_err)?
+        .is_some()
+    {
+        return Err(AdminError::bad_request("Username already exists"));
+    }
+
+    let hash =
+        bcrypt::hash(&req.password, 10).map_err(|e| AdminError::internal(e.to_string()))?;
+
+    let user = User {
+        id: req.username.clone(),
+        name: req.username.clone(),
+        password_hash: Some(hash),
+        rate_limits: None,
+        timezone: "UTC".to_string(),
+        token_version: 0,
+        role: "admin".to_string(),
+    };
+    state.db.create_user(&user).map_err(db_err)?;
+    state.auth.reload();
+
+    tracing::info!("setup_register: first admin user created: {}", user.id);
+
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────
@@ -1059,6 +1118,7 @@ async fn change_my_password(
         rate_limits: existing.rate_limits,
         timezone: existing.timezone,
         token_version: existing.token_version + 1,
+        role: existing.role,
     };
     state.db.update_user(&updated).map_err(db_err)?;
 
@@ -1336,6 +1396,7 @@ async fn create_user(
         rate_limits: req.rate_limits,
         timezone: "UTC".to_string(),
         token_version: 0,
+        role: "user".to_string(),
     };
 
     state.db.create_user(&user).map_err(db_err)?;
@@ -1389,6 +1450,7 @@ async fn update_user(
         rate_limits: req.rate_limits.or(existing.rate_limits),
         timezone: existing.timezone,
         token_version: existing.token_version,
+        role: existing.role,
     };
 
     state.db.update_user(&user).map_err(db_err)?;
@@ -2357,6 +2419,14 @@ async fn set_gateway_config_handler(
 pub fn admin_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/admin/api/login", axum::routing::post(admin_login))
+        .route(
+            "/admin/api/setup/status",
+            axum::routing::get(setup_status),
+        )
+        .route(
+            "/admin/api/setup/register",
+            axum::routing::post(setup_register),
+        )
         .route(
             "/admin/api/sso/status",
             axum::routing::get(crate::sso::sso_status_handler),

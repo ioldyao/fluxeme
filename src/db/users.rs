@@ -4,7 +4,7 @@ use crate::domain::user::{ApiKey, User};
 
 /// List all users (password_hash excluded)
 pub fn list(conn: &Connection) -> Result<Vec<User>, crate::db::DbError> {
-    let mut stmt = conn.prepare("SELECT id, name, rpm, tpm, timezone, token_version FROM users ORDER BY id")?;
+    let mut stmt = conn.prepare("SELECT id, name, rpm, tpm, timezone, token_version, role FROM users ORDER BY id")?;
     let rows = stmt.query_map([], |row| {
         Ok(User {
             id: row.get(0)?,
@@ -21,6 +21,7 @@ pub fn list(conn: &Connection) -> Result<Vec<User>, crate::db::DbError> {
             },
             timezone: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
             token_version: row.get::<_, i64>(5).unwrap_or(0),
+            role: row.get::<_, String>(6).unwrap_or_default(),
         })
     })?;
     let mut users = Vec::new();
@@ -32,7 +33,7 @@ pub fn list(conn: &Connection) -> Result<Vec<User>, crate::db::DbError> {
 
 /// Get user by id (password_hash excluded)
 pub fn get(conn: &Connection, id: &str) -> Result<Option<User>, crate::db::DbError> {
-    let mut stmt = conn.prepare("SELECT id, name, rpm, tpm, timezone, token_version FROM users WHERE id = ?1")?;
+    let mut stmt = conn.prepare("SELECT id, name, rpm, tpm, timezone, token_version, role FROM users WHERE id = ?1")?;
     let mut rows = stmt.query_map(params![id], |row| {
         Ok(User {
             id: row.get(0)?,
@@ -49,6 +50,7 @@ pub fn get(conn: &Connection, id: &str) -> Result<Option<User>, crate::db::DbErr
             },
             timezone: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
             token_version: row.get::<_, i64>(5).unwrap_or(0),
+            role: row.get::<_, String>(6).unwrap_or_default(),
         })
     })?;
     match rows.next() {
@@ -60,7 +62,7 @@ pub fn get(conn: &Connection, id: &str) -> Result<Option<User>, crate::db::DbErr
 /// Get user with password_hash for login verification
 pub fn get_with_password(conn: &Connection, id: &str) -> Result<Option<User>, crate::db::DbError> {
     let mut stmt =
-        conn.prepare("SELECT id, name, password_hash, rpm, tpm, timezone, token_version FROM users WHERE id = ?1")?;
+        conn.prepare("SELECT id, name, password_hash, rpm, tpm, timezone, token_version, role FROM users WHERE id = ?1")?;
     let mut rows = stmt.query_map(params![id], |row| {
         Ok(User {
             id: row.get(0)?,
@@ -77,6 +79,7 @@ pub fn get_with_password(conn: &Connection, id: &str) -> Result<Option<User>, cr
             },
             timezone: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
             token_version: row.get::<_, i64>(6).unwrap_or(0),
+            role: row.get::<_, String>(7).unwrap_or_default(),
         })
     })?;
     match rows.next() {
@@ -93,9 +96,10 @@ pub fn create(conn: &Connection, user: &User) -> Result<(), crate::db::DbError> 
         .unwrap_or((None, None));
     let pw_hash = user.password_hash.as_deref().unwrap_or("");
     let tz = if user.timezone.is_empty() { "UTC" } else { &user.timezone };
+    let role = if user.role.is_empty() { "user" } else { &user.role };
     conn.execute(
-        "INSERT INTO users (id, name, password_hash, rpm, tpm, timezone, token_version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![user.id, user.name, pw_hash, rpm, tpm, tz, user.token_version],
+        "INSERT INTO users (id, name, password_hash, rpm, tpm, timezone, token_version, role) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![user.id, user.name, pw_hash, rpm, tpm, tz, user.token_version, role],
     )?;
     Ok(())
 }
@@ -110,13 +114,13 @@ pub fn update(conn: &Connection, user: &User) -> Result<(), crate::db::DbError> 
 
     if let Some(ref pw) = user.password_hash {
         conn.execute(
-            "UPDATE users SET name = ?1, password_hash = ?2, rpm = ?3, tpm = ?4, timezone = ?5, token_version = ?6 WHERE id = ?7",
-            params![user.name, pw, rpm, tpm, tz, user.token_version, user.id],
+            "UPDATE users SET name = ?1, password_hash = ?2, rpm = ?3, tpm = ?4, timezone = ?5, token_version = ?6, role = ?7 WHERE id = ?8",
+            params![user.name, pw, rpm, tpm, tz, user.token_version, user.role, user.id],
         )?;
     } else {
         conn.execute(
-            "UPDATE users SET name = ?1, rpm = ?2, tpm = ?3, timezone = ?4, token_version = ?5 WHERE id = ?6",
-            params![user.name, rpm, tpm, tz, user.token_version, user.id],
+            "UPDATE users SET name = ?1, rpm = ?2, tpm = ?3, timezone = ?4, token_version = ?5, role = ?6 WHERE id = ?7",
+            params![user.name, rpm, tpm, tz, user.token_version, user.role, user.id],
         )?;
     }
     Ok(())
@@ -205,11 +209,11 @@ pub fn lookup_key(
     key: &str,
 ) -> Result<Option<(User, ApiKey)>, crate::db::DbError> {
     let mut stmt = conn.prepare(
-        "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
+        "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
          FROM api_keys a JOIN users u ON u.id = a.user_id WHERE a.key = ?1",
     )?;
     let mut rows = stmt.query_map(params![key], |row| {
-        let api_key = row_to_api_key_joined(row, 6)?;
+        let api_key = row_to_api_key_joined(row, 7)?;
         let user = User {
             id: row.get(0)?,
             name: row.get(1)?,
@@ -225,6 +229,7 @@ pub fn lookup_key(
             },
             timezone: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
             token_version: row.get::<_, i64>(5).unwrap_or(0),
+            role: row.get::<_, String>(6).unwrap_or_default(),
         };
         Ok((user, api_key))
     })?;
@@ -236,11 +241,11 @@ pub fn lookup_key(
 
 pub fn all_api_keys(conn: &Connection) -> Result<Vec<(User, ApiKey)>, crate::db::DbError> {
     let mut stmt = conn.prepare(
-        "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
+        "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
          FROM api_keys a JOIN users u ON u.id = a.user_id ORDER BY a.key",
     )?;
     let rows = stmt.query_map([], |row| {
-        let api_key = row_to_api_key_joined(row, 6)?;
+        let api_key = row_to_api_key_joined(row, 7)?;
         let user = User {
             id: row.get(0)?,
             name: row.get(1)?,
@@ -256,6 +261,7 @@ pub fn all_api_keys(conn: &Connection) -> Result<Vec<(User, ApiKey)>, crate::db:
             },
             timezone: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
             token_version: row.get::<_, i64>(5).unwrap_or(0),
+            role: row.get::<_, String>(6).unwrap_or_default(),
         };
         Ok((user, api_key))
     })?;

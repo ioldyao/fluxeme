@@ -45,7 +45,7 @@ async fn main() {
         std::env::var("GATEWAY_CONFIG").unwrap_or_else(|_| "config/config.yaml".to_string());
 
     // Load config (server settings only)
-    let mut raw_config = match loader::load_config(&config_path) {
+    let raw_config = match loader::load_config(&config_path) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!("Failed to load config: {}", e);
@@ -54,16 +54,6 @@ async fn main() {
     };
 
     let addr = format!("{}:{}", raw_config.server.host, raw_config.server.port);
-    let admin_username = raw_config.admin.username.clone();
-
-    // Resolve admin password: env var takes precedence over config file
-    if let Ok(env_password) = std::env::var("GATEWAY_ADMIN_PASSWORD") {
-        raw_config.admin.password = env_password;
-    } else {
-        tracing::warn!(
-            "Admin password from config file. Consider setting GATEWAY_ADMIN_PASSWORD env var."
-        );
-    }
 
     let db_path = raw_config.database.path.clone();
     let jwt_secret = loader::resolve_jwt_secret(&raw_config);
@@ -78,7 +68,7 @@ async fn main() {
     }
 
     // Seed from config YAML if database is empty
-    if let Err(e) = loader::seed_from_config(&config_path, &db, &admin_username) {
+    if let Err(e) = loader::seed_from_config(&config_path, &db) {
         tracing::error!("Failed to seed database: {}", e);
         std::process::exit(1);
     }
@@ -90,7 +80,7 @@ async fn main() {
     let rate_limiter = Arc::new(RateLimiter::new());
     rate_limiter.start_cleanup_task();
     let health = Arc::new(HealthService::new(db.clone()).expect("Failed to create HealthService"));
-    let admin = Arc::new(AdminModule::new(&jwt_secret));
+    let admin = Arc::new(AdminModule::new(&jwt_secret, db.clone()));
 
     let sso = Arc::new(
         match sso::SsoModule::new(&config.read().unwrap().sso).await {

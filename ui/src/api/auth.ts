@@ -1,4 +1,4 @@
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from './client';
 import { useAuth } from '@/store/auth';
 import type { LoginResponse } from '@/types';
@@ -33,5 +33,23 @@ export function useUpdateTimezone() {
     onSuccess: (res) => {
       setTimezone(res.timezone);
     },
+  });
+}
+
+export function useSetupStatus() {
+  return useQuery({
+    queryKey: ['setup-status'],
+    queryFn: () => api<{ setup_required: boolean }>('/setup/status'),
+    staleTime: Infinity,
+  });
+}
+
+export function useSetupRegister() {
+  return useMutation({
+    mutationFn: (data: { username: string; password: string }) =>
+      api<{ ok: boolean }>('/setup/register', {
+        method: 'POST',
+        body: data,
+      }),
   });
 }

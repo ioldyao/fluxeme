@@ -54,12 +54,6 @@ pub fn load_config(path: &str) -> Result<AppConfig, String> {
     if config.server.port == 0 {
         return Err("Server port is 0".into());
     }
-    if config.admin.username.is_empty() {
-        return Err("Admin username is empty".into());
-    }
-    if config.admin.password.is_empty() {
-        return Err("Admin password is empty".into());
-    }
 
     tracing::info!(
         "Config loaded: server {}:{}",
@@ -99,7 +93,6 @@ pub fn resolve_jwt_secret(cfg: &AppConfig) -> String {
 pub fn seed_from_config(
     config_path: &str,
     db: &Database,
-    admin_username: &str,
 ) -> Result<(), String> {
     let content = fs::read_to_string(Path::new(config_path))
         .map_err(|e| format!("Failed to read config file: {}", e))?;
@@ -197,17 +190,6 @@ pub fn seed_from_config(
     }
 
     #[derive(Deserialize)]
-    struct OldGlobalKey {
-        key: String,
-        #[serde(default)]
-        name: String,
-        #[serde(default = "default_true")]
-        enabled: bool,
-        #[serde(default)]
-        expires_at: Option<String>,
-    }
-
-    #[derive(Deserialize)]
     struct SeedPayload {
         #[serde(default)]
         users: Option<Vec<OldTenant>>,
@@ -219,8 +201,6 @@ pub fn seed_from_config(
         models: Option<Vec<OldModel>>,
         #[serde(default)]
         routing_rules: Option<Vec<OldRoutingRule>>,
-        #[serde(default)]
-        api_keys: Option<Vec<OldGlobalKey>>,
     }
 
     fn default_true() -> bool {
@@ -240,41 +220,6 @@ pub fn seed_from_config(
             return Ok(());
         }
     };
-
-    // Seed admin user and its API keys before the early-return check,
-    // so admin always exists in DB even when there is no tenant/channel/model data.
-    {
-        if db.get_user(admin_username).unwrap_or(None).is_none() {
-            let admin_user = User {
-                id: admin_username.to_string(),
-                name: "管理员".to_string(),
-                password_hash: None, // admin login uses config, not DB
-                rate_limits: None,
-                timezone: "UTC".to_string(),
-                token_version: 0,
-            };
-            if let Err(e) = db.create_user(&admin_user) {
-                tracing::warn!("Seed admin user: {}", e);
-            }
-        }
-        let admin_id = admin_username;
-        if let Some(keys) = &seed.api_keys {
-            for k in keys {
-                let ak = ApiKey {
-                    key: k.key.clone(),
-                    user_id: admin_id.to_string(),
-                    name: k.name.clone(),
-                    enabled: k.enabled,
-                    expires_at: k.expires_at.clone(),
-                    spend_limit: None,
-                    allowed_models: None,
-                };
-                if let Err(e) = db.create_api_key(&ak) {
-                    tracing::warn!("Seed api key {}: {}", k.key, e);
-                }
-            }
-        }
-    }
 
     let tenants = seed.users.or(seed.tenants).unwrap_or_default();
     tracing::info!(
@@ -303,6 +248,7 @@ pub fn seed_from_config(
             }),
             timezone: "UTC".to_string(),
             token_version: 0,
+            role: "user".to_string(),
         };
         if let Err(e) = db.create_user(&user) {
             tracing::warn!("Seed user {}: {}", t.id, e);

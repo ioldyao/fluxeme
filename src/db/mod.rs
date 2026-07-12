@@ -251,6 +251,10 @@ impl Database {
         let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN balance REAL NOT NULL DEFAULT 0.0;");
         let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN frozen REAL NOT NULL DEFAULT 0.0;");
         let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0;");
+        // Backward compat: add role column to users
+        let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user';");
+        // Upgrade existing seeded admin user
+        let _ = conn.execute_batch("UPDATE users SET role='admin' WHERE id='admin' AND role='user';");
         // Wallet transactions table
         let _ = conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS wallet_transactions (
@@ -319,6 +323,14 @@ impl Database {
     }
     pub fn delete_user(&self, id: &str) -> Result<(), DbError> {
         users::delete(&*self.conn()?, id)
+    }
+    pub fn count_admins(&self) -> Result<i64, DbError> {
+        let conn = self.conn()?;
+        conn.query_row(
+            "SELECT COUNT(*) FROM users WHERE role = 'admin'",
+            [],
+            |row| row.get(0),
+        ).map_err(|e| DbError(e.to_string()))
     }
     pub fn list_api_keys(&self, user_id: &str) -> Result<Vec<ApiKey>, DbError> {
         users::list_api_keys(&*self.conn()?, user_id)

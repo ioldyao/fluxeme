@@ -31,7 +31,6 @@ pub struct SsoConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AppConfig {
     pub server: ServerConfig,
-    pub admin: AdminConfig,
     #[serde(default)]
     pub database: DatabaseConfig,
     #[serde(default)]
@@ -48,12 +47,6 @@ pub struct AppConfig {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct AdminConfig {
-    pub username: String,
-    pub password: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

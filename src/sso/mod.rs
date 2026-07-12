@@ -213,6 +213,7 @@ impl SsoModule {
                 rate_limits: None,
                 timezone: "UTC".to_string(),
                 token_version: 0,
+                role: "user".to_string(),
             };
             db.create_user(&user)
                 .map_err(|e| AdminError::internal(format!("Failed to create user: {e}")))?;
