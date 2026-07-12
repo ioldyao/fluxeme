@@ -370,7 +370,7 @@ function TimeoutField({
         type="number"
         min="0"
         className="w-full h-8 text-xs"
-        value={value}
+        value={Number(value)}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
       />
