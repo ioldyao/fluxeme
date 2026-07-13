@@ -385,6 +385,7 @@ export default function Usage() {
                         formatter={(value: string) => <span style={{ color: 'hsl(var(--foreground))', fontSize: 12 }}>{value}</span>}
                       />
                       <Bar dataKey="prompt_tokens" stackId="tokens" fill="var(--chart-2)" radius={[0, 0, 0, 0]} name={t('dash.prompt')} />
+                      <Bar dataKey="cache_hit_tokens" stackId="tokens" fill="var(--chart-5)" radius={[0, 0, 0, 0]} name={t('usage.cacheHit')} />
                       <Bar dataKey="completion_tokens" stackId="tokens" fill="var(--chart-3)" radius={[4, 4, 0, 0]} name={t('dash.completion')} />
                     </BarChart>
                   </ResponsiveContainer>

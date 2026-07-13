@@ -153,6 +153,7 @@ export interface DailyAggregate {
   total_tokens: number;
   success_count: number;
   latency_ms: number;
+  cache_hit_tokens: number;
 }
 
 export interface LoginResponse {

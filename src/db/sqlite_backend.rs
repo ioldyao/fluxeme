@@ -1726,7 +1726,7 @@ impl DbBackend for SqliteBackend {
         since: &str,
         user_id: Option<&str>,
         tz_offset_seconds: i64,
-    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError> {
+    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64, u64)>, DbError> {
         let since = since.to_string();
         let uid = user_id.map(|s| s.to_string());
         self.exec(move |conn| {
@@ -1741,7 +1741,7 @@ impl DbBackend for SqliteBackend {
                 if let Some(ref uid) = uid {
                     (
                         format!(
-                            "SELECT {} as day, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(total_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(latency_ms),0) FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2 GROUP BY day ORDER BY day ASC",
+                            "SELECT {} as day, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(total_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(latency_ms),0), COALESCE(SUM(cache_hit_input_tokens),0) FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2 GROUP BY day ORDER BY day ASC",
                             day_expr
                         ),
                         vec![Box::new(uid.clone()), Box::new(since.clone())],
@@ -1749,7 +1749,7 @@ impl DbBackend for SqliteBackend {
                 } else {
                     (
                         format!(
-                            "SELECT {} as day, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(total_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(latency_ms),0) FROM usage_logs WHERE timestamp >= ?1 GROUP BY day ORDER BY day ASC",
+                            "SELECT {} as day, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(total_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(latency_ms),0), COALESCE(SUM(cache_hit_input_tokens),0) FROM usage_logs WHERE timestamp >= ?1 GROUP BY day ORDER BY day ASC",
                             day_expr
                         ),
                         vec![Box::new(since.clone())],
@@ -1768,6 +1768,7 @@ impl DbBackend for SqliteBackend {
                     row.get::<_, u64>(4)?,
                     row.get::<_, u64>(5)?,
                     row.get::<_, u64>(6)?,
+                    row.get::<_, u64>(7)?,
                 ));
             }
             Ok(records)

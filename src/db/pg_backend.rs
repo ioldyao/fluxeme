@@ -1697,44 +1697,46 @@ impl DbBackend for PgBackend {
         since: &str,
         user_id: Option<&str>,
         tz_offset_seconds: i64,
-    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError> {
+    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64, u64)>, DbError> {
         let day_expr = Self::day_expr(tz_offset_seconds);
         if let Some(uid) = user_id {
             let sql = format!(
                 "SELECT {}, COUNT(*)::bigint, COALESCE(SUM(prompt_tokens),0)::bigint, \
                  COALESCE(SUM(completion_tokens),0)::bigint, COALESCE(SUM(total_tokens),0)::bigint, \
                  COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
-                 COALESCE(SUM(latency_ms),0)::bigint \
+                 COALESCE(SUM(latency_ms),0)::bigint, \
+                 COALESCE(SUM(cache_hit_input_tokens),0)::bigint \
                  FROM usage_logs WHERE user_id = $1 AND timestamp >= $2 \
                  GROUP BY day ORDER BY day ASC",
                 day_expr
             );
-            let rows = sqlx::query_as::<_, (String, i64, i64, i64, i64, i64, i64)>(&sql)
+            let rows = sqlx::query_as::<_, (String, i64, i64, i64, i64, i64, i64, i64)>(&sql)
                 .bind(uid)
                 .bind(since)
                 .fetch_all(&self.pool)
                 .await?;
             Ok(rows
                 .into_iter()
-                .map(|r| (r.0, r.1 as u64, r.2 as u64, r.3 as u64, r.4 as u64, r.5 as u64, r.6 as u64))
+                .map(|r| (r.0, r.1 as u64, r.2 as u64, r.3 as u64, r.4 as u64, r.5 as u64, r.6 as u64, r.7 as u64))
                 .collect())
         } else {
             let sql = format!(
                 "SELECT {}, COUNT(*)::bigint, COALESCE(SUM(prompt_tokens),0)::bigint, \
                  COALESCE(SUM(completion_tokens),0)::bigint, COALESCE(SUM(total_tokens),0)::bigint, \
                  COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
-                 COALESCE(SUM(latency_ms),0)::bigint \
+                 COALESCE(SUM(latency_ms),0)::bigint, \
+                 COALESCE(SUM(cache_hit_input_tokens),0)::bigint \
                  FROM usage_logs WHERE timestamp >= $1 \
                  GROUP BY day ORDER BY day ASC",
                 day_expr
             );
-            let rows = sqlx::query_as::<_, (String, i64, i64, i64, i64, i64, i64)>(&sql)
+            let rows = sqlx::query_as::<_, (String, i64, i64, i64, i64, i64, i64, i64)>(&sql)
                 .bind(since)
                 .fetch_all(&self.pool)
                 .await?;
             Ok(rows
                 .into_iter()
-                .map(|r| (r.0, r.1 as u64, r.2 as u64, r.3 as u64, r.4 as u64, r.5 as u64, r.6 as u64))
+                .map(|r| (r.0, r.1 as u64, r.2 as u64, r.3 as u64, r.4 as u64, r.5 as u64, r.6 as u64, r.7 as u64))
                 .collect())
         }
     }

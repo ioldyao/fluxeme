@@ -65,7 +65,7 @@ impl UsageService {
         self.db.usage_cost_rows_since(since, user_id).await.map_err(|e| e.0)
     }
 
-    pub async fn daily_stats(&self, since: &str, user_id: Option<&str>, tz_offset_seconds: i64) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, String> {
+    pub async fn daily_stats(&self, since: &str, user_id: Option<&str>, tz_offset_seconds: i64) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64, u64)>, String> {
         self.db.daily_usage_stats(since, user_id, tz_offset_seconds).await.map_err(|e| e.0)
     }
 }

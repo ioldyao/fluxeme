@@ -2166,6 +2166,7 @@ struct DailyAggregate {
     total_tokens: u64,
     success_count: u64,
     latency_ms: u64,
+    cache_hit_tokens: u64,
 }
 
 async fn usage_aggregate(
@@ -2194,7 +2195,7 @@ async fn usage_aggregate(
     Ok(Json(
         records
             .into_iter()
-            .map(|(date, count, pt, ct, tt, sc, lat)| DailyAggregate {
+            .map(|(date, count, pt, ct, tt, sc, lat, ch)| DailyAggregate {
                 date,
                 count,
                 prompt_tokens: pt,
@@ -2202,6 +2203,7 @@ async fn usage_aggregate(
                 total_tokens: tt,
                 success_count: sc,
                 latency_ms: lat,
+                cache_hit_tokens: ch,
             })
             .collect(),
     ))

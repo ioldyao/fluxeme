@@ -288,7 +288,7 @@ impl Database {
         since: &str,
         user_id: Option<&str>,
         tz_offset_seconds: i64,
-    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError> {
+    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64, u64)>, DbError> {
         self.backend
             .daily_usage_stats(since, user_id, tz_offset_seconds)
             .await
