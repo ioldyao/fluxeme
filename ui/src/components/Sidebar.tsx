@@ -20,7 +20,7 @@ export function Sidebar() {
   const byLabel = Object.fromEntries(visible.map((item) => [item.label, item]));
 
   return (
-    <aside className="w-60 h-screen fixed left-0 top-0 border-r bg-sidebar flex flex-col z-30">
+    <aside className="w-52 h-screen fixed left-0 top-0 border-r bg-sidebar flex flex-col z-30">
       <div className="flex items-center gap-2 px-5 h-14 border-b">
         <Cog className="h-5 w-5 text-brand" />
         <span className="font-semibold text-sm">{t('nav.subtitle')}</span>
