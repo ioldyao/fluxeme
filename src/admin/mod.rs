@@ -227,6 +227,12 @@ fn db_err(e: crate::db::DbError) -> AdminError {
     AdminError::internal("Internal server error")
 }
 
+/// Wrap a DB error from a bad-request operation: log and return a generic message.
+fn db_err_bad_request(e: crate::db::DbError) -> AdminError {
+    tracing::error!("[admin] DB bad-request error: {}", e.0);
+    AdminError::bad_request("Bad request")
+}
+
 /// Parse IANA timezone name (e.g. "Asia/Shanghai") and return the current
 /// UTC offset in seconds. Falls back to 0 (UTC) on invalid input.
 fn tz_offset_seconds(tz: Option<&str>) -> i64 {
@@ -566,10 +572,10 @@ async fn billing_period_summary(
     };
 
     let (total_cost, total_requests, total_tokens) = state.db.period_summary(year, month, user_filter)
-        .await.map_err(|e| AdminError::internal(e.0))?;
+        .await.map_err(db_err)?;
 
     let by_model = state.db.period_model_breakdown(year, month, user_filter)
-        .await.map_err(|e| AdminError::internal(e.0))?
+        .await.map_err(db_err)?
         .into_iter()
         .map(|(model, cost)| {
             let pct = if total_cost > 0.0 { (cost / total_cost * 100.0 * 10.0).round() / 10.0 } else { 0.0 };
@@ -578,7 +584,7 @@ async fn billing_period_summary(
         .collect();
 
     let by_channel = state.db.period_channel_breakdown(year, month, user_filter)
-        .await.map_err(|e| AdminError::internal(e.0))?
+        .await.map_err(db_err)?
         .into_iter()
         .map(|(channel, cost)| {
             let pct = if total_cost > 0.0 { (cost / total_cost * 100.0 * 10.0).round() / 10.0 } else { 0.0 };
@@ -631,9 +637,9 @@ async fn billing_deductions(
     };
 
     let total = state.db.count_daily_deductions(year, month, user_filter)
-        .await.map_err(|e| AdminError::internal(e.0))?;
+        .await.map_err(db_err)?;
     let records = state.db.daily_deductions_paginated(year, month, user_filter, limit, offset)
-        .await.map_err(|e| AdminError::internal(e.0))?;
+        .await.map_err(db_err)?;
     let items: Vec<DeductionRecord> = records.into_iter().map(|(day, amount, _count)| DeductionRecord {
         time: format!("{}T00:00:00", day),
         amount: -((amount * 100.0).round() / 100.0),
@@ -664,7 +670,7 @@ async fn billing_months(
     headers: HeaderMap,
 ) -> Result<Json<Vec<String>>, AdminError> {
     let _session = require_admin(&state.admin, &headers).await?;
-    state.db.billing_months().await.map_err(|e| AdminError::internal(e.0)).map(Json)
+    state.db.billing_months().await.map_err(db_err).map(Json)
 }
 
 #[derive(Serialize)]
@@ -680,7 +686,7 @@ async fn billing_period_summary_all(
     headers: HeaderMap,
 ) -> Result<Json<Vec<MonthSummary>>, AdminError> {
     let _session = require_admin(&state.admin, &headers).await?;
-    let records = state.db.period_summary_all().await.map_err(|e| AdminError::internal(e.0))?;
+    let records = state.db.period_summary_all().await.map_err(db_err)?;
     Ok(Json(records.into_iter().map(|(month, cost, req, tok)| MonthSummary {
         month,
         total_cost: (cost * 100.0).round() / 100.0,
@@ -705,9 +711,9 @@ async fn wallet_overview(
 ) -> Result<Json<WalletOverview>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     let user_id = &session.user_id;
-    let (balance, frozen) = state.db.get_wallet_balance(user_id).await.map_err(|e| AdminError::internal(e.0))?;
-    let total_consumed = state.db.get_total_consumed(user_id).await.map_err(|e| AdminError::internal(e.0))?;
-    let total_recharged = state.db.get_total_recharged(user_id).await.map_err(|e| AdminError::internal(e.0))?;
+    let (balance, frozen) = state.db.get_wallet_balance(user_id).await.map_err(db_err)?;
+    let total_consumed = state.db.get_total_consumed(user_id).await.map_err(db_err)?;
+    let total_recharged = state.db.get_total_recharged(user_id).await.map_err(db_err)?;
     Ok(Json(WalletOverview { balance, frozen, total_consumed, total_recharged }))
 }
 
@@ -765,7 +771,7 @@ async fn wallet_create_key(
         return Err(AdminError::bad_request("Amount must be positive"));
     }
     let key = uuid::Uuid::new_v4().to_string();
-    state.db.create_recharge_key(&key, req.amount, &session.user_id, req.expires_at.as_deref()).await.map_err(|e| AdminError::internal(e.0))?;
+    state.db.create_recharge_key(&key, req.amount, &session.user_id, req.expires_at.as_deref()).await.map_err(db_err)?;
     Ok(Json(CreateKeyResp { key, amount: req.amount, expires_at: req.expires_at }))
 }
 
@@ -775,8 +781,8 @@ async fn wallet_redeem_key(
     Json(req): Json<RedeemKeyReq>,
 ) -> Result<Json<RedeemKeyResp>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    let amount = state.db.redeem_recharge_key(&req.key, &session.user_id).await.map_err(|e| AdminError::bad_request(e.0))?;
-    let (balance, frozen) = state.db.get_wallet_balance(&session.user_id).await.map_err(|e| AdminError::internal(e.0))?;
+    let amount = state.db.redeem_recharge_key(&req.key, &session.user_id).await.map_err(db_err_bad_request)?;
+    let (balance, frozen) = state.db.get_wallet_balance(&session.user_id).await.map_err(db_err)?;
 
     // Sync to Redis gate cache
     let status = compute_gate_status(balance, frozen);
@@ -815,13 +821,13 @@ async fn wallet_list_keys(
         q.search.as_deref(),
         q.status.as_deref(),
         q.used_by.as_deref(),
-    ).await.map_err(|e| AdminError::internal(e.0))?;
+    ).await.map_err(db_err)?;
     let items = state.db.list_recharge_keys_filtered(
         limit, offset,
         q.search.as_deref(),
         q.status.as_deref(),
         q.used_by.as_deref(),
-    ).await.map_err(|e| AdminError::internal(e.0))?;
+    ).await.map_err(db_err)?;
     Ok(Json(serde_json::json!({ "items": items, "total": total })))
 }
 
@@ -831,7 +837,7 @@ async fn wallet_revoke_key(
     Json(req): Json<RevokeKeyReq>,
 ) -> Result<Json<serde_json::Value>, AdminError> {
     let _session = require_admin(&state.admin, &headers).await?;
-    state.db.revoke_recharge_key(&req.key).await.map_err(|e| AdminError::bad_request(e.0))?;
+    state.db.revoke_recharge_key(&req.key).await.map_err(db_err_bad_request)?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
@@ -874,7 +880,7 @@ async fn wallet_transactions(
     let uid_filter: Option<&str> = if session.role == "admin" { None } else { Some(&session.user_id) };
     let (rows, total_dates) = state.db.list_wallet_tx_by_dates(
         uid_filter, page, size, q.since.as_deref(), q.until.as_deref(), q.tx_type.as_deref(),
-    ).await.map_err(|e| AdminError::internal(e.0))?;
+    ).await.map_err(db_err)?;
     let items = rows.into_iter().map(|r| WalletTxItem {
         id: r.id,
         tx_type: r.tx_type,
@@ -899,7 +905,7 @@ async fn wallet_estimated_days(
     headers: HeaderMap,
 ) -> Result<Json<EstimatedDaysResp>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    let days = state.db.get_wallet_estimated_days(&session.user_id).await.map_err(|e| AdminError::internal(e.0))?;
+    let days = state.db.get_wallet_estimated_days(&session.user_id).await.map_err(db_err)?;
     Ok(Json(EstimatedDaysResp { days }))
 }
 
@@ -1867,7 +1873,7 @@ async fn test_subscription_connection(
     let subscribed = state
         .db
         .list_subscribed_model_ids(&session.user_id)
-        .await.map_err(|e| AdminError::internal(e.0))?;
+        .await.map_err(db_err)?;
     if !subscribed.contains(&body.model_id) {
         return Err(AdminError::forbidden("未订阅此模型"));
     }
@@ -1876,7 +1882,7 @@ async fn test_subscription_connection(
     let model = state
         .db
         .get_model(&body.model_id)
-        .await.map_err(|e| AdminError::internal(e.0))?
+        .await.map_err(db_err)?
         .ok_or_else(|| AdminError::not_found("模型不存在"))?;
 
     // Find the first enabled channel for this model (by priority)
@@ -2327,7 +2333,7 @@ async fn get_channel_health(
 ) -> Result<Json<ChannelHealthResponse>, AdminError> {
     require_admin(&state.admin, &headers).await?;
     let eps = state.routing.channel_health(&id);
-    let ch = state.db.get_channel(&id).await.map_err(|e| AdminError::internal(e.0))?;
+    let ch = state.db.get_channel(&id).await.map_err(db_err)?;
     let channel_id = ch.as_ref().map(|c| c.id.clone()).unwrap_or(id);
     let mut endpoints = Vec::with_capacity(eps.len());
     for (eid, enabled, available) in eps {
@@ -2359,7 +2365,7 @@ async fn toggle_endpoint(
     state
         .db
         .update_endpoint_enabled(id, body.enabled)
-        .await.map_err(|e| AdminError::internal(e.0))?;
+        .await.map_err(db_err)?;
     state.routing.set_endpoint_enabled(id, body.enabled);
     Ok(Json(serde_json::json!({ "success": true })))
 }
