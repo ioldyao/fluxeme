@@ -1526,8 +1526,8 @@ impl DbBackend for PgBackend {
             let row: (i64, i64, i64, i64) = sqlx::query_as(
                 "SELECT COUNT(*), \
                  COALESCE(SUM(CASE WHEN success = true THEN 1 ELSE 0 END),0), \
-                 COALESCE(SUM(latency_ms),0), \
-                 COALESCE(SUM(total_tokens),0) \
+                 COALESCE(SUM(latency_ms)::bigint,0), \
+                 COALESCE(SUM(total_tokens)::bigint,0) \
                  FROM usage_logs WHERE user_id = $1 AND timestamp >= $2",
             )
             .bind(uid)
@@ -1539,8 +1539,8 @@ impl DbBackend for PgBackend {
             let row: (i64, i64, i64, i64) = sqlx::query_as(
                 "SELECT COUNT(*), \
                  COALESCE(SUM(CASE WHEN success = true THEN 1 ELSE 0 END),0), \
-                 COALESCE(SUM(latency_ms),0), \
-                 COALESCE(SUM(total_tokens),0) \
+                 COALESCE(SUM(latency_ms)::bigint,0), \
+                 COALESCE(SUM(total_tokens)::bigint,0) \
                  FROM usage_logs WHERE timestamp >= $1",
             )
             .bind(since)
