@@ -1,6 +1,7 @@
 pub mod openai;
 pub mod anthropic;
 pub mod vllm;
+pub mod sglang;
 
 use std::net::IpAddr;
 use std::pin::Pin;
@@ -263,6 +264,7 @@ pub struct ProviderRegistry {
     openai: Arc<openai::OpenAIAdapter>,
     anthropic: Arc<anthropic::AnthropicAdapter>,
     vllm: Arc<vllm::VllmAdapter>,
+    sglang: Arc<sglang::SglangAdapter>,
 }
 
 impl ProviderRegistry {
@@ -271,6 +273,7 @@ impl ProviderRegistry {
             openai: Arc::new(openai::OpenAIAdapter),
             anthropic: Arc::new(anthropic::AnthropicAdapter),
             vllm: Arc::new(vllm::VllmAdapter),
+            sglang: Arc::new(sglang::SglangAdapter),
         }
     }
 
@@ -279,6 +282,7 @@ impl ProviderRegistry {
             "openai" | "azure" | "ollama" => Some(self.openai.clone()),
             "anthropic" => Some(self.anthropic.clone()),
             "vllm" => Some(self.vllm.clone()),
+            "sglang" => Some(self.sglang.clone()),
             _ => None,
         }
     }
