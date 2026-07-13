@@ -975,6 +975,11 @@ async fn dashboard_aggregations(
         .await
         .unwrap_or((0, 0, 0, 0));
 
+    tracing::info!(
+        "[dashboard_debug] since_24h={} total_requests={} requests_24h={} success_count={} total_latency={} total_tokens={} offset={} tz={}",
+        since_24h, total_requests, requests_24h, success_count, total_latency, total_tokens_24h, offset, tz,
+    );
+
     if requests_24h == 0 {
         return Ok(Json(DashboardAggregations {
             total_requests,
