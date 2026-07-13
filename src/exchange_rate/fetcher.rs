@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::db::Database;
 
-const FRANKFURTER_API: &str = "https://api.frankfurter.dev";
+const FRANKFURTER_API: &str = "https://api.frankfurter.dev/v1";
 
 /// Response from Frankfurter API `/latest?from=USD`
 #[derive(Debug, Deserialize)]
