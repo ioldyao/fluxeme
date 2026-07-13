@@ -13,6 +13,8 @@ mod sso;
 #[cfg(feature = "pricing_chain")]
 mod pricing;
 
+mod exchange_rate;
+
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -217,6 +219,18 @@ async fn main() {
                     tokio::time::sleep(Duration::from_millis(5)).await;
                 }
             }
+        });
+    }
+
+    // Background exchange rate fetcher (Frankfurter API, daily)
+    {
+        let db = db.clone();
+        tokio::spawn(async move {
+            exchange_rate::fetcher::start_background_fetcher(
+                db,
+                vec!["CNY".into(), "JPY".into(), "EUR".into()],
+            )
+            .await;
         });
     }
 

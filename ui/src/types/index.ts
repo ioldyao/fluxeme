@@ -235,3 +235,14 @@ export interface TenantDiscount {
   created_at: string;
   updated_at: string;
 }
+
+export interface ExchangeRateRow {
+  id: number;
+  base_currency: string;
+  quote_currency: string;
+  rate: number;
+  rate_date: string;
+  source: string;
+  notes: string | null;
+  created_at: string;
+}

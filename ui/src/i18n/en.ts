@@ -491,5 +491,19 @@ const en: Record<string, string> = {
   'confirm.deleteTenantDiscount': 'Delete tenant discount "',
   'empty.noContractPrices': 'No contract prices configured.',
   'empty.noTenantDiscounts': 'No tenant discounts configured.',
+
+  // ── Exchange Rates ──────────────────────────────────────────────────────
+  'settings.exchangeRates': 'Exchange Rates',
+  'settings.exchangeRatesHint': 'Auto-fetched daily from Frankfurter API. Used for currency conversion on the billing pages.',
+  'settings.exchangeTable': 'Current Rates',
+  'settings.refreshRates': 'Refresh',
+  'settings.overrideRate': 'Override',
+  'settings.rateOverrideDialog': 'Override Exchange Rate',
+  'settings.rateQuote': 'Quote Currency',
+  'settings.rateValue': 'Rate',
+  'settings.rateDate': 'Date',
+  'settings.source': 'Source',
+  'settings.rateOverrideSuccess': 'Exchange rate updated.',
+  'settings.refreshSuccess': 'Exchange rates refreshed ({{count}} rates).',
 };
 export default en;

@@ -448,6 +448,29 @@ impl DbBackend for PgBackend {
         .execute(&self.pool)
         .await;
 
+        // ── Exchange Rates ─────────────────────────────────────────────────
+        let _ = sqlx::raw_sql(
+            "CREATE TABLE IF NOT EXISTS exchange_rates (
+                id BIGSERIAL PRIMARY KEY,
+                base_currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+                quote_currency VARCHAR(10) NOT NULL,
+                rate FLOAT8 NOT NULL,
+                rate_date DATE NOT NULL,
+                source VARCHAR(50) NOT NULL DEFAULT 'frankfurter',
+                notes TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(base_currency, quote_currency, rate_date)
+            );",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = sqlx::raw_sql(
+            "CREATE INDEX IF NOT EXISTS idx_exchange_rates_date
+             ON exchange_rates(rate_date)",
+        )
+        .execute(&self.pool)
+        .await;
+
         Ok(())
     }
 
@@ -2980,6 +3003,96 @@ impl DbBackend for PgBackend {
             .await
             .map_err(|e| DbError(e.to_string()))?;
         Ok(())
+    }
+
+    // ── Exchange Rates ─────────────────────────────────────────────────────
+
+    async fn list_exchange_rates(&self) -> Result<Vec<super::ExchangeRateRow>, DbError> {
+        #[allow(unused_assignments)]
+        fn map_row(r: &sqlx::postgres::PgRow) -> super::ExchangeRateRow {
+            let mut idx = 0usize;
+            super::ExchangeRateRow {
+                id: { let v: i64 = r.get(idx); idx += 1; v },
+                base_currency: { let v: String = r.get(idx); idx += 1; v },
+                quote_currency: { let v: String = r.get(idx); idx += 1; v },
+                rate: { let v: f64 = r.get(idx); idx += 1; v },
+                rate_date: { let v: String = r.get(idx); idx += 1; v },
+                source: { let v: String = r.get(idx); idx += 1; v },
+                notes: {
+                    let n: String = r.get(idx); idx += 1;
+                    if n.is_empty() { None } else { Some(n) }
+                },
+                created_at: { let v: String = r.get(idx); idx += 1; v },
+            }
+        }
+
+        let rows = sqlx::query(
+            "SELECT id, base_currency, quote_currency, rate, rate_date::text, source, notes, created_at::text
+             FROM exchange_rates ORDER BY rate_date DESC, quote_currency",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(map_row).collect())
+    }
+
+    async fn upsert_exchange_rate(
+        &self,
+        base: &str,
+        quote: &str,
+        rate: f64,
+        date: &str,
+        source: &str,
+        notes: Option<&str>,
+    ) -> Result<(), DbError> {
+        sqlx::query(
+            "INSERT INTO exchange_rates (base_currency, quote_currency, rate, rate_date, source, notes)
+             VALUES ($1, $2, $3, $4::date, $5, $6)
+             ON CONFLICT(base_currency, quote_currency, rate_date)
+             DO UPDATE SET rate = EXCLUDED.rate, source = EXCLUDED.source, notes = EXCLUDED.notes",
+        )
+        .bind(base)
+        .bind(quote)
+        .bind(rate)
+        .bind(date)
+        .bind(source)
+        .bind(notes.unwrap_or(""))
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn get_latest_exchange_rates(&self) -> Result<Vec<super::ExchangeRateRow>, DbError> {
+        #[allow(unused_assignments)]
+        fn map_row(r: &sqlx::postgres::PgRow) -> super::ExchangeRateRow {
+            let mut idx = 0usize;
+            super::ExchangeRateRow {
+                id: { let v: i64 = r.get(idx); idx += 1; v },
+                base_currency: { let v: String = r.get(idx); idx += 1; v },
+                quote_currency: { let v: String = r.get(idx); idx += 1; v },
+                rate: { let v: f64 = r.get(idx); idx += 1; v },
+                rate_date: { let v: String = r.get(idx); idx += 1; v },
+                source: { let v: String = r.get(idx); idx += 1; v },
+                notes: {
+                    let n: String = r.get(idx); idx += 1;
+                    if n.is_empty() { None } else { Some(n) }
+                },
+                created_at: { let v: String = r.get(idx); idx += 1; v },
+            }
+        }
+
+        let rows = sqlx::query(
+            "SELECT e.id, e.base_currency, e.quote_currency, e.rate, e.rate_date::text, e.source, e.notes, e.created_at::text
+             FROM exchange_rates e
+             INNER JOIN (
+                 SELECT quote_currency, MAX(rate_date) AS max_date
+                 FROM exchange_rates
+                 GROUP BY quote_currency
+             ) latest ON e.quote_currency = latest.quote_currency AND e.rate_date = latest.max_date",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(map_row).collect())
     }
 }
 

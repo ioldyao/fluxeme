@@ -2530,6 +2530,50 @@ async fn delete_tenant_discount_handler(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+// ── Exchange Rate Handlers ────────────────────────────────────────────────
+
+async fn list_exchange_rates_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::db::ExchangeRateRow>>, AdminError> {
+    require_admin(&state.admin, &headers).await?;
+    let rates = state.db.list_exchange_rates().await.map_err(db_err)?;
+    Ok(Json(rates))
+}
+
+async fn upsert_exchange_rate_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, AdminError> {
+    require_admin(&state.admin, &headers).await?;
+    let base = body["base_currency"].as_str().unwrap_or("USD");
+    let quote = body["quote_currency"].as_str().ok_or_else(|| AdminError::bad_request("quote_currency required"))?;
+    let rate = body["rate"].as_f64().ok_or_else(|| AdminError::bad_request("rate required"))?;
+    let date = body["rate_date"].as_str().unwrap_or("");
+    let date = if date.is_empty() {
+        &chrono::Utc::now().format("%Y-%m-%d").to_string()
+    } else {
+        date
+    };
+    let source = body["source"].as_str().unwrap_or("manual");
+    let notes = body["notes"].as_str();
+    state.db.upsert_exchange_rate(base, quote, rate, date, source, notes).await.map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn refresh_exchange_rates_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AdminError> {
+    require_admin(&state.admin, &headers).await?;
+    let currencies = ["CNY", "JPY", "EUR"];
+    match crate::exchange_rate::fetcher::fetch_and_store_rates(&state.db, &currencies).await {
+        Ok(n) => Ok(Json(serde_json::json!({ "ok": true, "count": n }))),
+        Err(e) => Err(AdminError::internal(e)),
+    }
+}
+
 // ── Router ────────────────────────────────────────────────────────
 
 pub fn admin_routes() -> Router<Arc<AppState>> {
@@ -2738,6 +2782,18 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
                 axum::routing::delete(delete_tenant_discount_handler),
             );
     }
+
+    // ── Exchange Rate Routes ─────────────────────────────────────────────
+    router = router
+        .route(
+            "/admin/api/exchange-rates",
+            axum::routing::get(list_exchange_rates_handler)
+                .put(upsert_exchange_rate_handler),
+        )
+        .route(
+            "/admin/api/exchange-rates/refresh",
+            axum::routing::post(refresh_exchange_rates_handler),
+        );
 
     router
 }

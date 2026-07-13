@@ -233,6 +233,26 @@ impl SqliteBackend {
             "CREATE INDEX IF NOT EXISTS idx_tenant_discounts_user_model
              ON tenant_discounts(user_id, model_id)",
         );
+
+        // ── Exchange Rates ─────────────────────────────────────────────────
+        let _ = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS exchange_rates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                base_currency TEXT NOT NULL DEFAULT 'USD',
+                quote_currency TEXT NOT NULL,
+                rate REAL NOT NULL,
+                rate_date TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'frankfurter',
+                notes TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(base_currency, quote_currency, rate_date)
+            );",
+        );
+        let _ = conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_exchange_rates_date
+             ON exchange_rates(rate_date)",
+        );
+
         Ok(())
     }
 }
@@ -3111,6 +3131,100 @@ impl DbBackend for SqliteBackend {
         self.exec(move |conn| {
             conn.execute("DELETE FROM tenant_discounts WHERE id = ?1", params![pid])?;
             Ok(())
+        })
+        .await
+    }
+
+    // ── Exchange Rates ─────────────────────────────────────────────────────
+
+    async fn list_exchange_rates(&self) -> Result<Vec<super::ExchangeRateRow>, DbError> {
+        self.exec(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, base_currency, quote_currency, rate, rate_date, source, notes, created_at
+                 FROM exchange_rates ORDER BY rate_date DESC, quote_currency",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(super::ExchangeRateRow {
+                    id: row.get(0)?,
+                    base_currency: row.get(1)?,
+                    quote_currency: row.get(2)?,
+                    rate: row.get(3)?,
+                    rate_date: row.get(4)?,
+                    source: row.get(5)?,
+                    notes: {
+                        let n: String = row.get(6)?;
+                        if n.is_empty() { None } else { Some(n) }
+                    },
+                    created_at: row.get(7)?,
+                })
+            })?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row?);
+            }
+            Ok(out)
+        })
+        .await
+    }
+
+    async fn upsert_exchange_rate(
+        &self,
+        base: &str,
+        quote: &str,
+        rate: f64,
+        date: &str,
+        source: &str,
+        notes: Option<&str>,
+    ) -> Result<(), DbError> {
+        let base = base.to_string();
+        let quote = quote.to_string();
+        let date = date.to_string();
+        let source = source.to_string();
+        let notes = notes.unwrap_or("").to_string();
+        self.exec(move |conn| {
+            conn.execute(
+                "INSERT INTO exchange_rates (base_currency, quote_currency, rate, rate_date, source, notes)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(base_currency, quote_currency, rate_date)
+                 DO UPDATE SET rate = excluded.rate, source = excluded.source, notes = excluded.notes",
+                params![base, quote, rate, date, source, notes],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn get_latest_exchange_rates(&self) -> Result<Vec<super::ExchangeRateRow>, DbError> {
+        self.exec(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT e.id, e.base_currency, e.quote_currency, e.rate, e.rate_date, e.source, e.notes, e.created_at
+                 FROM exchange_rates e
+                 INNER JOIN (
+                     SELECT quote_currency, MAX(rate_date) AS max_date
+                     FROM exchange_rates
+                     GROUP BY quote_currency
+                 ) latest ON e.quote_currency = latest.quote_currency AND e.rate_date = latest.max_date",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(super::ExchangeRateRow {
+                    id: row.get(0)?,
+                    base_currency: row.get(1)?,
+                    quote_currency: row.get(2)?,
+                    rate: row.get(3)?,
+                    rate_date: row.get(4)?,
+                    source: row.get(5)?,
+                    notes: {
+                        let n: String = row.get(6)?;
+                        if n.is_empty() { None } else { Some(n) }
+                    },
+                    created_at: row.get(7)?,
+                })
+            })?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row?);
+            }
+            Ok(out)
         })
         .await
     }

@@ -45,7 +45,7 @@ pub struct WalletTransactionRow {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RechargeKeyRow {
     pub key: String,
     pub amount: f64,
@@ -55,6 +55,18 @@ pub struct RechargeKeyRow {
     pub created_at: String,
     pub expires_at: Option<String>,
     pub revoked: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExchangeRateRow {
+    pub id: i64,
+    pub base_currency: String,
+    pub quote_currency: String,
+    pub rate: f64,
+    pub rate_date: String,
+    pub source: String,
+    pub notes: Option<String>,
+    pub created_at: String,
 }
 
 pub struct Database {
@@ -567,5 +579,26 @@ impl Database {
     #[cfg(feature = "pricing_chain")]
     pub async fn delete_tenant_discount(&self, id: &str) -> Result<(), DbError> {
         self.backend.delete_tenant_discount(id).await
+    }
+
+    // ── Exchange Rates ─────────────────────────────────────────────────────
+    pub async fn list_exchange_rates(&self) -> Result<Vec<ExchangeRateRow>, DbError> {
+        self.backend.list_exchange_rates().await
+    }
+    pub async fn upsert_exchange_rate(
+        &self,
+        base: &str,
+        quote: &str,
+        rate: f64,
+        date: &str,
+        source: &str,
+        notes: Option<&str>,
+    ) -> Result<(), DbError> {
+        self.backend
+            .upsert_exchange_rate(base, quote, rate, date, source, notes)
+            .await
+    }
+    pub async fn get_latest_exchange_rates(&self) -> Result<Vec<ExchangeRateRow>, DbError> {
+        self.backend.get_latest_exchange_rates().await
     }
 }

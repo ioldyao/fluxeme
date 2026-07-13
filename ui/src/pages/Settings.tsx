@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { RefreshCw, Pencil } from 'lucide-react';
 import { useCurrency, CURRENCY_SYMBOL, CURRENCY_CODE, type CurrencyCode } from '@/store/currency';
 import { useAuth } from '@/store/auth';
 import { useUpdateTimezone, useUpdateCurrency } from '@/api/auth';
+import { useExchangeRates, useUpsertExchangeRate, useRefreshExchangeRates } from '@/api/exchangeRates';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -11,8 +13,25 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
 import { api } from '@/api/client';
-import type { GatewayRuntimeConfig } from '@/types';
+import type { GatewayRuntimeConfig, ExchangeRateRow } from '@/types';
 
 const COMMON_TIMEZONES: string[] = [
   'UTC',
@@ -62,6 +81,13 @@ export default function SettingsPage() {
   const [gatewayConfig, setGatewayConfig] = useState<GatewayRuntimeConfig>(DEFAULT_GATEWAY_CONFIG);
   const [gatewayLoading, setGatewayLoading] = useState(true);
   const [gatewaySaving, setGatewaySaving] = useState(false);
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [overrideQuote, setOverrideQuote] = useState('');
+  const [overrideRate, setOverrideRate] = useState('');
+  const [overrideDate, setOverrideDate] = useState('');
+  const { data: exchangeRates, isLoading: ratesLoading } = useExchangeRates();
+  const upsertRate = useUpsertExchangeRate();
+  const refreshRates = useRefreshExchangeRates();
 
   useEffect(() => {
     if (role !== 'admin') {
@@ -208,6 +234,145 @@ export default function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {role === 'admin' && (
+        <Card>
+          <CardContent className="p-6 space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">{t('settings.exchangeRates')}</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">{t('settings.exchangeRatesHint')}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => refreshRates.mutate(undefined, {
+                    onSuccess: (data) => toast.success(t('settings.refreshSuccess', { count: data.count })),
+                    onError: () => toast.error('Refresh failed'),
+                  })}
+                  disabled={refreshRates.isPending}
+                >
+                  <RefreshCw className={`h-4 w-4 mr-1 ${refreshRates.isPending ? 'animate-spin' : ''}`} />
+                  {t('settings.refreshRates')}
+                </Button>
+                <Dialog open={overrideOpen} onOpenChange={setOverrideOpen}>
+                  <DialogTrigger asChild>
+                    <Button size="sm" variant="outline">
+                      <Pencil className="h-4 w-4 mr-1" />
+                      {t('settings.overrideRate')}
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>{t('settings.rateOverrideDialog')}</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label>{t('settings.rateQuote')}</Label>
+                        <Select value={overrideQuote} onValueChange={setOverrideQuote}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="CNY" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="CNY">CNY</SelectItem>
+                            <SelectItem value="JPY">JPY</SelectItem>
+                            <SelectItem value="EUR">EUR</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t('settings.rateValue')}</Label>
+                        <Input
+                          type="number"
+                          step="0.0001"
+                          min="0"
+                          value={overrideRate}
+                          onChange={(e) => setOverrideRate(e.target.value)}
+                          placeholder="7.2500"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t('settings.rateDate')}</Label>
+                        <Input
+                          type="date"
+                          value={overrideDate}
+                          onChange={(e) => setOverrideDate(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setOverrideOpen(false)}>
+                        {t('common.cancel')}
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          const rate = parseFloat(overrideRate);
+                          if (isNaN(rate) || rate <= 0 || !overrideQuote) return;
+                          upsertRate.mutate(
+                            {
+                              quote_currency: overrideQuote,
+                              rate,
+                              rate_date: overrideDate || undefined,
+                              source: 'manual',
+                            },
+                            {
+                              onSuccess: () => {
+                                toast.success(t('settings.rateOverrideSuccess'));
+                                setOverrideOpen(false);
+                                setOverrideQuote('');
+                                setOverrideRate('');
+                                setOverrideDate('');
+                              },
+                              onError: () => toast.error('Failed to save override'),
+                            },
+                          );
+                        }}
+                        disabled={!overrideQuote || !overrideRate || upsertRate.isPending}
+                      >
+                        {t('common.save')}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
+            </div>
+
+            <div className="rounded-lg border">
+              {ratesLoading ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">{t('common.loading')}</div>
+              ) : !exchangeRates || exchangeRates.length === 0 ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">{t('empty.noData')}</div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('settings.rateQuote')}</TableHead>
+                      <TableHead>{t('settings.rateValue')}</TableHead>
+                      <TableHead>{t('settings.rateDate')}</TableHead>
+                      <TableHead>{t('settings.source')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {exchangeRates.map((row: ExchangeRateRow) => (
+                      <TableRow key={row.id}>
+                        <TableCell className="font-medium">{row.quote_currency}</TableCell>
+                        <TableCell>{row.rate.toFixed(6)}</TableCell>
+                        <TableCell>{row.rate_date}</TableCell>
+                        <TableCell>
+                          <Badge variant="secondary" className="text-[11px]">
+                            {row.source}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardContent className="p-6 space-y-6">

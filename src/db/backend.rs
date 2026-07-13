@@ -168,4 +168,9 @@ pub trait DbBackend: Send + Sync {
 
     #[cfg(feature = "pricing_chain")]
     async fn delete_tenant_discount(&self, id: &str) -> Result<(), DbError>;
+
+    // ── Exchange Rates ─────────────────────────────────────────────────────
+    async fn list_exchange_rates(&self) -> Result<Vec<super::ExchangeRateRow>, DbError>;
+    async fn upsert_exchange_rate(&self, base: &str, quote: &str, rate: f64, date: &str, source: &str, notes: Option<&str>) -> Result<(), DbError>;
+    async fn get_latest_exchange_rates(&self) -> Result<Vec<super::ExchangeRateRow>, DbError>;
 }

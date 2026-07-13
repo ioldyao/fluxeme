@@ -490,5 +490,19 @@ const zh: Record<string, string> = {
   'confirm.deleteTenantDiscount': '确定删除租户折扣 "',
   'empty.noContractPrices': '暂无合约价格配置',
   'empty.noTenantDiscounts': '暂无租户折扣配置',
+
+  // ── Exchange Rates ──────────────────────────────────────────────────────
+  'settings.exchangeRates': '汇率管理',
+  'settings.exchangeRatesHint': '每日自动从 Frankfurter API 获取。用于在账单页面进行货币转换。',
+  'settings.exchangeTable': '当前汇率',
+  'settings.refreshRates': '刷新',
+  'settings.overrideRate': '覆盖',
+  'settings.rateOverrideDialog': '覆盖汇率',
+  'settings.rateQuote': '目标货币',
+  'settings.rateValue': '汇率',
+  'settings.rateDate': '日期',
+  'settings.source': '来源',
+  'settings.rateOverrideSuccess': '汇率已更新。',
+  'settings.refreshSuccess': '汇率已刷新（{{count}} 条）。',
 };
 export default zh;
