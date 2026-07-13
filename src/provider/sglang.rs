@@ -20,9 +20,9 @@ impl SglangAdapter {
         let text = Self::messages_to_text(body.get("messages"));
         let mut sampling = serde_json::Map::new();
 
-        if let Some(v) = body.get("max_tokens").and_then(|v| v.as_u64()) {
-            sampling.insert("max_new_tokens".into(), Value::Number(v.into()));
-        }
+        // Default max_new_tokens if client doesn't specify
+        let max_tokens = body.get("max_tokens").and_then(|v| v.as_u64());
+        sampling.insert("max_new_tokens".into(), Value::Number(max_tokens.unwrap_or(4096).into()));
         if let Some(v) = body.get("temperature").and_then(|v| v.as_f64()) {
             sampling.insert("temperature".into(), Value::from(v));
         }
@@ -57,7 +57,7 @@ impl SglangAdapter {
         Value::Object(req)
     }
 
-    /// Simple messages → plain text conversion using chatml format.
+    /// Convert OpenAI messages to SGLang text format.
     fn messages_to_text(messages: Option<&Value>) -> String {
         let msgs = match messages.and_then(|m| m.as_array()) {
             Some(a) => a,
@@ -70,13 +70,13 @@ impl SglangAdapter {
             let content = Self::extract_content(msg.get("content"));
 
             match role {
-                "system" => parts.push(format!("<|im_start|>system\n{}\n<|im_end|>", content)),
-                "user" => parts.push(format!("<|im_start|>user\n{}\n<|im_end|>", content)),
-                "assistant" => parts.push(format!("<|im_start|>assistant\n{}\n<|im_end|>", content)),
+                "system" => parts.push(format!("<|system|>\n{}", content)),
+                "user" => parts.push(format!("<|user|>\n{}", content)),
+                "assistant" => parts.push(format!("<|assistant|>\n{}", content)),
                 _ => parts.push(content),
             }
         }
-        parts.push("<|im_start|>assistant\n".to_string());
+        parts.push("<|assistant|>\n".to_string());
         parts.join("\n")
     }
 
@@ -106,9 +106,9 @@ impl SglangAdapter {
 
         let mut sampling = serde_json::Map::new();
 
-        if let Some(v) = body.get("max_tokens").and_then(|v| v.as_u64()) {
-            sampling.insert("max_new_tokens".into(), Value::Number(v.into()));
-        }
+        // Default max_new_tokens if client doesn't specify
+        let max_tokens = body.get("max_tokens").and_then(|v| v.as_u64());
+        sampling.insert("max_new_tokens".into(), Value::Number(max_tokens.unwrap_or(4096).into()));
         if let Some(v) = body.get("temperature").and_then(|v| v.as_f64()) {
             sampling.insert("temperature".into(), Value::from(v));
         }
@@ -134,18 +134,18 @@ impl SglangAdapter {
         Value::Object(req)
     }
 
-    /// Convert Anthropic messages + system prompt to ChatML text.
+    /// Convert Anthropic messages + system prompt to SGLang text format.
     fn anthropic_messages_to_text(system: &str, messages: Option<&Value>) -> String {
         let mut parts: Vec<String> = Vec::new();
 
         if !system.is_empty() {
-            parts.push(format!("<|im_start|>system\n{}\n<|im_end|>", system));
+            parts.push(format!("<|system|>\n{}", system));
         }
 
         let msgs = match messages.and_then(|m| m.as_array()) {
             Some(a) => a,
             None => {
-                parts.push("<|im_start|>assistant\n".to_string());
+                parts.push("<|assistant|>\n".to_string());
                 return parts.join("\n");
             }
         };
@@ -154,13 +154,12 @@ impl SglangAdapter {
             let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("user");
             let content = Self::extract_content(msg.get("content"));
             match role {
-                "system" => parts.push(format!("<|im_start|>system\n{}\n<|im_end|>", content)),
-                "user" => parts.push(format!("<|im_start|>user\n{}\n<|im_end|>", content)),
-                "assistant" => parts.push(format!("<|im_start|>assistant\n{}\n<|im_end|>", content)),
+                "user" => parts.push(format!("<|user|>\n{}", content)),
+                "assistant" => parts.push(format!("<|assistant|>\n{}", content)),
                 _ => parts.push(content),
             }
         }
-        parts.push("<|im_start|>assistant\n".to_string());
+        parts.push("<|assistant|>\n".to_string());
         parts.join("\n")
     }
 
