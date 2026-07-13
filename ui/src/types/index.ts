@@ -162,6 +162,7 @@ export interface LoginResponse {
   user_id: string;
   user_name: string;
   timezone?: string;
+  display_currency?: string;
 }
 
 export interface CreateUserReq {

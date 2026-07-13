@@ -333,6 +333,7 @@ async fn admin_login(
             "user_id": u.id,
             "user_name": u.name,
             "timezone": u.timezone,
+            "display_currency": u.display_currency,
         })));
     }
 
@@ -403,6 +404,7 @@ async fn setup_register(
         password_hash: Some(hash),
         rate_limits: None,
         timezone: "UTC".to_string(),
+        display_currency: "usd".to_string(),
         token_version: 0,
         role: "admin".to_string(),
     };
@@ -1125,6 +1127,7 @@ async fn change_my_password(
         password_hash: Some(new_hash),
         rate_limits: existing.rate_limits,
         timezone: existing.timezone,
+        display_currency: existing.display_currency.clone(),
         token_version: existing.token_version + 1,
         role: existing.role,
     };
@@ -1165,6 +1168,36 @@ async fn update_my_timezone(
         .await.map_err(db_err)?;
 
     Ok(Json(serde_json::json!({ "ok": true, "timezone": req.timezone })))
+}
+
+#[derive(Deserialize)]
+struct UpdateCurrencyReq {
+    currency: String,
+}
+
+async fn get_my_currency(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    let currency = state.db.get_user_currency(&session.user_id).await.map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "currency": currency })))
+}
+
+async fn update_my_currency(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<UpdateCurrencyReq>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    if req.currency != "usd" && req.currency != "cny" {
+        return Err(AdminError::bad_request("Currency must be 'usd' or 'cny'"));
+    }
+    state
+        .db
+        .update_user_currency(&session.user_id, &req.currency)
+        .await.map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "ok": true, "currency": req.currency })))
 }
 
 async fn my_keys(
@@ -1403,6 +1436,7 @@ async fn create_user(
         password_hash,
         rate_limits: req.rate_limits,
         timezone: "UTC".to_string(),
+        display_currency: "usd".to_string(),
         token_version: 0,
         role: "user".to_string(),
     };
@@ -1457,6 +1491,7 @@ async fn update_user(
         },
         rate_limits: req.rate_limits.or(existing.rate_limits),
         timezone: existing.timezone,
+        display_currency: existing.display_currency.clone(),
         token_version: existing.token_version,
         role: existing.role,
     };
@@ -2467,6 +2502,10 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route(
             "/admin/api/me/timezone",
             axum::routing::get(get_my_timezone).put(update_my_timezone),
+        )
+        .route(
+            "/admin/api/me/currency",
+            axum::routing::get(get_my_currency).put(update_my_currency),
         )
         .route(
             "/admin/api/me/keys",

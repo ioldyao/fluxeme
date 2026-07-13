@@ -11,6 +11,8 @@ pub struct User {
     #[serde(default)]
     pub timezone: String,
     #[serde(default)]
+    pub display_currency: String,
+    #[serde(default)]
     pub token_version: i64,
     #[serde(default)]
     pub role: String,

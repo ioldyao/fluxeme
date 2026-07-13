@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Search, Check, Loader2, Cpu, RefreshCw, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { useCurrency, CURRENCY_SYMBOL } from '@/store/currency';
 import type { Model } from '@/types';
 
 function inferProvider(pattern: string): string {
@@ -218,9 +219,11 @@ function FilterBtn({ active, onClick, label }: { active: boolean; onClick: () =>
   );
 }
 
-function formatPrice(price: number): string {
+function formatPrice(price: number, currency: 'usd' | 'cny' = 'usd', rate: number = 1): string {
   if (!price || price === 0) return '-';
-  return `$${price}`;
+  const value = currency === 'cny' ? price * rate : price;
+  const symbol = currency === 'cny' ? '¥' : '$';
+  return `${symbol}${value}`;
 }
 
 function formatContextLength(len: number | null | undefined): string {
@@ -242,6 +245,7 @@ function ModelCard({
   onToggle: (id: string, subscribed: boolean) => void;
 }) {
   const { t } = useTranslation();
+  const { currency, rate } = useCurrency();
   const [detailOpen, setDetailOpen] = useState(false);
 
   return (
@@ -304,16 +308,16 @@ function ModelCard({
         <div className={`grid gap-2 border-t border-border pt-4 text-center ${model.pricing.cache_read_price > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
           <div>
             <p className="text-xs text-muted-foreground">{t('marketplace.prompt')}</p>
-            <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.prompt_price)}</p>
+            <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.prompt_price, currency, rate)}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">{t('marketplace.completion')}</p>
-            <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.completion_price)}</p>
+            <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.completion_price, currency, rate)}</p>
           </div>
           {model.pricing.cache_read_price > 0 && (
             <div>
               <p className="text-xs text-muted-foreground">{t('pricing.cacheRead')}</p>
-              <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.cache_read_price)}</p>
+              <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.cache_read_price, currency, rate)}</p>
             </div>
           )}
         </div>

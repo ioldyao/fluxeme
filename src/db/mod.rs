@@ -114,6 +114,12 @@ impl Database {
     pub async fn update_user_timezone(&self, id: &str, timezone: &str) -> Result<(), DbError> {
         self.backend.update_user_timezone(id, timezone).await
     }
+    pub async fn get_user_currency(&self, id: &str) -> Result<String, DbError> {
+        self.backend.get_user_currency(id).await
+    }
+    pub async fn update_user_currency(&self, id: &str, currency: &str) -> Result<(), DbError> {
+        self.backend.update_user_currency(id, currency).await
+    }
 
     // ── API Keys ─────────────────────────────────────────────────────────
     pub async fn list_api_keys(&self, user_id: &str) -> Result<Vec<ApiKey>, DbError> {

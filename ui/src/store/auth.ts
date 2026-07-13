@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { UserRole, LoginResponse } from '@/types';
+import { useCurrency } from './currency';
 
 interface AuthState {
   token: string | null;
@@ -8,6 +9,7 @@ interface AuthState {
   userId: string | null;
   userName: string | null;
   timezone: string;
+  displayCurrency: string;
   setSession: (res: LoginResponse) => void;
   setTimezone: (tz: string) => void;
   clear: () => void;
@@ -21,14 +23,18 @@ export const useAuth = create<AuthState>()(
       userId: null,
       userName: null,
       timezone: 'UTC',
-      setSession: (res) =>
+      displayCurrency: 'usd',
+      setSession: (res) => {
         set({
           token: res.token,
           role: res.role,
           userId: res.user_id,
           userName: res.user_name,
           timezone: res.timezone || 'UTC',
-        }),
+          displayCurrency: res.display_currency || 'usd',
+        });
+        useCurrency.getState().setCurrency((res.display_currency as any) || 'usd');
+      },
       setTimezone: (timezone) => set({ timezone }),
       clear: () =>
         set({
@@ -37,6 +43,7 @@ export const useAuth = create<AuthState>()(
           userId: null,
           userName: null,
           timezone: 'UTC',
+          displayCurrency: 'usd',
         }),
     }),
     {

@@ -212,6 +212,7 @@ impl SsoModule {
                 password_hash: None,
                 rate_limits: None,
                 timezone: "UTC".to_string(),
+                display_currency: "usd".to_string(),
                 token_version: 0,
                 role: "user".to_string(),
             };

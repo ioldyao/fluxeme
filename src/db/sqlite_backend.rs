@@ -159,6 +159,7 @@ impl SqliteBackend {
         let _ = conn.execute_batch("ALTER TABLE endpoints ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;");
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN category TEXT NOT NULL DEFAULT '';");
         let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC';");
+        let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN display_currency TEXT NOT NULL DEFAULT 'usd';");
         let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN balance REAL NOT NULL DEFAULT 0.0;");
         let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN frozen REAL NOT NULL DEFAULT 0.0;");
         let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0;");
@@ -311,8 +312,9 @@ impl SqliteBackend {
                 }
             },
             timezone: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
-            token_version: row.get::<_, i64>(5).unwrap_or(0),
-            role: row.get::<_, String>(6).unwrap_or_default(),
+            display_currency: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+            token_version: row.get::<_, i64>(6).unwrap_or(0),
+            role: row.get::<_, String>(7).unwrap_or_default(),
         })
     }
 
@@ -331,8 +333,9 @@ impl SqliteBackend {
                 }
             },
             timezone: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
-            token_version: row.get::<_, i64>(6).unwrap_or(0),
-            role: row.get::<_, String>(7).unwrap_or_default(),
+            display_currency: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+            token_version: row.get::<_, i64>(7).unwrap_or(0),
+            role: row.get::<_, String>(8).unwrap_or_default(),
         })
     }
 }
@@ -350,7 +353,7 @@ impl DbBackend for SqliteBackend {
     async fn list_users(&self) -> Result<Vec<User>, DbError> {
         self.exec(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, name, rpm, tpm, timezone, token_version, role FROM users ORDER BY id",
+                "SELECT id, name, rpm, tpm, timezone, display_currency, token_version, role FROM users ORDER BY id",
             )?;
             let rows = stmt.query_map([], Self::map_user_row)?;
             let mut users = Vec::new();
@@ -366,7 +369,7 @@ impl DbBackend for SqliteBackend {
         let id = id.to_string();
         self.exec(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, name, rpm, tpm, timezone, token_version, role FROM users WHERE id = ?1",
+                "SELECT id, name, rpm, tpm, timezone, display_currency, token_version, role FROM users WHERE id = ?1",
             )?;
             let mut rows = stmt.query_map(params![id], Self::map_user_row)?;
             match rows.next() {
@@ -381,7 +384,7 @@ impl DbBackend for SqliteBackend {
         let id = id.to_string();
         self.exec(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, name, password_hash, rpm, tpm, timezone, token_version, role FROM users WHERE id = ?1",
+                "SELECT id, name, password_hash, rpm, tpm, timezone, display_currency, token_version, role FROM users WHERE id = ?1",
             )?;
             let mut rows = stmt.query_map(params![id], Self::map_user_with_pw_row)?;
             match rows.next() {
@@ -406,14 +409,19 @@ impl DbBackend for SqliteBackend {
             } else {
                 &user.timezone
             };
+            let currency = if user.display_currency.is_empty() {
+                "usd"
+            } else {
+                &user.display_currency
+            };
             let role = if user.role.is_empty() {
                 "user"
             } else {
                 &user.role
             };
             conn.execute(
-                "INSERT INTO users (id, name, password_hash, rpm, tpm, timezone, token_version, role) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![user.id, user.name, pw_hash, rpm, tpm, tz, user.token_version, role],
+                "INSERT INTO users (id, name, password_hash, rpm, tpm, timezone, display_currency, token_version, role) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![user.id, user.name, pw_hash, rpm, tpm, tz, currency, user.token_version, role],
             )?;
             Ok(())
         })
@@ -433,15 +441,20 @@ impl DbBackend for SqliteBackend {
             } else {
                 &user.timezone
             };
+            let currency = if user.display_currency.is_empty() {
+                "usd"
+            } else {
+                &user.display_currency
+            };
             if let Some(ref pw) = user.password_hash {
                 conn.execute(
-                    "UPDATE users SET name = ?1, password_hash = ?2, rpm = ?3, tpm = ?4, timezone = ?5, token_version = ?6, role = ?7 WHERE id = ?8",
-                    params![user.name, pw, rpm, tpm, tz, user.token_version, user.role, user.id],
+                    "UPDATE users SET name = ?1, password_hash = ?2, rpm = ?3, tpm = ?4, timezone = ?5, display_currency = ?6, token_version = ?7, role = ?8 WHERE id = ?9",
+                    params![user.name, pw, rpm, tpm, tz, currency, user.token_version, user.role, user.id],
                 )?;
             } else {
                 conn.execute(
-                    "UPDATE users SET name = ?1, rpm = ?2, tpm = ?3, timezone = ?4, token_version = ?5, role = ?6 WHERE id = ?7",
-                    params![user.name, rpm, tpm, tz, user.token_version, user.role, user.id],
+                    "UPDATE users SET name = ?1, rpm = ?2, tpm = ?3, timezone = ?4, display_currency = ?5, token_version = ?6, role = ?7 WHERE id = ?8",
+                    params![user.name, rpm, tpm, tz, currency, user.token_version, user.role, user.id],
                 )?;
             }
             Ok(())
@@ -489,6 +502,33 @@ impl DbBackend for SqliteBackend {
             conn.execute(
                 "UPDATE users SET timezone = ?1 WHERE id = ?2",
                 params![tz, id],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn get_user_currency(&self, id: &str) -> Result<String, DbError> {
+        let id = id.to_string();
+        self.exec(move |conn| {
+            let mut stmt = conn.prepare("SELECT display_currency FROM users WHERE id = ?1")?;
+            let _currency: Option<String> = stmt.query_row(params![id], |row| row.get(0)).ok();
+            Ok(_currency.unwrap_or_else(|| "usd".to_string()))
+        })
+        .await
+    }
+
+    async fn update_user_currency(&self, id: &str, currency: &str) -> Result<(), DbError> {
+        let id = id.to_string();
+        let cur = if currency.is_empty() {
+            "usd".to_string()
+        } else {
+            currency.to_string()
+        };
+        self.exec(move |conn| {
+            conn.execute(
+                "UPDATE users SET display_currency = ?1 WHERE id = ?2",
+                params![cur, id],
             )?;
             Ok(())
         })
@@ -565,18 +605,18 @@ impl DbBackend for SqliteBackend {
         let key = key.to_string();
         self.exec(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
+                "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.display_currency, u.token_version, u.role, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
                  FROM api_keys a JOIN users u ON u.id = a.user_id WHERE a.key = ?1",
             )?;
             let mut rows = stmt.query_map(params![key], |row| {
-                let allowed_models_str: Option<String> = row.get(13)?;
+                let allowed_models_str: Option<String> = row.get(14)?;
                 let api_key = ApiKey {
-                    key: row.get(7)?,
-                    user_id: row.get(8)?,
-                    name: row.get(9)?,
-                    enabled: row.get::<_, i32>(10)? != 0,
-                    expires_at: row.get(11)?,
-                    spend_limit: row.get(12)?,
+                    key: row.get(8)?,
+                    user_id: row.get(9)?,
+                    name: row.get(10)?,
+                    enabled: row.get::<_, i32>(11)? != 0,
+                    expires_at: row.get(12)?,
+                    spend_limit: row.get(13)?,
                     allowed_models: allowed_models_str
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
@@ -595,8 +635,9 @@ impl DbBackend for SqliteBackend {
                         }
                     },
                     timezone: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
-                    token_version: row.get::<_, i64>(5).unwrap_or(0),
-                    role: row.get::<_, String>(6).unwrap_or_default(),
+                    display_currency: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                    token_version: row.get::<_, i64>(6).unwrap_or(0),
+                    role: row.get::<_, String>(7).unwrap_or_default(),
                 };
                 Ok((user, api_key))
             })?;
@@ -611,18 +652,18 @@ impl DbBackend for SqliteBackend {
     async fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError> {
         self.exec(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
+                "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.display_currency, u.token_version, u.role, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
                  FROM api_keys a JOIN users u ON u.id = a.user_id ORDER BY a.key",
             )?;
             let rows = stmt.query_map([], |row| {
-                let allowed_models_str: Option<String> = row.get(13)?;
+                let allowed_models_str: Option<String> = row.get(14)?;
                 let api_key = ApiKey {
-                    key: row.get(7)?,
-                    user_id: row.get(8)?,
-                    name: row.get(9)?,
-                    enabled: row.get::<_, i32>(10)? != 0,
-                    expires_at: row.get(11)?,
-                    spend_limit: row.get(12)?,
+                    key: row.get(8)?,
+                    user_id: row.get(9)?,
+                    name: row.get(10)?,
+                    enabled: row.get::<_, i32>(11)? != 0,
+                    expires_at: row.get(12)?,
+                    spend_limit: row.get(13)?,
                     allowed_models: allowed_models_str
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
@@ -641,8 +682,9 @@ impl DbBackend for SqliteBackend {
                         }
                     },
                     timezone: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
-                    token_version: row.get::<_, i64>(5).unwrap_or(0),
-                    role: row.get::<_, String>(6).unwrap_or_default(),
+                    display_currency: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                    token_version: row.get::<_, i64>(6).unwrap_or(0),
+                    role: row.get::<_, String>(7).unwrap_or_default(),
                 };
                 Ok((user, api_key))
             })?;

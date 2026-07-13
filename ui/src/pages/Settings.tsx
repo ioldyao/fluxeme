@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { useCurrency, CURRENCY_SYMBOL, CURRENCY_CODE, type CurrencyCode } from '@/store/currency';
 import { useAuth } from '@/store/auth';
-import { useUpdateTimezone } from '@/api/auth';
+import { useUpdateTimezone, useUpdateCurrency } from '@/api/auth';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -56,6 +56,7 @@ export default function SettingsPage() {
   const { currency, rate, setCurrency, setRate } = useCurrency();
   const { timezone, setTimezone, role } = useAuth();
   const updateTimezone = useUpdateTimezone();
+  const updateCurrency = useUpdateCurrency();
   const [allowPrivateIps, setAllowPrivateIps] = useState(true);
   const [loading, setLoading] = useState(true);
   const [gatewayConfig, setGatewayConfig] = useState<GatewayRuntimeConfig>(DEFAULT_GATEWAY_CONFIG);
@@ -150,7 +151,7 @@ export default function SettingsPage() {
                   <Label className="text-sm">{t('settings.currencyLabel')}</Label>
                   <p className="text-xs text-muted-foreground mt-0.5">{t('settings.currencyHint')}</p>
                 </div>
-                <Select value={currency} onValueChange={(v) => setCurrency(v as CurrencyCode)}>
+                <Select value={currency} onValueChange={(v) => { setCurrency(v as CurrencyCode); updateCurrency.mutate(v); }}>
                   <SelectTrigger className="w-32">
                     <SelectValue />
                   </SelectTrigger>

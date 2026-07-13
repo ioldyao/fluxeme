@@ -247,6 +247,7 @@ pub async fn seed_from_config(
                 tpm: rl.tpm,
             }),
             timezone: "UTC".to_string(),
+            display_currency: "usd".to_string(),
             token_version: 0,
             role: "user".to_string(),
         };
