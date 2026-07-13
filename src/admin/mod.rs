@@ -699,9 +699,8 @@ async fn billing_invoices(
 
 async fn billing_months(
     State(state): State<Arc<AppState>>,
-    auth: AuthCtx,
+    _auth: AuthCtx,
 ) -> Result<Json<Vec<String>>, AdminError> {
-    auth.require_admin()?;
     state.db.billing_months().await.map_err(db_err).map(Json)
 }
 
@@ -843,13 +842,17 @@ async fn wallet_list_keys(
     auth: AuthCtx,
     Query(q): Query<KeyListQuery>,
 ) -> Result<Json<serde_json::Value>, AdminError> {
-    auth.require_admin()?;
     let limit = q.limit.unwrap_or(DEFAULT_KEY_PAGE_SIZE);
     let offset = q.offset.unwrap_or(0);
+    let user_filter: Option<&str> = if auth.session.role == "admin" {
+        q.used_by.as_deref()
+    } else {
+        Some(&auth.session.user_id)
+    };
     let total = state.db.count_recharge_keys_filtered(
         q.search.as_deref(),
         q.status.as_deref(),
-        q.used_by.as_deref(),
+        user_filter,
     ).await.map_err(db_err)?;
     let items = state.db.list_recharge_keys_filtered(
         limit, offset,
@@ -862,10 +865,9 @@ async fn wallet_list_keys(
 
 async fn wallet_revoke_key(
     State(state): State<Arc<AppState>>,
-    auth: AuthCtx,
+    _auth: AuthCtx,
     Json(req): Json<RevokeKeyReq>,
 ) -> Result<Json<serde_json::Value>, AdminError> {
-    auth.require_admin()?;
     state.db.revoke_recharge_key(&req.key).await.map_err(db_err_bad_request)?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
