@@ -15,12 +15,12 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositorie
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs && \
-    cargo build --release -j $(nproc); \
+    cargo build --release --features pricing_chain -j $(nproc); \
     rm -rf src
 COPY src/ src/
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories && \
     apk add --no-cache openssl-dev pkgconfig openssl-libs-static
-RUN cargo build --release -j $(nproc) && \
+RUN cargo build --release --features pricing_chain -j $(nproc) && \
     strip target/release/ai-gateway
 
 # ── Runtime ──
