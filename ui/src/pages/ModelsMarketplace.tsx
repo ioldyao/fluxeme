@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Search, Check, Loader2, Cpu, RefreshCw, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { useCurrency, CURRENCY_SYMBOL } from '@/store/currency';
+import { useCurrency } from '@/store/currency';
 import type { Model } from '@/types';
 
 function inferProvider(pattern: string): string {

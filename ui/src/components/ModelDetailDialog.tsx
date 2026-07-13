@@ -260,7 +260,7 @@ export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props
               <div className="space-y-0.5 text-xs">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-muted-foreground">{t('marketplace.input')}</span>
-                  <span className="font-mono font-medium">{CURRENCY_SYMBOL[currency]}{formatPrice(model.pricing.prompt_price, currency, rate)}/1K</span>
+                  <span className="font-mono font-medium">{fmtPrice(model.pricing.prompt_price)}/1K</span>
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-muted-foreground">{t('marketplace.output')}</span>
