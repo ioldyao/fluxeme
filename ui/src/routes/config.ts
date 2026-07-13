@@ -11,6 +11,8 @@ import {
   DollarSign,
   Wallet,
   Receipt,
+  FileText,
+  Percent,
 } from 'lucide-react';
 
 export type RouteGuard = 'public' | 'auth' | 'admin';
@@ -50,6 +52,8 @@ export const adminRoutes: RouteConfig[] = [
   { path: '/models', Component: lazy(() => import('@/pages/Models')), guard: 'admin', label: 'nav.models', icon: Braces, nav: true, end: true },
   { path: '/rules', Component: lazy(() => import('@/pages/Rules')), guard: 'admin', label: 'nav.rules', icon: Route, nav: true },
   { path: '/pricing', Component: lazy(() => import('@/pages/ModelPricing')), guard: 'admin', label: 'nav.modelPricing', icon: DollarSign, nav: true },
+  { path: '/contract-prices', Component: lazy(() => import('@/pages/ContractPrices')), guard: 'admin', label: 'nav.contractPrices', icon: FileText, nav: true },
+  { path: '/tenant-discounts', Component: lazy(() => import('@/pages/TenantDiscounts')), guard: 'admin', label: 'nav.tenantDiscounts', icon: Percent, nav: true },
 ];
 
 export const catchAllRoutes: RouteConfig[] = [

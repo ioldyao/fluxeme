@@ -211,3 +211,27 @@ export interface BillingSummary {
   total_cost: number;
   balance: number;
 }
+
+export interface ContractPrice {
+  id: string;
+  user_id: string;
+  model_id: string;
+  prompt_price: number;
+  completion_price: number;
+  effective_from: string;
+  effective_until: string | null;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TenantDiscount {
+  id: string;
+  user_id: string;
+  model_id: string;
+  discount_type: 'Percentage' | 'Fixed';
+  discount_value: number;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+}

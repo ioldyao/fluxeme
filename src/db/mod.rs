@@ -514,4 +514,58 @@ impl Database {
             .batch_insert_usage_with_billing(batch, billing_enabled)
             .await
     }
+
+    // ── Pricing Chain (contract prices) ──────────────────────────────────
+    #[cfg(feature = "pricing_chain")]
+    pub async fn get_contract_prices_for_user(
+        &self,
+        user_id: &str,
+        model_id: &str,
+    ) -> Result<Vec<crate::pricing::types::ContractPriceRow>, DbError> {
+        self.backend
+            .get_contract_prices_for_user(user_id, model_id)
+            .await
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    pub async fn list_contract_prices(&self) -> Result<Vec<crate::pricing::types::ContractPrice>, DbError> {
+        self.backend.list_contract_prices().await
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    pub async fn create_contract_price(&self, price: &crate::pricing::types::ContractPrice) -> Result<(), DbError> {
+        self.backend.create_contract_price(price).await
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    pub async fn delete_contract_price(&self, id: &str) -> Result<(), DbError> {
+        self.backend.delete_contract_price(id).await
+    }
+
+    // ── Pricing Chain (tenant discounts) ─────────────────────────────────
+    #[cfg(feature = "pricing_chain")]
+    pub async fn get_tenant_discount_for_user(
+        &self,
+        user_id: &str,
+        model_id: &str,
+    ) -> Result<Option<crate::pricing::types::TenantDiscountRow>, DbError> {
+        self.backend
+            .get_tenant_discount_for_user(user_id, model_id)
+            .await
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    pub async fn list_tenant_discounts(&self) -> Result<Vec<crate::pricing::types::TenantDiscount>, DbError> {
+        self.backend.list_tenant_discounts().await
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    pub async fn create_tenant_discount(&self, discount: &crate::pricing::types::TenantDiscount) -> Result<(), DbError> {
+        self.backend.create_tenant_discount(discount).await
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    pub async fn delete_tenant_discount(&self, id: &str) -> Result<(), DbError> {
+        self.backend.delete_tenant_discount(id).await
+    }
 }

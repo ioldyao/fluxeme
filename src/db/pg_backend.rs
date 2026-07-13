@@ -404,6 +404,50 @@ impl DbBackend for PgBackend {
             .execute(&self.pool)
             .await;
 
+        // ── Pricing Chain tables ──────────────────────────────────────────
+        let _ = sqlx::raw_sql(
+            "CREATE TABLE IF NOT EXISTS contract_prices (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                prompt_price DOUBLE PRECISION NOT NULL,
+                completion_price DOUBLE PRECISION NOT NULL,
+                effective_from TIMESTAMPTZ NOT NULL,
+                effective_until TIMESTAMPTZ,
+                description TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
+            );",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = sqlx::raw_sql(
+            "CREATE INDEX IF NOT EXISTS idx_contract_prices_user_model
+             ON contract_prices(user_id, model_id)",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = sqlx::raw_sql(
+            "CREATE TABLE IF NOT EXISTS tenant_discounts (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                discount_type TEXT NOT NULL,
+                discount_value DOUBLE PRECISION NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
+            );",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = sqlx::raw_sql(
+            "CREATE INDEX IF NOT EXISTS idx_tenant_discounts_user_model
+             ON tenant_discounts(user_id, model_id)",
+        )
+        .execute(&self.pool)
+        .await;
+
         Ok(())
     }
 
@@ -2622,7 +2666,9 @@ impl DbBackend for PgBackend {
         let mut deductions: Vec<(String, f64, f64)> = Vec::new();
 
         for record in batch {
-            let (prompt_price, completion_price) = {
+            let (prompt_price, completion_price) = if record.prompt_price > 0.0 {
+                (record.prompt_price, record.completion_price)
+            } else {
                 // Lookup pricing within transaction
                 let result = sqlx::query_as::<_, (f64, f64)>(
                     "SELECT prompt_price, completion_price FROM models WHERE name = $1",
@@ -2740,6 +2786,200 @@ impl DbBackend for PgBackend {
 
         tx.commit().await?;
         Ok(deductions)
+    }
+
+    // ── Pricing Chain (contract prices) ──────────────────────────────────
+
+    #[cfg(feature = "pricing_chain")]
+    async fn get_contract_prices_for_user(
+        &self,
+        user_id: &str,
+        model_id: &str,
+    ) -> Result<Vec<crate::pricing::types::ContractPriceRow>, DbError> {
+        use crate::pricing::types::ContractPriceRow;
+
+        let rows = sqlx::query_as::<_, (f64, f64, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
+            "SELECT prompt_price, completion_price, effective_from, effective_until
+             FROM contract_prices
+             WHERE user_id = $1 AND model_id = $2
+               AND effective_from <= NOW()
+               AND (effective_until IS NULL OR effective_until >= NOW())
+             ORDER BY effective_from DESC",
+        )
+        .bind(user_id)
+        .bind(model_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(e.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(p, c, f, u)| ContractPriceRow {
+                prompt_price: p,
+                completion_price: c,
+                effective_from: f,
+                effective_until: u,
+            })
+            .collect())
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    async fn list_contract_prices(&self) -> Result<Vec<crate::pricing::types::ContractPrice>, DbError> {
+        use crate::pricing::types::ContractPrice;
+
+        let rows = sqlx::query_as::<_, (String, String, String, f64, f64, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, Option<String>, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>(
+            "SELECT id, user_id, model_id, prompt_price, completion_price,
+                    effective_from, effective_until, description, created_at, updated_at
+             FROM contract_prices ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(e.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(id, uid, mid, pp, cp, ef, eu, desc, ca, ua)| ContractPrice {
+                id,
+                user_id: uid,
+                model_id: mid,
+                prompt_price: pp,
+                completion_price: cp,
+                effective_from: ef,
+                effective_until: eu,
+                description: desc.filter(|d| !d.is_empty()),
+                created_at: ca,
+                updated_at: ua,
+            })
+            .collect())
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    async fn create_contract_price(&self, price: &crate::pricing::types::ContractPrice) -> Result<(), DbError> {
+        sqlx::query(
+            "INSERT INTO contract_prices (id, user_id, model_id, prompt_price, completion_price,
+             effective_from, effective_until, description, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+        )
+        .bind(&price.id)
+        .bind(&price.user_id)
+        .bind(&price.model_id)
+        .bind(price.prompt_price)
+        .bind(price.completion_price)
+        .bind(price.effective_from)
+        .bind(price.effective_until)
+        .bind(price.description.as_deref().unwrap_or(""))
+        .bind(price.created_at)
+        .bind(price.updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(e.to_string()))?;
+        Ok(())
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    async fn delete_contract_price(&self, id: &str) -> Result<(), DbError> {
+        sqlx::query("DELETE FROM contract_prices WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError(e.to_string()))?;
+        Ok(())
+    }
+
+    // ── Pricing Chain (tenant discounts) ─────────────────────────────────
+
+    #[cfg(feature = "pricing_chain")]
+    async fn get_tenant_discount_for_user(
+        &self,
+        user_id: &str,
+        model_id: &str,
+    ) -> Result<Option<crate::pricing::types::TenantDiscountRow>, DbError> {
+        use crate::pricing::types::{DiscountType, TenantDiscountRow};
+
+        let result = sqlx::query_as::<_, (String, f64)>(
+            "SELECT discount_type, discount_value FROM tenant_discounts
+             WHERE user_id = $1 AND model_id = $2
+             LIMIT 1",
+        )
+        .bind(user_id)
+        .bind(model_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DbError(e.to_string()))?;
+
+        Ok(result.map(|(dt, dv)| TenantDiscountRow {
+            discount_type: match dt.as_str() {
+                "Percentage" => DiscountType::Percentage,
+                _ => DiscountType::Fixed,
+            },
+            discount_value: dv,
+        }))
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    async fn list_tenant_discounts(&self) -> Result<Vec<crate::pricing::types::TenantDiscount>, DbError> {
+        use crate::pricing::types::{DiscountType, TenantDiscount};
+
+        let rows = sqlx::query_as::<_, (String, String, String, String, f64, Option<String>, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>(
+            "SELECT id, user_id, model_id, discount_type, discount_value,
+                    description, created_at, updated_at
+             FROM tenant_discounts ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(e.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(id, uid, mid, dt, dv, desc, ca, ua)| TenantDiscount {
+                id,
+                user_id: uid,
+                model_id: mid,
+                discount_type: match dt.as_str() {
+                    "Percentage" => DiscountType::Percentage,
+                    _ => DiscountType::Fixed,
+                },
+                discount_value: dv,
+                description: desc.filter(|d| !d.is_empty()),
+                created_at: ca,
+                updated_at: ua,
+            })
+            .collect())
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    async fn create_tenant_discount(&self, discount: &crate::pricing::types::TenantDiscount) -> Result<(), DbError> {
+        let dt_str = match discount.discount_type {
+            crate::pricing::types::DiscountType::Percentage => "Percentage",
+            crate::pricing::types::DiscountType::Fixed => "Fixed",
+        };
+        sqlx::query(
+            "INSERT INTO tenant_discounts (id, user_id, model_id, discount_type, discount_value,
+             description, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(&discount.id)
+        .bind(&discount.user_id)
+        .bind(&discount.model_id)
+        .bind(dt_str)
+        .bind(discount.discount_value)
+        .bind(discount.description.as_deref().unwrap_or(""))
+        .bind(discount.created_at)
+        .bind(discount.updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(e.to_string()))?;
+        Ok(())
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    async fn delete_tenant_discount(&self, id: &str) -> Result<(), DbError> {
+        sqlx::query("DELETE FROM tenant_discounts WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError(e.to_string()))?;
+        Ok(())
     }
 }
 

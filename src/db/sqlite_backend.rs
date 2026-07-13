@@ -197,6 +197,42 @@ impl SqliteBackend {
         );
         let _ = conn.execute_batch("ALTER TABLE recharge_keys ADD COLUMN expires_at TEXT;");
         let _ = conn.execute_batch("ALTER TABLE recharge_keys ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0;");
+
+        // ── Pricing Chain tables ──────────────────────────────────────────
+        let _ = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS contract_prices (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                prompt_price REAL NOT NULL,
+                completion_price REAL NOT NULL,
+                effective_from TEXT NOT NULL,
+                effective_until TEXT,
+                description TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );",
+        );
+        let _ = conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_contract_prices_user_model
+             ON contract_prices(user_id, model_id)",
+        );
+        let _ = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS tenant_discounts (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                discount_type TEXT NOT NULL,
+                discount_value REAL NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );",
+        );
+        let _ = conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_tenant_discounts_user_model
+             ON tenant_discounts(user_id, model_id)",
+        );
         Ok(())
     }
 }
@@ -2777,8 +2813,11 @@ impl DbBackend for SqliteBackend {
             let mut deductions: Vec<(String, f64, f64)> = Vec::new();
 
             for record in &batch {
-                let (prompt_price, completion_price) =
-                    Self::pricing_lookup(&tx, &record.model);
+                let (prompt_price, completion_price) = if record.prompt_price > 0.0 {
+                    (record.prompt_price, record.completion_price)
+                } else {
+                    Self::pricing_lookup(&tx, &record.model)
+                };
 
                 // Insert usage record with pricing snapshot
                 tx.execute(
@@ -2840,6 +2879,238 @@ impl DbBackend for SqliteBackend {
             tx.commit()
                 .map_err(|e| DbError(format!("Failed to commit batch: {}", e)))?;
             Ok(deductions)
+        })
+        .await
+    }
+
+    // ── Pricing Chain (contract prices) ──────────────────────────────────
+
+    #[cfg(feature = "pricing_chain")]
+    async fn get_contract_prices_for_user(
+        &self,
+        user_id: &str,
+        model_id: &str,
+    ) -> Result<Vec<crate::pricing::types::ContractPriceRow>, DbError> {
+        use crate::pricing::types::ContractPriceRow;
+
+        let uid = user_id.to_string();
+        let mid = model_id.to_string();
+        self.exec(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT prompt_price, completion_price, effective_from, effective_until
+                 FROM contract_prices
+                 WHERE user_id = ?1 AND model_id = ?2
+                   AND datetime(effective_from) <= datetime('now')
+                   AND (effective_until IS NULL OR datetime(effective_until) >= datetime('now'))
+                 ORDER BY effective_from DESC",
+            )?;
+            let rows = stmt.query_map(params![uid, mid], |row| {
+                Ok(ContractPriceRow {
+                    prompt_price: row.get(0)?,
+                    completion_price: row.get(1)?,
+                    effective_from: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(2)?)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                    effective_until: row
+                        .get::<_, Option<String>>(3)?
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                        .map(|dt| dt.with_timezone(&chrono::Utc)),
+                })
+            })?;
+            let mut result = Vec::new();
+            for row in rows {
+                result.push(row?);
+            }
+            Ok(result)
+        })
+        .await
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    async fn list_contract_prices(&self) -> Result<Vec<crate::pricing::types::ContractPrice>, DbError> {
+        use crate::pricing::types::ContractPrice;
+
+        self.exec(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, user_id, model_id, prompt_price, completion_price,
+                        effective_from, effective_until, description, created_at, updated_at
+                 FROM contract_prices ORDER BY created_at DESC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(ContractPrice {
+                    id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    model_id: row.get(2)?,
+                    prompt_price: row.get(3)?,
+                    completion_price: row.get(4)?,
+                    effective_from: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                    effective_until: row.get::<_, Option<String>>(6)?
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                        .map(|dt| dt.with_timezone(&chrono::Utc)),
+                    description: Some(row.get::<_, Option<String>>(7)?.unwrap_or_default()),
+                    created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                    updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(9)?)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                })
+            })?;
+            let mut result = Vec::new();
+            for row in rows {
+                result.push(row?);
+            }
+            Ok(result)
+        })
+        .await
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    async fn create_contract_price(&self, price: &crate::pricing::types::ContractPrice) -> Result<(), DbError> {
+        let p = price.clone();
+        self.exec(move |conn| {
+            conn.execute(
+                "INSERT INTO contract_prices (id, user_id, model_id, prompt_price, completion_price,
+                 effective_from, effective_until, description, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    p.id,
+                    p.user_id,
+                    p.model_id,
+                    p.prompt_price,
+                    p.completion_price,
+                    p.effective_from.to_rfc3339(),
+                    p.effective_until.map(|dt| dt.to_rfc3339()),
+                    p.description.unwrap_or_default(),
+                    p.created_at.to_rfc3339(),
+                    p.updated_at.to_rfc3339(),
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    async fn delete_contract_price(&self, id: &str) -> Result<(), DbError> {
+        let pid = id.to_string();
+        self.exec(move |conn| {
+            conn.execute("DELETE FROM contract_prices WHERE id = ?1", params![pid])?;
+            Ok(())
+        })
+        .await
+    }
+
+    // ── Pricing Chain (tenant discounts) ─────────────────────────────────
+
+    #[cfg(feature = "pricing_chain")]
+    async fn get_tenant_discount_for_user(
+        &self,
+        user_id: &str,
+        model_id: &str,
+    ) -> Result<Option<crate::pricing::types::TenantDiscountRow>, DbError> {
+        use crate::pricing::types::{DiscountType, TenantDiscountRow};
+
+        let uid = user_id.to_string();
+        let mid = model_id.to_string();
+        self.exec(move |conn| {
+            let result = conn.query_row(
+                "SELECT discount_type, discount_value FROM tenant_discounts
+                 WHERE user_id = ?1 AND model_id = ?2
+                 LIMIT 1",
+                params![uid, mid],
+                |row| {
+                    Ok(TenantDiscountRow {
+                        discount_type: match row.get::<_, String>(0)?.as_str() {
+                            "Percentage" => DiscountType::Percentage,
+                            _ => DiscountType::Fixed,
+                        },
+                        discount_value: row.get(1)?,
+                    })
+                },
+            );
+            match result {
+                Ok(row) => Ok(Some(row)),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                Err(e) => Err(DbError(e.to_string())),
+            }
+        })
+        .await
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    async fn list_tenant_discounts(&self) -> Result<Vec<crate::pricing::types::TenantDiscount>, DbError> {
+        use crate::pricing::types::{DiscountType, TenantDiscount};
+
+        self.exec(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, user_id, model_id, discount_type, discount_value,
+                        description, created_at, updated_at
+                 FROM tenant_discounts ORDER BY created_at DESC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(TenantDiscount {
+                    id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    model_id: row.get(2)?,
+                    discount_type: match row.get::<_, String>(3)?.as_str() {
+                        "Percentage" => DiscountType::Percentage,
+                        _ => DiscountType::Fixed,
+                    },
+                    discount_value: row.get(4)?,
+                    description: Some(row.get::<_, Option<String>>(5)?.unwrap_or_default()),
+                    created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                    updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                })
+            })?;
+            let mut result = Vec::new();
+            for row in rows {
+                result.push(row?);
+            }
+            Ok(result)
+        })
+        .await
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    async fn create_tenant_discount(&self, discount: &crate::pricing::types::TenantDiscount) -> Result<(), DbError> {
+        let d = discount.clone();
+        self.exec(move |conn| {
+            conn.execute(
+                "INSERT INTO tenant_discounts (id, user_id, model_id, discount_type, discount_value,
+                 description, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    d.id,
+                    d.user_id,
+                    d.model_id,
+                    match d.discount_type {
+                        crate::pricing::types::DiscountType::Percentage => "Percentage",
+                        crate::pricing::types::DiscountType::Fixed => "Fixed",
+                    },
+                    d.discount_value,
+                    d.description.unwrap_or_default(),
+                    d.created_at.to_rfc3339(),
+                    d.updated_at.to_rfc3339(),
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    #[cfg(feature = "pricing_chain")]
+    async fn delete_tenant_discount(&self, id: &str) -> Result<(), DbError> {
+        let pid = id.to_string();
+        self.exec(move |conn| {
+            conn.execute("DELETE FROM tenant_discounts WHERE id = ?1", params![pid])?;
+            Ok(())
         })
         .await
     }

@@ -2466,8 +2466,74 @@ async fn set_gateway_config_handler(
 
 // ── Router ────────────────────────────────────────────────────────
 
+#[cfg(feature = "pricing_chain")]
+async fn list_contract_prices_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::pricing::types::ContractPrice>>, AdminError> {
+    require_admin(&state.admin, &headers).await?;
+    let prices = state.db.list_contract_prices().await.map_err(db_err)?;
+    Ok(Json(prices))
+}
+
+#[cfg(feature = "pricing_chain")]
+async fn create_contract_price_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(price): Json<crate::pricing::types::ContractPrice>,
+) -> Result<Json<Value>, AdminError> {
+    require_admin(&state.admin, &headers).await?;
+    state.db.create_contract_price(&price).await.map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[cfg(feature = "pricing_chain")]
+async fn delete_contract_price_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, AdminError> {
+    require_admin(&state.admin, &headers).await?;
+    state.db.delete_contract_price(&id).await.map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[cfg(feature = "pricing_chain")]
+async fn list_tenant_discounts_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::pricing::types::TenantDiscount>>, AdminError> {
+    require_admin(&state.admin, &headers).await?;
+    let discounts = state.db.list_tenant_discounts().await.map_err(db_err)?;
+    Ok(Json(discounts))
+}
+
+#[cfg(feature = "pricing_chain")]
+async fn create_tenant_discount_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(discount): Json<crate::pricing::types::TenantDiscount>,
+) -> Result<Json<Value>, AdminError> {
+    require_admin(&state.admin, &headers).await?;
+    state.db.create_tenant_discount(&discount).await.map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[cfg(feature = "pricing_chain")]
+async fn delete_tenant_discount_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, AdminError> {
+    require_admin(&state.admin, &headers).await?;
+    state.db.delete_tenant_discount(&id).await.map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ── Router ────────────────────────────────────────────────────────
+
 pub fn admin_routes() -> Router<Arc<AppState>> {
-    Router::new()
+    let mut router = Router::new()
         .route("/admin/api/login", axum::routing::post(admin_login))
         .route(
             "/admin/api/setup/status",
@@ -2648,5 +2714,30 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
             "/admin/api/gateway/config",
             axum::routing::get(get_gateway_config_handler)
                 .put(set_gateway_config_handler),
-        )
+        );
+
+    #[cfg(feature = "pricing_chain")]
+    {
+        router = router
+            .route(
+                "/admin/api/contract-prices",
+                axum::routing::get(list_contract_prices_handler)
+                    .post(create_contract_price_handler),
+            )
+            .route(
+                "/admin/api/contract-prices/{id}",
+                axum::routing::delete(delete_contract_price_handler),
+            )
+            .route(
+                "/admin/api/tenant-discounts",
+                axum::routing::get(list_tenant_discounts_handler)
+                    .post(create_tenant_discount_handler),
+            )
+            .route(
+                "/admin/api/tenant-discounts/{id}",
+                axum::routing::delete(delete_tenant_discount_handler),
+            );
+    }
+
+    router
 }

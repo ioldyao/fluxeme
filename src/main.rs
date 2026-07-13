@@ -10,6 +10,9 @@ mod server;
 mod service;
 mod sso;
 
+#[cfg(feature = "pricing_chain")]
+mod pricing;
+
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -157,7 +160,14 @@ async fn main() {
     );
 
     // Initialize usage service (background writer for usage logs + billing deductions)
+    #[cfg(not(feature = "pricing_chain"))]
     let (usage, usage_handle) = UsageService::new(db.clone(), cache.clone());
+
+    #[cfg(feature = "pricing_chain")]
+    let (usage, usage_handle) = {
+        let pricing = Arc::new(crate::pricing::PricingChainService::new(db.clone()));
+        UsageService::new_with_pricing(db.clone(), cache.clone(), pricing)
+    };
 
     // In-memory gate cache (populated by inspection, read by handler when Redis is down)
     let gate_cache: Arc<AsyncRwLock<HashMap<String, GateStatus>>> = Arc::new(AsyncRwLock::new(HashMap::new()));

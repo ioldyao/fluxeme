@@ -134,4 +134,38 @@ pub trait DbBackend: Send + Sync {
         batch: &[UsageRecord],
         billing_enabled: bool,
     ) -> Result<Vec<(String, f64, f64)>, DbError>;
+
+    // ── Pricing Chain (contract prices) ──────────────────────────────────
+    #[cfg(feature = "pricing_chain")]
+    async fn get_contract_prices_for_user(
+        &self,
+        user_id: &str,
+        model_id: &str,
+    ) -> Result<Vec<crate::pricing::types::ContractPriceRow>, DbError>;
+
+    #[cfg(feature = "pricing_chain")]
+    async fn list_contract_prices(&self) -> Result<Vec<crate::pricing::types::ContractPrice>, DbError>;
+
+    #[cfg(feature = "pricing_chain")]
+    async fn create_contract_price(&self, price: &crate::pricing::types::ContractPrice) -> Result<(), DbError>;
+
+    #[cfg(feature = "pricing_chain")]
+    async fn delete_contract_price(&self, id: &str) -> Result<(), DbError>;
+
+    // ── Pricing Chain (tenant discounts) ─────────────────────────────────
+    #[cfg(feature = "pricing_chain")]
+    async fn get_tenant_discount_for_user(
+        &self,
+        user_id: &str,
+        model_id: &str,
+    ) -> Result<Option<crate::pricing::types::TenantDiscountRow>, DbError>;
+
+    #[cfg(feature = "pricing_chain")]
+    async fn list_tenant_discounts(&self) -> Result<Vec<crate::pricing::types::TenantDiscount>, DbError>;
+
+    #[cfg(feature = "pricing_chain")]
+    async fn create_tenant_discount(&self, discount: &crate::pricing::types::TenantDiscount) -> Result<(), DbError>;
+
+    #[cfg(feature = "pricing_chain")]
+    async fn delete_tenant_discount(&self, id: &str) -> Result<(), DbError>;
 }
