@@ -9,11 +9,13 @@ export default function SsoCallback() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const hash = window.location.hash.slice(1);
-    const params = new URLSearchParams(hash);
-    const token = params.get('token');
-    window.location.hash = "";
-    window.history.replaceState(null, "", window.location.pathname);
+    // Read JWT from cookie (set by server) instead of URL fragment,
+    // so the token never appears in the address bar or browser history.
+    const match = document.cookie.match(/(?:^|; )sso_token=([^;]*)/);
+    const token = match ? decodeURIComponent(match[1]) : null;
+
+    // Clear the one-time cookie immediately
+    document.cookie = "sso_token=; Path=/sso/callback; Max-Age=0";
 
     if (!token) {
       setError('SSO 登录失败：未收到认证令牌');

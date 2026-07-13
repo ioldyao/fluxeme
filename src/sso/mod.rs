@@ -265,7 +265,7 @@ pub async fn sso_login_handler(
 pub async fn sso_callback_handler(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SsoCallbackParams>,
-) -> Result<Redirect, AdminError> {
+) -> Result<impl axum::response::IntoResponse, AdminError> {
     if !state.sso.is_enabled() {
         return Err(AdminError::unauthorized("SSO not enabled"));
     }
@@ -275,5 +275,18 @@ pub async fn sso_callback_handler(
         .handle_callback(&params.code, &params.state, &state.admin, &state.db)
         .await?;
 
-    Ok(Redirect::to(&format!("/sso/callback#token={token}")))
+    // Set JWT as a short-lived cookie instead of URL fragment,
+    // so the token never appears in the address bar or browser history.
+    let cookie = format!(
+        "sso_token={token}; Path=/sso/callback; Max-Age=60; SameSite=Lax"
+    );
+
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        axum::http::header::SET_COOKIE,
+        axum::http::HeaderValue::from_str(&cookie)
+            .expect("valid header value"),
+    );
+
+    Ok((headers, Redirect::to("/sso/callback")))
 }
