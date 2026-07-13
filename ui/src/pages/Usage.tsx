@@ -53,6 +53,7 @@ function ChartTooltip({ active, payload, label, formatter, showTotal }: any) {
 export default function Usage() {
   const { t } = useTranslation();
   const { role } = useAuth();
+  const canFilterUsers = usePermission('admin:usage-filters');
   const [limit, setLimit] = useState(20);
   const [offset, setOffset] = useState(0);
   const [showFilters, setShowFilters] = useState(false);
@@ -93,7 +94,7 @@ export default function Usage() {
   }, [dateFilter]);
   const isCustomDate = dateFilter.length === 10 && dateFilter.includes('-');
 
-  const filtersActive = !!(role === 'admin' && userFilter) || modelFilter || apiKeyFilter || apiFormatFilter || dateFilter !== 'all';
+  const filtersActive = !!(canFilterUsers && userFilter) || modelFilter || apiKeyFilter || apiFormatFilter || dateFilter !== 'all';
   const params = {
     limit, offset,
     ...(role === 'admin' && userFilter ? { user_id: userFilter } : {}),
@@ -182,7 +183,7 @@ export default function Usage() {
           {/* Filter inputs */}
           {showFilters && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 p-3 rounded-lg border bg-muted/30">
-              {role === 'admin' && (
+              {canFilterUsers && (
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
                   <Input
@@ -263,7 +264,7 @@ export default function Usage() {
                         <th className="text-right py-3 px-4">{t('table.cacheHit')}</th>
                         <th className="text-right py-3 px-4">{t('table.completion')}</th>
                         <th className="text-right py-3 px-4">{t('table.total')}</th>
-                        {role === 'admin' && <th className="text-right py-3 px-4">{t('table.cost')}</th>}
+                        {canFilterUsers && <th className="text-right py-3 px-4">{t('table.cost')}</th>}
                         <th className="text-right py-3 px-4">{t('table.latency')}</th>
                         <th className="text-center py-3 px-4">{t('table.status')}</th>
                       </tr>
@@ -296,7 +297,7 @@ export default function Usage() {
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.cache_hit_input_tokens > 0 ? r.cache_hit_input_tokens : '—'}</td>
                           <td className="py-3 px-4 text-right">{r.completion_tokens}</td>
                           <td className="py-3 px-4 text-right font-medium">{r.total_tokens}</td>
-                          {role === 'admin' && <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, getRecordPricing(r, modelPricing), currency, rate)}</td>}
+                          {canFilterUsers && <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, getRecordPricing(r, modelPricing), currency, rate)}</td>}
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>
                           <td className="py-3 px-4 text-center">
                             {r.success ? (

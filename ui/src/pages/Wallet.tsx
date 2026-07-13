@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useWalletOverview, useWalletTransactions, useRecharge, useRedeemKey, useCreateRechargeKey, useRechargeKeys, useRevokeKey, useEstimatedDays } from '@/api/wallet';
 import { useCurrency } from '@/store/currency';
-import { useAuth } from '@/store/auth';
+import { usePermission } from '@/permissions';
 import { PageHeader } from '@/components/PageHeader';
 import { Wallet, CreditCard, KeyRound, Receipt, AlertTriangle, Copy, Check, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -21,8 +21,7 @@ export default function WalletPage() {
   const navigate = useNavigate();
   const { t, i18n } = useTranslation();
   const { currency, rate } = useCurrency();
-  const { role } = useAuth();
-  const isAdmin = role === 'admin';
+  const isAdmin = usePermission('admin:wallet-keys');
 
   const { data: overview } = useWalletOverview();
 

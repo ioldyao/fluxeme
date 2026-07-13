@@ -4,8 +4,8 @@ import {
 } from 'recharts';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
-import { useAuth } from '@/store/auth';
 import { useCurrency, CURRENCY_SYMBOL, CURRENCY_CODE } from '@/store/currency';
+import { usePermission } from '@/permissions';
 import { useDashboard, useDashboardAggregations, useDailyUsage } from '@/api/dashboard';
 import { useSubscriptions } from '@/api/models';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -35,7 +35,6 @@ const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var
 
 export default function Dashboard() {
   const { t } = useTranslation();
-  const role = useAuth((s) => s.role);
   const { data: stats, isLoading, isError, refetch } = useDashboard();
   const { data: agg } = useDashboardAggregations();
   const { data: dailyData } = useDailyUsage(14);
@@ -44,9 +43,9 @@ export default function Dashboard() {
   const sym = CURRENCY_SYMBOL[currency];
   const code = CURRENCY_CODE[currency];
   const convert = (v: number) => (currency === 'cny' ? v * rate : v);
-  const isAdmin = role === 'admin';
+  const canViewAll = usePermission('admin:dashboard');
 
-  const cards = isAdmin
+  const cards = canViewAll
     ? [
       { title: t('dash.users'), value: stats?.users ?? 0, icon: <Users className="size-5" /> },
       { title: t('dash.channels'), value: stats?.channels ?? 0, icon: <Radio className="size-5" /> },

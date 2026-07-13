@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { RefreshCw, Pencil } from 'lucide-react';
 import { useCurrency, CURRENCY_SYMBOL, CURRENCY_CODE, type CurrencyCode } from '@/store/currency';
 import { useAuth } from '@/store/auth';
+import { usePermission } from '@/permissions';
 import { useUpdateTimezone, useUpdateCurrency } from '@/api/auth';
 import { useExchangeRates, useUpsertExchangeRate, useRefreshExchangeRates } from '@/api/exchangeRates';
 import { PageHeader } from '@/components/PageHeader';
@@ -74,6 +75,7 @@ export default function SettingsPage() {
   const { t } = useTranslation();
   const { currency, rate, setCurrency, setRate } = useCurrency();
   const { timezone, setTimezone, role } = useAuth();
+  const canManageRates = usePermission('admin:exchange-rates');
   const updateTimezone = useUpdateTimezone();
   const updateCurrency = useUpdateCurrency();
   const [allowPrivateIps, setAllowPrivateIps] = useState(true);
@@ -235,7 +237,7 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {role === 'admin' && (
+      {canManageRates && (
         <Card>
           <CardContent className="p-6 space-y-6">
             <div className="flex items-center justify-between">
@@ -397,7 +399,7 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {role === 'admin' && (
+      {canManageRates && (
         <Card>
           <CardContent className="p-6 space-y-6">
             <h2 className="text-sm font-semibold text-foreground mb-4">{t('settings.security')}</h2>
@@ -416,7 +418,7 @@ export default function SettingsPage() {
         </Card>
       )}
 
-      {role === 'admin' && (
+      {canManageRates && (
         <Card>
           <CardContent className="p-6 space-y-6">
             <div className="flex items-center justify-between">
@@ -494,7 +496,7 @@ export default function SettingsPage() {
         </Card>
       )}
 
-      {role === 'admin' && (
+      {canManageRates && (
         <Card>
           <CardContent className="p-6 space-y-6">
             <h2 className="text-sm font-semibold text-foreground">{t('settings.billing')}</h2>

@@ -1,4 +1,5 @@
 mod admin;
+mod auth;
 mod balancer;
 mod cache;
 mod config;
