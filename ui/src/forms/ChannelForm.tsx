@@ -10,7 +10,7 @@ import { Plus, X } from 'lucide-react';
 import { useChannelHealth } from '@/api/balancer';
 import type { Channel, Endpoint } from '@/types';
 
-const PROVIDERS = ['openai', 'anthropic', 'vllm', 'azure', 'ollama'] as const;
+const PROVIDERS = ['openai', 'anthropic', 'vllm', 'sglang', 'azure', 'ollama'] as const;
 
 interface Props {
   channel?: Channel | null;

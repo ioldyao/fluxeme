@@ -34,7 +34,7 @@ export interface Endpoint {
   enabled?: boolean;
 }
 
-export type Provider = 'openai' | 'anthropic' | 'vllm' | 'azure' | 'ollama' | string;
+export type Provider = 'openai' | 'anthropic' | 'vllm' | 'sglang' | 'azure' | 'ollama' | string;
 
 export interface Channel {
   id: string;
