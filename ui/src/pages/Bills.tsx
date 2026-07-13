@@ -9,7 +9,6 @@ import { Wallet, Receipt, Activity, TrendingDown, ChevronDown, BarChart3 } from 
 
 export default function Bills() {
   const { t, i18n } = useTranslation();
-  const { role } = useAuth();
   const { data: rawMonths } = useBillingMonths();
   const months = useMemo(() => (rawMonths ?? []).map((m) => {
     const [y, mo] = m.split('-').map(Number);

@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
 import { useCurrency } from '@/store/currency';
+import { usePermission } from '@/permissions';
 import { formatCost, getRecordPricing } from '@/lib/cost';
 import { useUsage, useUsageAggregate, useModelActivity } from '@/api/usage';
 import { api } from '@/api/client';
