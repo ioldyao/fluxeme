@@ -7,7 +7,7 @@ import { navRoutes } from '@/routes/config';
 const NAV_GROUPS: { label: string; items: string[] }[] = [
   { label: '', items: ['nav.dashboard'] },
   { label: 'nav.group.models', items: ['nav.modelMarketplace', 'nav.myModels'] },
-  { label: 'nav.group.management', items: ['nav.users', 'nav.channels', 'nav.models', 'nav.rules', 'nav.modelPricing'] },
+  { label: 'nav.group.management', items: ['nav.users', 'nav.channels', 'nav.models', 'nav.rules', 'nav.modelPricing', 'nav.contractPrices', 'nav.tenantDiscounts'] },
   { label: 'nav.group.developer', items: ['nav.apiKeys', 'nav.usage'] },
 ];
 
