@@ -2573,8 +2573,9 @@ async fn upsert_exchange_rate_handler(
 
 async fn refresh_exchange_rates_handler(
     State(state): State<Arc<AppState>>,
-    _auth: AuthCtx,
+    auth: AuthCtx,
 ) -> Result<Json<serde_json::Value>, AdminError> {
+    auth.require_admin()?;
     let currencies = ["CNY", "JPY", "EUR"];
     match crate::exchange_rate::fetcher::fetch_and_store_rates(&state.db, &currencies).await {
         Ok(n) => Ok(Json(serde_json::json!({ "ok": true, "count": n }))),
