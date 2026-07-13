@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { UserRole, LoginResponse } from '@/types';
-import { useCurrency } from './currency';
+import { useCurrency, type CurrencyCode } from './currency';
 
 interface AuthState {
   token: string | null;
@@ -25,15 +25,16 @@ export const useAuth = create<AuthState>()(
       timezone: 'UTC',
       displayCurrency: 'usd',
       setSession: (res) => {
+        const currency = (res.display_currency || 'usd') as CurrencyCode;
         set({
           token: res.token,
           role: res.role,
           userId: res.user_id,
           userName: res.user_name,
           timezone: res.timezone || 'UTC',
-          displayCurrency: res.display_currency || 'usd',
+          displayCurrency: currency,
         });
-        useCurrency.getState().setCurrency((res.display_currency as any) || 'usd');
+        useCurrency.getState().setCurrency(currency);
       },
       setTimezone: (timezone) => set({ timezone }),
       clear: () =>
