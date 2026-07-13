@@ -182,6 +182,7 @@ const zh: Record<string, string> = {
   'form.channel': '所属渠道',
   'form.channelName': '渠道名称',
   'form.noChannels': '暂无可用渠道',
+  'form.description': '备注',
   'form.allEndpointsRequired': '所有端点需要填写 URL 和 API Key',
   'err.required': '此项为必填',
   'err.selectChannel': '请选择渠道',
