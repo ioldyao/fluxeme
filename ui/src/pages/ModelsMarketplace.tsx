@@ -126,7 +126,7 @@ export default function ModelsMarketplace() {
         <aside className="w-56 shrink-0 space-y-5">
           <h3 className="text-sm font-semibold">{t('marketplace.categories')}</h3>
 
-          <div className="relative">
+          <div className="relative px-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <input
               value={query}
