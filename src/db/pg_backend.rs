@@ -1669,7 +1669,7 @@ impl DbBackend for PgBackend {
         let day_expr = Self::day_expr(tz_offset_seconds);
         if let Some(uid) = user_id {
             let sql = format!(
-                "SELECT {} FROM usage_logs WHERE user_id = $1 AND timestamp >= $2 \
+                "SELECT {}, COUNT(*) FROM usage_logs WHERE user_id = $1 AND timestamp >= $2 \
                  GROUP BY day ORDER BY day ASC",
                 day_expr
             );
@@ -1681,7 +1681,7 @@ impl DbBackend for PgBackend {
             Ok(rows)
         } else {
             let sql = format!(
-                "SELECT {} FROM usage_logs WHERE timestamp >= $1 GROUP BY day ORDER BY day ASC",
+                "SELECT {}, COUNT(*) FROM usage_logs WHERE timestamp >= $1 GROUP BY day ORDER BY day ASC",
                 day_expr
             );
             let rows = sqlx::query_as::<_, (String, i64)>(&sql)
