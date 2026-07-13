@@ -2,10 +2,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 import type { ExchangeRateRow } from '@/types';
 
-export function useExchangeRates() {
+export function useExchangeRates(enabled?: boolean) {
   return useQuery<ExchangeRateRow[]>({
     queryKey: ['exchange-rates'],
     queryFn: () => api('/exchange-rates'),
+    enabled,
     refetchInterval: 60_000,
   });
 }

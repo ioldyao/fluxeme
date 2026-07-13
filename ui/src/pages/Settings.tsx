@@ -85,7 +85,7 @@ export default function SettingsPage() {
   const [overrideQuote, setOverrideQuote] = useState('');
   const [overrideRate, setOverrideRate] = useState('');
   const [overrideDate, setOverrideDate] = useState('');
-  const { data: exchangeRates, isLoading: ratesLoading } = useExchangeRates();
+  const { data: exchangeRates, isLoading: ratesLoading } = useExchangeRates(role === 'admin');
   const upsertRate = useUpsertExchangeRate();
   const refreshRates = useRefreshExchangeRates();
 

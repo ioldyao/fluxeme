@@ -2,12 +2,14 @@ import { useState, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useBillingSummary, usePeriodSummary, useDeductions, useBillingMonths, usePeriodSummaryAll } from '@/api/billing';
 import { useCurrency } from '@/store/currency';
+import { useAuth } from '@/store/auth';
 import { PageHeader } from '@/components/PageHeader';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Wallet, Receipt, Activity, TrendingDown, ChevronDown, BarChart3 } from 'lucide-react';
 
 export default function Bills() {
   const { t, i18n } = useTranslation();
+  const { role } = useAuth();
   const { data: rawMonths } = useBillingMonths();
   const months = useMemo(() => (rawMonths ?? []).map((m) => {
     const [y, mo] = m.split('-').map(Number);
@@ -28,7 +30,7 @@ export default function Bills() {
   const { currency, rate } = useCurrency();
   const [open, setOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
-  const { data: allMonths } = usePeriodSummaryAll();
+  const { data: allMonths } = usePeriodSummaryAll(role === 'admin');
 
   const fmt = (usd: number) => {
     if (usd === 0) return '¥0.000000';

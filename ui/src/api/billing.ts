@@ -58,10 +58,11 @@ export function useBillingMonths() {
   });
 }
 
-export function usePeriodSummaryAll() {
+export function usePeriodSummaryAll(enabled?: boolean) {
   return useQuery({
     queryKey: ['billing', 'period-summary-all'],
     queryFn: () => api<MonthSummary[]>('/billing/period-summary-all'),
+    enabled,
     staleTime: 60_000,
   });
 }

@@ -110,7 +110,7 @@ export default function WalletPage() {
     search: debouncedKeySearch || undefined,
     status: keyStatus || undefined,
     used_by: debouncedKeyUser || undefined,
-  });
+  }, isAdmin);
   const keys = keysData?.items;
   const keyTotal = keysData?.total ?? 0;
   const keyTotalPages = Math.max(1, Math.ceil(keyTotal / KEY_PAGE_SIZE));
