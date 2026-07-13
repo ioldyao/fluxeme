@@ -1779,17 +1779,17 @@ impl DbBackend for SqliteBackend {
         &self,
         since: &str,
         user_id: Option<&str>,
-    ) -> Result<Vec<(String, u64, u64, u64, u64, u64)>, DbError> {
+    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError> {
         let since = since.to_string();
         let uid = user_id.map(|s| s.to_string());
         self.exec(move |conn| {
             let mut records = Vec::new();
             let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
                 if let Some(ref uid) = uid {
-                    ("SELECT model, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END),0) FROM usage_logs WHERE timestamp >= ?1 AND user_id = ?2 GROUP BY model ORDER BY COUNT(*) DESC".into(),
+                    ("SELECT model, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END),0), COALESCE(SUM(cache_hit_input_tokens),0) FROM usage_logs WHERE timestamp >= ?1 AND user_id = ?2 GROUP BY model ORDER BY COUNT(*) DESC".into(),
                      vec![Box::new(since.clone()), Box::new(uid.clone())])
                 } else {
-                    ("SELECT model, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END),0) FROM usage_logs WHERE timestamp >= ?1 GROUP BY model ORDER BY COUNT(*) DESC".into(),
+                    ("SELECT model, COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END),0), COALESCE(SUM(cache_hit_input_tokens),0) FROM usage_logs WHERE timestamp >= ?1 GROUP BY model ORDER BY COUNT(*) DESC".into(),
                      vec![Box::new(since.clone())])
                 };
             let mut stmt = conn.prepare(&sql)?;
@@ -1804,6 +1804,7 @@ impl DbBackend for SqliteBackend {
                     row.get::<_, u64>(3)?,
                     row.get::<_, u64>(4)?,
                     row.get::<_, u64>(5)?,
+                    row.get::<_, u64>(6)?,
                 ));
             }
             Ok(records)

@@ -140,6 +140,7 @@ export interface ModelActivity {
   total_requests: number;
   prompt_tokens: number;
   completion_tokens: number;
+  cache_hit_tokens: number;
   success_count: number;
   failure_count: number;
 }

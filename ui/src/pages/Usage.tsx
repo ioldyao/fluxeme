@@ -427,6 +427,7 @@ export default function Usage() {
                             <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} width={55} tickFormatter={(v: number) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${(v / 1_000).toFixed(1)}K` : `${v}`} />
                             <Tooltip content={<ChartTooltip showTotal />} />
                             <Bar dataKey="prompt_tokens" stackId="tokens" fill="var(--chart-2)" radius={[0, 0, 0, 0]} name={t('dash.prompt')} />
+                            <Bar dataKey="cache_hit_tokens" stackId="tokens" fill="var(--chart-5)" radius={[0, 0, 0, 0]} name={t('usage.cacheHit')} />
                             <Bar dataKey="completion_tokens" stackId="tokens" fill="var(--chart-3)" radius={[4, 4, 0, 0]} name={t('dash.completion')} />
                           </BarChart>
                         </ResponsiveContainer>

@@ -1743,13 +1743,14 @@ impl DbBackend for PgBackend {
         &self,
         since: &str,
         user_id: Option<&str>,
-    ) -> Result<Vec<(String, u64, u64, u64, u64, u64)>, DbError> {
+    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError> {
         let rows = if let Some(uid) = user_id {
-            sqlx::query_as::<_, (String, i64, i64, i64, i64, i64)>(
+            sqlx::query_as::<_, (String, i64, i64, i64, i64, i64, i64)>(
                 "SELECT model, COUNT(*)::bigint, COALESCE(SUM(prompt_tokens),0)::bigint, \
                  COALESCE(SUM(completion_tokens),0)::bigint, \
                  COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
-                 COALESCE(SUM(CASE WHEN success=false THEN 1 ELSE 0 END),0)::bigint \
+                 COALESCE(SUM(CASE WHEN success=false THEN 1 ELSE 0 END),0)::bigint, \
+                 COALESCE(SUM(cache_hit_input_tokens)::bigint,0) \
                  FROM usage_logs WHERE timestamp >= $1 AND user_id = $2 \
                  GROUP BY model ORDER BY COUNT(*) DESC",
             )
@@ -1758,11 +1759,12 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, (String, i64, i64, i64, i64, i64)>(
+            sqlx::query_as::<_, (String, i64, i64, i64, i64, i64, i64)>(
                 "SELECT model, COUNT(*)::bigint, COALESCE(SUM(prompt_tokens),0)::bigint, \
                  COALESCE(SUM(completion_tokens),0)::bigint, \
                  COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
-                 COALESCE(SUM(CASE WHEN success=false THEN 1 ELSE 0 END),0)::bigint \
+                 COALESCE(SUM(CASE WHEN success=false THEN 1 ELSE 0 END),0)::bigint, \
+                 COALESCE(SUM(cache_hit_input_tokens)::bigint,0) \
                  FROM usage_logs WHERE timestamp >= $1 \
                  GROUP BY model ORDER BY COUNT(*) DESC",
             )
@@ -1772,7 +1774,7 @@ impl DbBackend for PgBackend {
         };
         Ok(rows
             .into_iter()
-            .map(|r| (r.0, r.1 as u64, r.2 as u64, r.3 as u64, r.4 as u64, r.5 as u64))
+            .map(|r| (r.0, r.1 as u64, r.2 as u64, r.3 as u64, r.4 as u64, r.5 as u64, r.6 as u64))
             .collect())
     }
 

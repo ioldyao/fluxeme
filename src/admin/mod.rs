@@ -975,10 +975,6 @@ async fn dashboard_aggregations(
         .await
         .unwrap_or((0, 0, 0, 0));
 
-    tracing::info!(
-        "[dashboard_debug] since_24h={} total_requests={} requests_24h={} success_count={} total_latency={} total_tokens={} offset={} tz={}",
-        since_24h, total_requests, requests_24h, success_count, total_latency, total_tokens_24h, offset, tz,
-    );
 
     if requests_24h == 0 {
         return Ok(Json(DashboardAggregations {
@@ -2219,6 +2215,7 @@ struct ModelActivity {
     total_requests: u64,
     prompt_tokens: u64,
     completion_tokens: u64,
+    cache_hit_tokens: u64,
     success_count: u64,
     failure_count: u64,
 }
@@ -2246,11 +2243,12 @@ async fn model_activity(
     Ok(Json(
         records
             .into_iter()
-            .map(|(model, total, pt, ct, sc, fc)| ModelActivity {
+            .map(|(model, total, pt, ct, sc, fc, ch)| ModelActivity {
                 model,
                 total_requests: total,
                 prompt_tokens: pt,
                 completion_tokens: ct,
+                cache_hit_tokens: ch,
                 success_count: sc,
                 failure_count: fc,
             })

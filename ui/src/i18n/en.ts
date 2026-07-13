@@ -99,6 +99,7 @@ const en: Record<string, string> = {
   'usage.completionTokens': 'Completion tokens',
   'usage.totalTokens': 'Total tokens',
   'usage.modelActivity': 'Model Activity',
+  'usage.cacheHit': 'Cache Hit',
   'usage.modelSuccessRate': 'Model Success / Failure',
   'usage.success': 'Success',
   'usage.failure': 'Failure',

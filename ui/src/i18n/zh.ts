@@ -99,6 +99,7 @@ const zh: Record<string, string> = {
   'usage.completionTokens': '输出 Token',
   'usage.totalTokens': '合计 Token',
   'usage.modelActivity': '模型活动',
+  'usage.cacheHit': '缓存命中',
   'usage.modelSuccessRate': '模型成功 / 失败',
   'usage.success': '成功',
   'usage.failure': '失败',

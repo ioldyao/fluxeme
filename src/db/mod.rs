@@ -297,7 +297,7 @@ impl Database {
         &self,
         since: &str,
         user_id: Option<&str>,
-    ) -> Result<Vec<(String, u64, u64, u64, u64, u64)>, DbError> {
+    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError> {
         self.backend.model_activity(since, user_id).await
     }
 

@@ -84,7 +84,7 @@ pub trait DbBackend: Send + Sync {
     async fn query_usage_since(&self, since: &str, user_id: Option<&str>) -> Result<Vec<UsageRecord>, DbError>;
     async fn daily_usage_counts(&self, since: &str, user_id: Option<&str>, tz_offset_seconds: i64) -> Result<Vec<(String, i64)>, DbError>;
     async fn daily_usage_stats(&self, since: &str, user_id: Option<&str>, tz_offset_seconds: i64) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError>;
-    async fn model_activity(&self, since: &str, user_id: Option<&str>) -> Result<Vec<(String, u64, u64, u64, u64, u64)>, DbError>;
+    async fn model_activity(&self, since: &str, user_id: Option<&str>) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError>;
 
     // ── Billing / Period ─────────────────────────────────────────────────
     async fn period_summary(&self, year: i32, month: u32, user_id: Option<&str>) -> Result<(f64, u64, u64), DbError>;
