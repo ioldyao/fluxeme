@@ -67,16 +67,97 @@ impl SglangAdapter {
         let mut parts: Vec<String> = Vec::with_capacity(msgs.len());
         for msg in msgs {
             let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("user");
-            let content = msg
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let content = Self::extract_content(msg.get("content"));
 
             match role {
                 "system" => parts.push(format!("<|im_start|>system\n{}\n<|im_end|>", content)),
                 "user" => parts.push(format!("<|im_start|>user\n{}\n<|im_end|>", content)),
                 "assistant" => parts.push(format!("<|im_start|>assistant\n{}\n<|im_end|>", content)),
-                _ => parts.push(content.to_string()),
+                _ => parts.push(content),
+            }
+        }
+        parts.push("<|im_start|>assistant\n".to_string());
+        parts.join("\n")
+    }
+
+    /// Extract text from a content field (handles both string and array-of-blocks).
+    fn extract_content(content: Option<&Value>) -> String {
+        match content {
+            Some(Value::String(s)) => s.clone(),
+            Some(Value::Array(blocks)) => blocks
+                .iter()
+                .filter_map(|b| {
+                    if b.get("type").and_then(|v| v.as_str()) == Some("text") {
+                        b.get("text").and_then(|v| v.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(""),
+            _ => String::new(),
+        }
+    }
+
+    /// Convert Anthropic-format request body to SGLang native `/generate` format.
+    fn to_native_anthropic(body: &Value) -> Value {
+        let system = body.get("system").and_then(|v| v.as_str()).unwrap_or("");
+        let text = Self::anthropic_messages_to_text(system, body.get("messages"));
+
+        let mut sampling = serde_json::Map::new();
+
+        if let Some(v) = body.get("max_tokens").and_then(|v| v.as_u64()) {
+            sampling.insert("max_new_tokens".into(), Value::Number(v.into()));
+        }
+        if let Some(v) = body.get("temperature").and_then(|v| v.as_f64()) {
+            sampling.insert("temperature".into(), Value::from(v));
+        }
+        if let Some(v) = body.get("top_p").and_then(|v| v.as_f64()) {
+            sampling.insert("top_p".into(), Value::from(v));
+        }
+        if let Some(v) = body.get("top_k").and_then(|v| v.as_u64()) {
+            sampling.insert("top_k".into(), Value::Number(v.into()));
+        }
+        if let Some(v) = body.get("stop_sequences") {
+            sampling.insert("stop".into(), v.clone());
+        }
+
+        let mut req = serde_json::Map::new();
+        req.insert("text".into(), Value::String(text));
+        req.insert("sampling_params".into(), Value::Object(sampling));
+
+        let is_stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+        if is_stream {
+            req.insert("stream".into(), Value::Bool(true));
+        }
+
+        Value::Object(req)
+    }
+
+    /// Convert Anthropic messages + system prompt to ChatML text.
+    fn anthropic_messages_to_text(system: &str, messages: Option<&Value>) -> String {
+        let mut parts: Vec<String> = Vec::new();
+
+        if !system.is_empty() {
+            parts.push(format!("<|im_start|>system\n{}\n<|im_end|>", system));
+        }
+
+        let msgs = match messages.and_then(|m| m.as_array()) {
+            Some(a) => a,
+            None => {
+                parts.push("<|im_start|>assistant\n".to_string());
+                return parts.join("\n");
+            }
+        };
+
+        for msg in msgs {
+            let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+            let content = Self::extract_content(msg.get("content"));
+            match role {
+                "system" => parts.push(format!("<|im_start|>system\n{}\n<|im_end|>", content)),
+                "user" => parts.push(format!("<|im_start|>user\n{}\n<|im_end|>", content)),
+                "assistant" => parts.push(format!("<|im_start|>assistant\n{}\n<|im_end|>", content)),
+                _ => parts.push(content),
             }
         }
         parts.push("<|im_start|>assistant\n".to_string());
@@ -110,6 +191,43 @@ impl SglangAdapter {
                 "total_tokens": completion_tokens.max(1) as u64,
             }
         })
+    }
+
+    /// Convert SGLang `/generate` response to Anthropic-compatible format.
+    fn to_anthropic(body: &Value, model: &str) -> Value {
+        let text = body
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let completion_tokens = text.len() / 4;
+
+        serde_json::json!({
+            "id": format!("msg_{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": text}],
+            "model": model,
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "usage": {
+                "input_tokens": 0,
+                "output_tokens": completion_tokens.max(1) as u64,
+            }
+        })
+    }
+
+    /// Produce an Anthropic-format `content_block_delta` SSE event string.
+    fn anthropic_delta_event(text: &str) -> String {
+        let payload = serde_json::json!({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {
+                "type": "text_delta",
+                "text": text,
+            }
+        });
+        format!("event: content_block_delta\ndata: {}\n\n", serde_json::to_string(&payload).unwrap_or_default())
     }
 
     async fn send_generate(
@@ -360,6 +478,219 @@ impl ProviderAdapter for SglangAdapter {
                         }
                     }
                 }
+            }
+            let _ = tx.send("data: [DONE]\n\n".to_string()).await;
+        });
+
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        Ok(Pin::from(Box::new(stream)))
+    }
+
+    async fn messages(
+        &self,
+        endpoint: &EndpointConfig,
+        body: Value,
+    ) -> Result<Value, ProviderError> {
+        let model = body
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default")
+            .to_string();
+        let native = Self::to_native_anthropic(&body);
+        let resp = self.send_generate(endpoint, native).await?;
+        Ok(Self::to_anthropic(&resp, &model))
+    }
+
+    async fn messages_stream(
+        &self,
+        endpoint: &EndpointConfig,
+        body: Value,
+    ) -> Result<StreamResult, ProviderError> {
+        let model = body
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default")
+            .to_string();
+        super::validate_endpoint_url(&endpoint.url).await?;
+        let client = shared_client();
+
+        let base = endpoint.url.trim_end_matches('/');
+        let url = format!("{}/generate", base);
+
+        let mut headers = HeaderMap::new();
+        if !endpoint.api_key.is_empty() {
+            headers.insert(
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key))
+                    .map_err(|e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other))?,
+            );
+        }
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+        let native = Self::to_native_anthropic(&body);
+        let stream_body = {
+            let mut map = if let Value::Object(m) = native { m } else { serde_json::Map::new() };
+            map.insert("stream".into(), Value::Bool(true));
+            Value::Object(map)
+        };
+
+        let body_size = serde_json::to_string(&stream_body).map(|s| s.len()).unwrap_or(0);
+        let timeout = request_timeout(&RequestKind::Streaming, endpoint, &default_config());
+        tracing::info!(
+            endpoint = %endpoint.url,
+            body_size = %body_size,
+            total_timeout_ms = timeout.as_millis(),
+            "Sending anthropic-format stream request to upstream (sglang)"
+        );
+
+        let req = client.post(&url).headers(headers).json(&stream_body).timeout(timeout);
+        let response = req.send().await
+            .map_err(|e| {
+                let kind = classify_reqwest_error(&e);
+                ProviderError::new(format!("Stream request failed: {}", e), kind)
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            let kind = classify_status(status.as_u16());
+            tracing::error!(%status, body = %body, "sglang anthropic-format stream request failed");
+            return Err(ProviderError::new(
+                format!("Upstream request failed with status {}", status.as_u16()),
+                kind,
+            ));
+        }
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<String>(1024);
+        let mut byte_stream = response.bytes_stream();
+        let msg_id = format!("msg_{}", uuid::Uuid::new_v4().to_string().replace('-', ""));
+
+        tokio::spawn(async move {
+            let mut buffer = String::new();
+            let mut has_sent_start = false;
+
+            while let Some(chunk) = byte_stream.next().await {
+                match chunk {
+                    Ok(bytes) => {
+                        buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+                        while let Some(pos) = buffer.find("\n\n") {
+                            let event = buffer[..pos + 2].to_string();
+                            buffer = buffer[pos + 2..].to_string();
+
+                            if let Some(json_str) = event.strip_prefix("data: ") {
+                                let trimmed = json_str.trim();
+                                if trimmed == "[DONE]" {
+                                    // Emit remaining anthropic events before done
+                                    if has_sent_start {
+                                        let _ = tx.send("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n".to_string()).await;
+                                        let delta_payload = serde_json::json!({
+                                            "type": "message_delta",
+                                            "delta": {"stop_reason": "end_turn", "stop_sequence": null},
+                                            "usage": {"output_tokens": 0}
+                                        });
+                                        let _ = tx.send(format!("event: message_delta\ndata: {}\n\n", serde_json::to_string(&delta_payload).unwrap_or_default())).await;
+                                        let _ = tx.send("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".to_string()).await;
+                                    }
+                                    let _ = tx.send("data: [DONE]\n\n".to_string()).await;
+                                    return;
+                                }
+                                if let Ok(val) = serde_json::from_str::<Value>(trimmed) {
+                                    let text = val
+                                        .get("text")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+
+                                    if !has_sent_start {
+                                        // Emit message_start + content_block_start
+                                        let start_msg = serde_json::json!({
+                                            "type": "message_start",
+                                            "message": {
+                                                "id": msg_id,
+                                                "type": "message",
+                                                "role": "assistant",
+                                                "content": [],
+                                                "model": model,
+                                                "stop_reason": null,
+                                                "stop_sequence": null,
+                                                "usage": {"input_tokens": 0, "output_tokens": 0}
+                                            }
+                                        });
+                                        let _ = tx.send(format!("event: message_start\ndata: {}\n\n", serde_json::to_string(&start_msg).unwrap_or_default())).await;
+                                        let _ = tx.send("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n".to_string()).await;
+                                        has_sent_start = true;
+                                    }
+
+                                    // Check for final chunk with meta info
+                                    let is_final = val.get("meta").is_some();
+
+                                    if !text.is_empty() {
+                                        let _ = tx.send(Self::anthropic_delta_event(text)).await;
+                                    }
+
+                                    if is_final {
+                                        let _ = tx.send("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n".to_string()).await;
+                                        let delta_payload = serde_json::json!({
+                                            "type": "message_delta",
+                                            "delta": {"stop_reason": "end_turn", "stop_sequence": null},
+                                            "usage": {"output_tokens": text.len() as u64 / 4}
+                                        });
+                                        let _ = tx.send(format!("event: message_delta\ndata: {}\n\n", serde_json::to_string(&delta_payload).unwrap_or_default())).await;
+                                        let _ = tx.send("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".to_string()).await;
+                                        let _ = tx.send("data: [DONE]\n\n".to_string()).await;
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(format!("data: {{\"error\":\"{}\"}}\n\n", e)).await;
+                        break;
+                    }
+                }
+            }
+
+            // Flush remaining buffer
+            if !buffer.is_empty() {
+                if let Some(json_str) = buffer.strip_prefix("data: ") {
+                    if let Ok(val) = serde_json::from_str::<Value>(json_str.trim()) {
+                        if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
+                            if !text.is_empty() {
+                                if !has_sent_start {
+                                    let start_msg = serde_json::json!({
+                                        "type": "message_start",
+                                        "message": {
+                                            "id": &msg_id,
+                                            "type": "message",
+                                            "role": "assistant",
+                                            "content": [],
+                                            "model": &model,
+                                            "stop_reason": null,
+                                            "stop_sequence": null,
+                                            "usage": {"input_tokens": 0, "output_tokens": 0}
+                                        }
+                                    });
+                                    let _ = tx.send(format!("event: message_start\ndata: {}\n\n", serde_json::to_string(&start_msg).unwrap_or_default())).await;
+                                    let _ = tx.send("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n".to_string()).await;
+                                    has_sent_start = true;
+                                }
+                                let _ = tx.send(Self::anthropic_delta_event(text)).await;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if has_sent_start {
+                let _ = tx.send("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n".to_string()).await;
+                let delta_payload = serde_json::json!({
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "end_turn", "stop_sequence": null},
+                    "usage": {"output_tokens": 0}
+                });
+                let _ = tx.send(format!("event: message_delta\ndata: {}\n\n", serde_json::to_string(&delta_payload).unwrap_or_default())).await;
+                let _ = tx.send("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".to_string()).await;
             }
             let _ = tx.send("data: [DONE]\n\n".to_string()).await;
         });
