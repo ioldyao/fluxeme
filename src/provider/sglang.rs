@@ -164,6 +164,34 @@ impl SglangAdapter {
         parts.join("\n")
     }
 
+    /// Extract token counts and finish_reason from SGLang `meta_info`.
+    fn extract_meta(body: &Value) -> (u64, u64, u64, String) {
+        let prompt = body["meta_info"]["prompt_tokens"].as_u64().unwrap_or(0);
+        let completion = body["meta_info"]["completion_tokens"].as_u64().unwrap_or(0);
+        let cached = body["meta_info"]["cached_tokens"].as_u64().unwrap_or(0);
+        let finish = body["meta_info"]["finish_reason"]["type"]
+            .as_str()
+            .unwrap_or("stop")
+            .to_string();
+        (prompt, completion, cached, finish)
+    }
+
+    /// Map SGLang finish_reason to OpenAI format.
+    fn map_finish_reason(sglang_reason: &str) -> &str {
+        match sglang_reason {
+            "length" | "eos_token" => "length",
+            _ => "stop",
+        }
+    }
+
+    /// Map SGLang finish_reason to Anthropic stop_reason.
+    fn map_stop_reason(sglang_reason: &str) -> &str {
+        match sglang_reason {
+            "length" | "eos_token" => "max_tokens",
+            _ => "end_turn",
+        }
+    }
+
     /// Convert SGLang `/generate` response to OpenAI-compatible format.
     fn to_openai(body: &Value, model: &str) -> Value {
         let text = body
@@ -171,7 +199,8 @@ impl SglangAdapter {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        let completion_tokens = text.len() / 4;
+        let (prompt_tokens, completion_tokens, cached_tokens, reason) = Self::extract_meta(body);
+        let finish_reason = Self::map_finish_reason(&reason);
 
         serde_json::json!({
             "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
@@ -183,12 +212,15 @@ impl SglangAdapter {
                     "role": "assistant",
                     "content": text,
                 },
-                "finish_reason": "stop",
+                "finish_reason": finish_reason,
             }],
             "usage": {
-                "prompt_tokens": 0,
-                "completion_tokens": completion_tokens.max(1) as u64,
-                "total_tokens": completion_tokens.max(1) as u64,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+                "prompt_tokens_details": {
+                    "cached_tokens": cached_tokens,
+                },
             }
         })
     }
@@ -200,7 +232,8 @@ impl SglangAdapter {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        let completion_tokens = text.len() / 4;
+        let (prompt_tokens, completion_tokens, cached_tokens, reason) = Self::extract_meta(body);
+        let stop_reason = Self::map_stop_reason(&reason);
 
         serde_json::json!({
             "id": format!("msg_{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
@@ -208,11 +241,12 @@ impl SglangAdapter {
             "role": "assistant",
             "content": [{"type": "text", "text": text}],
             "model": model,
-            "stop_reason": "end_turn",
+            "stop_reason": stop_reason,
             "stop_sequence": null,
             "usage": {
-                "input_tokens": 0,
-                "output_tokens": completion_tokens.max(1) as u64,
+                "input_tokens": prompt_tokens,
+                "output_tokens": completion_tokens,
+                "cache_read_input_tokens": cached_tokens,
             }
         })
     }
@@ -419,14 +453,17 @@ impl ProviderAdapter for SglangAdapter {
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("");
 
-                                    // Check for final chunk with meta info
-                                    let finish_reason = if val.get("meta").is_some() {
-                                        Some("stop")
+                                    let is_final = val.get("meta_info").is_some();
+                                    let finish_reason = if is_final {
+                                        let reason = val["meta_info"]["finish_reason"]["type"]
+                                            .as_str()
+                                            .unwrap_or("stop");
+                                        Some(Self::map_finish_reason(reason))
                                     } else {
                                         None
                                     };
 
-                                    let openai_chunk = serde_json::json!({
+                                    let mut chunk = serde_json::json!({
                                         "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
                                         "object": "chat.completion.chunk",
                                         "model": model,
@@ -438,8 +475,21 @@ impl ProviderAdapter for SglangAdapter {
                                             "finish_reason": finish_reason,
                                         }]
                                     });
+
+                                    // Include real usage in the final chunk
+                                    if is_final {
+                                        let (p, c, cached, _) = Self::extract_meta(&val);
+                                        chunk["usage"] = serde_json::json!({
+                                            "prompt_tokens": p,
+                                            "completion_tokens": c,
+                                            "total_tokens": p + c,
+                                            "prompt_tokens_details": {
+                                                "cached_tokens": cached,
+                                            },
+                                        });
+                                    }
                                     let _ = tx
-                                        .send(format!("data: {}\n\n", serde_json::to_string(&openai_chunk).unwrap_or_default()))
+                                        .send(format!("data: {}\n\n", serde_json::to_string(&chunk).unwrap_or_default()))
                                         .await;
 
                                     if finish_reason.is_some() {
@@ -462,18 +512,36 @@ impl ProviderAdapter for SglangAdapter {
                 if let Some(json_str) = buffer.strip_prefix("data: ") {
                     if let Ok(val) = serde_json::from_str::<Value>(json_str.trim()) {
                         if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
-                            let openai_chunk = serde_json::json!({
+                            let is_final = val.get("meta_info").is_some();
+                            let finish_reason = if is_final {
+                                let reason = val["meta_info"]["finish_reason"]["type"]
+                                    .as_str()
+                                    .unwrap_or("stop");
+                                Some(Self::map_finish_reason(reason))
+                            } else {
+                                Some("stop")
+                            };
+                            let mut chunk = serde_json::json!({
                                 "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
                                 "object": "chat.completion.chunk",
                                 "model": model,
                                 "choices": [{
                                     "index": 0,
                                     "delta": {"content": text},
-                                    "finish_reason": "stop",
+                                    "finish_reason": finish_reason,
                                 }]
                             });
+                            if is_final {
+                                let (p, c, cached, _) = Self::extract_meta(&val);
+                                chunk["usage"] = serde_json::json!({
+                                    "prompt_tokens": p,
+                                    "completion_tokens": c,
+                                    "total_tokens": p + c,
+                                    "prompt_tokens_details": {"cached_tokens": cached},
+                                });
+                            }
                             let _ = tx
-                                .send(format!("data: {}\n\n", serde_json::to_string(&openai_chunk).unwrap_or_default()))
+                                .send(format!("data: {}\n\n", serde_json::to_string(&chunk).unwrap_or_default()))
                                 .await;
                         }
                     }
@@ -602,7 +670,6 @@ impl ProviderAdapter for SglangAdapter {
                                         .unwrap_or("");
 
                                     if !has_sent_start {
-                                        // Emit message_start + content_block_start
                                         let start_msg = serde_json::json!({
                                             "type": "message_start",
                                             "message": {
@@ -621,19 +688,21 @@ impl ProviderAdapter for SglangAdapter {
                                         has_sent_start = true;
                                     }
 
-                                    // Check for final chunk with meta info
-                                    let is_final = val.get("meta").is_some();
+                                    // Check for final chunk with meta_info
+                                    let is_final = val.get("meta_info").is_some();
 
                                     if !text.is_empty() {
                                         let _ = tx.send(Self::anthropic_delta_event(text)).await;
                                     }
 
                                     if is_final {
+                                        let (_, c_tokens, _, reason) = Self::extract_meta(&val);
+                                        let stop_reason = Self::map_stop_reason(&reason);
                                         let _ = tx.send("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n".to_string()).await;
                                         let delta_payload = serde_json::json!({
                                             "type": "message_delta",
-                                            "delta": {"stop_reason": "end_turn", "stop_sequence": null},
-                                            "usage": {"output_tokens": text.len() as u64 / 4}
+                                            "delta": {"stop_reason": stop_reason, "stop_sequence": null},
+                                            "usage": {"output_tokens": c_tokens}
                                         });
                                         let _ = tx.send(format!("event: message_delta\ndata: {}\n\n", serde_json::to_string(&delta_payload).unwrap_or_default())).await;
                                         let _ = tx.send("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".to_string()).await;
