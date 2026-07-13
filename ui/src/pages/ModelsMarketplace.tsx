@@ -266,10 +266,10 @@ function ModelCard({
                 <h3 className="font-semibold leading-none truncate">{model.name}</h3>
                 {isSubscribed && <Badge variant="default" className="shrink-0">{t('marketplace.subscribed')}</Badge>}
               </div>
-              <div className="flex items-center gap-2 mt-1">
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
                 <p className="text-xs text-muted-foreground">{model._provider || t('marketplace.provider')}</p>
                 {(model.category?.split(',').filter(Boolean).sort((a, b) => CATEGORY_KEYS.indexOf(a as any) - CATEGORY_KEYS.indexOf(b as any)) ?? []).map((cat) => (
-                  <span key={cat} className="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-muted text-muted-foreground">
+                  <span key={cat} className="inline-block shrink-0 whitespace-nowrap px-1.5 py-0.5 text-[10px] font-medium rounded bg-muted text-muted-foreground">
                     {t(`model.category.${cat}`, { defaultValue: cat })}
                   </span>
                 ))}
