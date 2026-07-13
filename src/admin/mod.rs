@@ -552,6 +552,12 @@ async fn billing_summary(
         })
         .sum();
     let total_requests = records.len() as u64;
+    let balance = if user_filter.is_some() {
+        let (b, _frozen) = state.db.get_wallet_balance(&session.user_id).await.map_err(db_err)?;
+        b
+    } else {
+        0.0
+    };
     Ok(Json(BillingSummary {
         total_requests,
         total_cost: (total_cost * 100.0).round() / 100.0,
