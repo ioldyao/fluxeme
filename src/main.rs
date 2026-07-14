@@ -5,6 +5,7 @@ mod cache;
 mod config;
 mod db;
 mod domain;
+mod exchange_rate;
 mod provider;
 mod ratelimit;
 mod server;

@@ -73,7 +73,7 @@ const DEFAULT_GATEWAY_CONFIG: GatewayRuntimeConfig = {
 
 export default function SettingsPage() {
   const { t } = useTranslation();
-  const { currency, rate, setCurrency, setRate } = useCurrency();
+  const { currency, rate, setCurrency, fetchRate } = useCurrency();
   const { timezone, setTimezone, role } = useAuth();
   const canManageRates = usePermission('admin:exchange-rates');
   const updateTimezone = useUpdateTimezone();
@@ -101,6 +101,10 @@ export default function SettingsPage() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [role]);
+
+  useEffect(() => {
+    fetchRate();
+  }, [fetchRate]);
 
   useEffect(() => {
     if (role !== 'admin') {
@@ -204,13 +208,13 @@ export default function SettingsPage() {
                     min="0"
                     className="w-24"
                     value={rate}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value);
-                      if (!isNaN(v) && v > 0) setRate(v);
-                    }}
+                    disabled
                   />
                   <span className="text-xs text-muted-foreground whitespace-nowrap">
                     1 USD = {rate} CNY
+                  </span>
+                  <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                    {t('settings.auto') || 'auto'}
                   </span>
                 </div>
               </div>

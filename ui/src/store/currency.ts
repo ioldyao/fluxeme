@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { fetchUsdToCnyRate } from '@/api/exchangeRates';
 
 export type CurrencyCode = 'cny' | 'usd';
 
@@ -8,6 +9,7 @@ interface CurrencyState {
   rate: number;
   setCurrency: (c: CurrencyCode) => void;
   setRate: (r: number) => void;
+  fetchRate: () => Promise<void>;
 }
 
 export const CURRENCY_SYMBOL: Record<CurrencyCode, string> = {
@@ -27,6 +29,14 @@ export const useCurrency = create<CurrencyState>()(
       rate: 7.2,
       setCurrency: (currency) => set({ currency }),
       setRate: (rate) => set({ rate }),
+      fetchRate: async () => {
+        try {
+          const rate = await fetchUsdToCnyRate();
+          set({ rate });
+        } catch {
+          // Rate already has fallback default, keep current value
+        }
+      },
     }),
     { name: 'currency' },
   ),

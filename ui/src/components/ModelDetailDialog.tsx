@@ -193,7 +193,9 @@ export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props
   const hasOpenAi = model.channels?.some(c => c.provider !== 'anthropic') ?? true;
   const fmtPrice = (v: number) => {
     if (!v || v === 0) return '-';
-    return `${CURRENCY_SYMBOL[currency]}${currency === 'cny' ? (v * rate).toFixed(4) : v}`;
+    const perM = v * 1000000;
+    const value = currency === 'cny' ? perM * rate : perM;
+    return `${CURRENCY_SYMBOL[currency]}${value.toFixed(6)}`;
   };
 
   useEffect(() => {
@@ -260,24 +262,20 @@ export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props
               <div className="space-y-0.5 text-xs">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-muted-foreground">{t('marketplace.input')}</span>
-                  <span className="font-mono font-medium">{fmtPrice(model.pricing.prompt_price)}/1K</span>
+                  <span className="font-mono font-medium">{fmtPrice(model.pricing.prompt_price)}/1M</span>
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-muted-foreground">{t('marketplace.output')}</span>
-                  <span className="font-mono font-medium">{fmtPrice(model.pricing.completion_price)}/1K</span>
+                  <span className="font-mono font-medium">{fmtPrice(model.pricing.completion_price)}/1M</span>
                 </div>
                 {model.pricing.cache_read_price > 0 && (
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-muted-foreground">{t('pricing.cacheRead')}</span>
-                    <span className="font-mono font-medium">{fmtPrice(model.pricing.cache_read_price)}/1K</span>
+                    <span className="font-mono font-medium">{fmtPrice(model.pricing.cache_read_price)}/1M</span>
                   </div>
                 )}
               </div>
-            </div>
-          </div>
-
-          <section className="space-y-3">
-            <h3 className="text-sm font-semibold">API 调用示例</h3>
+                    <span className="font-mono font-medium">{fmtPrice(model.pricing.cache_read_price)}/1M</span>
 
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <Tabs value={format} onValueChange={(v) => setFormat(v as ApiFormat)}>

@@ -27,3 +27,13 @@ export function useRefreshExchangeRates() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['exchange-rates'] }),
   });
 }
+
+export async function fetchLatestRates(): Promise<ExchangeRateRow[]> {
+  return api<ExchangeRateRow[]>('/exchange-rates/latest');
+}
+
+export async function fetchUsdToCnyRate(): Promise<number> {
+  const rates = await fetchLatestRates();
+  const cnyRate = rates.find(r => r.base_currency === 'USD' && r.quote_currency === 'CNY');
+  return cnyRate?.rate ?? 7.2;
+}

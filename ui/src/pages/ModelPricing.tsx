@@ -23,25 +23,25 @@ const PRICE_FIELDS: { key: keyof Pricing; labelKey: string }[] = [
 
 function toDisplay(p: Pricing): Pricing {
   return {
-    prompt_price: +(p.prompt_price * 1000).toFixed(6),
-    completion_price: +(p.completion_price * 1000).toFixed(6),
-    cache_read_price: +(p.cache_read_price * 1000).toFixed(6),
-    cache_write_price: +(p.cache_write_price * 1000).toFixed(6),
-    image_input_price: +(p.image_input_price * 1000).toFixed(6),
-    audio_input_price: +(p.audio_input_price * 1000).toFixed(6),
-    audio_output_price: +(p.audio_output_price * 1000).toFixed(6),
+    prompt_price: +(p.prompt_price * 1000000).toFixed(6),
+    completion_price: +(p.completion_price * 1000000).toFixed(6),
+    cache_read_price: +(p.cache_read_price * 1000000).toFixed(6),
+    cache_write_price: +(p.cache_write_price * 1000000).toFixed(6),
+    image_input_price: +(p.image_input_price * 1000000).toFixed(6),
+    audio_input_price: +(p.audio_input_price * 1000000).toFixed(6),
+    audio_output_price: +(p.audio_output_price * 1000000).toFixed(6),
   };
 }
 
 function toApi(p: Pricing): Pricing {
   return {
-    prompt_price: +(p.prompt_price / 1000).toFixed(10),
-    completion_price: +(p.completion_price / 1000).toFixed(10),
-    cache_read_price: +(p.cache_read_price / 1000).toFixed(10),
-    cache_write_price: +(p.cache_write_price / 1000).toFixed(10),
-    image_input_price: +(p.image_input_price / 1000).toFixed(10),
-    audio_input_price: +(p.audio_input_price / 1000).toFixed(10),
-    audio_output_price: +(p.audio_output_price / 1000).toFixed(10),
+    prompt_price: +(p.prompt_price / 1000000).toFixed(10),
+    completion_price: +(p.completion_price / 1000000).toFixed(10),
+    cache_read_price: +(p.cache_read_price / 1000000).toFixed(10),
+    cache_write_price: +(p.cache_write_price / 1000000).toFixed(10),
+    image_input_price: +(p.image_input_price / 1000000).toFixed(10),
+    audio_input_price: +(p.audio_input_price / 1000000).toFixed(10),
+    audio_output_price: +(p.audio_output_price / 1000000).toFixed(10),
   };
 }
 
