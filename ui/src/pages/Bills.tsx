@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useBillingSummary, usePeriodSummary, useDeductions, useBillingMonths, usePeriodSummaryAll } from '@/api/billing';
 import { useCurrency } from '@/store/currency';
-import { usePermission } from '@/permissions';
+import { usePermission, Guard } from '@/permissions';
 import { PageHeader } from '@/components/PageHeader';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Wallet, Receipt, Activity, TrendingDown, ChevronDown, BarChart3 } from 'lucide-react';
@@ -158,27 +158,29 @@ export default function Bills() {
                 </div>
               )}
 
-              {/* Channel breakdown */}
+              {/* Channel breakdown — admin only */}
               {period.by_channel.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">{t('bills.byChannel')}</h4>
-                  <div className="space-y-1.5">
-                    {period.by_channel.map((c) => (
-                      <div key={c.channel} className="flex items-center gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex justify-between text-sm">
-                            <span className="truncate font-mono text-xs">{c.channel}</span>
-                            <span className="font-mono text-xs">{fmt(c.cost)}</span>
+                <Guard perm="admin:billing-channels" fallback={null}>
+                  <div>
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">{t('bills.byChannel')}</h4>
+                    <div className="space-y-1.5">
+                      {period.by_channel.map((c) => (
+                        <div key={c.channel} className="flex items-center gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex justify-between text-sm">
+                              <span className="truncate font-mono text-xs">{c.channel}</span>
+                              <span className="font-mono text-xs">{fmt(c.cost)}</span>
+                            </div>
+                            <div className="h-1.5 bg-muted rounded-full mt-1 overflow-hidden">
+                              <div className="h-full bg-brand rounded-full" style={{ width: `${c.percentage}%` }} />
+                            </div>
                           </div>
-                          <div className="h-1.5 bg-muted rounded-full mt-1 overflow-hidden">
-                            <div className="h-full bg-brand rounded-full" style={{ width: `${c.percentage}%` }} />
-                          </div>
+                          <span className="text-xs text-muted-foreground w-10 text-right">{c.percentage}%</span>
                         </div>
-                        <span className="text-xs text-muted-foreground w-10 text-right">{c.percentage}%</span>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </div>
+                </Guard>
               )}
             </div>
           ) : (

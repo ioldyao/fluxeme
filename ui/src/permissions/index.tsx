@@ -14,6 +14,7 @@ const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     'admin:period-summary-all',
     'admin:dashboard',
     'admin:usage-filters',
+    'admin:billing-channels',
   ],
   user: [],
 };
