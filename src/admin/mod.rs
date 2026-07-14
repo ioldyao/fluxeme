@@ -2552,7 +2552,7 @@ async fn list_exchange_rates_handler(
     State(state): State<Arc<AppState>>,
     _auth: AuthCtx,
 ) -> Result<Json<Vec<crate::db::ExchangeRateRow>>, AdminError> {
-    let rates = state.db.list_exchange_rates().await.map_err(db_err)?;
+    let rates = state.db.get_latest_exchange_rates().await.map_err(db_err)?;
     Ok(Json(rates))
 }
 
