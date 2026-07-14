@@ -214,7 +214,7 @@ export default function SettingsPage() {
                     1 USD = {rate} CNY
                   </span>
                   <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                    {t('settings.auto') || 'auto'}
+                    {t('settings.auto', { defaultValue: 'auto' })}
                   </span>
                 </div>
               </div>

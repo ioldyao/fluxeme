@@ -29,7 +29,7 @@ export function useRefreshExchangeRates() {
 }
 
 export async function fetchLatestRates(): Promise<ExchangeRateRow[]> {
-  return api<ExchangeRateRow[]>('/exchange-rates/latest');
+  return api<ExchangeRateRow[]>('/exchange-rates');
 }
 
 export async function fetchUsdToCnyRate(): Promise<number> {
