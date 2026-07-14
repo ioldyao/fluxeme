@@ -275,8 +275,11 @@ export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props
                   </div>
                 )}
               </div>
-                    <span className="font-mono font-medium">{fmtPrice(model.pricing.cache_read_price)}/1M</span>
+            </div>
+          </div>
 
+          <section className="space-y-3">
+            <h3 className="text-sm font-semibold">{t('marketplace.codeExample')}</h3>
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <Tabs value={format} onValueChange={(v) => setFormat(v as ApiFormat)}>
                 <TabsList>

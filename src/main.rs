@@ -15,7 +15,6 @@ mod sso;
 #[cfg(feature = "pricing_chain")]
 mod pricing;
 
-mod exchange_rate;
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};

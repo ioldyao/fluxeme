@@ -224,7 +224,7 @@ function formatPrice(price: number, currency: 'usd' | 'cny' = 'usd', rate: numbe
   const perM = price * 1000000;
   const value = currency === 'cny' ? perM * rate : perM;
   const symbol = currency === 'cny' ? '¥' : '$';
-  return `$'{symbol}$'{value.toFixed(6)}`;
+  return `${symbol}${value.toFixed(6)}`;
 }
 
 function formatContextLength(len: number | null | undefined): string {
