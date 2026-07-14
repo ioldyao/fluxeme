@@ -5,7 +5,8 @@ export type Permission =
   | 'admin:wallet-keys'
   | 'admin:period-summary-all'
   | 'admin:dashboard'
-  | 'admin:usage-filters';
+  | 'admin:usage-filters'
+  | 'admin:billing-channels';
 
 const ROLE_PERMISSIONS: Record<string, Permission[]> = {
   admin: [
