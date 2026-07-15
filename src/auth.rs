@@ -136,7 +136,7 @@ impl FromRequestParts<Arc<AppState>> for AuthCtx {
         state: &Arc<AppState>,
     ) -> Result<Self, Self::Rejection> {
         let token = extract_token(parts)?;
-        let session = state.admin.decode_token(&token)?;
+        let mut session = state.admin.decode_token(&token)?;
 
         // Verify token_version against DB (session revocation enforcement)
         let db_user = state
@@ -149,6 +149,12 @@ impl FromRequestParts<Arc<AppState>> for AuthCtx {
             return Err(AdminError::unauthorized(
                 "Session has been revoked. Please log in again.",
             ));
+        }
+
+        // Reload permissions from DB so old tokens (issued before RBAC) and
+        // permission changes take effect immediately without requiring re-login.
+        if let Ok(perms) = state.db.get_role_permissions(&session.role).await {
+            session.permissions = perms;
         }
 
         // Rate limit: 300 requests/minute per session
