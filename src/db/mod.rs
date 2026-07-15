@@ -357,8 +357,14 @@ impl Database {
     pub async fn billing_months(&self) -> Result<Vec<String>, DbError> {
         self.backend.billing_months().await
     }
+    pub async fn billing_months_for_user(&self, user_id: &str) -> Result<Vec<String>, DbError> {
+        self.backend.billing_months_for_user(user_id).await
+    }
     pub async fn period_summary_all(&self) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
         self.backend.period_summary_all().await
+    }
+    pub async fn period_summary_for_user(&self, user_id: &str) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
+        self.backend.period_summary_for_user(user_id).await
     }
     pub async fn lookup_model_pricing(&self, model_name: &str) -> Result<(f64, f64), DbError> {
         self.backend.lookup_model_pricing(model_name).await

@@ -673,8 +673,13 @@ async fn billing_months(
     headers: HeaderMap,
 ) -> Result<Json<Vec<String>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    check_perm(&state.authz, &session, "admin:bills").await?;
-    state.db.billing_months().await.map_err(db_err).map(Json)
+    let can_view_all = state.authz.enforce(&session.role, "admin:bills").await;
+    let months = if can_view_all {
+        state.db.billing_months().await.map_err(db_err)?
+    } else {
+        state.db.billing_months_for_user(&session.user_id).await.map_err(db_err)?
+    };
+    Ok(Json(months))
 }
 
 #[derive(Serialize)]
@@ -690,8 +695,12 @@ async fn billing_period_summary_all(
     headers: HeaderMap,
 ) -> Result<Json<Vec<MonthSummary>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    check_perm(&state.authz, &session, "admin:bills").await?;
-    let records = state.db.period_summary_all().await.map_err(db_err)?;
+    let can_view_all = state.authz.enforce(&session.role, "admin:bills").await;
+    let records = if can_view_all {
+        state.db.period_summary_all().await.map_err(db_err)?
+    } else {
+        state.db.period_summary_for_user(&session.user_id).await.map_err(db_err)?
+    };
     Ok(Json(records.into_iter().map(|(month, cost, req, tok)| MonthSummary {
         month,
         total_cost: (cost * 100.0).round() / 100.0,
@@ -821,7 +830,9 @@ async fn wallet_list_keys(
     Query(q): Query<KeyListQuery>,
 ) -> Result<Json<serde_json::Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    check_perm(&state.authz, &session, "admin:recharge-keys").await?;
+    if !state.authz.enforce(&session.role, "admin:recharge-keys").await {
+        return Ok(Json(serde_json::json!({ "items": [], "total": 0 })));
+    }
     let limit = q.limit.unwrap_or(DEFAULT_KEY_PAGE_SIZE);
     let offset = q.offset.unwrap_or(0);
     let total = state.db.count_recharge_keys_filtered(

@@ -2035,6 +2035,16 @@ impl DbBackend for PgBackend {
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
+    async fn billing_months_for_user(&self, user_id: &str) -> Result<Vec<String>, DbError> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT LEFT(timestamp::text, 7) AS month FROM usage_logs WHERE user_id = $1 ORDER BY month DESC",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
     async fn period_summary_all(&self) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
         let rows = sqlx::query_as::<_, (String, f64, i64, i64)>(
             "SELECT LEFT(timestamp::text, 7) AS month, \
@@ -2043,6 +2053,23 @@ impl DbBackend for PgBackend {
              COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
              FROM usage_logs GROUP BY month ORDER BY month DESC",
         )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(m, c, n, t)| (m, c, n as u64, t as u64))
+            .collect())
+    }
+
+    async fn period_summary_for_user(&self, user_id: &str) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
+        let rows = sqlx::query_as::<_, (String, f64, i64, i64)>(
+            "SELECT LEFT(timestamp::text, 7) AS month, \
+             COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + \
+             completion_tokens / 1000.0 * completion_price), 0), \
+             COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
+             FROM usage_logs WHERE user_id = $1 GROUP BY month ORDER BY month DESC",
+        )
+        .bind(user_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows

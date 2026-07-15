@@ -94,7 +94,9 @@ pub trait DbBackend: Send + Sync {
     async fn count_daily_deductions(&self, year: i32, month: u32, user_id: Option<&str>) -> Result<usize, DbError>;
     async fn daily_deductions_paginated(&self, year: i32, month: u32, user_id: Option<&str>, limit: usize, offset: usize) -> Result<Vec<(String, f64, u64)>, DbError>;
     async fn billing_months(&self) -> Result<Vec<String>, DbError>;
+    async fn billing_months_for_user(&self, user_id: &str) -> Result<Vec<String>, DbError>;
     async fn period_summary_all(&self) -> Result<Vec<(String, f64, u64, u64)>, DbError>;
+    async fn period_summary_for_user(&self, user_id: &str) -> Result<Vec<(String, f64, u64, u64)>, DbError>;
     async fn lookup_model_pricing(&self, model_name: &str) -> Result<(f64, f64), DbError>;
 
     // ── Wallet ───────────────────────────────────────────────────────────

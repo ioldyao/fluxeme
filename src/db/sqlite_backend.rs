@@ -2057,12 +2057,49 @@ impl DbBackend for SqliteBackend {
         .await
     }
 
+    async fn billing_months_for_user(&self, user_id: &str) -> Result<Vec<String>, DbError> {
+        let uid = user_id.to_string();
+        self.exec(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT DISTINCT SUBSTR(timestamp, 1, 7) AS month FROM usage_logs WHERE user_id = ?1 ORDER BY month DESC",
+            )?;
+            let mut rows = stmt.query(rusqlite::params![uid])?;
+            let mut months = Vec::new();
+            while let Some(row) = rows.next()? {
+                months.push(row.get::<_, String>(0)?);
+            }
+            Ok(months)
+        })
+        .await
+    }
+
     async fn period_summary_all(&self) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
         self.exec(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT SUBSTR(timestamp, 1, 7) AS month, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0), COUNT(*), COALESCE(SUM(total_tokens), 0) FROM usage_logs GROUP BY month ORDER BY month DESC",
             )?;
             let mut rows = stmt.query([])?;
+            let mut records = Vec::new();
+            while let Some(row) = rows.next()? {
+                records.push((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, f64>(1)?,
+                    row.get::<_, u64>(2)?,
+                    row.get::<_, u64>(3)?,
+                ));
+            }
+            Ok(records)
+        })
+        .await
+    }
+
+    async fn period_summary_for_user(&self, user_id: &str) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
+        let uid = user_id.to_string();
+        self.exec(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT SUBSTR(timestamp, 1, 7) AS month, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + completion_tokens / 1000.0 * completion_price), 0), COUNT(*), COALESCE(SUM(total_tokens), 0) FROM usage_logs WHERE user_id = ?1 GROUP BY month ORDER BY month DESC",
+            )?;
+            let mut rows = stmt.query(rusqlite::params![uid])?;
             let mut records = Vec::new();
             while let Some(row) = rows.next()? {
                 records.push((
