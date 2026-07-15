@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useUsers, useCreateUser, useUpdateUser, useDeleteUser } from '@/api/users';
+import { useUsers, useCreateUser, useUpdateUser, useDeleteUser, useRoles, useUpdateUserRole } from '@/api/users';
 import { UserForm } from '@/forms/UserForm';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -8,7 +8,9 @@ import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
-import { Pencil, Trash2, Plus, Search, RefreshCw } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Guard, PERMS } from '@/permissions';
+import { Pencil, Trash2, Plus, Search, RefreshCw, Shield } from 'lucide-react';
 import { toast } from 'sonner';
 import type { User } from '@/types';
 
@@ -17,6 +19,8 @@ export default function Users() {
   const { data: users, isLoading, isError, refetch } = useUsers();
   const createUser = useCreateUser();
   const deleteUser = useDeleteUser();
+  const { data: roles } = useRoles();
+  const updateUserRole = useUpdateUserRole();
   const [search, setSearch] = useState('');
   const [editUser, setEditUser] = useState<User | null>(null);
   const updateUser = useUpdateUser(editUser?.id ?? '');
@@ -71,6 +75,7 @@ export default function Users() {
                   <tr className="border-b text-muted-foreground">
                     <th className="text-left py-3 px-4">{t('table.id')}</th>
                     <th className="text-left py-3 px-4">{t('table.name')}</th>
+                    <th className="text-left py-3 px-4 w-40">{t('table.role')}</th>
                     <th className="text-left py-3 px-4">{t('table.rateLimits')}</th>
                     <th className="text-right py-3 px-4">{t('table.actions')}</th>
                   </tr>
@@ -80,6 +85,31 @@ export default function Users() {
                     <tr key={user.id} className="border-b last:border-0 hover:bg-muted/50">
                       <td className="py-3 px-4 font-mono text-xs">{user.id}</td>
                       <td className="py-3 px-4">{user.name}</td>
+                      <td className="py-3 px-4">
+                        <Guard perm={PERMS.ROLE_UPDATE} fallback={
+                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                            <Shield className="size-3" />{user.role || '-'}
+                          </span>
+                        }>
+                          <Select
+                            value={user.role || ''}
+                            onValueChange={(role_id) =>
+                              updateUserRole.mutate({ id: user.id, role_id })
+                            }
+                          >
+                            <SelectTrigger className="h-7 text-xs">
+                              <SelectValue placeholder={t('common.select')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {roles?.map((r) => (
+                                <SelectItem key={r.id} value={r.id}>
+                                  {r.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </Guard>
+                      </td>
                       <td className="py-3 px-4 text-muted-foreground text-xs">
                         {user.rate_limits ? `RPM: ${user.rate_limits.rpm ?? '-'} / TPM: ${user.rate_limits.tpm ?? '-'}` : '-'}
                       </td>

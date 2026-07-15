@@ -196,6 +196,7 @@ const zh: Record<string, string> = {
   'table.status': '状态',
   'table.id': 'ID',
   'table.name': '名称',
+  'table.role': '角色',
   'table.key': 'API Key',
   'table.keys': '密钥',
   'table.rateLimits': '速率限制',

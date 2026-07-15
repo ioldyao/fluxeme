@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
-import type { User, UserDetail, CreateUserReq, UpdateUserReq } from '@/types';
+import type { User, UserDetail, CreateUserReq, UpdateUserReq, Role, PermissionRecord } from '@/types';
 
 export function useUsers() {
   return useQuery({
@@ -40,6 +40,29 @@ export function useDeleteUser() {
   return useMutation({
     mutationFn: (id: string) =>
       api<void>(`/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  });
+}
+
+export function useRoles() {
+  return useQuery({
+    queryKey: ['roles'],
+    queryFn: () => api<Role[]>('/roles'),
+  });
+}
+
+export function usePermissions() {
+  return useQuery({
+    queryKey: ['permissions'],
+    queryFn: () => api<PermissionRecord[]>('/permissions'),
+  });
+}
+
+export function useUpdateUserRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, role_id }: { id: string; role_id: string }) =>
+      api<void>(`/users/${encodeURIComponent(id)}/role`, { method: 'PUT', body: { role_id } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   });
 }

@@ -8,11 +8,26 @@ export interface RateLimit {
 export interface User {
   id: string;
   name: string;
+  role?: string;
   rate_limits?: RateLimit | null;
 }
 
 export interface UserDetail extends User {
   keys: ApiKey[];
+}
+
+export interface Role {
+  id: string;
+  name: string;
+  description: string;
+  is_system: boolean;
+}
+
+export interface PermissionRecord {
+  id: string;
+  name: string;
+  group_name: string;
+  description: string;
 }
 
 export interface ApiKey {

@@ -196,6 +196,7 @@ const en: Record<string, string> = {
   'table.status': 'Status',
   'table.id': 'ID',
   'table.name': 'Name',
+  'table.role': 'Role',
   'table.key': 'API Key',
   'table.keys': 'Keys',
   'table.rateLimits': 'Rate Limits',

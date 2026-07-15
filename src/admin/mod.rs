@@ -16,7 +16,7 @@ use crate::domain::model::Pricing;
 use crate::domain::routing::RoutingRule;
 use crate::domain::usage::UsageFilter;
 use crate::auth::AuthCtx;
-use crate::domain::user::{ApiKey, SessionInfo, User};
+use crate::domain::user::{ApiKey, PermissionRecord, Role, SessionInfo, User};
 use crate::ratelimit::RateLimiter;
 use crate::cache::compute_gate_status;
 use crate::config::types::GatewayRuntimeConfig;
@@ -1415,6 +1415,50 @@ async fn delete_user(
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
 
+// ── RBAC management ───────────────────────────────────────────────
+
+async fn list_roles_handler(
+    State(state): State<Arc<AppState>>,
+    auth: AuthCtx,
+) -> Result<Json<Vec<Role>>, AdminError> {
+    auth.require_perm(crate::auth::perms::ROLE_READ)?;
+    let roles = state.db.list_roles().await.map_err(db_err)?;
+    Ok(Json(roles))
+}
+
+async fn list_permissions_handler(
+    State(state): State<Arc<AppState>>,
+    auth: AuthCtx,
+) -> Result<Json<Vec<PermissionRecord>>, AdminError> {
+    auth.require_perm(crate::auth::perms::PERMISSION_READ)?;
+    let perms = state.db.list_permissions().await.map_err(db_err)?;
+    Ok(Json(perms))
+}
+
+#[derive(Deserialize)]
+struct UpdateUserRoleReq {
+    role_id: String,
+}
+
+async fn update_user_role_handler(
+    State(state): State<Arc<AppState>>,
+    auth: AuthCtx,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateUserRoleReq>,
+) -> Result<Json<Value>, AdminError> {
+    auth.require_perm(crate::auth::perms::ROLE_UPDATE)?;
+
+    state.db.update_user_role(&id, &req.role_id).await.map_err(db_err)?;
+    state.auth.reload().await;
+
+    tracing::info!(
+        "admin={} action=update_user_role target={} role={}",
+        auth.session.user_id, id, req.role_id
+    );
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 // ── API Key CRUD (admin manages any user's keys) ──────────────────
 
 async fn list_user_keys(
@@ -2384,6 +2428,16 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
             axum::routing::get(get_user_detail)
                 .put(update_user)
                 .delete(delete_user),
+        )
+        .route(
+            "/admin/api/users/{id}/role",
+            axum::routing::put(update_user_role_handler),
+        )
+        // Roles & Permissions
+        .route("/admin/api/roles", axum::routing::get(list_roles_handler))
+        .route(
+            "/admin/api/permissions",
+            axum::routing::get(list_permissions_handler),
         )
         // User API keys (admin)
         .route(
