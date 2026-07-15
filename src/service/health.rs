@@ -62,7 +62,8 @@ impl HealthService {
 
         let mut ep_results = Vec::new();
         for ep in &ch.endpoints {
-            let url = format!("{}/v1/models", ep.url.trim_end_matches('/'));
+            let base = ep.url.trim_end_matches('/').trim_end_matches("/v1");
+            let url = format!("{}/v1/models", base);
             match self.update_models_from_endpoint(&url, &ep.api_key).await {
                 Ok(count) => ep_results.push(EndpointHealth {
                     url: ep.url.clone(),
@@ -97,7 +98,8 @@ impl HealthService {
                 continue;
             }
             for ep in &ch.endpoints {
-                let url = format!("{}/v1/models", ep.url.trim_end_matches('/'));
+                let base = ep.url.trim_end_matches('/').trim_end_matches("/v1");
+                let url = format!("{}/v1/models", base);
                 match self.update_models_from_endpoint(&url, &ep.api_key).await {
                     Ok(updated) => total_updated += updated,
                     Err(e) => tracing::warn!("Health check failed for {}: {}", url, e),
@@ -119,7 +121,8 @@ impl HealthService {
 
         let mut seen: std::collections::HashMap<String, Option<i64>> = std::collections::HashMap::new();
         for ep in &ch.endpoints {
-            let url = format!("{}/v1/models", ep.url.trim_end_matches('/'));
+            let base = ep.url.trim_end_matches('/').trim_end_matches("/v1");
+            let url = format!("{}/v1/models", base);
             match self.fetch_upstream_models(&url, &ep.api_key).await {
                 Ok(models) => {
                     for m in models {
