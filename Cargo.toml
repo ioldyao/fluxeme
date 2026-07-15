@@ -24,6 +24,7 @@ bytes = "1"
 async-trait = "0.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "migrate"] }
+casbin = "2.20"
 bcrypt = "0.16"
 jsonwebtoken = "9"
 url = "2"
