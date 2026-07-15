@@ -188,8 +188,8 @@ export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props
   if (!model) return null;
 
   const ANTHROPIC_COMPAT_PROVIDERS = ['anthropic', 'deepseek', 'dashscope', 'zhipu', 'minimax'];
-  const hasAnthropic = model.channels?.some(c => ANTHROPIC_COMPAT_PROVIDERS.includes(c.provider)) ?? false;
-  const hasOpenAi = model.channels?.some(c => c.provider !== 'anthropic') ?? true;
+  const hasAnthropic = model.channels?.some(c => c.provider && ANTHROPIC_COMPAT_PROVIDERS.includes(c.provider)) ?? false;
+  const hasOpenAi = model.channels?.some(c => c.provider && c.provider !== 'anthropic') ?? true;
 
   useEffect(() => {
     if (!hasAnthropic && format === 'anthropic') {
