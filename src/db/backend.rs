@@ -5,7 +5,7 @@ use crate::domain::model::{Model, Pricing};
 use crate::domain::routing::RoutingRule;
 use crate::domain::usage::UsageFilter;
 use crate::domain::usage::UsageRecord;
-use crate::domain::user::{ApiKey, User};
+use crate::domain::user::{ApiKey, PermissionRecord, Role, User};
 
 use super::{DbError, RechargeKeyRow, WalletTransactionRow};
 
@@ -132,4 +132,18 @@ pub trait DbBackend: Send + Sync {
         batch: &[UsageRecord],
         billing_enabled: bool,
     ) -> Result<Vec<(String, f64, f64)>, DbError>;
+
+    // ── RBAC ───────────────────────────────────────────────────────────
+    /// Seed default roles and permissions. Idempotent (INSERT OR IGNORE).
+    async fn seed_default_rbac(&self) -> Result<(), DbError>;
+    /// Get all permission codes for a given role_id.
+    async fn get_role_permissions(&self, role_id: &str) -> Result<Vec<String>, DbError>;
+    /// List all roles.
+    async fn list_roles(&self) -> Result<Vec<Role>, DbError>;
+    /// List all permissions.
+    async fn list_permissions(&self) -> Result<Vec<PermissionRecord>, DbError>;
+    /// Update a user's role_id.
+    async fn update_user_role(&self, user_id: &str, role_id: &str) -> Result<(), DbError>;
+    /// Get a user's role_id.
+    async fn get_user_role_id(&self, user_id: &str) -> Result<Option<String>, DbError>;
 }

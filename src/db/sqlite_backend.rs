@@ -11,7 +11,7 @@ use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, ModelChannel, Pricing};
 use crate::domain::routing::RoutingRule;
 use crate::domain::usage::{UsageFilter, UsageRecord};
-use crate::domain::user::{ApiKey, User};
+use crate::domain::user::{ApiKey, PermissionRecord, Role, User};
 
 pub struct SqliteBackend {
     conn: Arc<Mutex<Connection>>,
@@ -163,7 +163,7 @@ impl SqliteBackend {
         let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN frozen REAL NOT NULL DEFAULT 0.0;");
         let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0;");
         let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user';");
-        let _ = conn.execute_batch("UPDATE users SET role='admin' WHERE id='admin' AND role='user';");
+        let _ = conn.execute_batch("UPDATE users SET role_id='admin' WHERE id='admin' AND role_id IS NULL;");
         let _ = conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS wallet_transactions (
                 id TEXT PRIMARY KEY,
@@ -196,6 +196,32 @@ impl SqliteBackend {
         );
         let _ = conn.execute_batch("ALTER TABLE recharge_keys ADD COLUMN expires_at TEXT;");
         let _ = conn.execute_batch("ALTER TABLE recharge_keys ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0;");
+
+        // ── RBAC tables ──
+        conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS roles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                is_system INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS permissions (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                group_name TEXT NOT NULL DEFAULT 'general',
+                description TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS role_permissions (
+                role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+                permission_id TEXT NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+                PRIMARY KEY (role_id, permission_id)
+            );
+            ",
+        )?;
+        let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN role_id TEXT REFERENCES roles(id);");
         Ok(())
     }
 }
@@ -460,7 +486,7 @@ impl DbBackend for SqliteBackend {
 
     async fn count_admins(&self) -> Result<i64, DbError> {
         self.exec(|conn| {
-            conn.query_row("SELECT COUNT(*) FROM users WHERE role = 'admin'", [], |row| {
+            conn.query_row("SELECT COUNT(*) FROM users WHERE role_id = 'admin'", [], |row| {
                 row.get(0)
             })
             .map_err(|e| DbError(e.to_string()))
@@ -2798,6 +2824,218 @@ impl DbBackend for SqliteBackend {
             tx.commit()
                 .map_err(|e| DbError(format!("Failed to commit batch: {}", e)))?;
             Ok(deductions)
+        })
+        .await
+    }
+
+    // ── RBAC ────────────────────────────────────────────────────────────
+
+    async fn seed_default_rbac(&self) -> Result<(), DbError> {
+        self.exec(|conn| {
+            // De-duplicated permission definitions
+            let perms: Vec<(&str, &str, &str, &str)> = vec![
+                ("system:health", "System Health", "system", "Access system health endpoints"),
+                ("user:create", "Create Users", "user", "Create new users"),
+                ("user:read", "Read Users", "user", "View user details"),
+                ("user:update", "Update Users", "user", "Update user information"),
+                ("user:delete", "Delete Users", "user", "Delete users"),
+                ("apikey:self:read", "Read Own Keys", "apikey", "View own API keys"),
+                ("apikey:self:create", "Create Own Keys", "apikey", "Create own API keys"),
+                ("apikey:self:update", "Update Own Keys", "apikey", "Update own API keys"),
+                ("apikey:self:delete", "Delete Own Keys", "apikey", "Delete own API keys"),
+                ("apikey:read", "Read Any Key", "apikey", "View any user's API keys"),
+                ("apikey:create", "Create Any Key", "apikey", "Create API keys for any user"),
+                ("apikey:update", "Update Any Key", "apikey", "Update any user's API keys"),
+                ("apikey:delete", "Delete Any Key", "apikey", "Delete any user's API keys"),
+                ("channel:create", "Create Channels", "channel", "Create new channels"),
+                ("channel:read", "Read Channels", "channel", "View channel details"),
+                ("channel:update", "Update Channels", "channel", "Update channel config"),
+                ("channel:delete", "Delete Channels", "channel", "Delete channels"),
+                ("model:create", "Create Models", "model", "Create new models"),
+                ("model:read", "Read Models", "model", "View model details"),
+                ("model:update", "Update Models", "model", "Update model config"),
+                ("model:delete", "Delete Models", "model", "Delete models"),
+                ("model:publish", "Publish Models", "model", "Toggle model publish status"),
+                ("routing:create", "Create Rules", "routing", "Create routing rules"),
+                ("routing:read", "Read Rules", "routing", "View routing rules"),
+                ("routing:update", "Update Rules", "routing", "Update routing rules"),
+                ("routing:delete", "Delete Rules", "routing", "Delete routing rules"),
+                ("usage:read", "Read Usage", "usage", "View usage logs"),
+                ("usage:export", "Export Usage", "usage", "Export usage data"),
+                ("billing:view", "View Billing", "billing", "View billing info"),
+                ("billing:export", "Export Billing", "billing", "Export billing data"),
+                ("billing:manage", "Manage Billing", "billing", "Manage billing settings"),
+                ("wallet:read", "Read Wallet", "wallet", "View wallet info"),
+                ("wallet:recharge", "Recharge Wallet", "wallet", "Recharge wallet balance"),
+                ("wallet:manage", "Manage Wallet", "wallet", "Admin wallet operations"),
+                ("recharge:create", "Create Recharge Keys", "recharge", "Create recharge keys"),
+                ("recharge:read", "Read Recharge Keys", "recharge", "View recharge keys"),
+                ("recharge:revoke", "Revoke Recharge Keys", "recharge", "Revoke recharge keys"),
+                ("settings:read", "Read Settings", "settings", "View system settings"),
+                ("settings:update", "Update Settings", "settings", "Update system settings"),
+                ("settings:gateway", "Gateway Config", "settings", "Gateway runtime config"),
+                ("dashboard:view", "View Dashboard", "dashboard", "View dashboard"),
+                ("exchange:read", "Read Rates", "exchange", "View exchange rates"),
+                ("exchange:update", "Update Rates", "exchange", "Update exchange rates"),
+                ("role:read", "Read Roles", "role", "View role definitions"),
+                ("role:update", "Update Roles", "role", "Update user roles"),
+                ("permission:read", "Read Permissions", "perm", "View permission definitions"),
+                ("subscription:read", "Read Subscriptions", "subscription", "View subscriptions"),
+                ("subscription:manage", "Manage Subscriptions", "subscription", "Subscribe/unsubscribe models"),
+            ];
+
+            let mut inserted = 0i64;
+            for (id, name, group, desc) in &perms {
+                conn.execute(
+                    "INSERT OR IGNORE INTO permissions (id, name, group_name, description) VALUES (?1, ?2, ?3, ?4)",
+                    params![id, name, group, desc],
+                )?;
+                inserted += conn.changes() as i64;
+            }
+
+            // Insert roles
+            let roles: Vec<(&str, &str, &str, bool)> = vec![
+                ("admin", "Administrator", "Full system access", true),
+                ("user", "User", "Self-service access", true),
+                ("operator", "Operator", "Read-only operational access", true),
+                ("billing_manager", "Billing Manager", "Financial and billing access", true),
+            ];
+            for (id, name, desc, is_system) in &roles {
+                conn.execute(
+                    "INSERT OR IGNORE INTO roles (id, name, description, is_system) VALUES (?1, ?2, ?3, ?4)",
+                    params![id, name, desc, *is_system as i32],
+                )?;
+            }
+
+            let all_perm_ids: Vec<&str> = perms.iter().map(|(id, _, _, _)| *id).collect();
+
+            // Self-service permissions for regular users
+            let user_perms: Vec<&str> = vec![
+                "apikey:self:read", "apikey:self:create", "apikey:self:update", "apikey:self:delete",
+                "usage:read", "wallet:read", "subscription:read", "subscription:manage",
+            ];
+
+            // Read-only operational access
+            let operator_perms: Vec<&str> = vec![
+                "system:health", "user:read", "model:read", "model:create",
+                "channel:read", "routing:read", "usage:read", "billing:view",
+                "wallet:read", "settings:read", "dashboard:view", "exchange:read",
+                "subscription:read", "permission:read", "role:read",
+            ];
+
+            // Billing and financial operations
+            let billing_perms: Vec<&str> = vec![
+                "billing:view", "billing:export", "billing:manage",
+                "wallet:read", "wallet:recharge", "wallet:manage",
+                "recharge:create", "recharge:read", "recharge:revoke",
+                "dashboard:view", "usage:read", "usage:export",
+                "exchange:read", "exchange:update", "settings:read",
+            ];
+
+            fn insert_role_perms(conn: &Connection, role_id: &str, perm_ids: &[&str]) -> Result<(), rusqlite::Error> {
+                for perm in perm_ids {
+                    conn.execute(
+                        "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?1, ?2)",
+                        params![role_id, perm],
+                    )?;
+                }
+                Ok(())
+            }
+
+            insert_role_perms(conn, "admin", &all_perm_ids)?;
+            insert_role_perms(conn, "user", &user_perms)?;
+            insert_role_perms(conn, "operator", &operator_perms)?;
+            insert_role_perms(conn, "billing_manager", &billing_perms)?;
+
+            // Migrate existing users from role string to role_id FK
+            conn.execute("UPDATE users SET role_id = 'admin' WHERE role = 'admin' AND role_id IS NULL", [])?;
+            conn.execute("UPDATE users SET role_id = 'user' WHERE (role IS NULL OR role = '' OR role = 'user') AND role_id IS NULL", [])?;
+
+            tracing::info!(inserted, "RBAC seed complete");
+            Ok(())
+        })
+        .await
+    }
+
+    async fn get_role_permissions(&self, role_id: &str) -> Result<Vec<String>, DbError> {
+        let role_id = role_id.to_string();
+        self.exec(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT permission_id FROM role_permissions WHERE role_id = ?1 ORDER BY permission_id",
+            )?;
+            let perms = stmt
+                .query_map(params![role_id], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<String>, _>>()?;
+            Ok(perms)
+        })
+        .await
+    }
+
+    async fn list_roles(&self) -> Result<Vec<Role>, DbError> {
+        self.exec(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, name, description, is_system FROM roles ORDER BY id",
+            )?;
+            let roles = stmt
+                .query_map([], |row| {
+                    Ok(Role {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        description: row.get(2)?,
+                        is_system: row.get::<_, i32>(3)? != 0,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(roles)
+        })
+        .await
+    }
+
+    async fn list_permissions(&self) -> Result<Vec<PermissionRecord>, DbError> {
+        self.exec(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, name, group_name, description FROM permissions ORDER BY id",
+            )?;
+            let perms = stmt
+                .query_map([], |row| {
+                    Ok(PermissionRecord {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        group_name: row.get(2)?,
+                        description: row.get(3)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(perms)
+        })
+        .await
+    }
+
+    async fn update_user_role(&self, user_id: &str, role_id: &str) -> Result<(), DbError> {
+        let uid = user_id.to_string();
+        let rid = role_id.to_string();
+        self.exec(move |conn| {
+            let affected = conn.execute(
+                "UPDATE users SET role_id = ?1 WHERE id = ?2",
+                params![rid, uid],
+            )?;
+            if affected == 0 {
+                return Err(DbError(format!("User {} not found", uid)));
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    async fn get_user_role_id(&self, user_id: &str) -> Result<Option<String>, DbError> {
+        let uid = user_id.to_string();
+        self.exec(move |conn| {
+            conn.query_row(
+                "SELECT role_id FROM users WHERE id = ?1",
+                params![uid],
+                |row| row.get(0),
+            )
+            .map_err(|e| DbError(e.to_string()))
         })
         .await
     }

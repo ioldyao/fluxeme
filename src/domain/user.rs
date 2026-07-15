@@ -57,7 +57,27 @@ pub struct AuthResult {
 pub struct SessionInfo {
     pub user_id: String,
     pub user_name: String,
-    pub role: String, // "admin" or "user"
+    pub role: String,
+    #[serde(default)]
+    pub permissions: Vec<String>,
     #[serde(default)]
     pub token_version: i64,
+}
+
+/// RBAC role definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Role {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub is_system: bool,
+}
+
+/// RBAC permission definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionRecord {
+    pub id: String,
+    pub name: String,
+    pub group_name: String,
+    pub description: String,
 }

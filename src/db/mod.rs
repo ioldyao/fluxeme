@@ -8,7 +8,7 @@ use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, Pricing};
 use crate::domain::routing::RoutingRule;
 use crate::domain::usage::{UsageFilter, UsageRecord};
-use crate::domain::user::{ApiKey, User};
+use crate::domain::user::{ApiKey, PermissionRecord, Role, User};
 
 #[derive(Debug)]
 pub struct DbError(pub String);
@@ -507,5 +507,25 @@ impl Database {
         self.backend
             .batch_insert_usage_with_billing(batch, billing_enabled)
             .await
+    }
+
+    // ── RBAC ────────────────────────────────────────────────────────────────
+    pub async fn seed_default_rbac(&self) -> Result<(), DbError> {
+        self.backend.seed_default_rbac().await
+    }
+    pub async fn get_role_permissions(&self, role_id: &str) -> Result<Vec<String>, DbError> {
+        self.backend.get_role_permissions(role_id).await
+    }
+    pub async fn list_roles(&self) -> Result<Vec<Role>, DbError> {
+        self.backend.list_roles().await
+    }
+    pub async fn list_permissions(&self) -> Result<Vec<PermissionRecord>, DbError> {
+        self.backend.list_permissions().await
+    }
+    pub async fn update_user_role(&self, user_id: &str, role_id: &str) -> Result<(), DbError> {
+        self.backend.update_user_role(user_id, role_id).await
+    }
+    pub async fn get_user_role_id(&self, user_id: &str) -> Result<Option<String>, DbError> {
+        self.backend.get_user_role_id(user_id).await
     }
 }

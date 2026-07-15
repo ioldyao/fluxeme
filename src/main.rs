@@ -1,4 +1,5 @@
 mod admin;
+mod auth;
 mod balancer;
 mod cache;
 mod config;
@@ -75,6 +76,12 @@ async fn main() {
     // Initialize database
     if let Err(e) = db.migrate().await {
         tracing::error!("Failed to initialize database: {}", e);
+        std::process::exit(1);
+    }
+
+    // Seed default RBAC roles and permissions (idempotent)
+    if let Err(e) = db.seed_default_rbac().await {
+        tracing::error!("Failed to seed RBAC: {}", e);
         std::process::exit(1);
     }
 

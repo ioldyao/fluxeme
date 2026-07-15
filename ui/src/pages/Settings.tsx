@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { api } from '@/api/client';
+import { usePermission, PERMS } from '@/permissions';
 import type { GatewayRuntimeConfig } from '@/types';
 
 const COMMON_TIMEZONES: string[] = [
@@ -54,7 +55,8 @@ const DEFAULT_GATEWAY_CONFIG: GatewayRuntimeConfig = {
 export default function SettingsPage() {
   const { t } = useTranslation();
   const { currency, rate, setCurrency, setRate } = useCurrency();
-  const { timezone, setTimezone, role } = useAuth();
+  const { timezone, setTimezone } = useAuth();
+  const isAdmin = usePermission(PERMS.SETTINGS_UPDATE);
   const updateTimezone = useUpdateTimezone();
   const [allowPrivateIps, setAllowPrivateIps] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -63,7 +65,7 @@ export default function SettingsPage() {
   const [gatewaySaving, setGatewaySaving] = useState(false);
 
   useEffect(() => {
-    if (role !== 'admin') {
+    if (!isAdmin) {
       setLoading(false);
       return;
     }
@@ -71,10 +73,10 @@ export default function SettingsPage() {
       .then((r) => setAllowPrivateIps(r.enabled))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [role]);
+  }, [isAdmin]);
 
   useEffect(() => {
-    if (role !== 'admin') {
+    if (!isAdmin) {
       setGatewayLoading(false);
       return;
     }
@@ -82,7 +84,7 @@ export default function SettingsPage() {
       .then(setGatewayConfig)
       .catch(() => {})
       .finally(() => setGatewayLoading(false));
-  }, [role]);
+  }, [isAdmin]);
 
   const toggleAllowPrivateIps = async (checked: boolean) => {
     setAllowPrivateIps(checked);
@@ -231,7 +233,7 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {role === 'admin' && (
+      {isAdmin && (
         <Card>
           <CardContent className="p-6 space-y-6">
             <h2 className="text-sm font-semibold text-foreground mb-4">{t('settings.security')}</h2>
@@ -250,7 +252,7 @@ export default function SettingsPage() {
         </Card>
       )}
 
-      {role === 'admin' && (
+      {isAdmin && (
         <Card>
           <CardContent className="p-6 space-y-6">
             <div className="flex items-center justify-between">
@@ -328,7 +330,7 @@ export default function SettingsPage() {
         </Card>
       )}
 
-      {role === 'admin' && (
+      {isAdmin && (
         <Card>
           <CardContent className="p-6 space-y-6">
             <h2 className="text-sm font-semibold text-foreground">{t('settings.billing')}</h2>

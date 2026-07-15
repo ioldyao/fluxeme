@@ -9,7 +9,7 @@ use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, ModelChannel, Pricing};
 use crate::domain::routing::RoutingRule;
 use crate::domain::usage::{UsageFilter, UsageRecord};
-use crate::domain::user::{ApiKey, User};
+use crate::domain::user::{ApiKey, PermissionRecord, Role, User};
 
 pub struct PgBackend {
     pool: PgPool,
@@ -379,6 +379,35 @@ impl DbBackend for PgBackend {
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS expires_at TEXT");
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS revoked BOOLEAN NOT NULL DEFAULT false");
 
+        // ── RBAC tables ──
+        let _ = sqlx::raw_sql(
+            "
+            CREATE TABLE IF NOT EXISTS roles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                is_system BOOLEAN NOT NULL DEFAULT false
+            );
+
+            CREATE TABLE IF NOT EXISTS permissions (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                group_name TEXT NOT NULL DEFAULT 'general',
+                description TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS role_permissions (
+                role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+                permission_id TEXT NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+                PRIMARY KEY (role_id, permission_id)
+            );
+            ",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("RBAC migration error: {}", e)))?;
+        add_col!("ALTER TABLE users ADD COLUMN IF NOT EXISTS role_id TEXT REFERENCES roles(id)");
+
         // Indexes
         macro_rules! add_idx {
             ($sql:expr) => {
@@ -395,7 +424,7 @@ impl DbBackend for PgBackend {
         add_idx!("CREATE INDEX IF NOT EXISTS idx_wallet_tx_created ON wallet_transactions(created_at)");
 
         // Set admin role for any user who was historically created as 'admin'
-        let _ = sqlx::raw_sql("UPDATE users SET role='admin' WHERE id='admin' AND role='user'")
+        let _ = sqlx::raw_sql("UPDATE users SET role_id='admin' WHERE id='admin' AND role_id IS NULL")
             .execute(&self.pool)
             .await;
 
@@ -517,7 +546,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn count_admins(&self) -> Result<i64, DbError> {
-        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE role_id = 'admin'")
             .fetch_one(&self.pool)
             .await?;
         Ok(count)
@@ -2710,6 +2739,223 @@ impl DbBackend for PgBackend {
 
         tx.commit().await?;
         Ok(deductions)
+    }
+
+    // ── RBAC ────────────────────────────────────────────────────────────
+
+    async fn seed_default_rbac(&self) -> Result<(), DbError> {
+        let perms: Vec<(&str, &str, &str, &str)> = vec![
+            ("system:health", "System Health", "system", "Access system health endpoints"),
+            ("user:create", "Create Users", "user", "Create new users"),
+            ("user:read", "Read Users", "user", "View user details"),
+            ("user:update", "Update Users", "user", "Update user information"),
+            ("user:delete", "Delete Users", "user", "Delete users"),
+            ("apikey:self:read", "Read Own Keys", "apikey", "View own API keys"),
+            ("apikey:self:create", "Create Own Keys", "apikey", "Create own API keys"),
+            ("apikey:self:update", "Update Own Keys", "apikey", "Update own API keys"),
+            ("apikey:self:delete", "Delete Own Keys", "apikey", "Delete own API keys"),
+            ("apikey:read", "Read Any Key", "apikey", "View any user's API keys"),
+            ("apikey:create", "Create Any Key", "apikey", "Create API keys for any user"),
+            ("apikey:update", "Update Any Key", "apikey", "Update any user's API keys"),
+            ("apikey:delete", "Delete Any Key", "apikey", "Delete any user's API keys"),
+            ("channel:create", "Create Channels", "channel", "Create new channels"),
+            ("channel:read", "Read Channels", "channel", "View channel details"),
+            ("channel:update", "Update Channels", "channel", "Update channel config"),
+            ("channel:delete", "Delete Channels", "channel", "Delete channels"),
+            ("model:create", "Create Models", "model", "Create new models"),
+            ("model:read", "Read Models", "model", "View model details"),
+            ("model:update", "Update Models", "model", "Update model config"),
+            ("model:delete", "Delete Models", "model", "Delete models"),
+            ("model:publish", "Publish Models", "model", "Toggle model publish status"),
+            ("routing:create", "Create Rules", "routing", "Create routing rules"),
+            ("routing:read", "Read Rules", "routing", "View routing rules"),
+            ("routing:update", "Update Rules", "routing", "Update routing rules"),
+            ("routing:delete", "Delete Rules", "routing", "Delete routing rules"),
+            ("usage:read", "Read Usage", "usage", "View usage logs"),
+            ("usage:export", "Export Usage", "usage", "Export usage data"),
+            ("billing:view", "View Billing", "billing", "View billing info"),
+            ("billing:export", "Export Billing", "billing", "Export billing data"),
+            ("billing:manage", "Manage Billing", "billing", "Manage billing settings"),
+            ("wallet:read", "Read Wallet", "wallet", "View wallet info"),
+            ("wallet:recharge", "Recharge Wallet", "wallet", "Recharge wallet balance"),
+            ("wallet:manage", "Manage Wallet", "wallet", "Admin wallet operations"),
+            ("recharge:create", "Create Recharge Keys", "recharge", "Create recharge keys"),
+            ("recharge:read", "Read Recharge Keys", "recharge", "View recharge keys"),
+            ("recharge:revoke", "Revoke Recharge Keys", "recharge", "Revoke recharge keys"),
+            ("settings:read", "Read Settings", "settings", "View system settings"),
+            ("settings:update", "Update Settings", "settings", "Update system settings"),
+            ("settings:gateway", "Gateway Config", "settings", "Gateway runtime config"),
+            ("dashboard:view", "View Dashboard", "dashboard", "View dashboard"),
+            ("exchange:read", "Read Rates", "exchange", "View exchange rates"),
+            ("exchange:update", "Update Rates", "exchange", "Update exchange rates"),
+            ("role:read", "Read Roles", "role", "View role definitions"),
+            ("role:update", "Update Roles", "role", "Update user roles"),
+            ("permission:read", "Read Permissions", "perm", "View permission definitions"),
+            ("subscription:read", "Read Subscriptions", "subscription", "View subscriptions"),
+            ("subscription:manage", "Manage Subscriptions", "subscription", "Subscribe/unsubscribe models"),
+        ];
+
+        for (id, name, group, desc) in &perms {
+            sqlx::query(
+                "INSERT INTO permissions (id, name, group_name, description) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING",
+            )
+            .bind(id)
+            .bind(name)
+            .bind(group)
+            .bind(desc)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        // Insert roles
+        let roles: Vec<(&str, &str, &str, bool)> = vec![
+            ("admin", "Administrator", "Full system access", true),
+            ("user", "User", "Self-service access", true),
+            ("operator", "Operator", "Read-only operational access", true),
+            ("billing_manager", "Billing Manager", "Financial and billing access", true),
+        ];
+        for (id, name, desc, is_system) in &roles {
+            sqlx::query(
+                "INSERT INTO roles (id, name, description, is_system) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING",
+            )
+            .bind(id)
+            .bind(name)
+            .bind(desc)
+            .bind(is_system)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        let all_perm_ids: Vec<&str> = perms.iter().map(|(id, _, _, _)| *id).collect();
+
+        let user_perms: Vec<&str> = vec![
+            "apikey:self:read", "apikey:self:create", "apikey:self:update", "apikey:self:delete",
+            "usage:read", "wallet:read", "subscription:read", "subscription:manage",
+        ];
+
+        let operator_perms: Vec<&str> = vec![
+            "system:health", "user:read", "model:read", "model:create",
+            "channel:read", "routing:read", "usage:read", "billing:view",
+            "wallet:read", "settings:read", "dashboard:view", "exchange:read",
+            "subscription:read", "permission:read", "role:read",
+        ];
+
+        let billing_perms: Vec<&str> = vec![
+            "billing:view", "billing:export", "billing:manage",
+            "wallet:read", "wallet:recharge", "wallet:manage",
+            "recharge:create", "recharge:read", "recharge:revoke",
+            "dashboard:view", "usage:read", "usage:export",
+            "exchange:read", "exchange:update", "settings:read",
+        ];
+
+        async fn insert_role_perms(pool: &PgPool, role_id: &str, perm_ids: &[&str]) -> Result<(), sqlx::Error> {
+            for perm in perm_ids {
+                sqlx::query(
+                    "INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                )
+                .bind(role_id)
+                .bind(perm)
+                .execute(pool)
+                .await?;
+            }
+            Ok(())
+        }
+
+        insert_role_perms(&self.pool, "admin", &all_perm_ids).await?;
+        insert_role_perms(&self.pool, "user", &user_perms).await?;
+        insert_role_perms(&self.pool, "operator", &operator_perms).await?;
+        insert_role_perms(&self.pool, "billing_manager", &billing_perms).await?;
+
+        // Migrate existing users
+        sqlx::query("UPDATE users SET role_id = 'admin' WHERE role = 'admin' AND role_id IS NULL")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("UPDATE users SET role_id = 'user' WHERE (role IS NULL OR role = '' OR role = 'user') AND role_id IS NULL")
+            .execute(&self.pool)
+            .await?;
+
+        tracing::info!("RBAC seed complete");
+        Ok(())
+    }
+
+    async fn get_role_permissions(&self, role_id: &str) -> Result<Vec<String>, DbError> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT permission_id FROM role_permissions WHERE role_id = $1 ORDER BY permission_id",
+        )
+        .bind(role_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    async fn list_roles(&self) -> Result<Vec<Role>, DbError> {
+        #[derive(Debug, sqlx::FromRow)]
+        struct RoleRow {
+            id: String,
+            name: String,
+            description: String,
+            is_system: bool,
+        }
+        let rows: Vec<RoleRow> = sqlx::query_as::<_, RoleRow>(
+            "SELECT id, name, description, is_system FROM roles ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| Role {
+                id: r.id,
+                name: r.name,
+                description: r.description,
+                is_system: r.is_system,
+            })
+            .collect())
+    }
+
+    async fn list_permissions(&self) -> Result<Vec<PermissionRecord>, DbError> {
+        #[derive(Debug, sqlx::FromRow)]
+        struct PermRow {
+            id: String,
+            name: String,
+            group_name: String,
+            description: String,
+        }
+        let rows: Vec<PermRow> = sqlx::query_as::<_, PermRow>(
+            "SELECT id, name, group_name, description FROM permissions ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| PermissionRecord {
+                id: r.id,
+                name: r.name,
+                group_name: r.group_name,
+                description: r.description,
+            })
+            .collect())
+    }
+
+    async fn update_user_role(&self, user_id: &str, role_id: &str) -> Result<(), DbError> {
+        let result = sqlx::query("UPDATE users SET role_id = $1 WHERE id = $2")
+            .bind(role_id)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(DbError(format!("User {} not found", user_id)));
+        }
+        Ok(())
+    }
+
+    async fn get_user_role_id(&self, user_id: &str) -> Result<Option<String>, DbError> {
+        let result: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT role_id FROM users WHERE id = $1",
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(result.and_then(|r| r.0))
     }
 }
 

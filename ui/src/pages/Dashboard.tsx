@@ -4,7 +4,7 @@ import {
 } from 'recharts';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
-import { useAuth } from '@/store/auth';
+import { usePermission, PERMS } from '@/permissions';
 import { useCurrency, CURRENCY_SYMBOL, CURRENCY_CODE } from '@/store/currency';
 import { useDashboard, useDashboardAggregations, useDailyUsage } from '@/api/dashboard';
 import { useSubscriptions } from '@/api/models';
@@ -35,7 +35,7 @@ const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var
 
 export default function Dashboard() {
   const { t } = useTranslation();
-  const role = useAuth((s) => s.role);
+  const isAdmin = usePermission(PERMS.DASHBOARD_VIEW);
   const { data: stats, isLoading, isError, refetch } = useDashboard();
   const { data: agg } = useDashboardAggregations();
   const { data: dailyData } = useDailyUsage(14);
@@ -44,7 +44,6 @@ export default function Dashboard() {
   const sym = CURRENCY_SYMBOL[currency];
   const code = CURRENCY_CODE[currency];
   const convert = (v: number) => (currency === 'cny' ? v * rate : v);
-  const isAdmin = role === 'admin';
 
   const cards = isAdmin
     ? [

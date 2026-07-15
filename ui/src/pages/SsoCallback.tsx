@@ -27,6 +27,7 @@ export default function SsoCallback() {
         role: payload.role || 'user',
         user_id: payload.sub || '',
         user_name: payload.name || '',
+        permissions: payload.perms || [],
       });
       navigate('/', { replace: true });
     } catch {

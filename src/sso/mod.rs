@@ -223,10 +223,11 @@ impl SsoModule {
             user_id: sub.clone(),
             user_name: user_name.clone(),
             role: "user".to_string(),
+            permissions: vec![],
             token_version: 0,
         };
 
-        admin.encode_token(&info)
+        admin.encode_token(&info).await
     }
 }
 
