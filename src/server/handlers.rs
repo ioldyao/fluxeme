@@ -4,7 +4,7 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use bytes::Bytes;
@@ -112,6 +112,14 @@ fn trim_model(body: &mut Value) -> Result<String, GatewayError> {
     }
     body["model"] = Value::String(s.clone());
     Ok(s)
+}
+
+fn extract_client_ip(headers: &HeaderMap, addr: &std::net::SocketAddr) -> Option<String> {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next().map(|s| s.trim().to_string()))
+        .or_else(|| Some(addr.ip().to_string()))
 }
 
 /// Check whether the user's wallet balance is sufficient for this request.
@@ -476,6 +484,7 @@ struct UsageTrackingStream<S> {
     start: Instant,
     req_body: Option<String>,
     api_format: String,
+    client_ip: Option<String>,
     recorded: bool,
 }
 
@@ -530,6 +539,7 @@ impl<S> UsageTrackingStream<S> {
         }
 
         self.usage.record(UsageRecord {
+            client_ip: self.client_ip.clone(),
             timestamp: Utc::now().to_rfc3339(),
             request_id: self.request_id.clone(),
             user_id: self.user_id.clone(),
@@ -656,6 +666,7 @@ async fn handle_streaming(
     channel_id: String,
     model: String,
     start: Instant,
+    client_ip: &Option<String>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     let stream_result = adapter.chat_complete_stream(&endpoint, body).await;
@@ -685,6 +696,7 @@ async fn handle_streaming(
                 start,
                 req_body,
                 api_format: "openai".to_string(),
+                client_ip: client_ip.clone(),
                 recorded: false,
             };
 
@@ -704,6 +716,7 @@ async fn handle_streaming(
             let latency_ms = start.elapsed().as_millis() as u64;
             let (p_tokens, c_tokens, cache_hit) = parse_sse_usage("");
             state.usage.record(UsageRecord {
+            client_ip: client_ip.clone(),
                 timestamp: Utc::now().to_rfc3339(),
                 request_id,
                 user_id,
@@ -745,6 +758,7 @@ async fn handle_messages_streaming(
     channel_id: String,
     model: String,
     start: Instant,
+    client_ip: &Option<String>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     let stream_result = adapter.messages_stream(&endpoint, body).await;
@@ -773,6 +787,7 @@ async fn handle_messages_streaming(
                 start,
                 req_body,
                 api_format: "anthropic".to_string(),
+                client_ip: client_ip.clone(),
                 recorded: false,
             };
 
@@ -792,6 +807,7 @@ async fn handle_messages_streaming(
             let latency_ms = start.elapsed().as_millis() as u64;
             let (p_tokens, c_tokens, cache_hit) = parse_sse_usage("");
             state.usage.record(UsageRecord {
+            client_ip: client_ip.clone(),
                 timestamp: Utc::now().to_rfc3339(),
                 request_id,
                 user_id,
@@ -833,6 +849,7 @@ async fn handle_non_streaming(
     model: String,
     start: Instant,
     cache_key: Option<String>,
+    client_ip: &Option<String>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     let max_retries = {
@@ -863,6 +880,7 @@ async fn handle_non_streaming(
 
                 let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
+            client_ip: client_ip.clone(),
                     timestamp: Utc::now().to_rfc3339(),
                     request_id,
                     user_id: user_id.clone(),
@@ -921,6 +939,7 @@ async fn handle_non_streaming(
                 // return immediately without retrying.
                 let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
+            client_ip: client_ip.clone(),
                     timestamp: Utc::now().to_rfc3339(),
                     request_id: request_id.clone(),
                     user_id,
@@ -952,6 +971,7 @@ async fn handle_non_streaming(
     // All retry attempts exhausted without success
     let latency_ms = start.elapsed().as_millis() as u64;
     state.usage.record(UsageRecord {
+            client_ip: client_ip.clone(),
         timestamp: Utc::now().to_rfc3339(),
         request_id,
         user_id,
@@ -990,6 +1010,7 @@ async fn handle_messages_non_streaming(
     channel_id: String,
     model: String,
     start: Instant,
+    client_ip: &Option<String>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     let max_retries = {
@@ -1027,6 +1048,7 @@ async fn handle_messages_non_streaming(
 
                 let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
+            client_ip: client_ip.clone(),
                     timestamp: Utc::now().to_rfc3339(),
                     request_id,
                     user_id,
@@ -1071,6 +1093,7 @@ async fn handle_messages_non_streaming(
             Err(e) => {
                 let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
+            client_ip: client_ip.clone(),
                     timestamp: Utc::now().to_rfc3339(),
                     request_id: request_id.clone(),
                     user_id,
@@ -1101,6 +1124,7 @@ async fn handle_messages_non_streaming(
 
     let latency_ms = start.elapsed().as_millis() as u64;
     state.usage.record(UsageRecord {
+            client_ip: client_ip.clone(),
         timestamp: Utc::now().to_rfc3339(),
         request_id,
         user_id,
@@ -1130,9 +1154,11 @@ async fn handle_messages_non_streaming(
 
 pub async fn chat_completions(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
+    let client_ip = extract_client_ip(&headers, &addr);
     let mut body = body.0;
     let request_id = Uuid::new_v4().to_string();
     let start = Instant::now();
@@ -1210,13 +1236,13 @@ pub async fn chat_completions(
         if is_streaming {
             handle_streaming(
                 &state_clone, route.adapter, route.endpoint, body,
-                request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start,
+                request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start, &client_ip,
             )
             .await
         } else {
             handle_non_streaming(
                 &state_clone, &mut route, body,
-                request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start, cache_key,
+                request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start, cache_key, &client_ip,
             )
             .await
         }
@@ -1234,9 +1260,11 @@ pub async fn chat_completions(
 
 pub async fn messages(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
+    let client_ip = extract_client_ip(&headers, &addr);
     let mut body = body.0;
     let request_id = Uuid::new_v4().to_string();
     let start = Instant::now();
@@ -1287,13 +1315,13 @@ pub async fn messages(
         if is_streaming {
             handle_messages_streaming(
                 &state_clone, route.adapter, route.endpoint, body,
-                request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start,
+                request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start, &client_ip,
             )
             .await
         } else {
             handle_messages_non_streaming(
                 &state_clone, &mut route, body,
-                request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start,
+                request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start, &client_ip,
             )
             .await
         }
@@ -1314,6 +1342,7 @@ pub async fn messages(
 async fn relay_to_upstream(
     state: &AppState,
     headers: &HeaderMap,
+    client_ip: Option<String>,
     mut body: Value,
     upstream_path: &str,
     request_id: String,
@@ -1375,6 +1404,7 @@ async fn relay_to_upstream(
 
                 let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
+            client_ip: client_ip.clone(),
                     timestamp: Utc::now().to_rfc3339(),
                     request_id,
                     user_id: user.user_id,
@@ -1419,6 +1449,7 @@ async fn relay_to_upstream(
             Err(e) => {
                 let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
+            client_ip: client_ip.clone(),
                     timestamp: Utc::now().to_rfc3339(),
                     request_id,
                     user_id: user.user_id,
@@ -1448,6 +1479,7 @@ async fn relay_to_upstream(
 
     let latency_ms = start.elapsed().as_millis() as u64;
     state.usage.record(UsageRecord {
+            client_ip: client_ip.clone(),
         timestamp: Utc::now().to_rfc3339(),
         request_id,
         user_id: user.user_id,
@@ -1475,28 +1507,34 @@ async fn relay_to_upstream(
 
 pub async fn completions(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
-    relay_to_upstream(&state, &headers, body.0, "/v1/completions",
+    let client_ip = extract_client_ip(&headers, &addr);
+    relay_to_upstream(&state, &headers, client_ip, body.0, "/v1/completions",
         Uuid::new_v4().to_string(), Instant::now()).await
 }
 
 pub async fn embeddings(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
-    relay_to_upstream(&state, &headers, body.0, "/v1/embeddings",
+    let client_ip = extract_client_ip(&headers, &addr);
+    relay_to_upstream(&state, &headers, client_ip, body.0, "/v1/embeddings",
         Uuid::new_v4().to_string(), Instant::now()).await
 }
 
 pub async fn batches(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
-    relay_to_upstream(&state, &headers, body.0, "/v1/messages/batches",
+    let client_ip = extract_client_ip(&headers, &addr);
+    relay_to_upstream(&state, &headers, client_ip, body.0, "/v1/messages/batches",
         Uuid::new_v4().to_string(), Instant::now()).await
 }
 
@@ -1505,7 +1543,7 @@ pub async fn tokenize(
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
-    relay_to_upstream(&state, &headers, body.0, "/tokenize",
+    relay_to_upstream(&state, &headers, None, body.0, "/tokenize",
         Uuid::new_v4().to_string(), Instant::now()).await
 }
 
@@ -1514,7 +1552,7 @@ pub async fn detokenize(
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
-    relay_to_upstream(&state, &headers, body.0, "/detokenize",
+    relay_to_upstream(&state, &headers, None, body.0, "/detokenize",
         Uuid::new_v4().to_string(), Instant::now()).await
 }
 

@@ -107,6 +107,7 @@ const zh: Record<string, string> = {
   'usage.channel': '渠道',
   'usage.apiKey': 'API Key',
   'usage.apiFormat': '请求格式',
+  'usage.clientIp': '客户端 IP',
   'usage.filter': '筛选',
   'usage.filterModel': '筛选模型...',
   'usage.filterApiKey': '筛选 API Key...',

@@ -107,6 +107,7 @@ const en: Record<string, string> = {
   'usage.channel': 'Channel',
   'usage.apiKey': 'API Key',
   'usage.apiFormat': 'API Format',
+  'usage.clientIp': 'Client IP',
   'usage.filter': 'Filter',
   'usage.filterModel': 'Filter model...',
   'usage.filterApiKey': 'Filter API Key...',

@@ -173,6 +173,7 @@ impl PgBackend {
             cache_hit_input_tokens: cache_hit_input_tokens as u64,
             prompt_price,
             completion_price,
+            client_ip: None,
         }
     }
 
@@ -220,6 +221,7 @@ impl PgBackend {
             cache_hit_input_tokens: cache_hit_input_tokens as u64,
             prompt_price,
             completion_price,
+            client_ip: None,
         }
     }
 }
@@ -308,7 +310,8 @@ impl DbBackend for PgBackend {
                 stream BOOLEAN NOT NULL DEFAULT false,
                 cache_hit_input_tokens BIGINT NOT NULL DEFAULT 0,
                 prompt_price DOUBLE PRECISION NOT NULL DEFAULT 0.0,
-                completion_price DOUBLE PRECISION NOT NULL DEFAULT 0.0
+                completion_price DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                client_ip TEXT
             );
 
             CREATE TABLE IF NOT EXISTS user_subscriptions (
@@ -1387,8 +1390,8 @@ impl DbBackend for PgBackend {
             "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              request_body, response_body, reasoning_body, api_key_name, api_format, stream, \
-             cache_hit_input_tokens, prompt_price, completion_price) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)",
+             cache_hit_input_tokens, prompt_price, completion_price, client_ip) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)",
         )
         .bind(&record.timestamp)
         .bind(&record.request_id)
@@ -1411,6 +1414,7 @@ impl DbBackend for PgBackend {
         .bind(record.cache_hit_input_tokens as i64)
         .bind(record.prompt_price)
         .bind(record.completion_price)
+        .bind(&record.client_ip)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1477,7 +1481,8 @@ impl DbBackend for PgBackend {
         let mut builder: QueryBuilder<'_, sqlx::Postgres> = QueryBuilder::new(
             "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-             api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price \
+             api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
+             client_ip \
              FROM usage_logs WHERE 1=1",
         );
 
@@ -1526,7 +1531,7 @@ impl DbBackend for PgBackend {
             "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              request_body, response_body, reasoning_body, api_key_name, api_format, stream, \
-             cache_hit_input_tokens, prompt_price, completion_price \
+             cache_hit_input_tokens, prompt_price, completion_price, client_ip \
              FROM usage_logs WHERE request_id = $1",
         )
         .bind(request_id)
@@ -1684,6 +1689,7 @@ impl DbBackend for PgBackend {
                     cache_hit_input_tokens: cache_hit_input_tokens as u64,
                     prompt_price: 0.0,
                     completion_price: 0.0,
+                    client_ip: None,
                 }
             })
             .collect())
@@ -2665,9 +2671,9 @@ impl DbBackend for PgBackend {
                 "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, \
                  model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, \
                  success, request_body, response_body, reasoning_body, api_key_name, api_format, \
-                 stream, cache_hit_input_tokens, prompt_price, completion_price) \
+                 stream, cache_hit_input_tokens, prompt_price, completion_price, client_ip) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, \
-                 $16, $17, $18, $19, $20, $21)",
+                 $16, $17, $18, $19, $20, $21, $22)",
             )
             .bind(&record.timestamp)
             .bind(&record.request_id)
@@ -2690,6 +2696,7 @@ impl DbBackend for PgBackend {
             .bind(record.cache_hit_input_tokens as i64)
             .bind(prompt_price)
             .bind(completion_price)
+            .bind(&record.client_ip)
             .execute(&mut *tx)
             .await?;
 

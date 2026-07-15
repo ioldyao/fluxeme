@@ -33,4 +33,5 @@ pub struct UsageRecord {
     pub cache_hit_input_tokens: u64,
     pub prompt_price: f64,
     pub completion_price: f64,
+    pub client_ip: Option<String>,
 }
