@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useAuth } from '@/store/auth';
 
 export type Permission =
@@ -45,8 +46,8 @@ export function Guard({
   fallback = null,
 }: {
   perm: Permission;
-  children: React.ReactNode;
-  fallback?: React.ReactNode;
+  children: ReactNode;
+  fallback?: ReactNode;
 }) {
   const allowed = usePermission(perm);
   return allowed ? <>{children}</> : fallback;
