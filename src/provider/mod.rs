@@ -2,6 +2,10 @@ pub mod openai;
 pub mod anthropic;
 pub mod vllm;
 pub mod sglang;
+pub mod deepseek;
+pub mod dashscope;
+pub mod zhipu;
+pub mod minimax;
 
 use std::net::IpAddr;
 use std::pin::Pin;
@@ -265,6 +269,10 @@ pub struct ProviderRegistry {
     anthropic: Arc<anthropic::AnthropicAdapter>,
     vllm: Arc<vllm::VllmAdapter>,
     sglang: Arc<sglang::SglangAdapter>,
+    deepseek: Arc<deepseek::DeepSeekAdapter>,
+    dashscope: Arc<dashscope::DashScopeAdapter>,
+    zhipu: Arc<zhipu::ZhipuAdapter>,
+    minimax: Arc<minimax::MiniMaxAdapter>,
 }
 
 impl ProviderRegistry {
@@ -274,15 +282,24 @@ impl ProviderRegistry {
             anthropic: Arc::new(anthropic::AnthropicAdapter),
             vllm: Arc::new(vllm::VllmAdapter),
             sglang: Arc::new(sglang::SglangAdapter),
+            deepseek: Arc::new(deepseek::DeepSeekAdapter),
+            dashscope: Arc::new(dashscope::DashScopeAdapter),
+            zhipu: Arc::new(zhipu::ZhipuAdapter),
+            minimax: Arc::new(minimax::MiniMaxAdapter),
         }
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn ProviderAdapter>> {
         match name {
-            "openai" | "azure" | "ollama" | "deepseek" | "dashscope" | "zhipu" | "minimax" => Some(self.openai.clone()),
+            "openai" => Some(self.openai.clone()),
             "anthropic" => Some(self.anthropic.clone()),
             "vllm" => Some(self.vllm.clone()),
             "sglang" => Some(self.sglang.clone()),
+            "deepseek" => Some(self.deepseek.clone()),
+            "dashscope" => Some(self.dashscope.clone()),
+            "zhipu" => Some(self.zhipu.clone()),
+            "minimax" => Some(self.minimax.clone()),
+            "azure" | "ollama" => Some(self.openai.clone()),
             _ => None,
         }
     }
