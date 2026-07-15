@@ -61,6 +61,7 @@ const en: Record<string, string> = {
   'channel.add': 'Add Channel',
   'channel.edit': 'Edit Channel',
   'channel.new': 'New Channel',
+  'channel.deepseekBaseUrl': 'Base URL',
   'apikey.title': 'API Keys',
   'apikey.subtitle': 'Manage your personal API keys',
   'apikey.add': 'Add API Key',

@@ -61,6 +61,7 @@ const zh: Record<string, string> = {
   'channel.add': '新增渠道',
   'channel.edit': '编辑渠道',
   'channel.new': '新增渠道',
+  'channel.deepseekBaseUrl': '接口地址',
   'apikey.title': 'API Key',
   'apikey.subtitle': '管理你的 API Key，用于 API 调用鉴权',
   'apikey.add': '新增 API Key',

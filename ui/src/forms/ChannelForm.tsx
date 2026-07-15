@@ -10,7 +10,9 @@ import { Plus, X } from 'lucide-react';
 import { useChannelHealth } from '@/api/balancer';
 import type { Channel, Endpoint } from '@/types';
 
-const PROVIDERS = ['openai', 'anthropic', 'vllm', 'sglang', 'azure', 'ollama'] as const;
+const PROVIDERS = ['openai', 'anthropic', 'vllm', 'sglang', 'azure', 'ollama', 'deepseek'] as const;
+
+const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
 
 interface Props {
   channel?: Channel | null;
@@ -47,8 +49,15 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
 
   const updateEp = (i: number, field: keyof Endpoint, value: string | number | boolean | null) =>
     setEndpoints(endpoints.map((ep, idx) => idx === i ? { ...ep, [field]: value } : ep));
-  const addEp = () => setEndpoints([...endpoints, emptyEp()]);
+  const addEp = () => setEndpoints([...endpoints, isDeepSeek ? { ...emptyEp(), url: DEEPSEEK_BASE_URL } : emptyEp()]);
   const removeEp = (i: number) => endpoints.length > 1 && setEndpoints(endpoints.filter((_, idx) => idx !== i));
+  const isDeepSeek = provider === 'deepseek';
+
+  useEffect(() => {
+    if (provider === 'deepseek') {
+      setEndpoints(endpoints.map((ep) => ({ ...ep, url: DEEPSEEK_BASE_URL })));
+    }
+  }, [provider]);
 
   function healthStatus(ep: Endpoint): { color: string; title: string } {
     if (!health) return { color: 'bg-gray-300', title: t('common.unknown') };
@@ -173,15 +182,22 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                         </div>
                       </div>
 
-                      <Input
-                        className="h-9 bg-background"
-                        placeholder="URL"
-                        value={ep.url}
-                        onChange={(e) => updateEp(i, 'url', e.target.value)}
-                        required
-                      />
+                      {!isDeepSeek && (
+                        <Input
+                          className="h-9 bg-background"
+                          placeholder="URL"
+                          value={ep.url}
+                          onChange={(e) => updateEp(i, 'url', e.target.value)}
+                          required
+                        />
+                      )}
+                      {isDeepSeek && (
+                        <div className="p-2.5 rounded-md bg-muted/50 text-xs text-muted-foreground">
+                          {t('channel.deepseekBaseUrl')}: <code className="text-xs font-mono">{DEEPSEEK_BASE_URL}</code>
+                        </div>
+                      )}
 
-                      <div className="grid grid-cols-[1fr_80px_80px] gap-3">
+                      <div className={`grid gap-3 ${isDeepSeek ? 'grid-cols-[1fr_80px_80px]' : 'grid-cols-[1fr_80px_80px]'}`}>
                         <div className="space-y-1">
                           <Input
                             className="h-9 bg-background"
