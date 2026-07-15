@@ -433,7 +433,7 @@ async fn admin_dashboard(
 ) -> Result<Json<DashboardResp>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
 
-    if session.role == "admin" {
+    if state.authz.enforce(&session.role, "admin:dashboard").await {
         let users = state.db.list_users().await.map_err(db_err)?;
         let channels = state.db.list_channels().await.map_err(db_err)?;
         let models = state.db.list_models().await.map_err(db_err)?;
@@ -499,7 +499,8 @@ async fn billing_summary(
     headers: HeaderMap,
 ) -> Result<Json<BillingSummary>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    let user_filter: Option<&str> = if session.role == "admin" {
+    let can_view_all = state.authz.enforce(&session.role, "admin:bills").await;
+    let user_filter: Option<&str> = if can_view_all {
         None
     } else {
         Some(&session.user_id)
@@ -565,7 +566,8 @@ async fn billing_period_summary(
     let now = chrono::Utc::now();
     let year = q.year.unwrap_or_else(|| now.year());
     let month = q.month.unwrap_or_else(|| now.month());
-    let user_filter: Option<&str> = if session.role == "admin" {
+    let can_view_all = state.authz.enforce(&session.role, "admin:bills").await;
+    let user_filter: Option<&str> = if can_view_all {
         None
     } else {
         Some(&session.user_id)
@@ -630,7 +632,8 @@ async fn billing_deductions(
     let month = q.month.unwrap_or_else(|| now.month());
     let limit = q.limit.unwrap_or(DEFAULT_DEDUCTION_PAGE_SIZE);
     let offset = q.offset.unwrap_or(0);
-    let user_filter: Option<&str> = if session.role == "admin" {
+    let can_view_all = state.authz.enforce(&session.role, "admin:bills").await;
+    let user_filter: Option<&str> = if can_view_all {
         None
     } else {
         Some(&session.user_id)
@@ -769,6 +772,7 @@ async fn wallet_create_key(
     Json(req): Json<WalletCreateKeyReq>,
 ) -> Result<Json<CreateKeyResp>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:recharge-keys").await?;
     if req.amount <= 0.0 {
         return Err(AdminError::bad_request("Amount must be positive"));
     }
@@ -881,7 +885,8 @@ async fn wallet_transactions(
     let session = require_session(&state.admin, &headers).await?;
     let page = q.page.unwrap_or(1);
     let size = q.size.unwrap_or(15).min(31);
-    let uid_filter: Option<&str> = if session.role == "admin" { None } else { Some(&session.user_id) };
+    let can_view_all = state.authz.enforce(&session.role, "admin:bills").await;
+    let uid_filter: Option<&str> = if can_view_all { None } else { Some(&session.user_id) };
     let (rows, total_dates) = state.db.list_wallet_tx_by_dates(
         uid_filter, page, size, q.since.as_deref(), q.until.as_deref(), q.tx_type.as_deref(),
     ).await.map_err(db_err)?;
@@ -922,7 +927,7 @@ async fn dashboard_aggregations(
     let offset = tz_offset_seconds(Some(&tz));
     let since_24h = since_local_days_ago(1, offset);
 
-    let user_filter: Option<&str> = if session.role == "admin" {
+    let user_filter: Option<&str> = if state.authz.enforce(&session.role, "admin:dashboard").await {
         None
     } else {
         Some(&session.user_id)
@@ -1313,6 +1318,35 @@ async fn toggle_my_key(
     Ok(Json(
         serde_json::json!({ "key": key_val, "enabled": req.enabled }),
     ))
+}
+
+/// List all granted permissions for the current session.
+async fn my_permissions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<String>>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    let all_known = [
+        "admin:dashboard",
+        "admin:users",
+        "admin:channels",
+        "admin:models",
+        "admin:model-pricing",
+        "admin:rules",
+        "admin:usage",
+        "admin:bills",
+        "admin:recharge-keys",
+        "admin:health",
+        "admin:settings",
+        "admin:gateway",
+    ];
+    let mut granted = Vec::new();
+    for perm in &all_known {
+        if state.authz.enforce(&session.role, perm).await {
+            granted.push(perm.to_string());
+        }
+    }
+    Ok(Json(granted))
 }
 
 async fn toggle_user_key(
@@ -2080,7 +2114,8 @@ async fn get_usage(
     let offset = q.offset.unwrap_or(0);
 
     // Regular users can only see their own usage
-    let user_filter: Option<String> = if session.role == "user" {
+    let can_view_all = state.authz.enforce(&session.role, "admin:usage").await;
+    let user_filter: Option<String> = if !can_view_all {
         Some(session.user_id.clone())
     } else {
         q.user_id
@@ -2133,7 +2168,7 @@ async fn get_usage_detail(
         })?
         .ok_or_else(|| AdminError::not_found("Usage record not found"))?;
 
-    if session.role != "admin" && record.user_id != session.user_id {
+    if !state.authz.enforce(&session.role, "admin:usage").await && record.user_id != session.user_id {
         return Err(AdminError::not_found("Usage record not found"));
     }
 
@@ -2158,7 +2193,8 @@ async fn daily_usage(
     let offset = tz_offset_seconds(Some(&tz));
     let since = since_local_days_ago(days, offset);
 
-    let user_filter: Option<&str> = if session.role == "admin" {
+    let can_view_all = state.authz.enforce(&session.role, "admin:usage").await;
+    let user_filter: Option<&str> = if can_view_all {
         None
     } else {
         Some(&session.user_id)
@@ -2209,7 +2245,8 @@ async fn usage_aggregate(
     let offset = tz_offset_seconds(Some(&tz));
     let since = since_local_days_ago(days, offset);
 
-    let user_filter: Option<&str> = if session.role == "admin" {
+    let can_view_all = state.authz.enforce(&session.role, "admin:usage").await;
+    let user_filter: Option<&str> = if can_view_all {
         q.user_id.as_deref()
     } else {
         Some(&session.user_id)
@@ -2260,7 +2297,8 @@ async fn model_activity(
     let tz = state.db.get_user_timezone(&session.user_id).await.map_err(db_err)?;
     let offset = tz_offset_seconds(Some(&tz));
     let since = since_local_days_ago(days, offset);
-    let user_filter: Option<&str> = if session.role == "admin" {
+    let can_view_all = state.authz.enforce(&session.role, "admin:usage").await;
+    let user_filter: Option<&str> = if can_view_all {
         q.user_id.as_deref()
     } else {
         Some(&session.user_id)
@@ -2514,6 +2552,10 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
             axum::routing::delete(delete_my_key)
                 .patch(toggle_my_key)
                 .put(update_my_key),
+        )
+        .route(
+            "/admin/api/me/permissions",
+            axum::routing::get(my_permissions),
         )
         // Users
         .route(
