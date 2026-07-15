@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
-import { Pencil, Trash2, Plus, RefreshCw, Activity, Import } from 'lucide-react';
+import { Pencil, Trash2, Plus, RefreshCw, Activity, Import, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/api/client';
@@ -273,18 +273,18 @@ export default function Models() {
         />
       )}
       <Dialog open={syncOpen} onOpenChange={setSyncOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-xl">
           <DialogHeader><DialogTitle>{t('model.syncTitle')}</DialogTitle></DialogHeader>
-          <div className="space-y-4">
-            <div className="flex gap-2 items-end">
-              <div className="flex-1 space-y-2">
-                <Label>{t('model.selectChannel')}</Label>
+          <div className="space-y-3">
+            <div className="flex gap-3 items-end">
+              <div className="flex-1 space-y-1.5">
+                <Label className="text-xs font-medium">{t('model.selectChannel')}</Label>
                 <Select value={syncChannelId} onValueChange={(v) => {
                   setSyncChannelId(v ?? '');
                   setFetched(false); setUpstreamModels([]); setSelectedIds(new Set());
                 }}>
                   <SelectTrigger className="w-full">
-                    <span>{syncChannelId ? channels?.find((ch) => ch.id === syncChannelId)?.name || syncChannelId : t('model.selectChannelPlaceholder')}</span>
+                    <span className="truncate">{syncChannelId ? channels?.find((ch) => ch.id === syncChannelId)?.name || syncChannelId : t('model.selectChannelPlaceholder')}</span>
                     <SelectValue className="sr-only" />
                   </SelectTrigger>
                   <SelectContent>
@@ -294,41 +294,55 @@ export default function Models() {
                   </SelectContent>
                 </Select>
               </div>
-              <Button onClick={handleFetch} disabled={!syncChannelId || fetching}>
+              <Button onClick={handleFetch} disabled={!syncChannelId || fetching} className="shrink-0">
+                {fetching && <Loader2 className="size-4 mr-1 animate-spin" />}
                 {fetching ? t('model.fetching') : t('model.fetchModels')}
               </Button>
             </div>
             {fetched && (
               <>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 px-0.5">
                   <Checkbox
+                    id="select-all"
                     checked={upstreamModels.length > 0 && selectedIds.size === upstreamModels.length}
                     onCheckedChange={toggleSelectAll}
                   />
-                  <span className="text-sm text-muted-foreground">
+                  <label htmlFor="select-all" className="text-sm text-muted-foreground cursor-pointer select-none">
                     {t('model.selectAll', { count: upstreamModels.length })}
-                  </span>
+                  </label>
+                  <span className="ml-auto text-xs text-muted-foreground">{selectedIds.size}/{upstreamModels.length}</span>
                 </div>
-                <div className="max-h-64 overflow-y-auto border rounded-md divide-y">
+                <div className="max-h-72 overflow-y-auto border rounded-md">
                   {upstreamModels.length === 0 ? (
-                    <div className="p-4 text-center text-muted-foreground text-sm">{t('model.noUpstreamModels')}</div>
+                    <div className="p-8 text-center text-muted-foreground text-sm">{t('model.noUpstreamModels')}</div>
                   ) : (
-                    upstreamModels.map((m) => (
-                      <label key={m.id} className="flex items-center gap-3 px-3 py-2 hover:bg-muted/50 cursor-pointer">
-                        <Checkbox checked={selectedIds.has(m.id)} onCheckedChange={() => toggleSelect(m.id)} />
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium truncate">{m.id}</div>
-                          {m.max_model_len != null && (
-                            <div className="text-xs text-muted-foreground">{t('model.contextLabel')} {(m.max_model_len).toLocaleString()}</div>
-                          )}
-                        </div>
-                      </label>
-                    ))
+                    <div className="divide-y">
+                      {upstreamModels.map((m) => (
+                        <label
+                          key={m.id}
+                          className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors hover:bg-muted/60 ${
+                            selectedIds.has(m.id) ? 'bg-primary/5' : ''
+                          }`}
+                        >
+                          <Checkbox checked={selectedIds.has(m.id)} onCheckedChange={() => toggleSelect(m.id)} />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium truncate">{m.id}</div>
+                            {m.max_model_len != null && (
+                              <div className="text-xs text-muted-foreground mt-0.5">{t('model.contextLabel')} {(m.max_model_len).toLocaleString()}</div>
+                            )}
+                          </div>
+                        </label>
+                      ))}
+                    </div>
                   )}
                 </div>
-                <div className="flex justify-end">
+                <div className="flex justify-end pt-1">
                   <Button onClick={handleAddSelected} disabled={selectedIds.size === 0 || adding}>
-                    {adding ? t('model.adding') : t('model.addSelected', { count: selectedIds.size })}
+                    {adding ? (
+                      <>{t('model.adding')} <Loader2 className="size-4 ml-1 animate-spin" /></>
+                    ) : (
+                      t('model.addSelected', { count: selectedIds.size })
+                    )}
                   </Button>
                 </div>
               </>
