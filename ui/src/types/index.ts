@@ -8,6 +8,7 @@ export interface RateLimit {
 export interface User {
   id: string;
   name: string;
+  role?: string;
   rate_limits?: RateLimit | null;
 }
 
@@ -169,12 +170,14 @@ export interface CreateUserReq {
   name: string;
   password?: string | null;
   rate_limits?: RateLimit | null;
+  role?: string | null;
 }
 
 export interface UpdateUserReq {
   name?: string | null;
   password?: string | null;
   rate_limits?: RateLimit | null;
+  role?: string | null;
 }
 
 export interface CreateKeyReq {

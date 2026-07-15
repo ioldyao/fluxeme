@@ -1425,6 +1425,7 @@ struct CreateUserReq {
     name: String,
     password: Option<String>,
     rate_limits: Option<crate::domain::user::RateLimit>,
+    role: Option<String>,
 }
 
 async fn create_user(
@@ -1457,7 +1458,7 @@ async fn create_user(
         rate_limits: req.rate_limits,
         timezone: "UTC".to_string(),
         token_version: 0,
-        role: "user".to_string(),
+        role: req.role.unwrap_or_else(|| "user".to_string()),
     };
 
     state.db.create_user(&user).await.map_err(db_err)?;
@@ -1480,6 +1481,7 @@ struct UpdateUserReq {
     name: Option<String>,
     password: Option<String>,
     rate_limits: Option<crate::domain::user::RateLimit>,
+    role: Option<String>,
 }
 
 async fn update_user(
@@ -1512,7 +1514,7 @@ async fn update_user(
         rate_limits: req.rate_limits.or(existing.rate_limits),
         timezone: existing.timezone,
         token_version: existing.token_version,
-        role: existing.role,
+        role: req.role.unwrap_or(existing.role),
     };
 
     state.db.update_user(&user).await.map_err(db_err)?;

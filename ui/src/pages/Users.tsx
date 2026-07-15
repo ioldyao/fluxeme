@@ -71,6 +71,7 @@ export default function Users() {
                   <tr className="border-b text-muted-foreground">
                     <th className="text-left py-3 px-4">{t('table.id')}</th>
                     <th className="text-left py-3 px-4">{t('table.name')}</th>
+                    <th className="text-left py-3 px-4">{t('table.role')}</th>
                     <th className="text-left py-3 px-4">{t('table.rateLimits')}</th>
                     <th className="text-right py-3 px-4">{t('table.actions')}</th>
                   </tr>
@@ -80,6 +81,13 @@ export default function Users() {
                     <tr key={user.id} className="border-b last:border-0 hover:bg-muted/50">
                       <td className="py-3 px-4 font-mono text-xs">{user.id}</td>
                       <td className="py-3 px-4">{user.name}</td>
+                      <td className="py-3 px-4">
+                        {user.role === 'admin' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-brand/10 text-brand">{user.role}</span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">{user.role ?? 'user'}</span>
+                        )}
+                      </td>
                       <td className="py-3 px-4 text-muted-foreground text-xs">
                         {user.rate_limits ? `RPM: ${user.rate_limits.rpm ?? '-'} / TPM: ${user.rate_limits.tpm ?? '-'}` : '-'}
                       </td>

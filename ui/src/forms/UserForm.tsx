@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { User, CreateUserReq, UpdateUserReq } from '@/types';
 
 interface Props {
@@ -21,6 +22,7 @@ export function UserForm({ user, open, onOpenChange, onSubmit, isPending }: Prop
   const [password, setPassword] = useState('');
   const [rpm, setRpm] = useState('');
   const [tpm, setTpm] = useState('');
+  const [role, setRole] = useState('user');
 
   useEffect(() => {
     if (user) {
@@ -28,8 +30,9 @@ export function UserForm({ user, open, onOpenChange, onSubmit, isPending }: Prop
       setName(user.name);
       setRpm(String(user.rate_limits?.rpm ?? ''));
       setTpm(String(user.rate_limits?.tpm ?? ''));
+      setRole(user.role ?? 'user');
     } else {
-      setId(''); setName(''); setPassword(''); setRpm(''); setTpm('');
+      setId(''); setName(''); setPassword(''); setRpm(''); setTpm(''); setRole('user');
     }
   }, [user, open]);
 
@@ -44,12 +47,14 @@ export function UserForm({ user, open, onOpenChange, onSubmit, isPending }: Prop
       if (name !== user.name) data.name = name;
       if (password) data.password = password;
       if (rateLimits) data.rate_limits = rateLimits;
+      if (role !== (user.role ?? 'user')) data.role = role;
       onSubmit(data);
     } else {
       onSubmit({
         id, name,
         password: password || null,
         rate_limits: rateLimits ?? null,
+        role,
       });
     }
   };
@@ -81,6 +86,18 @@ export function UserForm({ user, open, onOpenChange, onSubmit, isPending }: Prop
               {t('login.password')}{user && <span className="text-muted-foreground font-normal ml-1">（留空不修改）</span>}
             </Label>
             <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">{t('form.role')}</Label>
+            <Select value={role} onValueChange={setRole}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="user">{t('form.roleUser')}</SelectItem>
+                <SelectItem value="admin">{t('form.roleAdmin')}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-3">
             <Label className="text-sm font-medium">速率限制</Label>
