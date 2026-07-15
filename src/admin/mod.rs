@@ -401,39 +401,25 @@ async fn admin_dashboard(
     auth: AuthCtx,
 ) -> Result<Json<DashboardResp>, AdminError> {
 
-    if auth.session.role == "admin" {
-        let users = state.db.list_users().await.map_err(db_err)?;
-        let channels = state.db.list_channels().await.map_err(db_err)?;
-        let models = state.db.list_models().await.map_err(db_err)?;
-        let rules = state.db.list_rules().await.map_err(db_err)?;
+    auth.require_perm(crate::auth::perms::DASHBOARD_VIEW)?;
+    let users = state.db.list_users().await.map_err(db_err)?;
+    let channels = state.db.list_channels().await.map_err(db_err)?;
+    let models = state.db.list_models().await.map_err(db_err)?;
+    let rules = state.db.list_rules().await.map_err(db_err)?;
 
-        let endpoint_count: usize = channels.iter().map(|c| c.endpoints.len()).sum();
-        let total_requests = state.usage.count().await.unwrap_or(0);
-        let api_key_count = state.db.all_api_keys().await.map(|k| k.len()).unwrap_or(0);
+    let endpoint_count: usize = channels.iter().map(|c| c.endpoints.len()).sum();
+    let total_requests = state.usage.count().await.unwrap_or(0);
+    let api_key_count = state.db.all_api_keys().await.map(|k| k.len()).unwrap_or(0);
 
-        Ok(Json(DashboardResp {
-            users: users.len(),
-            channels: channels.len(),
-            models: models.len(),
-            rules: rules.len(),
-            api_keys: api_key_count,
-            endpoints: endpoint_count,
-            total_requests,
-        }))
-    } else {
-        let api_keys = state.db.list_api_keys(&auth.session.user_id).await.map_err(db_err)?;
-        let user_requests = state.usage.count_by_user(&auth.session.user_id).await.unwrap_or(0);
-
-        Ok(Json(DashboardResp {
-            users: 0,
-            channels: 0,
-            models: 0,
-            rules: 0,
-            api_keys: api_keys.len(),
-            endpoints: 0,
-            total_requests: user_requests,
-        }))
-    }
+    Ok(Json(DashboardResp {
+        users: users.len(),
+        channels: channels.len(),
+        models: models.len(),
+        rules: rules.len(),
+        api_keys: api_key_count,
+        endpoints: endpoint_count,
+        total_requests,
+    }))
 }
 
 #[derive(Serialize)]
@@ -466,11 +452,13 @@ async fn billing_summary(
     State(state): State<Arc<AppState>>,
     auth: AuthCtx,
 ) -> Result<Json<BillingSummary>, AdminError> {
+    // Admin sees all users' billing; non-admin sees only own
     let user_filter: Option<&str> = if auth.session.role == "admin" {
         None
     } else {
         Some(&auth.session.user_id)
     };
+    auth.require_perm(crate::auth::perms::BILLING_VIEW)?;
     let records = state
         .usage
         .cost_rows_since("1970-01-01T00:00:00", user_filter)
@@ -531,6 +519,7 @@ async fn billing_period_summary(
     let now = chrono::Utc::now();
     let year = q.year.unwrap_or_else(|| now.year());
     let month = q.month.unwrap_or_else(|| now.month());
+    auth.require_perm(crate::auth::perms::BILLING_VIEW)?;
     let user_filter: Option<&str> = if auth.session.role == "admin" {
         None
     } else {
@@ -595,6 +584,7 @@ async fn billing_deductions(
     let month = q.month.unwrap_or_else(|| now.month());
     let limit = q.limit.unwrap_or(DEFAULT_DEDUCTION_PAGE_SIZE);
     let offset = q.offset.unwrap_or(0);
+    auth.require_perm(crate::auth::perms::BILLING_VIEW)?;
     let user_filter: Option<&str> = if auth.session.role == "admin" {
         None
     } else {
@@ -832,6 +822,7 @@ async fn wallet_transactions(
 ) -> Result<Json<WalletTxResp>, AdminError> {
     let page = q.page.unwrap_or(1);
     let size = q.size.unwrap_or(15).min(31);
+    auth.require_perm(crate::auth::perms::WALLET_READ)?;
     let uid_filter: Option<&str> = if auth.session.role == "admin" { None } else { Some(&auth.session.user_id) };
     let (rows, total_dates) = state.db.list_wallet_tx_by_dates(
         uid_filter, page, size, q.since.as_deref(), q.until.as_deref(), q.tx_type.as_deref(),
@@ -2043,6 +2034,7 @@ async fn daily_usage(
     let offset = tz_offset_seconds(Some(&tz));
     let since = since_local_days_ago(days, offset);
 
+    auth.require_perm(crate::auth::perms::USAGE_READ)?;
     let user_filter: Option<&str> = if auth.session.role == "admin" {
         None
     } else {
@@ -2093,6 +2085,7 @@ async fn usage_aggregate(
     let offset = tz_offset_seconds(Some(&tz));
     let since = since_local_days_ago(days, offset);
 
+    auth.require_perm(crate::auth::perms::USAGE_READ)?;
     let user_filter: Option<&str> = if auth.session.role == "admin" {
         q.user_id.as_deref()
     } else {
@@ -2143,6 +2136,7 @@ async fn model_activity(
     let tz = state.db.get_user_timezone(&auth.session.user_id).await.map_err(db_err)?;
     let offset = tz_offset_seconds(Some(&tz));
     let since = since_local_days_ago(days, offset);
+    auth.require_perm(crate::auth::perms::USAGE_READ)?;
     let user_filter: Option<&str> = if auth.session.role == "admin" {
         q.user_id.as_deref()
     } else {

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
+import { usePermission, PERMS } from '@/permissions';
 import { api } from '@/api/client';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -12,7 +13,8 @@ import { toast } from 'sonner';
 
 export default function Profile() {
   const { t } = useTranslation();
-  const { userId, userName, role } = useAuth();
+  const { userId, userName } = useAuth();
+  const isAdmin = usePermission(PERMS.SETTINGS_READ);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -69,7 +71,7 @@ export default function Profile() {
             <span className="text-sm text-muted-foreground">{t('profile.role')}</span>
             <span className="inline-flex items-center gap-1 text-sm">
               <Shield className="h-3.5 w-3.5 text-brand" />
-              {role === 'admin' ? t('profile.admin') : t('profile.user')}
+              {isAdmin ? t('profile.admin') : t('profile.user')}
             </span>
           </div>
         </CardContent>
