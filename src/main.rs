@@ -1,4 +1,5 @@
 mod admin;
+mod authz;
 mod balancer;
 mod cache;
 mod config;
@@ -21,6 +22,7 @@ use crate::cache::GateStatus;
 use crate::server::PerUserSemaphore;
 
 use crate::admin::AdminModule;
+use crate::authz::AuthzModule;
 use crate::cache::RedisCache;
 use crate::config::loader;
 use crate::db::Database;
@@ -210,6 +212,13 @@ async fn main() {
         });
     }
 
+    // Initialize Casbin authorization enforcer
+    let authz = Arc::new(
+        AuthzModule::new()
+            .await
+            .expect("Failed to initialize Casbin authorization module"),
+    );
+
     let state = Arc::new(AppState {
         config,
         auth,
@@ -219,6 +228,7 @@ async fn main() {
         usage,
         db,
         admin,
+        authz,
         health,
         sso,
         gateway_config,

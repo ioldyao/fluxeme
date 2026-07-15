@@ -10,6 +10,7 @@ use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation}
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::authz::AuthzModule;
 use crate::domain::channel::Channel;
 use crate::domain::model::Model;
 use crate::domain::model::Pricing;
@@ -161,14 +162,13 @@ async fn require_session(admin: &AdminModule, headers: &HeaderMap) -> Result<Ses
     Ok(session)
 }
 
-/// Require admin role. Returns 403 (not 401) so the frontend can
-/// distinguish "bad session" from "insufficient permissions".
-async fn require_admin(admin: &AdminModule, headers: &HeaderMap) -> Result<SessionInfo, AdminError> {
-    let session = require_session(admin, headers).await?;
-    if session.role != "admin" {
-        return Err(AdminError::forbidden("Admin access required"));
+/// Check Casbin permission for the given session.
+/// Returns 403 if the session's role lacks the permission.
+async fn check_perm(authz: &AuthzModule, session: &SessionInfo, perm: &str) -> Result<(), AdminError> {
+    if !authz.enforce(&session.role, perm).await {
+        return Err(AdminError::forbidden("Insufficient permissions"));
     }
-    Ok(session)
+    Ok(())
 }
 
 // ── Error type ────────────────────────────────────────────────────
@@ -669,7 +669,8 @@ async fn billing_months(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<String>>, AdminError> {
-    let _session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:bills").await?;
     state.db.billing_months().await.map_err(db_err).map(Json)
 }
 
@@ -685,7 +686,8 @@ async fn billing_period_summary_all(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<MonthSummary>>, AdminError> {
-    let _session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:bills").await?;
     let records = state.db.period_summary_all().await.map_err(db_err)?;
     Ok(Json(records.into_iter().map(|(month, cost, req, tok)| MonthSummary {
         month,
@@ -814,7 +816,8 @@ async fn wallet_list_keys(
     headers: HeaderMap,
     Query(q): Query<KeyListQuery>,
 ) -> Result<Json<serde_json::Value>, AdminError> {
-    let _session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:recharge-keys").await?;
     let limit = q.limit.unwrap_or(DEFAULT_KEY_PAGE_SIZE);
     let offset = q.offset.unwrap_or(0);
     let total = state.db.count_recharge_keys_filtered(
@@ -836,7 +839,8 @@ async fn wallet_revoke_key(
     headers: HeaderMap,
     Json(req): Json<RevokeKeyReq>,
 ) -> Result<Json<serde_json::Value>, AdminError> {
-    let _session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:recharge-keys").await?;
     state.db.revoke_recharge_key(&req.key).await.map_err(db_err_bad_request)?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
@@ -1317,7 +1321,8 @@ async fn toggle_user_key(
     Path((user_id, key_val)): Path<(String, String)>,
     Json(req): Json<ToggleKeyReq>,
 ) -> Result<Json<Value>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:users").await?;
 
     let keys = state.db.list_api_keys(&user_id).await.map_err(db_err)?;
     let existing = keys
@@ -1340,7 +1345,8 @@ async fn list_users(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<User>>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:users").await?;
     let users = state.db.list_users().await.map_err(db_err)?;
     Ok(Json(users))
 }
@@ -1357,7 +1363,8 @@ async fn get_user_detail(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<UserDetail>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:users").await?;
     let user = state
         .db
         .get_user(&id)
@@ -1380,7 +1387,8 @@ async fn create_user(
     headers: HeaderMap,
     Json(req): Json<CreateUserReq>,
 ) -> Result<Json<User>, AdminError> {
-    let session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:users").await?;
 
     if req.id.is_empty() {
         return Err(AdminError::bad_request("User ID is required"));
@@ -1435,7 +1443,8 @@ async fn update_user(
     Path(id): Path<String>,
     Json(req): Json<UpdateUserReq>,
 ) -> Result<Json<User>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:users").await?;
 
     let existing = state
         .db
@@ -1475,7 +1484,8 @@ async fn delete_user(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
-    let session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:users").await?;
 
     state.db.delete_user(&id).await.map_err(db_err)?;
     state.auth.reload().await;
@@ -1492,7 +1502,8 @@ async fn list_user_keys(
     headers: HeaderMap,
     Path(user_id): Path<String>,
 ) -> Result<Json<Vec<ApiKey>>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:users").await?;
     let keys = state.db.list_api_keys(&user_id).await.map_err(db_err)?;
     Ok(Json(keys))
 }
@@ -1514,7 +1525,8 @@ async fn create_user_key(
     Path(user_id): Path<String>,
     Json(req): Json<CreateKeyReq>,
 ) -> Result<Json<Value>, AdminError> {
-    let session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:users").await?;
 
     let key_value = format!("sk-{}", uuid::Uuid::new_v4());
     let ak = ApiKey {
@@ -1551,7 +1563,8 @@ async fn update_user_key(
     Path((user_id, key_val)): Path<(String, String)>,
     Json(req): Json<CreateKeyReq>,
 ) -> Result<Json<Value>, AdminError> {
-    let session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:users").await?;
 
     let keys = state.db.list_api_keys(&user_id).await.map_err(db_err)?;
     let existing = keys
@@ -1587,7 +1600,8 @@ async fn delete_user_key(
     headers: HeaderMap,
     Path((_user_id, key_val)): Path<(String, String)>,
 ) -> Result<Json<Value>, AdminError> {
-    let session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:users").await?;
 
     state.db.delete_api_key(&key_val).await.map_err(db_err)?;
     state.auth.reload().await;
@@ -1607,7 +1621,8 @@ async fn list_channels(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<Channel>>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:channels").await?;
     let channels = state.db.list_channels().await.map_err(db_err)?;
     Ok(Json(channels))
 }
@@ -1617,7 +1632,8 @@ async fn create_channel(
     headers: HeaderMap,
     Json(ch): Json<Channel>,
 ) -> Result<Json<Channel>, AdminError> {
-    let session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:channels").await?;
 
     if ch.id.is_empty() {
         return Err(AdminError::bad_request("Channel ID is required"));
@@ -1647,7 +1663,8 @@ async fn update_channel(
     Path(id): Path<String>,
     Json(mut ch): Json<Channel>,
 ) -> Result<Json<Channel>, AdminError> {
-    let session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:channels").await?;
 
     ch.id = id.clone();
     state.db.update_channel(&ch).await.map_err(db_err)?;
@@ -1667,7 +1684,8 @@ async fn delete_channel(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
-    let session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:channels").await?;
 
     state.db.delete_channel(&id).await.map_err(db_err)?;
     state.routing.reload().await;
@@ -1687,7 +1705,8 @@ async fn list_models(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<Model>>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:models").await?;
     let models = state.db.list_models().await.map_err(db_err)?;
     Ok(Json(models))
 }
@@ -1697,7 +1716,8 @@ async fn create_model(
     headers: HeaderMap,
     Json(mut model): Json<Model>,
 ) -> Result<Json<Model>, AdminError> {
-    let session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:models").await?;
 
     model.id = model.id.trim().to_string();
     if model.id.is_empty() {
@@ -1722,7 +1742,8 @@ async fn update_model(
     Path(id): Path<String>,
     Json(mut model): Json<Model>,
 ) -> Result<Json<Model>, AdminError> {
-    let session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:models").await?;
 
     model.id = id.clone();
     state.db.update_model(&model).await.map_err(db_err)?;
@@ -1742,7 +1763,8 @@ async fn delete_model(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
-    let session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:models").await?;
 
     state.db.delete_model(&id).await.map_err(db_err)?;
     state.routing.reload().await;
@@ -1772,7 +1794,8 @@ async fn toggle_publish_model(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
-    let session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:models").await?;
     let models = state.db.list_models().await.map_err(db_err)?;
     let model = models
         .iter()
@@ -1806,7 +1829,8 @@ async fn update_model_pricing(
     Path(id): Path<String>,
     Json(pricing): Json<Pricing>,
 ) -> Result<Json<Value>, AdminError> {
-    let session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:model-pricing").await?;
     state.db.set_model_pricing(&id, &pricing).await.map_err(db_err)?;
 
     tracing::info!(
@@ -1959,7 +1983,8 @@ async fn list_rules(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<RoutingRule>>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:rules").await?;
     let rules = state.db.list_rules().await.map_err(db_err)?;
     Ok(Json(rules))
 }
@@ -1969,7 +1994,8 @@ async fn create_rule(
     headers: HeaderMap,
     Json(rule): Json<RoutingRule>,
 ) -> Result<Json<RoutingRule>, AdminError> {
-    let session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:rules").await?;
 
     if rule.name.is_empty() {
         return Err(AdminError::bad_request("Rule name is required"));
@@ -1993,7 +2019,8 @@ async fn update_rule(
     Path(name): Path<String>,
     Json(mut rule): Json<RoutingRule>,
 ) -> Result<Json<RoutingRule>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:rules").await?;
 
     rule.name = name;
     state.db.update_rule(&rule).await.map_err(db_err)?;
@@ -2007,7 +2034,8 @@ async fn delete_rule(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
-    let session = require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:rules").await?;
 
     state.db.delete_rule(&name).await.map_err(db_err)?;
     state.routing.reload().await;
@@ -2270,7 +2298,8 @@ async fn health_check_models(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<HealthCheckResult>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:health").await?;
     let (models_updated, channels_checked) = state
         .health
         .check_all_channels()
@@ -2287,7 +2316,8 @@ async fn health_check_channel(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<crate::service::health::ChannelHealthResult>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:channels").await?;
     let result = state
         .health
         .check_channel(&id)
@@ -2301,7 +2331,8 @@ async fn list_upstream_models(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<crate::service::health::UpstreamModelInfo>>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:channels").await?;
     let models = state
         .health
         .list_upstream_models(&id)
@@ -2336,7 +2367,8 @@ async fn get_channel_health(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<ChannelHealthResponse>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:channels").await?;
     let eps = state.routing.channel_health(&id);
     let ch = state.db.get_channel(&id).await.map_err(db_err)?;
     let channel_id = ch.as_ref().map(|c| c.id.clone()).unwrap_or(id);
@@ -2366,7 +2398,8 @@ async fn toggle_endpoint(
     Path(id): Path<i64>,
     Json(body): Json<ToggleEndpointBody>,
 ) -> Result<Json<Value>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:channels").await?;
     state
         .db
         .update_endpoint_enabled(id, body.enabled)
@@ -2381,7 +2414,8 @@ async fn get_allow_private_ips(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:settings").await?;
     let value = state.db.get_setting("allow_private_ips").await.map_err(db_err)?;
     // Default to true when no setting is stored (matches AtomicBool default)
     let enabled = value.as_deref() != Some("false");
@@ -2398,7 +2432,8 @@ async fn set_allow_private_ips(
     headers: HeaderMap,
     Json(req): Json<AllowPrivateIpsReq>,
 ) -> Result<Json<Value>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:settings").await?;
     let value = if req.enabled { "true" } else { "false" };
     state.db.set_setting("allow_private_ips", value).await.map_err(db_err)?;
     crate::provider::set_allow_private_ips(req.enabled);
@@ -2411,7 +2446,8 @@ async fn get_gateway_config_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<GatewayRuntimeConfig>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:gateway").await?;
     let config = state.db.get_gateway_config().await.map_err(db_err)?;
     Ok(Json(config))
 }
@@ -2421,7 +2457,8 @@ async fn set_gateway_config_handler(
     headers: HeaderMap,
     Json(config): Json<GatewayRuntimeConfig>,
 ) -> Result<Json<Value>, AdminError> {
-    require_admin(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:gateway").await?;
     // Validate and persist
     state.db.set_gateway_config(&config).await.map_err(db_err)?;
     // Update in-memory config

@@ -14,6 +14,7 @@ use tower_http::cors::{CorsLayer, AllowOrigin};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::authz::AuthzModule;
 use crate::cache::{GateStatus, RedisCache};
 use crate::config::types::{AppConfig, GatewayRuntimeConfig};
 use crate::provider::ProviderRegistry;
@@ -81,6 +82,7 @@ pub struct AppState {
     pub usage: UsageService,
     pub db: Arc<crate::db::Database>,
     pub admin: Arc<crate::admin::AdminModule>,
+    pub authz: Arc<AuthzModule>,
     pub health: Arc<HealthService>,
     pub sso: Arc<SsoModule>,
     /// Runtime-adjustable timeout config. Read on every request, updated by
