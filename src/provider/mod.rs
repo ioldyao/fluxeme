@@ -279,7 +279,7 @@ impl ProviderRegistry {
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn ProviderAdapter>> {
         match name {
-            "openai" | "azure" | "ollama" | "deepseek" | "dashscope" | "zhipu" => Some(self.openai.clone()),
+            "openai" | "azure" | "ollama" | "deepseek" | "dashscope" | "zhipu" | "minimax" => Some(self.openai.clone()),
             "anthropic" => Some(self.anthropic.clone()),
             "vllm" => Some(self.vllm.clone()),
             "sglang" => Some(self.sglang.clone()),
