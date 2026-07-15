@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { useCurrency, CURRENCY_SYMBOL, CURRENCY_CODE, type CurrencyCode } from '@/store/currency';
 import { useAuth } from '@/store/auth';
+import { usePermission, Guard } from '@/permissions';
 import { useUpdateTimezone } from '@/api/auth';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -54,7 +55,7 @@ const DEFAULT_GATEWAY_CONFIG: GatewayRuntimeConfig = {
 export default function SettingsPage() {
   const { t } = useTranslation();
   const { currency, rate, setCurrency, setRate } = useCurrency();
-  const { timezone, setTimezone, role } = useAuth();
+  const { timezone, setTimezone } = useAuth();
   const updateTimezone = useUpdateTimezone();
   const [allowPrivateIps, setAllowPrivateIps] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -62,8 +63,10 @@ export default function SettingsPage() {
   const [gatewayLoading, setGatewayLoading] = useState(true);
   const [gatewaySaving, setGatewaySaving] = useState(false);
 
+  const isAdmin = usePermission('admin:settings');
+
   useEffect(() => {
-    if (role !== 'admin') {
+    if (!isAdmin) {
       setLoading(false);
       return;
     }
@@ -71,10 +74,10 @@ export default function SettingsPage() {
       .then((r) => setAllowPrivateIps(r.enabled))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [role]);
+  }, [isAdmin]);
 
   useEffect(() => {
-    if (role !== 'admin') {
+    if (!isAdmin) {
       setGatewayLoading(false);
       return;
     }
@@ -82,7 +85,7 @@ export default function SettingsPage() {
       .then(setGatewayConfig)
       .catch(() => {})
       .finally(() => setGatewayLoading(false));
-  }, [role]);
+  }, [isAdmin]);
 
   const toggleAllowPrivateIps = async (checked: boolean) => {
     setAllowPrivateIps(checked);
@@ -231,7 +234,7 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {role === 'admin' && (
+      <Guard perm="admin:settings">
         <Card>
           <CardContent className="p-6 space-y-6">
             <h2 className="text-sm font-semibold text-foreground mb-4">{t('settings.security')}</h2>
@@ -248,9 +251,9 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
-      )}
+      </Guard>
 
-      {role === 'admin' && (
+      <Guard perm="admin:gateway">
         <Card>
           <CardContent className="p-6 space-y-6">
             <div className="flex items-center justify-between">
@@ -326,9 +329,9 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
-      )}
+      </Guard>
 
-      {role === 'admin' && (
+      <Guard perm="admin:gateway">
         <Card>
           <CardContent className="p-6 space-y-6">
             <h2 className="text-sm font-semibold text-foreground">{t('settings.billing')}</h2>
@@ -345,7 +348,7 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
-      )}
+      </Guard>
     </div>
   );
 }

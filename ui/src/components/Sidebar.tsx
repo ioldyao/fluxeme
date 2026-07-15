@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useAuth } from '@/store/auth';
+import { usePermission } from '@/permissions';
 import { Cog, Settings, User, Wallet, Receipt } from 'lucide-react';
 import { navRoutes } from '@/routes/config';
 
@@ -13,9 +13,9 @@ const NAV_GROUPS: { label: string; items: string[] }[] = [
 
 export function Sidebar() {
   const { t } = useTranslation();
-  const role = useAuth((s) => s.role);
+  const isAdmin = usePermission('admin:dashboard');
 
-  const visible = navRoutes.filter((item) => item.guard !== 'admin' || role === 'admin');
+  const visible = navRoutes.filter((item) => item.guard !== 'admin' || isAdmin);
   const settings = visible.filter((item) => item.label === 'nav.settings');
   const byLabel = Object.fromEntries(visible.map((item) => [item.label, item]));
 
