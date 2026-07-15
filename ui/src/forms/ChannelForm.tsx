@@ -10,11 +10,12 @@ import { Plus, X } from 'lucide-react';
 import { useChannelHealth } from '@/api/balancer';
 import type { Channel, Endpoint } from '@/types';
 
-const PROVIDERS = ['openai', 'anthropic', 'vllm', 'sglang', 'azure', 'ollama', 'deepseek', 'dashscope'] as const;
+const PROVIDERS = ['openai', 'anthropic', 'vllm', 'sglang', 'azure', 'ollama', 'deepseek', 'dashscope', 'zhipu'] as const;
 
 const FIXED_BASE_URLS: Record<string, string> = {
   deepseek: 'https://api.deepseek.com',
   dashscope: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  zhipu: 'https://open.bigmodel.cn/api/paas/v4',
 };
 
 interface Props {
