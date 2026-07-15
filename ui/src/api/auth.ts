@@ -36,6 +36,15 @@ export function useUpdateTimezone() {
   });
 }
 
+export function useMyPermissions() {
+  return useQuery({
+    queryKey: ['my-permissions'],
+    queryFn: () => api<{ permissions: string[] }>('/me/permissions'),
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 export function useSetupStatus() {
   return useQuery({
     queryKey: ['setup-status'],

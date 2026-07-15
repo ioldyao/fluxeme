@@ -10,6 +10,7 @@ interface AuthState {
   timezone: string;
   permissions: string[];
   setSession: (res: LoginResponse) => void;
+  setPermissions: (perms: string[]) => void;
   setTimezone: (tz: string) => void;
   clear: () => void;
 }
@@ -32,6 +33,7 @@ export const useAuth = create<AuthState>()(
           timezone: res.timezone || 'UTC',
           permissions: res.permissions,
         }),
+      setPermissions: (perms) => set({ permissions: perms }),
       setTimezone: (timezone) => set({ timezone }),
       clear: () =>
         set({

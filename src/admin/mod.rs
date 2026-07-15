@@ -1089,6 +1089,12 @@ async fn get_my_timezone(
     Ok(Json(serde_json::json!({ "timezone": tz })))
 }
 
+async fn my_permissions(
+    auth: AuthCtx,
+) -> Result<Json<Value>, AdminError> {
+    Ok(Json(serde_json::json!({ "permissions": auth.session.permissions })))
+}
+
 async fn update_my_timezone(
     State(state): State<Arc<AppState>>,
     auth: AuthCtx,
@@ -2407,6 +2413,10 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route(
             "/admin/api/me/timezone",
             axum::routing::get(get_my_timezone).put(update_my_timezone),
+        )
+        .route(
+            "/admin/api/me/permissions",
+            axum::routing::get(my_permissions),
         )
         .route(
             "/admin/api/me/keys",
