@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Copy, Check } from 'lucide-react';
 import { toast } from 'sonner';
+import { useCurrency, usePricingCurrency, CURRENCY_SYMBOL } from '@/store/currency';
 import type { Model } from '@/types';
 
 const GATEWAY_BASE = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080';
@@ -185,6 +186,10 @@ export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props
   const [lang, setLang] = useState<Lang>('curl');
   const [copied, setCopied] = useState(false);
 
+  const { currency } = useCurrency();
+  const { effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
+  const sym = CURRENCY_SYMBOL[model ? getEffectiveCurrency(currency, model.id) : 'usd'];
+
   if (!model) return null;
 
   const ANTHROPIC_COMPAT_PROVIDERS = ['anthropic', 'deepseek', 'dashscope', 'zhipu', 'minimax'];
@@ -255,16 +260,16 @@ export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props
               <div className="space-y-0.5 text-xs">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-muted-foreground">{t('marketplace.input')}</span>
-                  <span className="font-mono font-medium">${model.pricing.prompt_price}/1K</span>
+                  <span className="font-mono font-medium">{sym}{(model.pricing.prompt_price * 1000).toFixed(3)}/1K</span>
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-muted-foreground">{t('marketplace.output')}</span>
-                  <span className="font-mono font-medium">${model.pricing.completion_price}/1K</span>
+                  <span className="font-mono font-medium">{sym}{(model.pricing.completion_price * 1000).toFixed(3)}/1K</span>
                 </div>
                 {model.pricing.cache_read_price > 0 && (
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-muted-foreground">{t('pricing.cacheRead')}</span>
-                    <span className="font-mono font-medium">${model.pricing.cache_read_price}/1K</span>
+                    <span className="font-mono font-medium">{sym}{(model.pricing.cache_read_price * 1000).toFixed(3)}/1K</span>
                   </div>
                 )}
               </div>
