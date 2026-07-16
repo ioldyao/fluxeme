@@ -1,4 +1,4 @@
-import { useState, useMemo, useId } from 'react';
+import { useState, useMemo, useId, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Search } from 'lucide-react';
 import { toast } from 'sonner';
@@ -89,6 +89,7 @@ export default function ModelPricingPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dirty, setDirty] = useState<Record<string, Pricing>>({});
   const [saving, setSaving] = useState<Record<string, boolean>>({});
+  const [initialCurrency, setInitialCurrency] = useState<Record<string, 'usd' | 'cny'>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const { mode: currencyMode, modelCurrency, setMode: setCurrencyMode, setModelCurrency, effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
 
@@ -112,6 +113,20 @@ export default function ModelPricingPage() {
     () => (selected ? dirty[selected.id] ?? toDisplay(selected.pricing) : null),
     [selected, dirty],
   );
+
+  // Snapshot original currency when a model is first selected
+  useEffect(() => {
+    if (selectedId && !(selectedId in initialCurrency)) {
+      setInitialCurrency((prev) => ({ ...prev, [selectedId]: modelCurrency[selectedId] ?? 'usd' }));
+    }
+  }, [selectedId]);
+
+  function isDirty(id: string): boolean {
+    if (dirty[id]) return true;
+    const initC = initialCurrency[id];
+    const curC = modelCurrency[id] ?? 'usd';
+    return initC !== undefined && initC !== curC;
+  }
 
   function setPrice(field: keyof Pricing, value: number) {
     if (!selected) return;
@@ -144,6 +159,7 @@ export default function ModelPricingPage() {
         delete next[id];
         return next;
       });
+      setInitialCurrency((prev) => ({ ...prev, [id]: modelCurrency[id] ?? 'usd' }));
       toast.success(t('pricing.saved') || 'Pricing saved');
     } catch {
       toast.error(t('toast.failed'));
@@ -245,7 +261,7 @@ export default function ModelPricingPage() {
               {selected && (
                 <Button
                   size="sm"
-                  disabled={!dirty[selected.id] || saving[selected.id]}
+                  disabled={!isDirty(selected.id) || saving[selected.id]}
                   onClick={() => handleSave(selected.id)}
                   className="shrink-0"
                 >
@@ -274,12 +290,7 @@ export default function ModelPricingPage() {
                   <div className="flex rounded-lg border p-0.5 shrink-0">
                     <button
                       type="button"
-                      onClick={() => {
-                        if ((modelCurrency[selected.id] ?? 'usd') !== 'usd') {
-                          setModelCurrency(selected.id, 'usd');
-                          if (!dirty[selected.id]) setDirty((p) => ({ ...p, [selected.id]: toDisplay(selected.pricing) }));
-                        }
-                      }}
+                      onClick={() => setModelCurrency(selected.id, 'usd')}
                       className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors ${
                         (modelCurrency[selected.id] ?? 'usd') === 'usd' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -288,12 +299,7 @@ export default function ModelPricingPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        if ((modelCurrency[selected.id] ?? 'usd') !== 'cny') {
-                          setModelCurrency(selected.id, 'cny');
-                          if (!dirty[selected.id]) setDirty((p) => ({ ...p, [selected.id]: toDisplay(selected.pricing) }));
-                        }
-                      }}
+                      onClick={() => setModelCurrency(selected.id, 'cny')}
                       className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors ${
                         modelCurrency[selected.id] === 'cny' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
                       }`}
