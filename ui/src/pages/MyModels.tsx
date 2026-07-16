@@ -133,10 +133,10 @@ export default function MyModels() {
                       {(() => {
                         const sym = CURRENCY_SYMBOL[getEffectiveCurrency(currency, model.id)];
                         const parts = [
-                          `${sym}${fmtPerK(model.pricing.prompt_price)} / ${sym}${fmtPerK(model.pricing.completion_price)}`
+                          `${t('pricing.inputPrice')} ${sym}${fmtPerK(model.pricing.prompt_price)} / ${t('pricing.outputPrice')} ${sym}${fmtPerK(model.pricing.completion_price)}`
                         ];
                         if (model.pricing.cache_read_price > 0) {
-                          parts.push(`Cache: ${sym}${fmtPerK(model.pricing.cache_read_price)}`);
+                          parts.push(`${t('pricing.cacheRead')} ${sym}${fmtPerK(model.pricing.cache_read_price)}`);
                         }
                         return parts.join(' · ');
                       })()}
