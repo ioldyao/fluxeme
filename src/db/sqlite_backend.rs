@@ -2470,29 +2470,30 @@ impl DbBackend for SqliteBackend {
         let key = key.to_string();
         let user_id = user_id.to_string();
         self.exec(move |conn| {
-            let (amount, used_by, expires_at, revoked): (
-                f64,
-                Option<String>,
-                Option<String>,
-                i64,
-            ) = conn
+            let tx = conn
+                .unchecked_transaction()
+                .map_err(|e| DbError(format!("Failed to begin transaction: {}", e)))?;
+
+            // Atomically claim the key with conditional UPDATE
+            let now = chrono::Utc::now().to_rfc3339();
+            let rows = tx.execute(
+                "UPDATE recharge_keys SET used_by = ?1, used_at = ?2 WHERE key = ?3 AND used_by IS NULL AND (revoked IS NULL OR revoked = 0)",
+                params![user_id, now, key],
+            )?;
+
+            if rows == 0 {
+                return Err(DbError("Invalid or already used recharge key".to_string()));
+            }
+
+            // Read amount and validate
+            let (amount, expires_at, revoked): (f64, Option<String>, i64) = tx
                 .query_row(
-                    "SELECT amount, used_by, expires_at, revoked FROM recharge_keys WHERE key = ?1",
+                    "SELECT amount, expires_at, COALESCE(revoked, 0) FROM recharge_keys WHERE key = ?1",
                     params![key],
-                    |row| {
-                        Ok((
-                            row.get(0)?,
-                            row.get(1)?,
-                            row.get(2)?,
-                            row.get::<_, i64>(3).unwrap_or(0),
-                        ))
-                    },
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, i64>(2)?)),
                 )
                 .map_err(|_| DbError("Invalid recharge key".to_string()))?;
 
-            if used_by.is_some() {
-                return Err(DbError("Recharge key already used".to_string()));
-            }
             if revoked != 0 {
                 return Err(DbError("Recharge key has been revoked".to_string()));
             }
@@ -2504,30 +2505,23 @@ impl DbBackend for SqliteBackend {
                 }
             }
 
-            // Mark as used
-            let now = chrono::Utc::now().to_rfc3339();
-            conn.execute(
-                "UPDATE recharge_keys SET used_by = ?1, used_at = ?2 WHERE key = ?3",
-                params![user_id, now, key],
-            )?;
-
             // Add balance
-            let (balance, _): (f64, f64) = conn
+            let (balance,): (f64,) = tx
                 .query_row(
-                    "SELECT balance, frozen FROM users WHERE id = ?1",
+                    "SELECT balance FROM users WHERE id = ?1",
                     params![user_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
+                    |row| Ok((row.get::<_, f64>(0)?,)),
                 )
                 .map_err(|_| DbError("User not found".to_string()))?;
 
             let new_balance = balance + amount;
-            conn.execute(
+            tx.execute(
                 "UPDATE users SET balance = ?1 WHERE id = ?2",
                 params![new_balance, user_id],
             )?;
 
             // Record transaction
-            conn.execute(
+            tx.execute(
                 "INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
@@ -2543,6 +2537,9 @@ impl DbBackend for SqliteBackend {
                     now,
                 ],
             )?;
+
+            tx.commit()
+                .map_err(|e| DbError(format!("Failed to commit: {}", e)))?;
             Ok(amount)
         })
         .await
