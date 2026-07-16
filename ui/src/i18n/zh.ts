@@ -365,7 +365,7 @@ const zh: Record<string, string> = {
   'pricing.audioInput': '音频输入',
   'pricing.audioOutput': '音频输出',
   'pricing.preview': '预览',
-  'pricing.perMillion': '{{price}}/100万 tokens',
+  'pricing.perMillion': '{{price}}/1M tokens',
   'pricing.saved': '定价已保存',
   'pricing.saving': '保存中...',
   'pricing.empty': '空',

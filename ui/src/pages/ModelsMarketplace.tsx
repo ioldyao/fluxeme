@@ -220,7 +220,7 @@ function FilterBtn({ active, onClick, label }: { active: boolean; onClick: () =>
 
 function formatPrice(price: number): string {
   if (!price || price === 0) return '-';
-  return `$${price}`;
+  return `$${(price * 1000).toFixed(3)}`;
 }
 
 function formatContextLength(len: number | null | undefined): string {
@@ -303,11 +303,11 @@ function ModelCard({
         {/* Pricing */}
         <div className={`grid gap-2 border-t border-border pt-4 text-center ${model.pricing.cache_read_price > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
           <div>
-            <p className="text-xs text-muted-foreground">{t('marketplace.prompt')}</p>
+            <p className="text-xs text-muted-foreground">{t('marketplace.prompt')} / 1K</p>
             <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.prompt_price)}</p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">{t('marketplace.completion')}</p>
+            <p className="text-xs text-muted-foreground">{t('marketplace.completion')} / 1K</p>
             <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.completion_price)}</p>
           </div>
           {model.pricing.cache_read_price > 0 && (
