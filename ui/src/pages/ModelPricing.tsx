@@ -115,10 +115,22 @@ export default function ModelPricingPage() {
 
   function setPrice(field: keyof Pricing, value: number) {
     if (!selected) return;
-    setDirty((prev) => ({
-      ...prev,
-      [selected.id]: { ...(prev[selected.id] ?? toDisplay(selected.pricing)), [field]: value },
-    }));
+    const original = toDisplay(selected.pricing);
+    const current = dirty[selected.id] ?? original;
+    const updated = { ...current, [field]: value };
+
+    const allFields = PRICE_GROUPS.flatMap((g) => g.fields).map((f) => f.key);
+    const isClean = allFields.every((k) => updated[k] === original[k]);
+
+    if (isClean) {
+      setDirty((prev) => {
+        const next = { ...prev };
+        delete next[selected.id];
+        return next;
+      });
+    } else {
+      setDirty((prev) => ({ ...prev, [selected.id]: updated }));
+    }
   }
 
   async function handleSave(id: string) {
@@ -262,7 +274,11 @@ export default function ModelPricingPage() {
                   <div className="flex rounded-lg border p-0.5 shrink-0">
                     <button
                       type="button"
-                      onClick={() => setModelCurrency(selected.id, 'usd')}
+                      onClick={() => {
+                        const orig = toDisplay(selected.pricing);
+                        setModelCurrency(selected.id, 'usd');
+                        if (!dirty[selected.id]) setDirty((p) => ({ ...p, [selected.id]: orig }));
+                      }}
                       className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors ${
                         (modelCurrency[selected.id] ?? 'usd') === 'usd' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -271,7 +287,11 @@ export default function ModelPricingPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setModelCurrency(selected.id, 'cny')}
+                      onClick={() => {
+                        const orig = toDisplay(selected.pricing);
+                        setModelCurrency(selected.id, 'cny');
+                        if (!dirty[selected.id]) setDirty((p) => ({ ...p, [selected.id]: orig }));
+                      }}
                       className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors ${
                         modelCurrency[selected.id] === 'cny' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
                       }`}
