@@ -227,8 +227,11 @@ export default function Models() {
                           const sym = CURRENCY_SYMBOL[getEffectiveCurrency(currency, m.id)];
                           const pp = m.pricing.prompt_price;
                           const cp = m.pricing.completion_price;
+                          const crp = m.pricing.cache_read_price;
                           const fmt = (v: number) => Number.isInteger(v) ? v.toString() : parseFloat(v.toFixed(10)).toString();
-                          return `${sym}${fmt(pp)} / ${sym}${fmt(cp)}`;
+                          const parts = [`${sym}${fmt(pp)} / ${sym}${fmt(cp)}`];
+                          if (crp > 0) parts.push(`Cache: ${sym}${fmt(crp)}`);
+                          return parts.join(' · ');
                         })()}
                       </td>
                       <td className="py-3 px-4 text-center">
