@@ -5,9 +5,11 @@ import { useCurrency } from '@/store/currency';
 import { PageHeader } from '@/components/PageHeader';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Wallet, Receipt, Activity, TrendingDown, ChevronDown, BarChart3 } from 'lucide-react';
+import { usePermission } from '@/permissions';
 
 export default function Bills() {
   const { t, i18n } = useTranslation();
+  const isAdmin = usePermission('admin:bills');
   const { data: rawMonths } = useBillingMonths();
   const months = useMemo(() => (rawMonths ?? []).map((m) => {
     const [y, mo] = m.split('-').map(Number);
@@ -156,7 +158,7 @@ export default function Bills() {
               )}
 
               {/* Channel breakdown */}
-              {period.by_channel.length > 0 && (
+              {isAdmin && period.by_channel.length > 0 && (
                 <div>
                   <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">{t('bills.byChannel')}</h4>
                   <div className="space-y-1.5">
