@@ -514,8 +514,8 @@ async fn billing_summary(
         .map(|r| {
             let pp = if r.prompt_price > 0.0 { r.prompt_price } else { 0.0 };
             let cp = if r.completion_price > 0.0 { r.completion_price } else { 0.0 };
-            (r.prompt_tokens as f64 / 1000.0 * pp)
-                + (r.completion_tokens as f64 / 1000.0 * cp)
+            (r.prompt_tokens as f64 / 1000000.0 * pp)
+                + (r.completion_tokens as f64 / 1000000.0 * cp)
         })
         .sum();
     let total_requests = records.len() as u64;
@@ -1022,9 +1022,9 @@ async fn dashboard_aggregations(
         } else {
             lookup_price(&r.model, &pricing, &prefix_prices)
         };
-        let cost = (r.prompt_tokens as f64 / 1000.0 * pp)
-            + (r.completion_tokens as f64 / 1000.0 * cp)
-            + (r.cache_hit_input_tokens as f64 / 1000.0 * r.cache_read_price);
+        let cost = (r.prompt_tokens as f64 / 1000000.0 * pp)
+            + (r.completion_tokens as f64 / 1000000.0 * cp)
+            + (r.cache_hit_input_tokens as f64 / 1000000.0 * r.cache_read_price);
         total_cost_24h += cost;
         *model_counts.entry(r.model.clone()).or_default() += 1;
     }
@@ -1042,9 +1042,9 @@ async fn dashboard_aggregations(
             } else {
                 lookup_price(&r.model, &pricing, &prefix_prices)
             };
-            (r.prompt_tokens as f64 / 1000.0 * pp)
-                + (r.completion_tokens as f64 / 1000.0 * cp)
-                + (r.cache_hit_input_tokens as f64 / 1000.0 * r.cache_read_price)
+            (r.prompt_tokens as f64 / 1000000.0 * pp)
+                + (r.completion_tokens as f64 / 1000000.0 * cp)
+                + (r.cache_hit_input_tokens as f64 / 1000000.0 * r.cache_read_price)
         })
         .sum();
 

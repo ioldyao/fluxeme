@@ -1821,8 +1821,8 @@ impl DbBackend for PgBackend {
         };
         let (cost, count, tokens): (f64, i64, i64) = if let Some(uid) = user_id {
             sqlx::query_as(
-                "SELECT COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + \
-                 completion_tokens / 1000.0 * completion_price), 0), \
+                "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
+                 completion_tokens / 1000000.0 * completion_price), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3",
             )
@@ -1833,8 +1833,8 @@ impl DbBackend for PgBackend {
             .await?
         } else {
             sqlx::query_as(
-                "SELECT COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + \
-                 completion_tokens / 1000.0 * completion_price), 0), \
+                "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
+                 completion_tokens / 1000000.0 * completion_price), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2",
             )
@@ -1860,8 +1860,8 @@ impl DbBackend for PgBackend {
         };
         let rows = if let Some(uid) = user_id {
             sqlx::query_as::<_, (String, f64)>(
-                "SELECT model, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + \
-                 completion_tokens / 1000.0 * completion_price), 0) \
+                "SELECT model, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
+                 completion_tokens / 1000000.0 * completion_price), 0) \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY model ORDER BY 2 DESC",
             )
@@ -1872,8 +1872,8 @@ impl DbBackend for PgBackend {
             .await?
         } else {
             sqlx::query_as::<_, (String, f64)>(
-                "SELECT model, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + \
-                 completion_tokens / 1000.0 * completion_price), 0) \
+                "SELECT model, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
+                 completion_tokens / 1000000.0 * completion_price), 0) \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY model ORDER BY 2 DESC",
             )
@@ -1899,8 +1899,8 @@ impl DbBackend for PgBackend {
         };
         let rows = if let Some(uid) = user_id {
             sqlx::query_as::<_, (String, f64)>(
-                "SELECT channel_id, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + \
-                 completion_tokens / 1000.0 * completion_price), 0) \
+                "SELECT channel_id, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
+                 completion_tokens / 1000000.0 * completion_price), 0) \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY channel_id ORDER BY 2 DESC",
             )
@@ -1911,8 +1911,8 @@ impl DbBackend for PgBackend {
             .await?
         } else {
             sqlx::query_as::<_, (String, f64)>(
-                "SELECT channel_id, COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + \
-                 completion_tokens / 1000.0 * completion_price), 0) \
+                "SELECT channel_id, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
+                 completion_tokens / 1000000.0 * completion_price), 0) \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY channel_id ORDER BY 2 DESC",
             )
@@ -1939,8 +1939,8 @@ impl DbBackend for PgBackend {
         let rows = if let Some(uid) = user_id {
             sqlx::query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + \
-                 completion_tokens / 1000.0 * completion_price), 0), \
+                 COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
+                 completion_tokens / 1000000.0 * completion_price), 0), \
                  COUNT(*)::bigint \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY day ORDER BY day DESC",
@@ -1953,8 +1953,8 @@ impl DbBackend for PgBackend {
         } else {
             sqlx::query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + \
-                 completion_tokens / 1000.0 * completion_price), 0), \
+                 COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
+                 completion_tokens / 1000000.0 * completion_price), 0), \
                  COUNT(*)::bigint \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY day ORDER BY day DESC",
@@ -2019,8 +2019,8 @@ impl DbBackend for PgBackend {
         let rows = if let Some(uid) = user_id {
             sqlx::query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + \
-                 completion_tokens / 1000.0 * completion_price), 0), \
+                 COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
+                 completion_tokens / 1000000.0 * completion_price), 0), \
                  COUNT(*)::bigint \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY day ORDER BY day DESC LIMIT $4 OFFSET $5",
@@ -2035,8 +2035,8 @@ impl DbBackend for PgBackend {
         } else {
             sqlx::query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + \
-                 completion_tokens / 1000.0 * completion_price), 0), \
+                 COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
+                 completion_tokens / 1000000.0 * completion_price), 0), \
                  COUNT(*)::bigint \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY day ORDER BY day DESC LIMIT $3 OFFSET $4",
@@ -2073,8 +2073,8 @@ impl DbBackend for PgBackend {
     async fn period_summary_all(&self) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
         let rows = sqlx::query_as::<_, (String, f64, i64, i64)>(
             "SELECT LEFT(timestamp::text, 7) AS month, \
-             COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + \
-             completion_tokens / 1000.0 * completion_price), 0), \
+             COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
+             completion_tokens / 1000000.0 * completion_price), 0), \
              COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
              FROM usage_logs GROUP BY month ORDER BY month DESC",
         )
@@ -2089,8 +2089,8 @@ impl DbBackend for PgBackend {
     async fn period_summary_for_user(&self, user_id: &str) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
         let rows = sqlx::query_as::<_, (String, f64, i64, i64)>(
             "SELECT LEFT(timestamp::text, 7) AS month, \
-             COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + \
-             completion_tokens / 1000.0 * completion_price), 0), \
+             COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
+             completion_tokens / 1000000.0 * completion_price), 0), \
              COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
              FROM usage_logs WHERE user_id = $1 GROUP BY month ORDER BY month DESC",
         )
@@ -2308,8 +2308,8 @@ impl DbBackend for PgBackend {
 
     async fn get_total_consumed(&self, user_id: &str) -> Result<f64, DbError> {
         let result: Result<(f64,), _> = sqlx::query_as(
-            "SELECT COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + \
-             completion_tokens / 1000.0 * completion_price), 0) \
+            "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
+             completion_tokens / 1000000.0 * completion_price), 0) \
              FROM usage_logs WHERE user_id = $1",
         )
         .bind(user_id)
@@ -2333,8 +2333,8 @@ impl DbBackend for PgBackend {
         let thirty_days_ago =
             (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
         let total_cost: f64 = sqlx::query_as::<_, (f64,)>(
-            "SELECT COALESCE(SUM(prompt_tokens / 1000.0 * prompt_price + \
-             completion_tokens / 1000.0 * completion_price), 0) \
+            "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
+             completion_tokens / 1000000.0 * completion_price), 0) \
              FROM usage_logs WHERE user_id = $1 AND timestamp >= $2",
         )
         .bind(user_id)
@@ -2719,9 +2719,9 @@ impl DbBackend for PgBackend {
             .await?;
 
             if billing_enabled {
-                let cost = record.prompt_tokens as f64 / 1000.0 * prompt_price
-                    + record.completion_tokens as f64 / 1000.0 * completion_price
-                    + record.cache_hit_input_tokens as f64 / 1000.0 * cache_read_price;
+                let cost = record.prompt_tokens as f64 / 1000000.0 * prompt_price
+                    + record.completion_tokens as f64 / 1000000.0 * completion_price
+                    + record.cache_hit_input_tokens as f64 / 1000000.0 * cache_read_price;
 
                 if cost > 0.0 {
                     let (balance, frozen): (f64, f64) = sqlx::query_as(

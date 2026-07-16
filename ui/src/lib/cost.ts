@@ -4,7 +4,7 @@ export function calculateCost(
   pricing?: { prompt_price: number; completion_price: number },
 ): number {
   if (!pricing) return 0;
-  return (promptTokens / 1000) * pricing.prompt_price + (completionTokens / 1000) * pricing.completion_price;
+  return (promptTokens / 1000000) * pricing.prompt_price + (completionTokens / 1000000) * pricing.completion_price;
 }
 
 export function formatCost(
