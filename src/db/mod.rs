@@ -168,8 +168,8 @@ impl Database {
     pub async fn create_model(&self, m: &Model) -> Result<(), DbError> {
         self.backend.create_model(m).await
     }
-    pub async fn update_model(&self, m: &Model) -> Result<(), DbError> {
-        self.backend.update_model(m).await
+    pub async fn update_model(&self, old_id: &str, m: &Model) -> Result<(), DbError> {
+        self.backend.update_model(old_id, m).await
     }
     pub async fn delete_model(&self, id: &str) -> Result<(), DbError> {
         self.backend.delete_model(id).await

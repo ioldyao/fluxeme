@@ -1788,20 +1788,19 @@ async fn create_model(
 async fn update_model(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Path(id): Path<String>,
+    Path(old_id): Path<String>,
     Json(mut model): Json<Model>,
 ) -> Result<Json<Model>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:models").await?;
 
-    model.id = id.clone();
-    state.db.update_model(&model).await.map_err(db_err)?;
+    state.db.update_model(&old_id, &model).await.map_err(db_err)?;
     state.routing.reload().await;
 
     tracing::info!(
         "admin={} action=update_model target={}",
         session.user_id,
-        id
+        old_id
     );
 
     Ok(Json(model))

@@ -89,18 +89,16 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
           <div className="flex flex-1 min-h-0">
             <div className="w-72 shrink-0 border-r bg-muted/20 px-5 py-6 space-y-5 overflow-y-auto">
-              {!model && (
-                <div className="space-y-1.5">
-                  <Label className="text-sm font-medium">{t('form.modelName')}</Label>
-                  <Input
-                    className="h-9 bg-background"
-                    value={id}
-                    onChange={(e) => setId(e.target.value)}
-                    placeholder="gpt-4, claude-sonnet-4"
-                    required
-                  />
-                </div>
-              )}
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">{t('form.modelName')}</Label>
+                <Input
+                  className="h-9 bg-background"
+                  value={id}
+                  onChange={(e) => setId(e.target.value)}
+                  placeholder="gpt-4, claude-sonnet-4"
+                  required
+                />
+              </div>
 
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium">{t('form.name')}</Label>

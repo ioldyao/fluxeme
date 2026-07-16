@@ -51,7 +51,7 @@ pub trait DbBackend: Send + Sync {
     async fn list_models(&self) -> Result<Vec<Model>, DbError>;
     async fn get_model(&self, id: &str) -> Result<Option<Model>, DbError>;
     async fn create_model(&self, m: &Model) -> Result<(), DbError>;
-    async fn update_model(&self, m: &Model) -> Result<(), DbError>;
+    async fn update_model(&self, old_id: &str, m: &Model) -> Result<(), DbError>;
     async fn delete_model(&self, id: &str) -> Result<(), DbError>;
     async fn list_published_models(&self) -> Result<Vec<Model>, DbError>;
     async fn set_model_published(&self, id: &str, published: bool) -> Result<(), DbError>;

@@ -966,14 +966,15 @@ impl DbBackend for SqliteBackend {
         .await
     }
 
-    async fn update_model(&self, m: &Model) -> Result<(), DbError> {
+    async fn update_model(&self, old_id: &str, m: &Model) -> Result<(), DbError> {
+        let old_id = old_id.to_string();
         let m = m.clone();
         self.exec(move |conn| {
             conn.execute(
-                "UPDATE models SET name=?1, model_pattern=?2, prompt_price=?3, completion_price=?4, cache_read_price=?5, cache_write_price=?6, image_input_price=?7, audio_input_price=?8, audio_output_price=?9, published=?10, context_length=?11, category=?12 WHERE id=?13",
-                params![m.name, m.model_pattern, m.pricing.prompt_price, m.pricing.completion_price, m.pricing.cache_read_price, m.pricing.cache_write_price, m.pricing.image_input_price, m.pricing.audio_input_price, m.pricing.audio_output_price, m.published as i32, m.context_length, m.category, m.id],
+                "UPDATE models SET id=?1, name=?2, model_pattern=?3, prompt_price=?4, completion_price=?5, cache_read_price=?6, cache_write_price=?7, image_input_price=?8, audio_input_price=?9, audio_output_price=?10, published=?11, context_length=?12, category=?13 WHERE id=?14",
+                params![m.id, m.name, m.model_pattern, m.pricing.prompt_price, m.pricing.completion_price, m.pricing.cache_read_price, m.pricing.cache_write_price, m.pricing.image_input_price, m.pricing.audio_input_price, m.pricing.audio_output_price, m.published as i32, m.context_length, m.category, old_id],
             )?;
-            conn.execute("DELETE FROM model_channels WHERE model_id = ?1", params![m.id])?;
+            conn.execute("DELETE FROM model_channels WHERE model_id = ?1", params![old_id])?;
             for binding in &m.channels {
                 conn.execute(
                     "INSERT INTO model_channels (model_id, channel_id, priority) VALUES (?1, ?2, ?3)",
