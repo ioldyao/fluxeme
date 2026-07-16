@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useCurrency, CURRENCY_SYMBOL } from '@/store/currency';
+import { useCurrency, CURRENCY_SYMBOL, usePricingCurrency } from '@/store/currency';
 import type { Pricing } from '@/types';
 
 const PRICE_GROUPS: { label: string; fields: { key: keyof Pricing; labelKey: string }[] }[] = [
@@ -90,8 +90,7 @@ export default function ModelPricingPage() {
   const [dirty, setDirty] = useState<Record<string, Pricing>>({});
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [searchQuery, setSearchQuery] = useState('');
-  const [currencyMode, setCurrencyMode] = useState<'global' | 'per-model'>('global');
-  const [modelCurrency, setModelCurrency] = useState<Record<string, 'usd' | 'cny'>>({});
+  const { mode: currencyMode, modelCurrency, setMode: setCurrencyMode, setModelCurrency, effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
 
   const filteredModels = useMemo(
     () => models?.filter((m) =>
@@ -106,10 +105,7 @@ export default function ModelPricingPage() {
     [models, selectedId],
   );
 
-  const effectiveCurrency = currencyMode === 'global'
-    ? currency
-    : (selectedId ? (modelCurrency[selectedId] ?? 'usd') : 'usd');
-
+  const effectiveCurrency = getEffectiveCurrency(currency, selectedId);
   const effectiveSym = CURRENCY_SYMBOL[effectiveCurrency];
 
   const currentValues = useMemo(
@@ -266,7 +262,7 @@ export default function ModelPricingPage() {
                   <div className="flex rounded-lg border p-0.5 shrink-0">
                     <button
                       type="button"
-                      onClick={() => setModelCurrency((prev) => ({ ...prev, [selected.id]: 'usd' }))}
+                      onClick={() => setModelCurrency(selected.id, 'usd')}
                       className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors ${
                         (modelCurrency[selected.id] ?? 'usd') === 'usd' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -275,7 +271,7 @@ export default function ModelPricingPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setModelCurrency((prev) => ({ ...prev, [selected.id]: 'cny' }))}
+                      onClick={() => setModelCurrency(selected.id, 'cny')}
                       className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors ${
                         modelCurrency[selected.id] === 'cny' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
                       }`}
