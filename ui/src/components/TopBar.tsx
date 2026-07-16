@@ -34,7 +34,7 @@ export function TopBar() {
   const ThemeIcon = resolved === 'dark' ? Moon : Sun;
 
   return (
-    <header className="h-14 border-b bg-background flex items-center justify-between px-6 sticky top-0 z-20">
+    <header className="h-14 border-b bg-background/70 glass flex items-center justify-between px-6 sticky top-0 z-20">
       <div />
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="sm" onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}>

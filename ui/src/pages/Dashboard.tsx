@@ -76,9 +76,9 @@ export default function Dashboard() {
         <>
           {/* Stats cards */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-            {cards.map((stat) => (
-              <Card key={stat.title}>
-                <CardContent className="flex items-center gap-3 p-5">
+            {cards.map((stat, i) => (
+              <Card key={stat.title} className="card-hover" style={{ animation: `fade-in 0.35s var(--ease-out) ${i * 0.06}s both` }}>
+                <CardContent className="flex items-center gap-3 p-5 press-feedback">
                   <div className="p-2 rounded-lg bg-brand/10 text-brand shrink-0">{stat.icon}</div>
                   <div className="min-w-0">
                     <p className="text-xs text-muted-foreground truncate">{stat.title}</p>
@@ -94,7 +94,7 @@ export default function Dashboard() {
           {/* Charts row */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Request trend */}
-            <Card className="lg:col-span-2">
+            <Card className="lg:col-span-2 card-hover">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <BarChart3 className="size-4 text-brand" />
@@ -143,7 +143,7 @@ export default function Dashboard() {
             </Card>
 
             {/* Model usage share */}
-            <Card>
+            <Card className="card-hover">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Braces className="size-4 text-brand" />
@@ -190,7 +190,7 @@ export default function Dashboard() {
           </div>
 
           {/* Cost overview */}
-          <Card>
+          <Card className="card-hover">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <BarChart3 className="size-4 text-brand" />
@@ -220,7 +220,7 @@ export default function Dashboard() {
           </Card>
 
           {/* Performance */}
-          <Card>
+          <Card className="card-hover">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Activity className="size-4 text-brand" />
@@ -260,7 +260,7 @@ export default function Dashboard() {
 
           {/* Top models list */}
           {modelShare.length > 0 && (
-            <Card>
+            <Card className="card-hover">
               <CardHeader>
                 <CardTitle>{t('dash.topModels')}</CardTitle>
               </CardHeader>
@@ -292,7 +292,7 @@ export default function Dashboard() {
 
       {/* Info cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card>
+        <Card className="card-hover">
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><Bell className="size-4" /> {t('dash.announcements')}</CardTitle>
           </CardHeader>
@@ -301,7 +301,7 @@ export default function Dashboard() {
             <p className="text-sm text-muted-foreground mt-3">{t('dash.noAnnouncements')}</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="card-hover">
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><HelpCircle className="size-4" /> FAQ</CardTitle>
           </CardHeader>

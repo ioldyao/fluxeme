@@ -45,11 +45,7 @@ export function Sidebar() {
                     to={item.path ?? '/'}
                     end={item.end}
                     className={({ isActive }) =>
-                      `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-                        isActive
-                          ? 'bg-accent text-accent-foreground font-medium'
-                          : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
-                      }`
+                      `nav-link ${isActive ? 'active' : 'text-muted-foreground'}`
                     }
                   >
                     {item.icon && <item.icon className="h-4 w-4" />}
@@ -65,11 +61,7 @@ export function Sidebar() {
         <NavLink
           to="/wallet"
           className={({ isActive }) =>
-            `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-              isActive
-                ? 'bg-accent text-accent-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
-            }`
+            `nav-link ${isActive ? 'active' : 'text-muted-foreground'}`
           }
         >
           <Wallet className="h-4 w-4" />
@@ -78,11 +70,7 @@ export function Sidebar() {
         <NavLink
           to="/bills"
           className={({ isActive }) =>
-            `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-              isActive
-                ? 'bg-accent text-accent-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
-            }`
+            `nav-link ${isActive ? 'active' : 'text-muted-foreground'}`
           }
         >
           <Receipt className="h-4 w-4" />
@@ -91,11 +79,7 @@ export function Sidebar() {
         <NavLink
           to="/profile"
           className={({ isActive }) =>
-            `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-              isActive
-                ? 'bg-accent text-accent-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
-            }`
+            `nav-link ${isActive ? 'active' : 'text-muted-foreground'}`
           }
         >
           <User className="h-4 w-4" />
@@ -107,11 +91,7 @@ export function Sidebar() {
             to={item.path ?? '/'}
             end={item.end}
             className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-                isActive
-                  ? 'bg-accent text-accent-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
-              }`
+              `nav-link ${isActive ? 'active' : 'text-muted-foreground'}`
             }
           >
             <Settings className="h-4 w-4" />
