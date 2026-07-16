@@ -947,21 +947,21 @@ async fn dashboard_aggregations(
 
     // Load model pricing map once
     let models = state.db.list_models().await.unwrap_or_default();
-    let mut pricing: std::collections::HashMap<String, (f64, f64)> =
+    let mut pricing: std::collections::HashMap<String, (f64, f64, f64)> =
         std::collections::HashMap::new();
     for m in &models {
         pricing.insert(
             m.name.clone(),
-            (m.pricing.prompt_price, m.pricing.completion_price),
+            (m.pricing.prompt_price, m.pricing.completion_price, m.pricing.cache_read_price),
         );
         pricing.insert(
             m.model_pattern.clone(),
-            (m.pricing.prompt_price, m.pricing.completion_price),
+            (m.pricing.prompt_price, m.pricing.completion_price, m.pricing.cache_read_price),
         );
     }
 
     // Build sorted prefix list for glob pattern matching (O(log n) per lookup)
-    let mut prefix_prices: Vec<(&str, (f64, f64))> = pricing
+    let mut prefix_prices: Vec<(&str, (f64, f64, f64))> = pricing
         .iter()
         .filter_map(|(k, v)| k.strip_suffix('*').map(|p| (p, *v)))
         .collect();
@@ -969,9 +969,9 @@ async fn dashboard_aggregations(
 
     fn lookup_price<'a>(
         model_name: &str,
-        pricing: &'a std::collections::HashMap<String, (f64, f64)>,
-        prefix_prices: &'a [(&str, (f64, f64))],
-    ) -> (f64, f64) {
+        pricing: &'a std::collections::HashMap<String, (f64, f64, f64)>,
+        prefix_prices: &'a [(&str, (f64, f64, f64))],
+    ) -> (f64, f64, f64) {
         if let Some(price) = pricing.get(model_name) {
             return *price;
         }
@@ -980,7 +980,7 @@ async fn dashboard_aggregations(
                 return *price;
             }
         }
-        (0.0, 0.0)
+        (0.0, 0.0, 0.0)
     }
 
     // All-time totals: use COUNT SQL aggregate instead of loading all rows
@@ -1018,14 +1018,14 @@ async fn dashboard_aggregations(
     let mut total_cost_24h = 0.0_f64;
     let mut model_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for r in &records {
-        let (pp, cp) = if r.prompt_price > 0.0 || r.completion_price > 0.0 {
-            (r.prompt_price, r.completion_price)
+        let (pp, cp, crp) = if r.prompt_price > 0.0 || r.completion_price > 0.0 {
+            (r.prompt_price, r.completion_price, r.cache_read_price)
         } else {
             lookup_price(&r.model, &pricing, &prefix_prices)
         };
         let cost = (r.prompt_tokens as f64 / 1000000.0 * pp)
             + (r.completion_tokens as f64 / 1000000.0 * cp)
-            + (r.cache_hit_input_tokens as f64 / 1000000.0 * r.cache_read_price);
+            + (r.cache_hit_input_tokens as f64 / 1000000.0 * crp);
         total_cost_24h += cost;
         *model_counts.entry(r.model.clone()).or_default() += 1;
     }
@@ -1038,14 +1038,14 @@ async fn dashboard_aggregations(
     let total_cost: f64 = all_records
         .iter()
         .map(|r| {
-            let (pp, cp) = if r.prompt_price > 0.0 || r.completion_price > 0.0 {
-                (r.prompt_price, r.completion_price)
+            let (pp, cp, crp) = if r.prompt_price > 0.0 || r.completion_price > 0.0 {
+                (r.prompt_price, r.completion_price, r.cache_read_price)
             } else {
                 lookup_price(&r.model, &pricing, &prefix_prices)
             };
             (r.prompt_tokens as f64 / 1000000.0 * pp)
                 + (r.completion_tokens as f64 / 1000000.0 * cp)
-                + (r.cache_hit_input_tokens as f64 / 1000000.0 * r.cache_read_price)
+                + (r.cache_hit_input_tokens as f64 / 1000000.0 * crp)
         })
         .sum();
 
