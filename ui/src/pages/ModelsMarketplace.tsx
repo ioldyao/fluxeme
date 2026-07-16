@@ -221,7 +221,8 @@ function FilterBtn({ active, onClick, label }: { active: boolean; onClick: () =>
 
 function formatPrice(price: number, sym = '$'): string {
   if (!price || price === 0) return '-';
-  return `${sym}${(price * 1000).toFixed(3)}`;
+  const v = price * 1000;
+  return `${sym}${Number.isInteger(v) ? v : parseFloat(v.toFixed(10)).toString()}`;
 }
 
 function formatContextLength(len: number | null | undefined): string {
