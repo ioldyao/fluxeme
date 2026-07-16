@@ -516,6 +516,7 @@ async fn billing_summary(
             let cp = if r.completion_price > 0.0 { r.completion_price } else { 0.0 };
             (r.prompt_tokens as f64 / 1000000.0 * pp)
                 + (r.completion_tokens as f64 / 1000000.0 * cp)
+                + (r.cache_hit_input_tokens as f64 / 1000000.0 * r.cache_read_price)
         })
         .sum();
     let total_requests = records.len() as u64;

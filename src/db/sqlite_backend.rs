@@ -137,6 +137,7 @@ impl SqliteBackend {
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN reasoning_body TEXT;");
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN api_key_name TEXT;");
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN client_ip TEXT;");
+        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN cache_read_price REAL NOT NULL DEFAULT 0.0;");
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN published INTEGER NOT NULL DEFAULT 0;");
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN context_length INTEGER;");
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN cache_read_price REAL NOT NULL DEFAULT 0.0;");
@@ -205,41 +206,42 @@ impl SqliteBackend {
 // ── Private helpers ──────────────────────────────────────────────────────────
 
 impl SqliteBackend {
-    fn pricing_lookup(conn: &Connection, model_name: &str) -> (f64, f64) {
+    fn pricing_lookup(conn: &Connection, model_name: &str) -> (f64, f64, f64) {
         let result = conn.query_row(
-            "SELECT prompt_price, completion_price FROM models WHERE name = ?1",
+            "SELECT prompt_price, completion_price, cache_read_price FROM models WHERE name = ?1",
             params![model_name],
-            |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
+            |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?, row.get::<_, f64>(2)?)),
         );
         match result {
             Ok(p) => p,
             Err(_) => {
                 let mut stmt = conn
-                    .prepare("SELECT prompt_price, completion_price, model_pattern FROM models")
+                    .prepare("SELECT prompt_price, completion_price, cache_read_price, model_pattern FROM models")
                     .ok();
                 if let Some(ref mut stmt) = stmt {
                     if let Ok(rows) = stmt.query_map([], |row| {
                         Ok((
                             row.get::<_, f64>(0)?,
                             row.get::<_, f64>(1)?,
-                            row.get::<_, String>(2)?,
+                            row.get::<_, f64>(2)?,
+                            row.get::<_, String>(3)?,
                         ))
                     }) {
                         for row in rows.flatten() {
-                            let (p, c, pattern) = row;
+                            let (p, c, cr, pattern) = row;
                             if pattern.ends_with('*') {
                                 let prefix = &pattern[..pattern.len() - 1];
                                 if model_name.starts_with(prefix) {
-                                    return (p, c);
+                                    return (p, c, cr);
                                 }
                             }
                             if pattern == model_name {
-                                return (p, c);
+                                return (p, c, cr);
                             }
                         }
                     }
                 }
-                (0.0, 0.0)
+                (0.0, 0.0, 0.0)
             }
         }
     }
@@ -1846,7 +1848,7 @@ impl DbBackend for SqliteBackend {
                 format!("{}-{:02}-01T00:00:00", year, month + 1)
             };
             let sql = format!(
-                "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price), 0), COUNT(*), COALESCE(SUM(total_tokens), 0) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{}",
+                "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price + cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), COUNT(*), COALESCE(SUM(total_tokens), 0) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{}",
                 if uid.is_some() { " AND user_id = ?3" } else { "" }
             );
             let mut stmt = conn.prepare(&sql)?;
@@ -1879,7 +1881,7 @@ impl DbBackend for SqliteBackend {
                 format!("{}-{:02}-01T00:00:00", year, month + 1)
             };
             let sql = format!(
-                "SELECT model, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price), 0) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{} GROUP BY model ORDER BY 2 DESC",
+                "SELECT model, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price + cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{} GROUP BY model ORDER BY 2 DESC",
                 if uid.is_some() { " AND user_id = ?3" } else { "" }
             );
             let mut stmt = conn.prepare(&sql)?;
@@ -1915,7 +1917,7 @@ impl DbBackend for SqliteBackend {
                 format!("{}-{:02}-01T00:00:00", year, month + 1)
             };
             let sql = format!(
-                "SELECT channel_id, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price), 0) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{} GROUP BY channel_id ORDER BY 2 DESC",
+                "SELECT channel_id, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price + cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{} GROUP BY channel_id ORDER BY 2 DESC",
                 if uid.is_some() { " AND user_id = ?3" } else { "" }
             );
             let mut stmt = conn.prepare(&sql)?;
@@ -1951,7 +1953,7 @@ impl DbBackend for SqliteBackend {
                 format!("{}-{:02}-01T00:00:00", year, month + 1)
             };
             let sql = format!(
-                "SELECT SUBSTR(timestamp, 1, 10) as day, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price), 0), COUNT(*) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{} GROUP BY day ORDER BY day DESC",
+                "SELECT SUBSTR(timestamp, 1, 10) as day, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price + cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), COUNT(*) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{} GROUP BY day ORDER BY day DESC",
                 if uid.is_some() { " AND user_id = ?3" } else { "" }
             );
             let mut stmt = conn.prepare(&sql)?;
@@ -2030,7 +2032,7 @@ impl DbBackend for SqliteBackend {
             let mut records = Vec::new();
             if let Some(ref uid) = uid {
                 let mut stmt = conn.prepare(
-                    "SELECT SUBSTR(timestamp, 1, 10) as day, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price), 0), COUNT(*) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2 AND user_id = ?3 GROUP BY day ORDER BY day DESC LIMIT ?4 OFFSET ?5",
+                    "SELECT SUBSTR(timestamp, 1, 10) as day, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price + cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), COUNT(*) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2 AND user_id = ?3 GROUP BY day ORDER BY day DESC LIMIT ?4 OFFSET ?5",
                 )?;
                 let mut rows = stmt.query(params![start, end, uid, limit_i64, offset_i64])?;
                 while let Some(row) = rows.next()? {
@@ -2042,7 +2044,7 @@ impl DbBackend for SqliteBackend {
                 }
             } else {
                 let mut stmt = conn.prepare(
-                    "SELECT SUBSTR(timestamp, 1, 10) as day, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price), 0), COUNT(*) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2 GROUP BY day ORDER BY day DESC LIMIT ?3 OFFSET ?4",
+                    "SELECT SUBSTR(timestamp, 1, 10) as day, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price + cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), COUNT(*) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2 GROUP BY day ORDER BY day DESC LIMIT ?3 OFFSET ?4",
                 )?;
                 let mut rows = stmt.query(params![start, end, limit_i64, offset_i64])?;
                 while let Some(row) = rows.next()? {
@@ -2092,7 +2094,7 @@ impl DbBackend for SqliteBackend {
     async fn period_summary_all(&self) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
         self.exec(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT SUBSTR(timestamp, 1, 7) AS month, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price), 0), COUNT(*), COALESCE(SUM(total_tokens), 0) FROM usage_logs GROUP BY month ORDER BY month DESC",
+                "SELECT SUBSTR(timestamp, 1, 7) AS month, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price + cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), COUNT(*), COALESCE(SUM(total_tokens), 0) FROM usage_logs GROUP BY month ORDER BY month DESC",
             )?;
             let mut rows = stmt.query([])?;
             let mut records = Vec::new();
@@ -2113,7 +2115,7 @@ impl DbBackend for SqliteBackend {
         let uid = user_id.to_string();
         self.exec(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT SUBSTR(timestamp, 1, 7) AS month, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price), 0), COUNT(*), COALESCE(SUM(total_tokens), 0) FROM usage_logs WHERE user_id = ?1 GROUP BY month ORDER BY month DESC",
+                "SELECT SUBSTR(timestamp, 1, 7) AS month, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price + cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), COUNT(*), COALESCE(SUM(total_tokens), 0) FROM usage_logs WHERE user_id = ?1 GROUP BY month ORDER BY month DESC",
             )?;
             let mut rows = stmt.query(rusqlite::params![uid])?;
             let mut records = Vec::new();
@@ -2389,7 +2391,7 @@ impl DbBackend for SqliteBackend {
         self.exec(move |conn| {
             Ok(conn
                 .query_row(
-                    "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price), 0)
+                    "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price + cache_hit_input_tokens / 1000000.0 * cache_read_price), 0)
                      FROM usage_logs WHERE user_id = ?1",
                     params![user_id],
                     |row| row.get::<_, f64>(0),
@@ -2419,7 +2421,7 @@ impl DbBackend for SqliteBackend {
                 (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
             let total_cost: f64 = conn
                 .query_row(
-                    "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price), 0)
+                    "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price + cache_hit_input_tokens / 1000000.0 * cache_read_price), 0)
                      FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2",
                     params![user_id, thirty_days_ago],
                     |row| row.get(0),
@@ -2788,13 +2790,13 @@ impl DbBackend for SqliteBackend {
             let mut deductions: Vec<(String, f64, f64)> = Vec::new();
 
             for record in &batch {
-                let (prompt_price, completion_price) =
+                let (prompt_price, completion_price, cache_read_price) =
                     Self::pricing_lookup(&tx, &record.model);
 
                 // Insert usage record with pricing snapshot
                 tx.execute(
-                    "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, client_ip)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+                    "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, client_ip, cache_read_price)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
                     params![
                         record.timestamp, record.request_id, record.user_id, record.user_name,
                         record.channel_id, record.model, record.prompt_tokens, record.completion_tokens,
@@ -2802,14 +2804,15 @@ impl DbBackend for SqliteBackend {
                         record.request_body, record.response_body, record.reasoning_body,
                         record.api_key_name, record.api_format, record.stream as i32,
                         record.cache_hit_input_tokens, prompt_price, completion_price,
-                        record.client_ip,
+                        record.client_ip, cache_read_price,
                     ],
                 )?;
 
                 if billing_enabled {
-                    // Calculate cost
+                    // Calculate cost including cache hits
                     let cost = record.prompt_tokens as f64 / 1000000.0 * prompt_price
-                        + record.completion_tokens as f64 / 1000000.0 * completion_price;
+                        + record.completion_tokens as f64 / 1000000.0 * completion_price
+                        + record.cache_hit_input_tokens as f64 / 1000000.0 * cache_read_price;
 
                     if cost > 0.0 {
                         let (balance, frozen): (f64, f64) = tx

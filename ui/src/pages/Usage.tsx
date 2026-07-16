@@ -121,7 +121,7 @@ export default function Usage() {
 
   const modelPricing = useMemo(() => {
     if (!models) return {};
-    const map: Record<string, { prompt_price: number; completion_price: number }> = {};
+    const map: Record<string, { prompt_price: number; completion_price: number; cache_read_price: number }> = {};
     for (const m of models) {
       map[m.name] = m.pricing;
     }
@@ -296,7 +296,7 @@ export default function Usage() {
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.cache_hit_input_tokens > 0 ? r.cache_hit_input_tokens : '—'}</td>
                           <td className="py-3 px-4 text-right">{r.completion_tokens}</td>
                           <td className="py-3 px-4 text-right font-medium">{r.total_tokens}</td>
-                          {canViewAll && <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, getRecordPricing(r, modelPricing), currency, rate)}</td>}
+                          {canViewAll && <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, r.cache_hit_input_tokens, getRecordPricing(r, modelPricing), currency, rate)}</td>}
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>
                           <td className="py-3 px-4 text-center">
                             {r.success ? (

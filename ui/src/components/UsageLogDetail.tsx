@@ -68,7 +68,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
   const { currency, rate } = useCurrency();
   const streaming = record ? isStreaming(record) : false;
   const matchedModel = record ? findModel(record.model) : undefined;
-  const costStr = record ? formatCost(record.prompt_tokens, record.completion_tokens, getRecordPricing(record, { [record.model]: matchedModel?.pricing }), currency, rate) : null;
+  const costStr = record ? formatCost(record.prompt_tokens, record.completion_tokens, record.cache_hit_input_tokens, getRecordPricing(record, { [record.model]: matchedModel?.pricing }), currency, rate) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

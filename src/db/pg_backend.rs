@@ -1822,7 +1822,8 @@ impl DbBackend for PgBackend {
         let (cost, count, tokens): (f64, i64, i64) = if let Some(uid) = user_id {
             sqlx::query_as(
                 "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price), 0), \
+                 completion_tokens / 1000000.0 * completion_price + \
+                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3",
             )
@@ -1834,7 +1835,8 @@ impl DbBackend for PgBackend {
         } else {
             sqlx::query_as(
                 "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price), 0), \
+                 completion_tokens / 1000000.0 * completion_price + \
+                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2",
             )
@@ -1861,7 +1863,8 @@ impl DbBackend for PgBackend {
         let rows = if let Some(uid) = user_id {
             sqlx::query_as::<_, (String, f64)>(
                 "SELECT model, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price), 0) \
+                 completion_tokens / 1000000.0 * completion_price + \
+                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY model ORDER BY 2 DESC",
             )
@@ -1873,7 +1876,8 @@ impl DbBackend for PgBackend {
         } else {
             sqlx::query_as::<_, (String, f64)>(
                 "SELECT model, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price), 0) \
+                 completion_tokens / 1000000.0 * completion_price + \
+                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY model ORDER BY 2 DESC",
             )
@@ -1900,7 +1904,8 @@ impl DbBackend for PgBackend {
         let rows = if let Some(uid) = user_id {
             sqlx::query_as::<_, (String, f64)>(
                 "SELECT channel_id, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price), 0) \
+                 completion_tokens / 1000000.0 * completion_price + \
+                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY channel_id ORDER BY 2 DESC",
             )
@@ -1912,7 +1917,8 @@ impl DbBackend for PgBackend {
         } else {
             sqlx::query_as::<_, (String, f64)>(
                 "SELECT channel_id, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price), 0) \
+                 completion_tokens / 1000000.0 * completion_price + \
+                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY channel_id ORDER BY 2 DESC",
             )
@@ -1940,7 +1946,8 @@ impl DbBackend for PgBackend {
             sqlx::query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
                  COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price), 0), \
+                 completion_tokens / 1000000.0 * completion_price + \
+                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY day ORDER BY day DESC",
@@ -1954,7 +1961,8 @@ impl DbBackend for PgBackend {
             sqlx::query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
                  COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price), 0), \
+                 completion_tokens / 1000000.0 * completion_price + \
+                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY day ORDER BY day DESC",
@@ -2020,7 +2028,8 @@ impl DbBackend for PgBackend {
             sqlx::query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
                  COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price), 0), \
+                 completion_tokens / 1000000.0 * completion_price + \
+                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY day ORDER BY day DESC LIMIT $4 OFFSET $5",
@@ -2036,7 +2045,8 @@ impl DbBackend for PgBackend {
             sqlx::query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
                  COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price), 0), \
+                 completion_tokens / 1000000.0 * completion_price + \
+                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY day ORDER BY day DESC LIMIT $3 OFFSET $4",
@@ -2385,44 +2395,63 @@ impl DbBackend for PgBackend {
     }
 
     async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<f64, DbError> {
-        // Fetch key details
-        let key_row = sqlx::query(
-            "SELECT amount, used_by, expires_at, revoked FROM recharge_keys WHERE key = $1",
-        )
-        .bind(key)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        let (amount, used_by, expires_at, revoked): (f64, Option<String>, Option<String>, bool) =
-            match key_row {
-                Some(r) => (r.get(0), r.get(1), r.get(2), r.get(3)),
-                None => return Err(DbError("Invalid recharge key".to_string())),
-            };
-
-        if used_by.is_some() {
-            return Err(DbError("Recharge key already used".to_string()));
-        }
-        if revoked {
-            return Err(DbError("Recharge key has been revoked".to_string()));
-        }
-        if let Some(exp) = &expires_at {
-            if let Ok(exp_time) = chrono::DateTime::parse_from_rfc3339(exp) {
-                if chrono::Utc::now() > exp_time {
-                    return Err(DbError("Recharge key has expired".to_string()));
-                }
-            }
-        }
-
         let now = chrono::Utc::now().to_rfc3339();
         let mut tx = self.pool.begin().await?;
 
-        // Mark as used
-        sqlx::query("UPDATE recharge_keys SET used_by = $1, used_at = $2 WHERE key = $3")
-            .bind(user_id)
-            .bind(&now)
+        // Atomically mark as used — only if not already used/revoked
+        let updated = sqlx::query(
+            "UPDATE recharge_keys SET used_by = $1, used_at = $2 \
+             WHERE key = $3 AND used_by IS NULL AND (revoked IS NULL OR revoked = false)",
+        )
+        .bind(user_id)
+        .bind(&now)
+        .bind(key)
+        .execute(&mut *tx)
+        .await?;
+
+        if updated.rows_affected() == 0 {
+            // Key doesn't exist or was already used/revoked — fetch details for error message
+            let existing = sqlx::query(
+                "SELECT used_by, revoked, expires_at FROM recharge_keys WHERE key = $1",
+            )
             .bind(key)
-            .execute(&mut *tx)
+            .fetch_optional(&mut *tx)
             .await?;
+            let msg = match existing {
+                None => "Invalid recharge key".to_string(),
+                Some(r) => {
+                    let used_by: Option<String> = r.get(0);
+                    let revoked: bool = r.get(1);
+                    let expires_at: Option<String> = r.get(2);
+                    if used_by.is_some() {
+                        "Recharge key already used".to_string()
+                    } else if revoked {
+                        "Recharge key has been revoked".to_string()
+                    } else if let Some(exp) = &expires_at {
+                        if let Ok(exp_time) = chrono::DateTime::parse_from_rfc3339(exp) {
+                            if chrono::Utc::now() > exp_time {
+                                "Recharge key has expired".to_string()
+                            } else {
+                                "Invalid recharge key".to_string()
+                            }
+                        } else {
+                            "Invalid recharge key".to_string()
+                        }
+                    } else {
+                        "Invalid recharge key".to_string()
+                    }
+                }
+            };
+            return Err(DbError(msg));
+        }
+
+        // Get amount from the key
+        let (amount,): (f64,) = sqlx::query_as(
+            "SELECT amount FROM recharge_keys WHERE key = $1",
+        )
+        .bind(key)
+        .fetch_one(&mut *tx)
+        .await?;
 
         // Get current balance
         let (balance,): (f64,) = sqlx::query_as("SELECT balance FROM users WHERE id = $1")
