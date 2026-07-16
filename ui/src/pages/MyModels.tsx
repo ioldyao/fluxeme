@@ -12,9 +12,8 @@ import { CURRENCY_SYMBOL, usePricingCurrency, useCurrency } from '@/store/curren
 const CATEGORY_ORDER = ['chat', 'reasoning', 'tools', 'web', 'vision', 'rerank', 'embedding'];
 
 function fmtPerK(price: number): string {
-  const v = price * 1000;
-  if (!v) return '0';
-  return Number.isInteger(v) ? v.toString() : parseFloat(v.toFixed(10)).toString();
+  if (!price) return '0';
+  return String(price);
 }
 
 export default function MyModels() {

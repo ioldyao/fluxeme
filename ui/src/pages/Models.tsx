@@ -225,8 +225,8 @@ export default function Models() {
                       <td className="py-3 px-4 text-right text-xs">
                         {(() => {
                           const sym = CURRENCY_SYMBOL[getEffectiveCurrency(currency, m.id)];
-                          const pp = m.pricing.prompt_price * 1000;
-                          const cp = m.pricing.completion_price * 1000;
+                          const pp = m.pricing.prompt_price;
+                          const cp = m.pricing.completion_price;
                           const fmt = (v: number) => Number.isInteger(v) ? v.toString() : parseFloat(v.toFixed(10)).toString();
                           return `${sym}${fmt(pp)} / ${sym}${fmt(cp)}`;
                         })()}

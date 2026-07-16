@@ -182,7 +182,7 @@ function formatCtx(v: number | null | undefined): string {
 
 function fmtPrice(price: number): string {
   if (!price) return '0';
-  return price.toFixed(4).replace(/\.?0+$/, '');
+  return String(price);
 }
 
 export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props) {

@@ -38,30 +38,6 @@ const PRICE_GROUPS: { label: string; fields: { key: keyof Pricing; labelKey: str
   },
 ];
 
-function toDisplay(p: Pricing): Pricing {
-  return {
-    prompt_price: +(p.prompt_price * 1000).toFixed(6),
-    completion_price: +(p.completion_price * 1000).toFixed(6),
-    cache_read_price: +(p.cache_read_price * 1000).toFixed(6),
-    cache_write_price: +(p.cache_write_price * 1000).toFixed(6),
-    image_input_price: +(p.image_input_price * 1000).toFixed(6),
-    audio_input_price: +(p.audio_input_price * 1000).toFixed(6),
-    audio_output_price: +(p.audio_output_price * 1000).toFixed(6),
-  };
-}
-
-function toApi(p: Pricing): Pricing {
-  return {
-    prompt_price: +(p.prompt_price / 1000).toFixed(10),
-    completion_price: +(p.completion_price / 1000).toFixed(10),
-    cache_read_price: +(p.cache_read_price / 1000).toFixed(10),
-    cache_write_price: +(p.cache_write_price / 1000).toFixed(10),
-    image_input_price: +(p.image_input_price / 1000).toFixed(10),
-    audio_input_price: +(p.audio_input_price / 1000).toFixed(10),
-    audio_output_price: +(p.audio_output_price / 1000).toFixed(10),
-  };
-}
-
 function PriceInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   const uid = useId();
   return (
@@ -110,7 +86,7 @@ export default function ModelPricingPage() {
   const effectiveSym = CURRENCY_SYMBOL[effectiveCurrency];
 
   const currentValues = useMemo(
-    () => (selected ? dirty[selected.id] ?? toDisplay(selected.pricing) : null),
+    () => (selected ? dirty[selected.id] ?? selected.pricing : null),
     [selected, dirty],
   );
 
@@ -130,7 +106,7 @@ export default function ModelPricingPage() {
 
   function setPrice(field: keyof Pricing, value: number) {
     if (!selected) return;
-    const original = toDisplay(selected.pricing);
+    const original = selected.pricing;
     const current = dirty[selected.id] ?? original;
     const updated = { ...current, [field]: value };
 
@@ -149,11 +125,11 @@ export default function ModelPricingPage() {
   }
 
   async function handleSave(id: string) {
-    const values = dirty[id] ?? (selected && toDisplay(selected.pricing));
+    const values = dirty[id] ?? (selected && selected.pricing);
     if (!values) return;
     setSaving((prev) => ({ ...prev, [id]: true }));
     try {
-      await updatePricing.mutateAsync({ id, pricing: toApi(values) });
+      await updatePricing.mutateAsync({ id, pricing: values });
       setDirty((prev) => {
         const next = { ...prev };
         delete next[id];
