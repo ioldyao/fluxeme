@@ -1894,7 +1894,7 @@ impl DbBackend for PgBackend {
         year: i32,
         month: u32,
         user_id: Option<&str>,
-    ) -> Result<Vec<(String, f64)>, DbError> {
+    ) -> Result<Vec<(String, String, f64)>, DbError> {
         let start = format!("{}-{:02}-01T00:00:00", year, month);
         let end = if month == 12 {
             format!("{}-01-01T00:00:00", year + 1)
@@ -1902,12 +1902,13 @@ impl DbBackend for PgBackend {
             format!("{}-{:02}-01T00:00:00", year, month + 1)
         };
         let rows = if let Some(uid) = user_id {
-            sqlx::query_as::<_, (String, f64)>(
-                "SELECT channel_id, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price + \
-                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
-                 FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
-                 GROUP BY channel_id ORDER BY 2 DESC",
+            sqlx::query_as::<_, (String, String, f64)>(
+                "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(ul.prompt_tokens / 1000000.0 * ul.prompt_price + \
+                 ul.completion_tokens / 1000000.0 * ul.completion_price + \
+                 ul.cache_hit_input_tokens / 1000000.0 * ul.cache_read_price), 0) \
+                 FROM usage_logs ul LEFT JOIN channels c ON c.id = ul.channel_id \
+                 WHERE ul.timestamp >= $1 AND ul.timestamp < $2 AND ul.user_id = $3 \
+                 GROUP BY ul.channel_id, c.name ORDER BY 3 DESC",
             )
             .bind(&start)
             .bind(&end)
@@ -1915,12 +1916,13 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, (String, f64)>(
-                "SELECT channel_id, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price + \
-                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
-                 FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 \
-                 GROUP BY channel_id ORDER BY 2 DESC",
+            sqlx::query_as::<_, (String, String, f64)>(
+                "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(ul.prompt_tokens / 1000000.0 * ul.prompt_price + \
+                 ul.completion_tokens / 1000000.0 * ul.completion_price + \
+                 ul.cache_hit_input_tokens / 1000000.0 * ul.cache_read_price), 0) \
+                 FROM usage_logs ul LEFT JOIN channels c ON c.id = ul.channel_id \
+                 WHERE ul.timestamp >= $1 AND ul.timestamp < $2 \
+                 GROUP BY ul.channel_id, c.name ORDER BY 3 DESC",
             )
             .bind(&start)
             .bind(&end)

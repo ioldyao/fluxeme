@@ -554,6 +554,7 @@ struct ModelCostShare {
 #[derive(Serialize)]
 struct ChannelCostShare {
     channel: String,
+    name: String,
     cost: f64,
     percentage: f64,
 }
@@ -589,9 +590,9 @@ async fn billing_period_summary(
     let by_channel = state.db.period_channel_breakdown(year, month, user_filter)
         .await.map_err(db_err)?
         .into_iter()
-        .map(|(channel, cost)| {
+        .map(|(channel, name, cost)| {
             let pct = if total_cost > 0.0 { (cost / total_cost * 100.0 * 10.0).round() / 10.0 } else { 0.0 };
-            ChannelCostShare { channel, cost: (cost * 100.0).round() / 100.0, percentage: pct }
+            ChannelCostShare { channel, name, cost: (cost * 100.0).round() / 100.0, percentage: pct }
         })
         .collect();
 

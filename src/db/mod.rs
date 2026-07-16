@@ -323,7 +323,7 @@ impl Database {
         year: i32,
         month: u32,
         user_id: Option<&str>,
-    ) -> Result<Vec<(String, f64)>, DbError> {
+    ) -> Result<Vec<(String, String, f64)>, DbError> {
         self.backend.period_channel_breakdown(year, month, user_id).await
     }
     pub async fn daily_deductions(

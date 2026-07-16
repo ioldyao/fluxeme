@@ -1907,7 +1907,7 @@ impl DbBackend for SqliteBackend {
         year: i32,
         month: u32,
         user_id: Option<&str>,
-    ) -> Result<Vec<(String, f64)>, DbError> {
+    ) -> Result<Vec<(String, String, f64)>, DbError> {
         let uid = user_id.map(|s| s.to_string());
         self.exec(move |conn| {
             let start = format!("{}-{:02}-01T00:00:00", year, month);
@@ -1917,20 +1917,20 @@ impl DbBackend for SqliteBackend {
                 format!("{}-{:02}-01T00:00:00", year, month + 1)
             };
             let sql = format!(
-                "SELECT channel_id, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + completion_tokens / 1000000.0 * completion_price + cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) FROM usage_logs WHERE timestamp >= ?1 AND timestamp < ?2{} GROUP BY channel_id ORDER BY 2 DESC",
-                if uid.is_some() { " AND user_id = ?3" } else { "" }
+                "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(ul.prompt_tokens / 1000000.0 * ul.prompt_price + ul.completion_tokens / 1000000.0 * ul.completion_price + ul.cache_hit_input_tokens / 1000000.0 * ul.cache_read_price), 0) FROM usage_logs ul LEFT JOIN channels c ON c.id = ul.channel_id WHERE ul.timestamp >= ?1 AND ul.timestamp < ?2{} GROUP BY ul.channel_id, c.name ORDER BY 3 DESC",
+                if uid.is_some() { " AND ul.user_id = ?3" } else { "" }
             );
             let mut stmt = conn.prepare(&sql)?;
             let mut records = Vec::new();
             if let Some(ref uid) = uid {
                 let mut rows = stmt.query(params![start, end, uid])?;
                 while let Some(row) = rows.next()? {
-                    records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?));
+                    records.push((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?));
                 }
             } else {
                 let mut rows = stmt.query(params![start, end])?;
                 while let Some(row) = rows.next()? {
-                    records.push((row.get::<_, String>(0)?, row.get::<_, f64>(1)?));
+                    records.push((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?));
                 }
             }
             Ok(records)

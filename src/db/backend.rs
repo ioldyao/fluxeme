@@ -89,7 +89,7 @@ pub trait DbBackend: Send + Sync {
     // ── Billing / Period ─────────────────────────────────────────────────
     async fn period_summary(&self, year: i32, month: u32, user_id: Option<&str>) -> Result<(f64, u64, u64), DbError>;
     async fn period_model_breakdown(&self, year: i32, month: u32, user_id: Option<&str>) -> Result<Vec<(String, f64)>, DbError>;
-    async fn period_channel_breakdown(&self, year: i32, month: u32, user_id: Option<&str>) -> Result<Vec<(String, f64)>, DbError>;
+    async fn period_channel_breakdown(&self, year: i32, month: u32, user_id: Option<&str>) -> Result<Vec<(String, String, f64)>, DbError>;
     async fn daily_deductions(&self, year: i32, month: u32, user_id: Option<&str>) -> Result<Vec<(String, f64, u64)>, DbError>;
     async fn count_daily_deductions(&self, year: i32, month: u32, user_id: Option<&str>) -> Result<usize, DbError>;
     async fn daily_deductions_paginated(&self, year: i32, month: u32, user_id: Option<&str>, limit: usize, offset: usize) -> Result<Vec<(String, f64, u64)>, DbError>;

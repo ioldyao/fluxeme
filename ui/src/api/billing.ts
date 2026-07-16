@@ -9,7 +9,7 @@ export interface PeriodSummary {
   total_requests: number;
   total_tokens: number;
   by_model: { model: string; cost: number; percentage: number }[];
-  by_channel: { channel: string; cost: number; percentage: number }[];
+  by_channel: { channel: string; name: string; cost: number; percentage: number }[];
 }
 
 export interface DeductionRecord {
