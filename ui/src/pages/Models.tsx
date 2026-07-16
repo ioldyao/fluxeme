@@ -229,8 +229,8 @@ export default function Models() {
                           const cp = m.pricing.completion_price;
                           const crp = m.pricing.cache_read_price;
                           const fmt = (v: number) => Number.isInteger(v) ? v.toString() : parseFloat(v.toFixed(10)).toString();
-                          const parts = [`${t('pricing.inputPrice')} ${sym}${fmt(pp)} / ${t('pricing.outputPrice')} ${sym}${fmt(cp)}`];
-                          if (crp > 0) parts.push(`${t('pricing.cacheRead')} ${sym}${fmt(crp)}`);
+                          const parts = [`${t('pricing.inputLabel')} ${sym}${fmt(pp)} / ${t('pricing.outputLabel')} ${sym}${fmt(cp)}`];
+                          if (crp > 0) parts.push(`${t('pricing.cacheLabel')} ${sym}${fmt(crp)}`);
                           return parts.join(' · ');
                         })()}
                       </td>
