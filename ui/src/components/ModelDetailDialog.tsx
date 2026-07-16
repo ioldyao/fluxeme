@@ -180,10 +180,9 @@ function formatCtx(v: number | null | undefined): string {
   return v.toLocaleString();
 }
 
-function fmtPerM(price: number): string {
-  const v = price * 1_000_000;
-  if (!v) return '0';
-  return Number.isInteger(v) ? v.toString() : parseFloat(v.toFixed(10)).toString();
+function fmtPrice(price: number): string {
+  if (!price) return '0';
+  return price.toFixed(4).replace(/\.?0+$/, '');
 }
 
 export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props) {
@@ -266,16 +265,16 @@ export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props
               <div className="space-y-0.5 text-xs">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-muted-foreground">{t('marketplace.input')}</span>
-                  <span className="font-mono font-medium">{sym}{fmtPerM(model.pricing.prompt_price)}/1M</span>
+                  <span className="font-mono font-medium">{t('pricing.perMillion', { price: `${sym}${fmtPrice(model.pricing.prompt_price)}` })}</span>
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-muted-foreground">{t('marketplace.output')}</span>
-                  <span className="font-mono font-medium">{sym}{fmtPerM(model.pricing.completion_price)}/1M</span>
+                  <span className="font-mono font-medium">{t('pricing.perMillion', { price: `${sym}${fmtPrice(model.pricing.completion_price)}` })}</span>
                 </div>
                 {model.pricing.cache_read_price > 0 && (
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-muted-foreground">{t('pricing.cacheRead')}</span>
-                    <span className="font-mono font-medium">{sym}{fmtPerM(model.pricing.cache_read_price)}/1M</span>
+                    <span className="font-mono font-medium">{t('pricing.perMillion', { price: `${sym}${fmtPrice(model.pricing.cache_read_price)}` })}</span>
                   </div>
                 )}
               </div>
