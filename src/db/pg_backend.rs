@@ -1455,7 +1455,8 @@ impl DbBackend for PgBackend {
         let mut builder: QueryBuilder<'_, sqlx::Postgres> = QueryBuilder::new(
             "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-             api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price \
+             api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
+             client_ip \
              FROM usage_logs WHERE 1=1",
         );
 
@@ -1504,7 +1505,7 @@ impl DbBackend for PgBackend {
             "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              request_body, response_body, reasoning_body, api_key_name, api_format, stream, \
-             cache_hit_input_tokens, prompt_price, completion_price \
+             cache_hit_input_tokens, prompt_price, completion_price, client_ip \
              FROM usage_logs WHERE request_id = $1",
         )
         .bind(request_id)
@@ -1566,7 +1567,8 @@ impl DbBackend for PgBackend {
             sqlx::query(
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-                 api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price \
+                 api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
+                 client_ip \
                  FROM usage_logs WHERE user_id = $1 AND timestamp >= $2 ORDER BY id ASC",
             )
             .bind(uid)
@@ -1577,7 +1579,8 @@ impl DbBackend for PgBackend {
             sqlx::query(
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-                 api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price \
+                 api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
+                 client_ip \
                  FROM usage_logs WHERE timestamp >= $1 ORDER BY id ASC",
             )
             .bind(since)
