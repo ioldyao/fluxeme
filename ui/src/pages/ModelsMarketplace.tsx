@@ -316,7 +316,7 @@ function ModelCard({
           </div>
           {model.pricing.cache_read_price > 0 && (
             <div>
-              <p className="text-xs text-muted-foreground">{t('pricing.cacheRead')}</p>
+              <p className="text-xs text-muted-foreground">{t('pricing.cacheRead')} /1M</p>
               <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.cache_read_price, sym)}</p>
             </div>
           )}
