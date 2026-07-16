@@ -2084,7 +2084,8 @@ impl DbBackend for PgBackend {
         let rows = sqlx::query_as::<_, (String, f64, i64, i64)>(
             "SELECT LEFT(timestamp::text, 7) AS month, \
              COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-             completion_tokens / 1000000.0 * completion_price), 0), \
+             completion_tokens / 1000000.0 * completion_price + \
+             cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
              COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
              FROM usage_logs GROUP BY month ORDER BY month DESC",
         )
@@ -2100,7 +2101,8 @@ impl DbBackend for PgBackend {
         let rows = sqlx::query_as::<_, (String, f64, i64, i64)>(
             "SELECT LEFT(timestamp::text, 7) AS month, \
              COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-             completion_tokens / 1000000.0 * completion_price), 0), \
+             completion_tokens / 1000000.0 * completion_price + \
+             cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
              COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
              FROM usage_logs WHERE user_id = $1 GROUP BY month ORDER BY month DESC",
         )
@@ -2319,7 +2321,8 @@ impl DbBackend for PgBackend {
     async fn get_total_consumed(&self, user_id: &str) -> Result<f64, DbError> {
         let result: Result<(f64,), _> = sqlx::query_as(
             "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-             completion_tokens / 1000000.0 * completion_price), 0) \
+             completion_tokens / 1000000.0 * completion_price + \
+             cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
              FROM usage_logs WHERE user_id = $1",
         )
         .bind(user_id)
@@ -2344,7 +2347,8 @@ impl DbBackend for PgBackend {
             (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
         let total_cost: f64 = sqlx::query_as::<_, (f64,)>(
             "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-             completion_tokens / 1000000.0 * completion_price), 0) \
+             completion_tokens / 1000000.0 * completion_price + \
+             cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
              FROM usage_logs WHERE user_id = $1 AND timestamp >= $2",
         )
         .bind(user_id)
