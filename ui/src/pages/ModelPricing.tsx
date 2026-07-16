@@ -275,18 +275,9 @@ export default function ModelPricingPage() {
                     <button
                       type="button"
                       onClick={() => {
-                        const current = modelCurrency[selected.id] ?? 'usd';
-                        if (current !== 'usd') {
+                        if ((modelCurrency[selected.id] ?? 'usd') !== 'usd') {
                           setModelCurrency(selected.id, 'usd');
                           if (!dirty[selected.id]) setDirty((p) => ({ ...p, [selected.id]: toDisplay(selected.pricing) }));
-                        } else if (dirty[selected.id]) {
-                          // restored to original — compare all fields to clear
-                          const original = toDisplay(selected.pricing);
-                          const updated = dirty[selected.id];
-                          const allFields = PRICE_GROUPS.flatMap((g) => g.fields).map((f) => f.key);
-                          if (allFields.every((k) => updated[k] === original[k])) {
-                            setDirty((p) => { const n = { ...p }; delete n[selected.id]; return n; });
-                          }
                         }
                       }}
                       className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors ${
@@ -298,17 +289,9 @@ export default function ModelPricingPage() {
                     <button
                       type="button"
                       onClick={() => {
-                        const current = modelCurrency[selected.id] ?? 'usd';
-                        if (current !== 'cny') {
+                        if ((modelCurrency[selected.id] ?? 'usd') !== 'cny') {
                           setModelCurrency(selected.id, 'cny');
                           if (!dirty[selected.id]) setDirty((p) => ({ ...p, [selected.id]: toDisplay(selected.pricing) }));
-                        } else if (dirty[selected.id]) {
-                          const original = toDisplay(selected.pricing);
-                          const updated = dirty[selected.id];
-                          const allFields = PRICE_GROUPS.flatMap((g) => g.fields).map((f) => f.key);
-                          if (allFields.every((k) => updated[k] === original[k])) {
-                            setDirty((p) => { const n = { ...p }; delete n[selected.id]; return n; });
-                          }
                         }
                       }}
                       className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors ${
