@@ -241,6 +241,7 @@ const en: Record<string, string> = {
   'model.context': 'Context',
   'model.publishCol': 'Publish',
   'model.healthCheckResult': '{{channels}} channels checked, {{models}} models updated',
+  'model.healthCheckResultWithFailures': '{{channels}} channels checked, {{models}} models updated, {{failed}} channels failed',
   'model.syncTitle': 'Sync Upstream Models',
   'model.syncSubtitle': 'Select a channel and fetch upstream models, then choose which ones to import',
   'model.selected': 'selected',

@@ -241,6 +241,7 @@ const zh: Record<string, string> = {
   'model.context': '上下文',
   'model.publishCol': '发布',
   'model.healthCheckResult': '{{channels}} 个渠道检查完成, {{models}} 个模型已更新',
+  'model.healthCheckResultWithFailures': '{{channels}} 个渠道检查完成, {{models}} 个模型已更新, {{failed}} 个渠道检查失败',
   'model.syncTitle': '同步上游模型',
   'model.syncSubtitle': '选择渠道并获取上游模型，勾选需要导入的模型后添加到本地',
   'model.selected': '个选中',

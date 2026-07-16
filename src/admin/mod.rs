@@ -2345,6 +2345,7 @@ async fn model_activity(
 struct HealthCheckResult {
     models_updated: usize,
     channels_checked: usize,
+    channels_failed: usize,
 }
 
 async fn health_check_models(
@@ -2353,7 +2354,7 @@ async fn health_check_models(
 ) -> Result<Json<HealthCheckResult>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:health").await?;
-    let (models_updated, channels_checked) = state
+    let (models_updated, channels_checked, channels_failed) = state
         .health
         .check_all_channels()
         .await
@@ -2361,6 +2362,7 @@ async fn health_check_models(
     Ok(Json(HealthCheckResult {
         models_updated,
         channels_checked,
+        channels_failed,
     }))
 }
 

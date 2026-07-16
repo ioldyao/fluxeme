@@ -87,28 +87,36 @@ impl HealthService {
     }
 
     /// Query all channel endpoints' /v1/models and update context_length for matching models.
-    /// Returns (total_models_updated, channel_count_checked).
-    pub async fn check_all_channels(&self) -> Result<(usize, usize), String> {
+    /// Returns (total_models_updated, channel_count_checked, channels_with_failures).
+    pub async fn check_all_channels(&self) -> Result<(usize, usize, usize), String> {
         let channels = self.db.list_channels().await.map_err(|e| e.0)?;
         let mut total_updated = 0;
         let mut channels_checked = 0;
+        let mut channels_failed = 0;
 
         for ch in &channels {
             if !ch.enabled || ch.endpoints.is_empty() {
                 continue;
             }
+            let mut has_failure = false;
             for ep in &ch.endpoints {
                 let base = ep.url.trim_end_matches('/').trim_end_matches("/v1");
                 let url = format!("{}/v1/models", base);
                 match self.update_models_from_endpoint(&url, &ep.api_key).await {
                     Ok(updated) => total_updated += updated,
-                    Err(e) => tracing::warn!("Health check failed for {}: {}", url, e),
+                    Err(e) => {
+                        tracing::warn!("Health check failed for {}: {}", url, e);
+                        has_failure = true;
+                    }
                 }
             }
             channels_checked += 1;
+            if has_failure {
+                channels_failed += 1;
+            }
         }
 
-        Ok((total_updated, channels_checked))
+        Ok((total_updated, channels_checked, channels_failed))
     }
 
     /// Fetch raw upstream model list from a channel's endpoint.
@@ -170,15 +178,14 @@ impl HealthService {
         let body = self.fetch_upstream_models(url, api_key).await?;
 
         // Get all gateway models to match against
-        let models = self.db.list_published_models().await.map_err(|e| e.0)?;
-        let all_models = self.db.list_models().await.map_err(|e| e.0)?;
+        let models = self.db.list_models().await.map_err(|e| e.0)?;
 
         let mut updated = 0;
         for upstream in &body {
             let Some(len) = upstream.max_model_len else { continue };
 
             // Match upstream model ID against gateway model_patterns
-            for m in models.iter().chain(all_models.iter()) {
+            for m in &models {
                 if match_pattern(&upstream.id, &m.model_pattern) {
                     let current = m.context_length.unwrap_or(0);
                     if len > current {

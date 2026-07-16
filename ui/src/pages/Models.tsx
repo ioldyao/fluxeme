@@ -57,8 +57,12 @@ export default function Models() {
   const handleHealthCheck = async () => {
     setHcLoading(true);
     try {
-      const res = await api<{ models_updated: number; channels_checked: number }>('/health-check/models', { method: 'POST' });
-      toast.success(t('model.healthCheckResult', { channels: res.channels_checked, models: res.models_updated }));
+      const res = await api<{ models_updated: number; channels_checked: number; channels_failed: number }>('/health-check/models', { method: 'POST' });
+      if (res.channels_failed > 0) {
+        toast.warning(t('model.healthCheckResultWithFailures', { channels: res.channels_checked, models: res.models_updated, failed: res.channels_failed }));
+      } else {
+        toast.success(t('model.healthCheckResult', { channels: res.channels_checked, models: res.models_updated }));
+      }
       refetch();
     } catch (e: any) {
       toast.error(e.message);
