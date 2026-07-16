@@ -590,6 +590,7 @@ impl<S> UsageTrackingStream<S> {
             stream: true,
             prompt_price: 0.0,
             completion_price: 0.0,
+            cache_read_price: 0.0,
             client_ip: Some(self.client_ip.clone()),
         });
     }
@@ -752,6 +753,7 @@ async fn handle_streaming(
                 stream: true,
                 prompt_price: 0.0,
                 completion_price: 0.0,
+                cache_read_price: 0.0,
                 client_ip: Some(client_ip),
             });
             Err(GatewayError::Upstream(e.0))
@@ -843,6 +845,7 @@ async fn handle_messages_streaming(
                 stream: true,
                 prompt_price: 0.0,
                 completion_price: 0.0,
+                cache_read_price: 0.0,
                 client_ip: Some(client_ip),
             });
             Err(GatewayError::Upstream(e.0))
@@ -916,6 +919,7 @@ async fn handle_non_streaming(
                     stream: false,
                     prompt_price: 0.0,
                     completion_price: 0.0,
+                    cache_read_price: 0.0,
                     client_ip: Some(client_ip.clone()),
                 });
 
@@ -975,6 +979,7 @@ async fn handle_non_streaming(
                     stream: false,
                     prompt_price: 0.0,
                     completion_price: 0.0,
+                    cache_read_price: 0.0,
                     client_ip: Some(client_ip.clone()),
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Upstream request failed");
@@ -1007,6 +1012,7 @@ async fn handle_non_streaming(
         stream: false,
         prompt_price: 0.0,
         completion_price: 0.0,
+        cache_read_price: 0.0,
         client_ip: Some(client_ip),
     });
     Err(GatewayError::Upstream(err_msg))
@@ -1084,6 +1090,7 @@ async fn handle_messages_non_streaming(
                     stream: false,
                     prompt_price: 0.0,
                     completion_price: 0.0,
+                    cache_read_price: 0.0,
                     client_ip: Some(client_ip.clone()),
                 });
 
@@ -1129,6 +1136,7 @@ async fn handle_messages_non_streaming(
                     stream: false,
                     prompt_price: 0.0,
                     completion_price: 0.0,
+                    cache_read_price: 0.0,
                     client_ip: Some(client_ip.clone()),
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Messages upstream request failed");
@@ -1160,6 +1168,7 @@ async fn handle_messages_non_streaming(
         stream: false,
         prompt_price: 0.0,
         completion_price: 0.0,
+        cache_read_price: 0.0,
         client_ip: Some(client_ip),
     });
     Err(GatewayError::Upstream(err_msg))
@@ -1442,6 +1451,7 @@ async fn relay_to_upstream(
                     stream: false,
                     prompt_price: 0.0,
                     completion_price: 0.0,
+                    cache_read_price: 0.0,
                     client_ip: Some(client_ip.clone()),
                 });
 
@@ -1487,6 +1497,7 @@ async fn relay_to_upstream(
                     stream: false,
                     prompt_price: 0.0,
                     completion_price: 0.0,
+                    cache_read_price: 0.0,
                     client_ip: Some(client_ip.clone()),
                 });
                 return Err(GatewayError::from(e));
@@ -1517,6 +1528,7 @@ async fn relay_to_upstream(
         stream: false,
         prompt_price: 0.0,
         completion_price: 0.0,
+        cache_read_price: 0.0,
         client_ip: Some(client_ip),
     });
     Err(GatewayError::Upstream(err_msg))

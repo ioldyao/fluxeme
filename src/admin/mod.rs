@@ -1023,7 +1023,8 @@ async fn dashboard_aggregations(
             lookup_price(&r.model, &pricing, &prefix_prices)
         };
         let cost = (r.prompt_tokens as f64 / 1000.0 * pp)
-            + (r.completion_tokens as f64 / 1000.0 * cp);
+            + (r.completion_tokens as f64 / 1000.0 * cp)
+            + (r.cache_hit_input_tokens as f64 / 1000.0 * r.cache_read_price);
         total_cost_24h += cost;
         *model_counts.entry(r.model.clone()).or_default() += 1;
     }
@@ -1043,6 +1044,7 @@ async fn dashboard_aggregations(
             };
             (r.prompt_tokens as f64 / 1000.0 * pp)
                 + (r.completion_tokens as f64 / 1000.0 * cp)
+                + (r.cache_hit_input_tokens as f64 / 1000.0 * r.cache_read_price)
         })
         .sum();
 

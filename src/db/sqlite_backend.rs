@@ -1400,7 +1400,7 @@ impl DbBackend for SqliteBackend {
             let offset_idx = param_vals.len() + 2;
 
             let sql = format!(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price FROM usage_logs {} ORDER BY id DESC LIMIT ?{} OFFSET ?{}",
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, cache_read_price FROM usage_logs {} ORDER BY id DESC LIMIT ?{} OFFSET ?{}",
                 where_clause, limit_idx, offset_idx
             );
 
@@ -1440,6 +1440,7 @@ impl DbBackend for SqliteBackend {
                     cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
                     prompt_price: row.get::<_, f64>(16)?,
                     completion_price: row.get::<_, f64>(17)?,
+                    cache_read_price: row.get::<_, f64>(18)?,
                     client_ip: None,
                 });
             }
@@ -1452,7 +1453,7 @@ impl DbBackend for SqliteBackend {
         let request_id = request_id.to_string();
         self.exec(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price
+                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip
                  FROM usage_logs WHERE request_id = ?1",
             )?;
             let mut rows = stmt.query_map(params![request_id], |row| {
@@ -1478,7 +1479,8 @@ impl DbBackend for SqliteBackend {
                     cache_hit_input_tokens: row.get::<_, i64>(18)? as u64,
                     prompt_price: row.get::<_, f64>(19)?,
                     completion_price: row.get::<_, f64>(20)?,
-                    client_ip: row.get(21)?,
+                    cache_read_price: row.get::<_, f64>(21)?,
+                    client_ip: row.get(22)?,
                 })
             })?;
             match rows.next() {
@@ -1541,7 +1543,7 @@ impl DbBackend for SqliteBackend {
             let mut records = Vec::new();
             if let Some(ref uid) = uid {
                 let mut stmt = conn.prepare(
-                    "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price
+                    "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, cache_read_price
                      FROM usage_logs WHERE user_id = ?1 AND timestamp >= ?2 ORDER BY id ASC",
                 )?;
                 let mut rows = stmt.query(params![uid, since])?;
@@ -1568,12 +1570,13 @@ impl DbBackend for SqliteBackend {
                         cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
                         prompt_price: row.get::<_, f64>(16)?,
                         completion_price: row.get::<_, f64>(17)?,
+                        cache_read_price: row.get::<_, f64>(18)?,
                         client_ip: None,
                     });
                 }
             } else {
                 let mut stmt = conn.prepare(
-                    "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price
+                    "SELECT timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, cache_read_price
                      FROM usage_logs WHERE timestamp >= ?1 ORDER BY id ASC",
                 )?;
                 let mut rows = stmt.query(params![since])?;
@@ -1600,6 +1603,7 @@ impl DbBackend for SqliteBackend {
                         cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
                         prompt_price: row.get::<_, f64>(16)?,
                         completion_price: row.get::<_, f64>(17)?,
+                        cache_read_price: row.get::<_, f64>(18)?,
                         client_ip: None,
                     });
                 }
@@ -1647,6 +1651,7 @@ impl DbBackend for SqliteBackend {
                         cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
                         prompt_price: 0.0,
                         completion_price: 0.0,
+                        cache_read_price: 0.0,
                         client_ip: None,
                     });
                 }
@@ -1679,6 +1684,7 @@ impl DbBackend for SqliteBackend {
                         cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
                         prompt_price: 0.0,
                         completion_price: 0.0,
+                        cache_read_price: 0.0,
                         client_ip: None,
                     });
                 }

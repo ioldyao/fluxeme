@@ -151,6 +151,7 @@ impl PgBackend {
         let cache_hit_input_tokens: i64 = row.get(*idx); *idx += 1;
         let prompt_price: f64 = row.get(*idx); *idx += 1;
         let completion_price: f64 = row.get(*idx); *idx += 1;
+        let cache_read_price: f64 = row.get(*idx); *idx += 1;
         let client_ip: Option<String> = row.get(*idx); *idx += 1;
         UsageRecord {
             timestamp,
@@ -174,6 +175,7 @@ impl PgBackend {
             cache_hit_input_tokens: cache_hit_input_tokens as u64,
             prompt_price,
             completion_price,
+            cache_read_price,
             client_ip,
         }
     }
@@ -200,6 +202,7 @@ impl PgBackend {
         let cache_hit_input_tokens: i64 = row.get(*idx); *idx += 1;
         let prompt_price: f64 = row.get(*idx); *idx += 1;
         let completion_price: f64 = row.get(*idx); *idx += 1;
+        let cache_read_price: f64 = row.get(*idx); *idx += 1;
         let client_ip: Option<String> = row.get(*idx); *idx += 1;
         UsageRecord {
             timestamp,
@@ -223,6 +226,7 @@ impl PgBackend {
             cache_hit_input_tokens: cache_hit_input_tokens as u64,
             prompt_price,
             completion_price,
+            cache_read_price,
             client_ip,
         }
     }
@@ -384,6 +388,7 @@ impl DbBackend for PgBackend {
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS expires_at TEXT");
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS revoked BOOLEAN NOT NULL DEFAULT false");
         add_col!("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS client_ip TEXT");
+        add_col!("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS cache_read_price DOUBLE PRECISION NOT NULL DEFAULT 0.0");
 
         // Indexes
         macro_rules! add_idx {
@@ -1364,8 +1369,8 @@ impl DbBackend for PgBackend {
             "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              request_body, response_body, reasoning_body, api_key_name, api_format, stream, \
-             cache_hit_input_tokens, prompt_price, completion_price, client_ip) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)",
+             cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)",
         )
         .bind(&record.timestamp)
         .bind(&record.request_id)
@@ -1388,6 +1393,7 @@ impl DbBackend for PgBackend {
         .bind(record.cache_hit_input_tokens as i64)
         .bind(record.prompt_price)
         .bind(record.completion_price)
+        .bind(record.cache_read_price)
         .bind(&record.client_ip)
         .execute(&self.pool)
         .await?;
@@ -1456,7 +1462,7 @@ impl DbBackend for PgBackend {
             "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
-             client_ip \
+             cache_read_price, client_ip \
              FROM usage_logs WHERE 1=1",
         );
 
@@ -1505,7 +1511,7 @@ impl DbBackend for PgBackend {
             "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              request_body, response_body, reasoning_body, api_key_name, api_format, stream, \
-             cache_hit_input_tokens, prompt_price, completion_price, client_ip \
+             cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip \
              FROM usage_logs WHERE request_id = $1",
         )
         .bind(request_id)
@@ -1568,7 +1574,7 @@ impl DbBackend for PgBackend {
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
-                 client_ip \
+                 cache_read_price, client_ip \
                  FROM usage_logs WHERE user_id = $1 AND timestamp >= $2 ORDER BY id ASC",
             )
             .bind(uid)
@@ -1580,7 +1586,7 @@ impl DbBackend for PgBackend {
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
-                 client_ip \
+                 cache_read_price, client_ip \
                  FROM usage_logs WHERE timestamp >= $1 ORDER BY id ASC",
             )
             .bind(since)
@@ -1605,7 +1611,8 @@ impl DbBackend for PgBackend {
             sqlx::query(
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-                 api_key_name, api_format, stream, cache_hit_input_tokens \
+                 api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
+                 cache_read_price \
                  FROM usage_logs WHERE user_id = $1 AND timestamp >= $2 ORDER BY id ASC",
             )
             .bind(uid)
@@ -1616,7 +1623,8 @@ impl DbBackend for PgBackend {
             sqlx::query(
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-                 api_key_name, api_format, stream, cache_hit_input_tokens \
+                 api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
+                 cache_read_price \
                  FROM usage_logs WHERE timestamp >= $1 ORDER BY id ASC",
             )
             .bind(since)
@@ -1642,7 +1650,10 @@ impl DbBackend for PgBackend {
                 let api_key_name: Option<String> = r.get(idx); idx += 1;
                 let api_format: String = r.get(idx); idx += 1;
                 let stream: bool = r.get(idx); idx += 1;
-                let cache_hit_input_tokens: i64 = r.get(idx);
+                let cache_hit_input_tokens: i64 = r.get(idx); idx += 1;
+                let prompt_price: f64 = r.get(idx); idx += 1;
+                let completion_price: f64 = r.get(idx); idx += 1;
+                let cache_read_price: f64 = r.get(idx);
                 UsageRecord {
                     timestamp,
                     request_id,
@@ -1663,8 +1674,9 @@ impl DbBackend for PgBackend {
                     api_format,
                     stream,
                     cache_hit_input_tokens: cache_hit_input_tokens as u64,
-                    prompt_price: 0.0,
-                    completion_price: 0.0,
+                    prompt_price,
+                    completion_price,
+                    cache_read_price,
                     client_ip: None,
                 }
             })
@@ -2630,10 +2642,10 @@ impl DbBackend for PgBackend {
         let mut deductions: Vec<(String, f64, f64)> = Vec::new();
 
         for record in batch {
-            let (prompt_price, completion_price) = {
+            let (prompt_price, completion_price, cache_read_price) = {
                 // Lookup pricing within transaction
-                let result = sqlx::query_as::<_, (f64, f64)>(
-                    "SELECT prompt_price, completion_price FROM models WHERE name = $1",
+                let result = sqlx::query_as::<_, (f64, f64, f64)>(
+                    "SELECT prompt_price, completion_price, cache_read_price FROM models WHERE name = $1",
                 )
                 .bind(&record.model)
                 .fetch_optional(&mut *tx)
@@ -2643,24 +2655,24 @@ impl DbBackend for PgBackend {
                     Ok(Some(p)) => p,
                     _ => {
                         // Fallback to pattern matching
-                        let rows = sqlx::query_as::<_, (f64, f64, String)>(
-                            "SELECT prompt_price, completion_price, model_pattern FROM models",
+                        let rows = sqlx::query_as::<_, (f64, f64, f64, String)>(
+                            "SELECT prompt_price, completion_price, cache_read_price, model_pattern FROM models",
                         )
                         .fetch_all(&mut *tx)
                         .await
                         .unwrap_or_default();
 
-                        let mut found = (0.0, 0.0);
-                        for (p, c, pattern) in rows {
+                        let mut found = (0.0, 0.0, 0.0);
+                        for (p, c, cr, pattern) in rows {
                             if pattern.ends_with('*') {
                                 let prefix = &pattern[..pattern.len() - 1];
                                 if record.model.starts_with(prefix) {
-                                    found = (p, c);
+                                    found = (p, c, cr);
                                     break;
                                 }
                             }
                             if pattern == record.model {
-                                found = (p, c);
+                                found = (p, c, cr);
                                 break;
                             }
                         }
@@ -2674,9 +2686,9 @@ impl DbBackend for PgBackend {
                 "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, \
                  model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, \
                  success, request_body, response_body, reasoning_body, api_key_name, api_format, \
-                 stream, cache_hit_input_tokens, prompt_price, completion_price, client_ip) \
+                 stream, cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, \
-                 $16, $17, $18, $19, $20, $21, $22)",
+                 $16, $17, $18, $19, $20, $21, $22, $23)",
             )
             .bind(&record.timestamp)
             .bind(&record.request_id)
@@ -2699,13 +2711,15 @@ impl DbBackend for PgBackend {
             .bind(record.cache_hit_input_tokens as i64)
             .bind(prompt_price)
             .bind(completion_price)
+            .bind(cache_read_price)
             .bind(&record.client_ip)
             .execute(&mut *tx)
             .await?;
 
             if billing_enabled {
                 let cost = record.prompt_tokens as f64 / 1000.0 * prompt_price
-                    + record.completion_tokens as f64 / 1000.0 * completion_price;
+                    + record.completion_tokens as f64 / 1000.0 * completion_price
+                    + record.cache_hit_input_tokens as f64 / 1000.0 * cache_read_price;
 
                 if cost > 0.0 {
                     let (balance, frozen): (f64, f64) = sqlx::query_as(
