@@ -308,11 +308,11 @@ function ModelCard({
         {/* Pricing */}
         <div className={`grid gap-2 border-t border-border pt-4 text-center ${model.pricing.cache_read_price > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
           <div>
-            <p className="text-xs text-muted-foreground">{t('marketplace.prompt')} / 1M</p>
+            <p className="text-xs text-muted-foreground">{t('marketplace.prompt')}</p>
             <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.prompt_price, sym)}</p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">{t('marketplace.completion')} / 1M</p>
+            <p className="text-xs text-muted-foreground">{t('marketplace.completion')}</p>
             <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.completion_price, sym)}</p>
           </div>
           {model.pricing.cache_read_price > 0 && (
