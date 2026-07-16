@@ -180,8 +180,8 @@ function formatCtx(v: number | null | undefined): string {
   return v.toLocaleString();
 }
 
-function fmtPerK(price: number): string {
-  const v = price * 1000;
+function fmtPerM(price: number): string {
+  const v = price * 1_000_000;
   if (!v) return '0';
   return Number.isInteger(v) ? v.toString() : parseFloat(v.toFixed(10)).toString();
 }
@@ -266,16 +266,16 @@ export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props
               <div className="space-y-0.5 text-xs">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-muted-foreground">{t('marketplace.input')}</span>
-                  <span className="font-mono font-medium">{sym}{fmtPerK(model.pricing.prompt_price)}/1K</span>
+                  <span className="font-mono font-medium">{sym}{fmtPerM(model.pricing.prompt_price)}/1M</span>
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-muted-foreground">{t('marketplace.output')}</span>
-                  <span className="font-mono font-medium">{sym}{fmtPerK(model.pricing.completion_price)}/1K</span>
+                  <span className="font-mono font-medium">{sym}{fmtPerM(model.pricing.completion_price)}/1M</span>
                 </div>
                 {model.pricing.cache_read_price > 0 && (
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-muted-foreground">{t('pricing.cacheRead')}</span>
-                    <span className="font-mono font-medium">{sym}{fmtPerK(model.pricing.cache_read_price)}/1K</span>
+                    <span className="font-mono font-medium">{sym}{fmtPerM(model.pricing.cache_read_price)}/1M</span>
                   </div>
                 )}
               </div>
