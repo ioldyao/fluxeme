@@ -7,8 +7,15 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { RefreshCw, Trash2, Loader2, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { CURRENCY_SYMBOL, usePricingCurrency, useCurrency } from '@/store/currency';
 
 const CATEGORY_ORDER = ['chat', 'reasoning', 'tools', 'web', 'vision', 'rerank', 'embedding'];
+
+function fmtPerK(price: number): string {
+  const v = price * 1000;
+  if (!v) return '0';
+  return Number.isInteger(v) ? v.toString() : parseFloat(v.toFixed(10)).toString();
+}
 
 export default function MyModels() {
   const { t } = useTranslation();
@@ -17,6 +24,8 @@ export default function MyModels() {
   const testConnection = useTestModelConnection();
   const [testingIds, setTestingIds] = useState<Record<string, boolean>>({});
   const [results, setResults] = useState<Record<string, ModelTestResult>>({});
+  const { currency } = useCurrency();
+  const { effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
 
   const formatCtx = (v: number | null | undefined) => {
     if (!v) return null;
@@ -122,8 +131,16 @@ export default function MyModels() {
                       </div>
                     )}
                     <div className="text-xs text-muted-foreground">
-                      P: ${model.pricing.prompt_price}/1K · C: ${model.pricing.completion_price}/1K
-                      {model.pricing.cache_read_price > 0 && <> · Cache: ${model.pricing.cache_read_price}/1K</>}
+                      {(() => {
+                        const sym = CURRENCY_SYMBOL[getEffectiveCurrency(currency, model.id)];
+                        const parts = [
+                          `${sym}${fmtPerK(model.pricing.prompt_price)} / ${sym}${fmtPerK(model.pricing.completion_price)}`
+                        ];
+                        if (model.pricing.cache_read_price > 0) {
+                          parts.push(`Cache: ${sym}${fmtPerK(model.pricing.cache_read_price)}`);
+                        }
+                        return parts.join(' · ');
+                      })()}
                     </div>
                   </div>
                   <div className="flex items-center gap-1">

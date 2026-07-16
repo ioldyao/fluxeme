@@ -17,6 +17,7 @@ import { Pencil, Trash2, Plus, RefreshCw, Activity, Import, Loader2 } from 'luci
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/api/client';
+import { CURRENCY_SYMBOL, usePricingCurrency, useCurrency } from '@/store/currency';
 import type { Model, UpstreamModel } from '@/types';
 
 const CATEGORY_ORDER = ['chat', 'reasoning', 'tools', 'web', 'vision', 'rerank', 'embedding'];
@@ -35,6 +36,8 @@ export default function Models() {
   const [syncOpen, setSyncOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Model | null>(null);
   const [hcLoading, setHcLoading] = useState(false);
+  const { currency } = useCurrency();
+  const { effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
 
   const handleDelete = () => {
     if (!deleteTarget) return;
@@ -220,7 +223,13 @@ export default function Models() {
                       </td>
                       <td className="py-3 px-4 text-right text-xs font-mono">{formatCtx(m.context_length)}</td>
                       <td className="py-3 px-4 text-right text-xs">
-                        P:{m.pricing.prompt_price} / C:{m.pricing.completion_price}
+                        {(() => {
+                          const sym = CURRENCY_SYMBOL[getEffectiveCurrency(currency, m.id)];
+                          const pp = m.pricing.prompt_price * 1000;
+                          const cp = m.pricing.completion_price * 1000;
+                          const fmt = (v: number) => Number.isInteger(v) ? v.toString() : parseFloat(v.toFixed(10)).toString();
+                          return `${sym}${fmt(pp)} / ${sym}${fmt(cp)}`;
+                        })()}
                       </td>
                       <td className="py-3 px-4 text-center">
                         <Button
