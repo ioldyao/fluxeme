@@ -9,7 +9,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
@@ -273,104 +273,77 @@ export default function Models() {
         />
       )}
       <Dialog open={syncOpen} onOpenChange={setSyncOpen}>
-        <DialogContent className="max-w-2xl gap-0 p-0">
-          {/* ── Header ── */}
-          <div className="px-6 pt-6 pb-4 space-y-1">
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
             <DialogTitle>{t('model.syncTitle')}</DialogTitle>
-            <p className="text-sm text-muted-foreground leading-relaxed">{t('model.syncSubtitle')}</p>
-          </div>
+            <p className="text-sm text-muted-foreground">{t('model.syncSubtitle')}</p>
+          </DialogHeader>
 
-          {/* ── Body ── */}
-          <div className="px-6 pb-4 space-y-4">
-            {/* Channel selector */}
-            <div className="rounded-xl border bg-muted/30 p-4 space-y-3">
-              <div className="flex items-end gap-3">
-                <div className="flex-1 space-y-1.5">
-                  <Label className="text-xs font-medium text-foreground/80">{t('model.selectChannel')}</Label>
-                  <Select value={syncChannelId} onValueChange={(v) => {
-                    setSyncChannelId(v ?? '');
-                    setFetched(false); setUpstreamModels([]); setSelectedIds(new Set());
-                  }}>
-                    <SelectTrigger className="w-full h-9">
-                      <span className="truncate">{syncChannelId ? channels?.find((ch) => ch.id === syncChannelId)?.name || syncChannelId : t('model.selectChannelPlaceholder')}</span>
-                      <SelectValue className="sr-only" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {channels?.map((ch) => (
-                        <SelectItem key={ch.id} value={ch.id}>{ch.name || ch.id} ({ch.provider})</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button onClick={handleFetch} disabled={!syncChannelId || fetching} className="shrink-0 h-9 press-feedback">
-                  {fetching && <Loader2 className="size-4 mr-1 animate-spin" />}
-                  {fetching ? t('model.fetching') : t('model.fetchModels')}
-                </Button>
+          <div className="space-y-4">
+            <div className="flex items-end gap-2">
+              <div className="flex-1 space-y-1.5 min-w-0">
+                <Label className="text-xs">{t('model.selectChannel')}</Label>
+                <Select value={syncChannelId} onValueChange={(v) => {
+                  setSyncChannelId(v ?? '');
+                  setFetched(false); setUpstreamModels([]); setSelectedIds(new Set());
+                }}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder={t('model.selectChannelPlaceholder')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {channels?.map((ch) => (
+                      <SelectItem key={ch.id} value={ch.id} className="truncate">{ch.name || ch.id}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
+              <Button onClick={handleFetch} disabled={!syncChannelId || fetching} className="shrink-0 h-9">
+                {fetching && <Loader2 className="size-4 mr-1 animate-spin" />}
+                {fetching ? t('model.fetching') : t('model.fetchModels')}
+              </Button>
             </div>
 
             {fetched && (
-              <div className="space-y-3 animate-fade-in">
-                {/* Select-all bar */}
-                <div className="flex items-center gap-3 px-1">
+              <div className="space-y-3">
+                <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
                   <Checkbox
-                    id="select-all"
                     checked={upstreamModels.length > 0 && selectedIds.size === upstreamModels.length}
                     onCheckedChange={toggleSelectAll}
-                    className="press-feedback"
                   />
-                  <label htmlFor="select-all" className="text-sm text-foreground cursor-pointer select-none font-medium">
-                    {t('model.selectAll', { count: upstreamModels.length })}
-                  </label>
-                  <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-brand/10 text-brand text-[11px] font-semibold">
-                      {selectedIds.size}
-                    </span>
-                    / {upstreamModels.length} {t('model.selected')}
+                  {t('model.selectAll', { count: upstreamModels.length })}
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {selectedIds.size}/{upstreamModels.length}
                   </span>
-                </div>
+                </label>
 
-                {/* Model list */}
-                <div className="max-h-80 overflow-y-auto rounded-xl border space-y-1 p-1.5">
+                <div className="max-h-72 overflow-y-auto border rounded-lg divide-y">
                   {upstreamModels.length === 0 ? (
-                    <div className="py-12 text-center text-muted-foreground text-sm">{t('model.noUpstreamModels')}</div>
+                    <div className="py-10 text-center text-sm text-muted-foreground">{t('model.noUpstreamModels')}</div>
                   ) : (
-                    upstreamModels.map((m, i) => (
+                    upstreamModels.map((m) => (
                       <label
                         key={m.id}
-                        style={{ animation: `fade-in 0.3s var(--ease-out) ${i * 0.04}s both` }}
-                        className={`flex items-center gap-3 px-3 py-3 rounded-lg cursor-pointer transition-all duration-150 press-feedback ${
-                          selectedIds.has(m.id)
-                            ? 'bg-primary/5 ring-1 ring-primary/20'
-                            : 'hover:bg-muted/60'
-                        }`}
+                        className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 cursor-pointer select-none transition-colors"
                       >
                         <Checkbox
                           checked={selectedIds.has(m.id)}
                           onCheckedChange={() => toggleSelect(m.id)}
-                          className="shrink-0"
                         />
-                        <div className="flex items-center gap-3 flex-1 min-w-0">
-                          <div className="flex items-center justify-center size-8 rounded-lg bg-brand/10 text-brand shrink-0 text-xs font-semibold">
-                            {m.id.charAt(0).toUpperCase()}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium truncate">{m.id}</div>
-                            {m.max_model_len != null && (
-                              <div className="text-xs text-muted-foreground mt-0.5">
-                                {t('model.contextLabel')} {(m.max_model_len).toLocaleString()}
-                              </div>
-                            )}
-                          </div>
-                        </div>
+                        <span className="flex-1 text-sm truncate">{m.id}</span>
+                        {m.max_model_len != null && (
+                          <span className="text-xs text-muted-foreground shrink-0">
+                            {m.max_model_len >= 1_000_000
+                              ? `${(m.max_model_len / 1_000_000).toFixed(0)}M`
+                              : `${(m.max_model_len / 1_000).toFixed(0)}K`}
+                          </span>
+                        )}
                       </label>
                     ))
                   )}
                 </div>
 
-                {/* Footer action */}
-                <div className="flex justify-end pt-1 animate-slide-up">
-                  <Button onClick={handleAddSelected} disabled={selectedIds.size === 0 || adding} className="press-feedback">
+                <div className="flex justify-end">
+                  <Button onClick={handleAddSelected} disabled={selectedIds.size === 0 || adding}>
                     {adding ? (
                       <><Loader2 className="size-4 mr-1 animate-spin" />{t('model.adding')}</>
                     ) : (
