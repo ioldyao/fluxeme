@@ -14,3 +14,4 @@ ai_ex/
 .env.*
 !.env.example
 data/
+web/
