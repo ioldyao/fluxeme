@@ -166,7 +166,7 @@ export default function Bills() {
                       <div key={c.channel} className="flex items-center gap-3">
                         <div className="flex-1 min-w-0">
                           <div className="flex justify-between text-sm">
-                            <span className="truncate font-mono text-xs">{c.channel === c.name ? c.channel : `${c.channel} (${c.name})`}</span>
+                            <span className="truncate font-mono text-xs">{c.channel} ({c.name})</span>
                             <span className="font-mono text-xs">{fmt(c.cost)}</span>
                           </div>
                           <div className="h-1.5 bg-muted rounded-full mt-1 overflow-hidden">
