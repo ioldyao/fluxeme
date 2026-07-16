@@ -164,7 +164,7 @@ impl ProviderAdapter for DeepSeekAdapter {
         let client = shared_client();
 
         let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
-        let url = format!("{}/v1/messages", base);
+        let url = format!("{}/anthropic/v1/messages", base);
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -247,7 +247,7 @@ impl ProviderAdapter for DeepSeekAdapter {
         let client = shared_client();
 
         let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
-        let url = format!("{}/v1/messages", base);
+        let url = format!("{}/anthropic/v1/messages", base);
 
         let mut headers = HeaderMap::new();
         headers.insert(
