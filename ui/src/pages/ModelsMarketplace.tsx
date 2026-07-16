@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Search, Check, Loader2, Cpu, RefreshCw, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { CURRENCY_SYMBOL, usePricingCurrency, useCurrency } from '@/store/currency';
 import type { Model } from '@/types';
 
 function inferProvider(pattern: string): string {
@@ -218,9 +219,9 @@ function FilterBtn({ active, onClick, label }: { active: boolean; onClick: () =>
   );
 }
 
-function formatPrice(price: number): string {
+function formatPrice(price: number, sym = '$'): string {
   if (!price || price === 0) return '-';
-  return `$${(price * 1000).toFixed(3)}`;
+  return `${sym}${(price * 1000).toFixed(3)}`;
 }
 
 function formatContextLength(len: number | null | undefined): string {
@@ -243,6 +244,9 @@ function ModelCard({
 }) {
   const { t } = useTranslation();
   const [detailOpen, setDetailOpen] = useState(false);
+  const { currency } = useCurrency();
+  const { effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
+  const sym = CURRENCY_SYMBOL[getEffectiveCurrency(currency, model.id)];
 
   return (
     <Card className="group flex flex-col transition-colors hover:border-primary/40">
@@ -304,16 +308,16 @@ function ModelCard({
         <div className={`grid gap-2 border-t border-border pt-4 text-center ${model.pricing.cache_read_price > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
           <div>
             <p className="text-xs text-muted-foreground">{t('marketplace.prompt')} / 1K</p>
-            <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.prompt_price)}</p>
+            <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.prompt_price, sym)}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">{t('marketplace.completion')} / 1K</p>
-            <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.completion_price)}</p>
+            <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.completion_price, sym)}</p>
           </div>
           {model.pricing.cache_read_price > 0 && (
             <div>
               <p className="text-xs text-muted-foreground">{t('pricing.cacheRead')}</p>
-              <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.cache_read_price)}</p>
+              <p className="mt-0.5 text-sm font-medium">{formatPrice(model.pricing.cache_read_price, sym)}</p>
             </div>
           )}
         </div>
