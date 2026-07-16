@@ -6,7 +6,9 @@ gateway.log
 node_modules/
 config/config.yaml
 config.local.yaml
-.claude/worktrees/
+.claude/
+.agents/
+CLAUDE.md
 ai.zip
 ai_ex/
 *.env
