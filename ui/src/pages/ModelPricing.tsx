@@ -1,5 +1,6 @@
 import { useState, useMemo, useId } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { useModels, useUpdateModelPricing } from '@/api/models';
 import { PageHeader } from '@/components/PageHeader';
@@ -84,16 +85,32 @@ export default function ModelPricingPage() {
   const { data: models, isLoading, isError, refetch } = useModels();
   const updatePricing = useUpdateModelPricing();
   const { currency, rate } = useCurrency();
-  const sym = CURRENCY_SYMBOL[currency];
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dirty, setDirty] = useState<Record<string, Pricing>>({});
   const [saving, setSaving] = useState<Record<string, boolean>>({});
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currencyMode, setCurrencyMode] = useState<'global' | 'per-model'>('global');
+  const [modelCurrency, setModelCurrency] = useState<Record<string, 'usd' | 'cny'>>({});
+
+  const filteredModels = useMemo(
+    () => models?.filter((m) =>
+      m.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (m.name && m.name.toLowerCase().includes(searchQuery.toLowerCase()))
+    ) ?? [],
+    [models, searchQuery],
+  );
 
   const selected = useMemo(
     () => models?.find((m) => m.id === selectedId) ?? null,
     [models, selectedId],
   );
+
+  const effectiveCurrency = currencyMode === 'global'
+    ? currency
+    : (selectedId ? (modelCurrency[selectedId] ?? 'usd') : 'usd');
+
+  const effectiveSym = CURRENCY_SYMBOL[effectiveCurrency];
 
   const currentValues = useMemo(
     () => (selected ? dirty[selected.id] ?? toDisplay(selected.pricing) : null),
@@ -160,36 +177,74 @@ export default function ModelPricingPage() {
 
       <Card>
         <CardContent className="p-5 sm:p-6 space-y-6">
-          {/* Toolbar: model selector + save */}
-          <div className="flex items-center gap-3">
-            <div className="flex-1 min-w-0">
-              <Select
-                value={selectedId ?? ''}
-                onValueChange={(v) => setSelectedId(v || null)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={t('pricing.selectModel')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {models.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      <span className="truncate">{m.name || m.id}</span>
-                      <span className="text-xs text-muted-foreground ml-2">{m.id}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          {/* Toolbar: search + model selector + mode + save */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1 min-w-0">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
+                <Input
+                  placeholder={t('common.search') || 'Search...'}
+                  className="pl-8 h-9 text-sm"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+              <div className="flex rounded-lg border p-0.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setCurrencyMode('global')}
+                  className={`px-2.5 py-1 text-xs rounded-md font-medium transition-colors ${
+                    currencyMode === 'global' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {t('pricing.global') || 'Global'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCurrencyMode('per-model')}
+                  className={`px-2.5 py-1 text-xs rounded-md font-medium transition-colors ${
+                    currencyMode === 'per-model' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {t('pricing.perModel') || 'Per'}
+                </button>
+              </div>
             </div>
-            {selected && (
-              <Button
-                size="sm"
-                disabled={!dirty[selected.id] || saving[selected.id]}
-                onClick={() => handleSave(selected.id)}
-                className="shrink-0"
-              >
-                {saving[selected.id] ? (t('pricing.saving') || 'Saving...') : t('common.save')}
-              </Button>
-            )}
+
+            <div className="flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <Select
+                  value={selectedId ?? ''}
+                  onValueChange={(v) => setSelectedId(v || null)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={t('pricing.selectModel')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {filteredModels.length === 0 ? (
+                      <div className="py-6 text-center text-xs text-muted-foreground">{t('common.noResults') || 'No results'}</div>
+                    ) : (
+                      filteredModels.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          <span className="truncate">{m.name || m.id}</span>
+                          <span className="text-xs text-muted-foreground ml-2">{m.id}</span>
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              {selected && (
+                <Button
+                  size="sm"
+                  disabled={!dirty[selected.id] || saving[selected.id]}
+                  onClick={() => handleSave(selected.id)}
+                  className="shrink-0"
+                >
+                  {saving[selected.id] ? (t('pricing.saving') || 'Saving...') : t('common.save')}
+                </Button>
+              )}
+            </div>
           </div>
 
           {!selected ? (
@@ -203,10 +258,32 @@ export default function ModelPricingPage() {
                 <div className="flex items-center justify-center size-10 rounded-full bg-brand/10 text-brand font-semibold text-sm shrink-0 select-none">
                   {(selected.name || selected.id).charAt(0).toUpperCase()}
                 </div>
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <h2 className="text-sm font-semibold truncate">{selected.name || selected.id}</h2>
                   <p className="text-xs text-muted-foreground font-mono truncate">{selected.id}</p>
                 </div>
+                {currencyMode === 'per-model' && (
+                  <div className="flex rounded-lg border p-0.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setModelCurrency((prev) => ({ ...prev, [selected.id]: 'usd' }))}
+                      className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors ${
+                        (modelCurrency[selected.id] ?? 'usd') === 'usd' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      USD
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setModelCurrency((prev) => ({ ...prev, [selected.id]: 'cny' }))}
+                      className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors ${
+                        modelCurrency[selected.id] === 'cny' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      CNY
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Price groups */}
@@ -240,7 +317,7 @@ export default function ModelPricingPage() {
                         <span className="text-muted-foreground">{t(labelKey)}</span>
                         <span className={v > 0 ? 'font-medium tabular-nums' : 'text-muted-foreground'}>
                           {v > 0
-                            ? t('pricing.perMillion', { price: `${sym}${(currency === 'cny' ? v * rate : v).toFixed(2)}` })
+                            ? t('pricing.perMillion', { price: `${effectiveSym}${(effectiveCurrency === 'cny' ? v * rate : v).toFixed(2)}` })
                             : t('pricing.empty')}
                         </span>
                       </div>
