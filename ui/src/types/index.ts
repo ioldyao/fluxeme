@@ -102,6 +102,7 @@ export interface UsageRecord {
   cache_hit_input_tokens: number;
   prompt_price: number;
   completion_price: number;
+  client_ip?: string | null;
 }
 
 export interface DashboardStats {

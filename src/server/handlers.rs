@@ -4,7 +4,7 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use bytes::Bytes;
@@ -14,6 +14,7 @@ use futures::Future;
 use futures::Stream;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::net::SocketAddr;
 use uuid::Uuid;
 
 use crate::balancer::LoadBalancer;
@@ -210,6 +211,28 @@ fn normalize_sse_reasoning(data: &str) -> String {
         }
     }
     out
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+fn extract_client_ip(headers: &HeaderMap, addr: SocketAddr) -> String {
+    if let Some(fwd) = headers.get("x-forwarded-for") {
+        if let Ok(s) = fwd.to_str() {
+            if let Some(ip) = s.split(',').next().map(|s| s.trim()) {
+                if !ip.is_empty() {
+                    return ip.to_string();
+                }
+            }
+        }
+    }
+    if let Some(real) = headers.get("x-real-ip") {
+        if let Ok(s) = real.to_str() {
+            if !s.is_empty() {
+                return s.to_string();
+            }
+        }
+    }
+    addr.ip().to_string()
 }
 
 struct RouteTarget {
@@ -477,6 +500,7 @@ struct UsageTrackingStream<S> {
     req_body: Option<String>,
     api_format: String,
     recorded: bool,
+    client_ip: String,
 }
 
 impl<S: Stream<Item = String> + Unpin> Stream for UsageTrackingStream<S> {
@@ -566,6 +590,7 @@ impl<S> UsageTrackingStream<S> {
             stream: true,
             prompt_price: 0.0,
             completion_price: 0.0,
+            client_ip: Some(self.client_ip.clone()),
         });
     }
 }
@@ -656,6 +681,7 @@ async fn handle_streaming(
     channel_id: String,
     model: String,
     start: Instant,
+    client_ip: String,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     let stream_result = adapter.chat_complete_stream(&endpoint, body).await;
@@ -686,6 +712,7 @@ async fn handle_streaming(
                 req_body,
                 api_format: "openai".to_string(),
                 recorded: false,
+                client_ip,
             };
 
             let body_stream = usage_stream.map(|data| {
@@ -725,6 +752,7 @@ async fn handle_streaming(
                 stream: true,
                 prompt_price: 0.0,
                 completion_price: 0.0,
+                client_ip: Some(client_ip),
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -745,6 +773,7 @@ async fn handle_messages_streaming(
     channel_id: String,
     model: String,
     start: Instant,
+    client_ip: String,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     let stream_result = adapter.messages_stream(&endpoint, body).await;
@@ -774,6 +803,7 @@ async fn handle_messages_streaming(
                 req_body,
                 api_format: "anthropic".to_string(),
                 recorded: false,
+                client_ip,
             };
 
             let body_stream = usage_stream.map(|data| {
@@ -813,6 +843,7 @@ async fn handle_messages_streaming(
                 stream: true,
                 prompt_price: 0.0,
                 completion_price: 0.0,
+                client_ip: Some(client_ip),
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -833,6 +864,7 @@ async fn handle_non_streaming(
     model: String,
     start: Instant,
     cache_key: Option<String>,
+    client_ip: String,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     let max_retries = {
@@ -884,6 +916,7 @@ async fn handle_non_streaming(
                     stream: false,
                     prompt_price: 0.0,
                     completion_price: 0.0,
+                    client_ip: Some(client_ip.clone()),
                 });
 
                 // Cache the response for non-streaming requests
@@ -942,6 +975,7 @@ async fn handle_non_streaming(
                     stream: false,
                     prompt_price: 0.0,
                     completion_price: 0.0,
+                    client_ip: Some(client_ip.clone()),
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Upstream request failed");
                 return Err(GatewayError::Upstream(e.0));
@@ -973,6 +1007,7 @@ async fn handle_non_streaming(
         stream: false,
         prompt_price: 0.0,
         completion_price: 0.0,
+        client_ip: Some(client_ip),
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -990,6 +1025,7 @@ async fn handle_messages_non_streaming(
     channel_id: String,
     model: String,
     start: Instant,
+    client_ip: String,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     let max_retries = {
@@ -1048,6 +1084,7 @@ async fn handle_messages_non_streaming(
                     stream: false,
                     prompt_price: 0.0,
                     completion_price: 0.0,
+                    client_ip: Some(client_ip.clone()),
                 });
 
                 return Ok(Json(resp).into_response());
@@ -1092,6 +1129,7 @@ async fn handle_messages_non_streaming(
                     stream: false,
                     prompt_price: 0.0,
                     completion_price: 0.0,
+                    client_ip: Some(client_ip.clone()),
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Messages upstream request failed");
                 return Err(GatewayError::Upstream(e.0));
@@ -1122,6 +1160,7 @@ async fn handle_messages_non_streaming(
         stream: false,
         prompt_price: 0.0,
         completion_price: 0.0,
+        client_ip: Some(client_ip),
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -1131,6 +1170,7 @@ async fn handle_messages_non_streaming(
 pub async fn chat_completions(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
     let mut body = body.0;
@@ -1171,6 +1211,7 @@ pub async fn chat_completions(
     }
     let mut route = resolve_route(&state, &channel_id)?;
     let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let client_ip = extract_client_ip(&headers, addr);
 
     tracing::info!(request_id, channel = %channel_id, endpoint = %route.endpoint.url, "Routing resolved");
 
@@ -1206,17 +1247,18 @@ pub async fn chat_completions(
     let state_clone = state.clone();
     let rid = request_id.clone();
 
+    let client_ip_clone = client_ip.clone();
     let result = tokio::time::timeout(handler_timeout, async move {
         if is_streaming {
             handle_streaming(
                 &state_clone, route.adapter, route.endpoint, body,
-                request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start,
+                request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start, client_ip,
             )
             .await
         } else {
             handle_non_streaming(
                 &state_clone, &mut route, body,
-                request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start, cache_key,
+                request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start, cache_key, client_ip_clone,
             )
             .await
         }
@@ -1235,6 +1277,7 @@ pub async fn chat_completions(
 pub async fn messages(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
     let mut body = body.0;
@@ -1274,6 +1317,7 @@ pub async fn messages(
     }
     let mut route = resolve_route(&state, &channel_id)?;
     let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let client_ip = extract_client_ip(&headers, addr);
 
     tracing::info!(request_id, channel = %channel_id, endpoint = %route.endpoint.url, "Messages routing resolved");
 
@@ -1282,18 +1326,19 @@ pub async fn messages(
     );
     let state_clone = state.clone();
     let rid = request_id.clone();
+    let client_ip_clone = client_ip.clone();
 
     let result = tokio::time::timeout(handler_timeout, async move {
         if is_streaming {
             handle_messages_streaming(
                 &state_clone, route.adapter, route.endpoint, body,
-                request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start,
+                request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start, client_ip,
             )
             .await
         } else {
             handle_messages_non_streaming(
                 &state_clone, &mut route, body,
-                request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start,
+                request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start, client_ip_clone,
             )
             .await
         }
@@ -1318,6 +1363,7 @@ async fn relay_to_upstream(
     upstream_path: &str,
     request_id: String,
     start: Instant,
+    client_ip: String,
 ) -> Result<Response, GatewayError> {
     let user = state.auth.authenticate(headers)?;
     let model = trim_model(&mut body)?;
@@ -1396,6 +1442,7 @@ async fn relay_to_upstream(
                     stream: false,
                     prompt_price: 0.0,
                     completion_price: 0.0,
+                    client_ip: Some(client_ip.clone()),
                 });
 
                 return Ok(Json(resp).into_response());
@@ -1440,6 +1487,7 @@ async fn relay_to_upstream(
                     stream: false,
                     prompt_price: 0.0,
                     completion_price: 0.0,
+                    client_ip: Some(client_ip.clone()),
                 });
                 return Err(GatewayError::from(e));
             }
@@ -1469,6 +1517,7 @@ async fn relay_to_upstream(
         stream: false,
         prompt_price: 0.0,
         completion_price: 0.0,
+        client_ip: Some(client_ip),
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -1479,7 +1528,7 @@ pub async fn completions(
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
     relay_to_upstream(&state, &headers, body.0, "/v1/completions",
-        Uuid::new_v4().to_string(), Instant::now()).await
+        Uuid::new_v4().to_string(), Instant::now(), String::new()).await
 }
 
 pub async fn embeddings(
@@ -1488,7 +1537,7 @@ pub async fn embeddings(
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
     relay_to_upstream(&state, &headers, body.0, "/v1/embeddings",
-        Uuid::new_v4().to_string(), Instant::now()).await
+        Uuid::new_v4().to_string(), Instant::now(), String::new()).await
 }
 
 pub async fn batches(
@@ -1497,7 +1546,7 @@ pub async fn batches(
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
     relay_to_upstream(&state, &headers, body.0, "/v1/messages/batches",
-        Uuid::new_v4().to_string(), Instant::now()).await
+        Uuid::new_v4().to_string(), Instant::now(), String::new()).await
 }
 
 pub async fn tokenize(
@@ -1506,7 +1555,7 @@ pub async fn tokenize(
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
     relay_to_upstream(&state, &headers, body.0, "/tokenize",
-        Uuid::new_v4().to_string(), Instant::now()).await
+        Uuid::new_v4().to_string(), Instant::now(), String::new()).await
 }
 
 pub async fn detokenize(
@@ -1515,7 +1564,7 @@ pub async fn detokenize(
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
     relay_to_upstream(&state, &headers, body.0, "/detokenize",
-        Uuid::new_v4().to_string(), Instant::now()).await
+        Uuid::new_v4().to_string(), Instant::now(), String::new()).await
 }
 
 // ── Other ─────────────────────────────────────────────────────────

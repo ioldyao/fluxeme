@@ -165,6 +165,12 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('table.time')}</div>
                 <div className="font-medium text-xs">{new Date(record.timestamp).toLocaleString()}</div>
               </div>
+              {record.client_ip && (
+                <div className="rounded-lg border p-3 space-y-1">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Client IP</div>
+                  <div className="font-medium text-xs font-mono">{record.client_ip}</div>
+                </div>
+              )}
             </div>
 
             {/* Request body */}

@@ -124,7 +124,8 @@ impl SqliteBackend {
                 stream INTEGER NOT NULL DEFAULT 0,
                 cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0,
                 prompt_price REAL NOT NULL DEFAULT 0.0,
-                completion_price REAL NOT NULL DEFAULT 0.0
+                completion_price REAL NOT NULL DEFAULT 0.0,
+                client_ip TEXT
             );
             ",
         )?;
@@ -135,6 +136,7 @@ impl SqliteBackend {
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN response_body TEXT;");
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN reasoning_body TEXT;");
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN api_key_name TEXT;");
+        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN client_ip TEXT;");
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN published INTEGER NOT NULL DEFAULT 0;");
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN context_length INTEGER;");
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN cache_read_price REAL NOT NULL DEFAULT 0.0;");
@@ -1269,8 +1271,8 @@ impl DbBackend for SqliteBackend {
         let record = record.clone();
         self.exec(move |conn| {
             conn.execute(
-                "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+                "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, client_ip)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
                 params![
                     record.timestamp, record.request_id, record.user_id, record.user_name,
                     record.channel_id, record.model, record.prompt_tokens, record.completion_tokens,
@@ -1278,6 +1280,7 @@ impl DbBackend for SqliteBackend {
                     record.request_body, record.response_body, record.reasoning_body,
                     record.api_key_name, record.api_format, record.stream as i32,
                     record.cache_hit_input_tokens, record.prompt_price, record.completion_price,
+                    record.client_ip,
                 ],
             )?;
             Ok(())
@@ -1437,6 +1440,7 @@ impl DbBackend for SqliteBackend {
                     cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
                     prompt_price: row.get::<_, f64>(16)?,
                     completion_price: row.get::<_, f64>(17)?,
+                    client_ip: None,
                 });
             }
             Ok(records)
@@ -1474,6 +1478,7 @@ impl DbBackend for SqliteBackend {
                     cache_hit_input_tokens: row.get::<_, i64>(18)? as u64,
                     prompt_price: row.get::<_, f64>(19)?,
                     completion_price: row.get::<_, f64>(20)?,
+                    client_ip: row.get(21)?,
                 })
             })?;
             match rows.next() {
@@ -1563,6 +1568,7 @@ impl DbBackend for SqliteBackend {
                         cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
                         prompt_price: row.get::<_, f64>(16)?,
                         completion_price: row.get::<_, f64>(17)?,
+                        client_ip: None,
                     });
                 }
             } else {
@@ -1594,6 +1600,7 @@ impl DbBackend for SqliteBackend {
                         cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
                         prompt_price: row.get::<_, f64>(16)?,
                         completion_price: row.get::<_, f64>(17)?,
+                        client_ip: None,
                     });
                 }
             }
@@ -1640,6 +1647,7 @@ impl DbBackend for SqliteBackend {
                         cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
                         prompt_price: 0.0,
                         completion_price: 0.0,
+                        client_ip: None,
                     });
                 }
             } else {
@@ -1671,6 +1679,7 @@ impl DbBackend for SqliteBackend {
                         cache_hit_input_tokens: row.get::<_, i64>(15)? as u64,
                         prompt_price: 0.0,
                         completion_price: 0.0,
+                        client_ip: None,
                     });
                 }
             }
@@ -2777,8 +2786,8 @@ impl DbBackend for SqliteBackend {
 
                 // Insert usage record with pricing snapshot
                 tx.execute(
-                    "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+                    "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, request_body, response_body, reasoning_body, api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, client_ip)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
                     params![
                         record.timestamp, record.request_id, record.user_id, record.user_name,
                         record.channel_id, record.model, record.prompt_tokens, record.completion_tokens,
@@ -2786,6 +2795,7 @@ impl DbBackend for SqliteBackend {
                         record.request_body, record.response_body, record.reasoning_body,
                         record.api_key_name, record.api_format, record.stream as i32,
                         record.cache_hit_input_tokens, prompt_price, completion_price,
+                        record.client_ip,
                     ],
                 )?;
 
