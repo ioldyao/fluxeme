@@ -20,7 +20,7 @@ function useDebounce<T>(value: T, delay: number): T {
 export default function WalletPage() {
   const navigate = useNavigate();
   const { t, i18n } = useTranslation();
-  const { currency, rate } = useCurrency();
+  const { currency } = useCurrency();
   const isAdmin = usePermission('admin:recharge-keys');
 
   const { data: overview } = useWalletOverview();
@@ -124,9 +124,8 @@ export default function WalletPage() {
   const [copied, setCopied] = useState(false);
 
   const fmt = (usd: number) => {
-    const v = currency === 'cny' ? usd * rate : usd;
     const s = currency === 'cny' ? '¥' : '$';
-    return `${s}${v.toFixed(6)}`;
+    return `${s}${usd.toFixed(6)}`;
   };
 
   const cardStyle = 'rounded-xl border p-5 space-y-2';

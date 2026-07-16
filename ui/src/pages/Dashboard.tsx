@@ -39,10 +39,9 @@ export default function Dashboard() {
   const { data: agg } = useDashboardAggregations();
   const { data: dailyData } = useDailyUsage(14);
   const { data: subscriptions } = useSubscriptions();
-  const { currency, rate } = useCurrency();
+  const { currency } = useCurrency();
   const sym = CURRENCY_SYMBOL[currency];
   const code = CURRENCY_CODE[currency];
-  const convert = (v: number) => (currency === 'cny' ? v * rate : v);
   const isAdmin = usePermission('admin:dashboard');
 
   const cards = isAdmin
@@ -201,12 +200,12 @@ export default function Dashboard() {
             <CardContent>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
-                  <p className="text-2xl font-bold">{sym}{convert(agg.cost_24h).toFixed(2)}</p>
+                  <p className="text-2xl font-bold">{sym}{agg.cost_24h.toFixed(2)}</p>
                   <p className="text-xs text-muted-foreground mt-1">{t('dash.cost24h')}</p>
                   <p className="text-xs text-muted-foreground">{t('dash.cost24hLabel', { currency: code })}</p>
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{sym}{convert(agg.total_cost ?? 0).toFixed(2)}</p>
+                  <p className="text-2xl font-bold">{sym}{(agg.total_cost ?? 0).toFixed(2)}</p>
                   <p className="text-xs text-muted-foreground mt-1">{t('dash.historicalUsage')}</p>
                   <p className="text-xs text-muted-foreground">{t('dash.totalCostLabel', { currency: code })}</p>
                 </div>

@@ -25,16 +25,14 @@ export default function Bills() {
   const deductions = deductionsData?.items;
   const dedTotal = deductionsData?.total ?? 0;
   const dedTotalPages = Math.max(1, Math.ceil(dedTotal / DED_PAGE_SIZE));
-  const { currency, rate } = useCurrency();
+  const { currency } = useCurrency();
   const [open, setOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
   const { data: allMonths } = usePeriodSummaryAll();
 
   const fmt = (usd: number) => {
-    if (usd === 0) return '¥0.000000';
-    const v = currency === 'cny' ? usd * rate : usd;
     const s = currency === 'cny' ? '¥' : '$';
-    return `${s}${v.toFixed(6)}`;
+    return usd === 0 ? `${s}0` : `${s}${usd.toFixed(6)}`;
   };
 
   const cardStyle = 'rounded-xl border p-5 space-y-2';

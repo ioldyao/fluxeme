@@ -84,7 +84,7 @@ export default function ModelPricingPage() {
   const { t } = useTranslation();
   const { data: models, isLoading, isError, refetch } = useModels();
   const updatePricing = useUpdateModelPricing();
-  const { currency, rate } = useCurrency();
+  const { currency } = useCurrency();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dirty, setDirty] = useState<Record<string, Pricing>>({});
@@ -313,7 +313,7 @@ export default function ModelPricingPage() {
                         <span className="text-muted-foreground">{t(labelKey)}</span>
                         <span className={v > 0 ? 'font-medium tabular-nums' : 'text-muted-foreground'}>
                           {v > 0
-                            ? t('pricing.perMillion', { price: `${effectiveSym}${(effectiveCurrency === 'cny' ? v * rate : v).toFixed(2)}` })
+                            ? t('pricing.perMillion', { price: `${effectiveSym}${v.toFixed(2)}` })
                             : t('pricing.empty')}
                         </span>
                       </div>
