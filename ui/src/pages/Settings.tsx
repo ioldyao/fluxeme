@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { useCurrency, CURRENCY_SYMBOL, CURRENCY_CODE, type CurrencyCode } from '@/store/currency';
+import { useCurrency, CURRENCY_SYMBOL, type CurrencyCode } from '@/store/currency';
 import { useAuth } from '@/store/auth';
 import { usePermission, Guard } from '@/permissions';
 import { useUpdateTimezone } from '@/api/auth';
@@ -191,23 +191,6 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          <div className="border-t pt-6">
-            <p className="text-xs text-muted-foreground mb-2">{t('settings.preview')}</p>
-            <div className="rounded-xl border bg-card p-4 flex items-center justify-between">
-              <div>
-                <p className="text-2xl font-bold tracking-tight">
-                  {CURRENCY_SYMBOL[currency]}{(100 * (currency === 'cny' ? rate : 1)).toFixed(2)}
-                </p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {CURRENCY_CODE[currency]}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs text-muted-foreground">{CURRENCY_CODE[currency]}</p>
-                <p className="text-lg font-semibold text-brand">{CURRENCY_SYMBOL[currency]}{rate.toFixed(1)}</p>
-              </div>
-            </div>
-          </div>
         </CardContent>
       </Card>
 
