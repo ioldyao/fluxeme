@@ -13,6 +13,10 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import type { ContentFilterRule } from '@/types';
 
 const SCOPE_LABELS: Record<string, string> = {
@@ -259,76 +263,57 @@ export default function ModerationPage() {
           </DialogHeader>
 
             <div className="space-y-1.5">
-              <label htmlFor="rule-name" className="text-sm font-medium">{t('moderation.ruleName')}</label>
-              <input
-                id="rule-name"
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                value={form.name || ''}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
+              <Label htmlFor="rule-name">{t('moderation.ruleName')}</Label>
+              <Input id="rule-name" value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label htmlFor="rule-type" className="text-sm font-medium">{t('moderation.type')}</label>
-                <select
-                  id="rule-type"
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                  value={form.pattern_type}
-                  onChange={(e) => setForm({ ...form, pattern_type: e.target.value as 'regex' | 'keyword' })}
-                >
-                  <option value="keyword">Keyword</option>
-                  <option value="regex">Regex</option>
-                </select>
+                <Label>{t('moderation.type')}</Label>
+                <Select value={form.pattern_type} onValueChange={(v) => setForm({ ...form, pattern_type: v as 'regex' | 'keyword' })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="keyword">Keyword</SelectItem>
+                    <SelectItem value="regex">Regex</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-1.5">
-                <label htmlFor="rule-action" className="text-sm font-medium">{t('moderation.action')}</label>
-                <select
-                  id="rule-action"
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                  value={form.action}
-                  onChange={(e) => setForm({ ...form, action: e.target.value as 'block' | 'mask' })}
-                >
-                  <option value="block">{t('moderation.actionBlock')}</option>
-                  <option value="mask">{t('moderation.actionMask')}</option>
-                </select>
+                <Label>{t('moderation.action')}</Label>
+                <Select value={form.action} onValueChange={(v) => setForm({ ...form, action: v as 'block' | 'mask' })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="block">{t('moderation.actionBlock')}</SelectItem>
+                    <SelectItem value="mask">{t('moderation.actionMask')}</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label htmlFor="rule-scope" className="text-sm font-medium">{t('moderation.scope')}</label>
-                <select
-                  id="rule-scope"
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                  value={form.scope}
-                  onChange={(e) => setForm({ ...form, scope: e.target.value as 'request' | 'response' | 'both' })}
-                >
-                  <option value="request">{t('moderation.scopeRequest')}</option>
-                  <option value="response">{t('moderation.scopeResponse')}</option>
-                  <option value="both">{t('moderation.scopeBoth')}</option>
-                </select>
+                <Label>{t('moderation.scope')}</Label>
+                <Select value={form.scope} onValueChange={(v) => setForm({ ...form, scope: v as 'request' | 'response' | 'both' })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="request">{t('moderation.scopeRequest')}</SelectItem>
+                    <SelectItem value="response">{t('moderation.scopeResponse')}</SelectItem>
+                    <SelectItem value="both">{t('moderation.scopeBoth')}</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-1.5">
-                <label htmlFor="rule-priority" className="text-sm font-medium">{t('moderation.priority')}</label>
-                <input
-                  id="rule-priority"
-                  type="number"
-                  min="1"
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                  value={form.priority ?? 1}
-                  onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value) || 1 })}
-                />
+                <Label>{t('moderation.priority')}</Label>
+                <Input id="rule-priority" type="number" min="1" value={form.priority ?? 1} onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value) || 1 })} />
               </div>
             </div>
 
             <div className="space-y-1.5">
-              <label htmlFor="rule-pattern" className="text-sm font-medium">{t('moderation.pattern')}</label>
-              <textarea
+              <Label htmlFor="rule-pattern">{t('moderation.pattern')}</Label>
+              <Textarea
                 id="rule-pattern"
-                className="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm"
                 value={form.pattern || ''}
                 onChange={(e) => setForm({ ...form, pattern: e.target.value })}
                 placeholder={form.pattern_type === 'regex' ? '[1-9]\\d{17}[\\dXx]' : 'badword1, badword2'}
@@ -342,39 +327,29 @@ export default function ModerationPage() {
 
             {form.action === 'mask' && (
               <div className="space-y-1.5">
-                <label htmlFor="rule-replacement" className="text-sm font-medium">{t('moderation.replacement')}</label>
-                <input
-                  id="rule-replacement"
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                  value={form.replacement || '[REDACTED]'}
-                  onChange={(e) => setForm({ ...form, replacement: e.target.value })}
-                />
+                <Label htmlFor="rule-replacement">{t('moderation.replacement')}</Label>
+                <Input id="rule-replacement" value={form.replacement || '[REDACTED]'} onChange={(e) => setForm({ ...form, replacement: e.target.value })} />
               </div>
             )}
 
             <div className="space-y-1.5">
-              <label htmlFor="rule-channel" className="text-sm font-medium">{t('moderation.channel')}</label>
-              <select
-                id="rule-channel"
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                value={form.channel_id || ''}
-                onChange={(e) => setForm({ ...form, channel_id: e.target.value || null })}
-              >
-                <option value="">{t('moderation.global')}</option>
-                {channels?.map((ch) => (
-                  <option key={ch.id} value={ch.id}>
-                    {ch.name || ch.id} ({ch.provider})
-                  </option>
-                ))}
-              </select>
+              <Label>{t('moderation.channel')}</Label>
+              <Select value={form.channel_id || ''} onValueChange={(v) => setForm({ ...form, channel_id: v || null })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">{t('moderation.global')}</SelectItem>
+                  {channels?.map((ch) => (
+                    <SelectItem key={ch.id} value={ch.id}>
+                      {ch.name || ch.id} ({ch.provider})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="flex items-center gap-2">
-              <label className="text-sm font-medium">{t('common.enabled')}</label>
-              <Switch
-                checked={form.enabled ?? true}
-                onCheckedChange={(v) => setForm({ ...form, enabled: v })}
-              />
+              <Label>{t('common.enabled')}</Label>
+              <Switch checked={form.enabled ?? true} onCheckedChange={(v) => setForm({ ...form, enabled: v })} />
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
