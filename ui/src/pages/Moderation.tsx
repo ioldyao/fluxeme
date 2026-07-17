@@ -384,6 +384,7 @@ export default function ModerationPage() {
               <Button onClick={handleSubmit} disabled={createRule.isPending || updateRule.isPending}>
                 {editRule ? t('common.save') : t('common.create')}
               </Button>
+            </div>
         </DialogContent>
       </Dialog>
 
