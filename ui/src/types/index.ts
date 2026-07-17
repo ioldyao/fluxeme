@@ -165,6 +165,7 @@ export interface LoginResponse {
   user_id: string;
   user_name: string;
   timezone?: string;
+  currency?: string;
 }
 
 export interface CreateUserReq {

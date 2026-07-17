@@ -8,8 +8,10 @@ interface AuthState {
   userId: string | null;
   userName: string | null;
   timezone: string;
+  currency: string;
   setSession: (res: LoginResponse) => void;
   setTimezone: (tz: string) => void;
+  setCurrency: (c: string) => void;
   clear: () => void;
 }
 
@@ -21,6 +23,7 @@ export const useAuth = create<AuthState>()(
       userId: null,
       userName: null,
       timezone: 'UTC',
+      currency: 'usd',
       setSession: (res) =>
         set({
           token: res.token,
@@ -28,8 +31,10 @@ export const useAuth = create<AuthState>()(
           userId: res.user_id,
           userName: res.user_name,
           timezone: res.timezone || 'UTC',
+          currency: res.currency || 'usd',
         }),
       setTimezone: (timezone) => set({ timezone }),
+      setCurrency: (currency) => set({ currency }),
       clear: () =>
         set({
           token: null,
@@ -37,6 +42,7 @@ export const useAuth = create<AuthState>()(
           userId: null,
           userName: null,
           timezone: 'UTC',
+          currency: 'usd',
         }),
     }),
     {

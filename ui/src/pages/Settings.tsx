@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { useCurrency, CURRENCY_SYMBOL, type CurrencyCode } from '@/store/currency';
 import { useAuth } from '@/store/auth';
 import { usePermission, Guard } from '@/permissions';
-import { useUpdateTimezone } from '@/api/auth';
+import { useUpdateTimezone, useUpdateCurrency } from '@/api/auth';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -55,8 +55,9 @@ const DEFAULT_GATEWAY_CONFIG: GatewayRuntimeConfig = {
 export default function SettingsPage() {
   const { t } = useTranslation();
   const { currency, rate, setCurrency, setRate } = useCurrency();
-  const { timezone, setTimezone } = useAuth();
+  const { timezone, setTimezone, currency: authCurrency } = useAuth();
   const updateTimezone = useUpdateTimezone();
+  const updateCurrency = useUpdateCurrency();
   const [allowPrivateIps, setAllowPrivateIps] = useState(true);
   const [loading, setLoading] = useState(true);
   const [gatewayConfig, setGatewayConfig] = useState<GatewayRuntimeConfig>(DEFAULT_GATEWAY_CONFIG);
@@ -64,6 +65,13 @@ export default function SettingsPage() {
   const [gatewaySaving, setGatewaySaving] = useState(false);
 
   const isAdmin = usePermission('admin:settings');
+
+  // Sync auth store currency to currency store (handles cross-device login)
+  useEffect(() => {
+    if (authCurrency && authCurrency !== currency) {
+      setCurrency(authCurrency as CurrencyCode);
+    }
+  }, [authCurrency]);
 
   useEffect(() => {
     if (!isAdmin) {
@@ -153,7 +161,7 @@ export default function SettingsPage() {
                   <Label className="text-sm">{t('settings.currencyLabel')}</Label>
                   <p className="text-xs text-muted-foreground mt-0.5">{t('settings.currencyHint')}</p>
                 </div>
-                <Select value={currency} onValueChange={(v) => setCurrency(v as CurrencyCode)}>
+                <Select value={currency} onValueChange={(v) => { setCurrency(v as CurrencyCode); updateCurrency.mutate(v); }}>
                   <SelectTrigger className="w-32">
                     <SelectValue />
                   </SelectTrigger>

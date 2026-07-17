@@ -16,10 +16,16 @@ pub struct User {
     pub role: String,
     #[serde(default = "default_concurrency")]
     pub concurrency_limit: u32,
+    #[serde(default = "default_currency")]
+    pub currency: String,
 }
 
 fn default_concurrency() -> u32 {
     2000
+}
+
+fn default_currency() -> String {
+    "usd".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -333,6 +333,7 @@ async fn admin_login(
             "user_id": u.id,
             "user_name": u.name,
             "timezone": u.timezone,
+            "currency": u.currency,
         })));
     }
 
@@ -406,6 +407,7 @@ async fn setup_register(
         token_version: 0,
         role: "admin".to_string(),
         concurrency_limit: 2000,
+        currency: "usd".to_string(),
     };
     state.db.create_user(&user).await.map_err(db_err)?;
     state.auth.reload().await;
@@ -1153,6 +1155,7 @@ async fn change_my_password(
         token_version: existing.token_version + 1,
         role: existing.role,
         concurrency_limit: existing.concurrency_limit,
+        currency: existing.currency.clone(),
     };
     state.db.update_user(&updated).await.map_err(db_err)?;
 
@@ -1191,6 +1194,30 @@ async fn update_my_timezone(
         .await.map_err(db_err)?;
 
     Ok(Json(serde_json::json!({ "ok": true, "timezone": req.timezone })))
+}
+
+#[derive(Deserialize)]
+struct UpdateCurrencyReq {
+    currency: String,
+}
+
+async fn get_my_currency(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    let cur = state.db.get_user_currency(&session.user_id).await.map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "currency": cur })))
+}
+
+async fn update_my_currency(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<UpdateCurrencyReq>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    state.db.update_user_currency(&session.user_id, &req.currency).await.map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "ok": true, "currency": req.currency })))
 }
 
 async fn my_keys(
@@ -2572,6 +2599,10 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route(
             "/admin/api/me/timezone",
             axum::routing::get(get_my_timezone).put(update_my_timezone),
+        )
+        .route(
+            "/admin/api/me/currency",
+            axum::routing::get(get_my_currency).put(update_my_currency),
         )
         .route(
             "/admin/api/me/keys",
