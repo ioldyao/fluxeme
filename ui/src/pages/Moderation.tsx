@@ -258,8 +258,9 @@ export default function ModerationPage() {
             </h2>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">{t('moderation.ruleName')}</label>
+              <label htmlFor="rule-name" className="text-sm font-medium">{t('moderation.ruleName')}</label>
               <input
+                id="rule-name"
                 className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                 value={form.name || ''}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -268,8 +269,9 @@ export default function ModerationPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">{t('moderation.type')}</label>
+                <label htmlFor="rule-type" className="text-sm font-medium">{t('moderation.type')}</label>
                 <select
+                  id="rule-type"
                   className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                   value={form.pattern_type}
                   onChange={(e) => setForm({ ...form, pattern_type: e.target.value as 'regex' | 'keyword' })}
@@ -280,8 +282,9 @@ export default function ModerationPage() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">{t('moderation.action')}</label>
+                <label htmlFor="rule-action" className="text-sm font-medium">{t('moderation.action')}</label>
                 <select
+                  id="rule-action"
                   className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                   value={form.action}
                   onChange={(e) => setForm({ ...form, action: e.target.value as 'block' | 'mask' })}
@@ -294,8 +297,9 @@ export default function ModerationPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">{t('moderation.scope')}</label>
+                <label htmlFor="rule-scope" className="text-sm font-medium">{t('moderation.scope')}</label>
                 <select
+                  id="rule-scope"
                   className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                   value={form.scope}
                   onChange={(e) => setForm({ ...form, scope: e.target.value as 'request' | 'response' | 'both' })}
@@ -307,8 +311,9 @@ export default function ModerationPage() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">{t('moderation.priority')}</label>
+                <label htmlFor="rule-priority" className="text-sm font-medium">{t('moderation.priority')}</label>
                 <input
+                  id="rule-priority"
                   type="number"
                   min="1"
                   className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
@@ -319,8 +324,9 @@ export default function ModerationPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">{t('moderation.pattern')}</label>
+              <label htmlFor="rule-pattern" className="text-sm font-medium">{t('moderation.pattern')}</label>
               <textarea
+                id="rule-pattern"
                 className="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm"
                 value={form.pattern || ''}
                 onChange={(e) => setForm({ ...form, pattern: e.target.value })}
@@ -335,8 +341,9 @@ export default function ModerationPage() {
 
             {form.action === 'mask' && (
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">{t('moderation.replacement')}</label>
+                <label htmlFor="rule-replacement" className="text-sm font-medium">{t('moderation.replacement')}</label>
                 <input
+                  id="rule-replacement"
                   className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                   value={form.replacement || '[REDACTED]'}
                   onChange={(e) => setForm({ ...form, replacement: e.target.value })}
@@ -345,8 +352,9 @@ export default function ModerationPage() {
             )}
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">{t('moderation.channel')}</label>
+              <label htmlFor="rule-channel" className="text-sm font-medium">{t('moderation.channel')}</label>
               <select
+                id="rule-channel"
                 className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                 value={form.channel_id || ''}
                 onChange={(e) => setForm({ ...form, channel_id: e.target.value || null })}
