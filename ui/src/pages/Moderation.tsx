@@ -334,10 +334,10 @@ export default function ModerationPage() {
 
             <div className="space-y-1.5">
               <Label>{t('moderation.channel')}</Label>
-              <Select value={form.channel_id || ''} onValueChange={(v) => setForm({ ...form, channel_id: v || null })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+              <Select value={form.channel_id || '__global__'} onValueChange={(v) => setForm({ ...form, channel_id: v === '__global__' ? null : v })}>
+                <SelectTrigger><SelectValue placeholder={t('moderation.global')} /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">{t('moderation.global')}</SelectItem>
+                  <SelectItem value="__global__">{t('moderation.global')}</SelectItem>
                   {channels?.map((ch) => (
                     <SelectItem key={ch.id} value={ch.id}>
                       {ch.name || ch.id} ({ch.provider})
