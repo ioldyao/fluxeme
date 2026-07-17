@@ -182,6 +182,8 @@ const zh: Record<string, string> = {
   'form.bindChannelsCount': '绑定渠道（{{count}}）',
   'form.bindChannels': '绑定渠道',
   'form.channelPriority': '优先级',
+  'form.addChannelPlaceholder': '添加渠道…',
+  'form.noAvailableChannels': '已绑定全部渠道',
   'form.channel': '所属渠道',
   'form.channelName': '渠道名称',
   'form.noChannels': '暂无可用渠道',

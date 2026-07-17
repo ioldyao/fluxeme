@@ -182,6 +182,8 @@ const en: Record<string, string> = {
   'form.bindChannelsCount': 'Channel Bindings ({{count}})',
   'form.bindChannels': 'Channel Bindings',
   'form.channelPriority': 'Priority',
+  'form.addChannelPlaceholder': 'Add channel…',
+  'form.noAvailableChannels': 'All channels already bound',
   'form.channel': 'Channel',
   'form.channelName': 'Channel name',
   'form.noChannels': 'No channels available',

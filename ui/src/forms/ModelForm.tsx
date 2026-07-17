@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useChannels } from '@/api/channels';
 import { Checkbox } from '@/components/ui/checkbox';
 import type { Model } from '@/types';
@@ -44,13 +44,17 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
       setCategory(model.category ? model.category.split(',').filter(Boolean) : []);
     } else {
       setId(''); setName(''); setModelPattern(''); setPromptPrice('0'); setCompletionPrice('0');
-      setContextLength(''); setBindings([]); setCategory([]);
+      setContextLength(''); setBindings([]); setCategory([]); setSelectedAddChannel('');
     }
   }, [model, open]);
 
-  const addBinding = () => {
-    if (!channels?.length) return;
-    setBindings([...bindings, { channel_id: channels[0].id, priority: 0 }]);
+  const [selectedAddChannel, setSelectedAddChannel] = useState('');
+  const availableChannels = channels?.filter((ch) => !bindings.some((b) => b.channel_id === ch.id)) ?? [];
+
+  const addBinding = (channelId: string) => {
+    if (!channelId) return;
+    setBindings([...bindings, { channel_id: channelId, priority: 0 }]);
+    setSelectedAddChannel('');
   };
   const updateBinding = (i: number, field: string, value: string | number) =>
     setBindings(bindings.map((b, idx) => idx === i ? { ...b, [field]: value } : b));
@@ -187,16 +191,26 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                 <Label className="text-sm font-medium text-muted-foreground">
                   {t('form.bindChannelsCount', { count: bindings.length })}
                 </Label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={addBinding}
-                  disabled={!channels?.length}
-                >
-                  <Plus className="h-3.5 w-3.5 mr-1" />{t('common.add')}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Select value={selectedAddChannel} onValueChange={(v) => addBinding(v ?? '')}>
+                    <SelectTrigger className="h-8 w-56 text-xs bg-background">
+                      <SelectValue placeholder={t('form.addChannelPlaceholder')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableChannels.length === 0 ? (
+                        <div className="px-2 py-4 text-xs text-center text-muted-foreground">
+                          {t('form.noAvailableChannels')}
+                        </div>
+                      ) : (
+                        availableChannels.map((ch) => (
+                          <SelectItem key={ch.id} value={ch.id}>
+                            <span className="truncate">{ch.name || ch.id} ({ch.provider})</span>
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               <div className="flex-1 overflow-y-auto px-6 pb-6">
@@ -211,21 +225,19 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                         key={i}
                         className="grid grid-cols-[1fr_88px_32px] gap-3 items-center rounded-lg border bg-muted/30 px-3 py-2.5"
                       >
-                        <Select value={b.channel_id} onValueChange={(v) => updateBinding(i, 'channel_id', v ?? '')}>
-                          <SelectTrigger className="h-9 bg-background">
-                            <span className="truncate">
-                              {channels?.find((ch) => ch.id === b.channel_id)?.name || b.channel_id}
-                            </span>
-                            <SelectValue className="sr-only" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {channels?.map((ch) => (
-                              <SelectItem key={ch.id} value={ch.id}>
-                                {ch.name || ch.id} ({ch.provider})
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm font-medium truncate">
+                            {channels?.find((ch) => ch.id === b.channel_id)?.name || b.channel_id}
+                          </span>
+                          {(() => {
+                            const ch = channels?.find((c) => c.id === b.channel_id);
+                            return ch ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
+                                {ch.provider}
+                              </span>
+                            ) : null;
+                          })()}
+                        </div>
 
                         <Input
                           className="h-9 bg-background"
