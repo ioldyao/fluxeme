@@ -306,7 +306,6 @@ impl SqliteBackend {
 
     fn map_user_row(row: &rusqlite::Row) -> rusqlite::Result<User> {
         Ok(User {
-            currency: row.get::<_, String>(8).unwrap_or_default(),
             id: row.get(0)?,
             name: row.get(1)?,
             password_hash: None,
@@ -323,11 +322,11 @@ impl SqliteBackend {
             token_version: row.get::<_, i64>(5).unwrap_or(0),
             role: row.get::<_, String>(6).unwrap_or_default(),
             concurrency_limit: row.get::<_, u32>(7).unwrap_or(2000),
+            currency: row.get::<_, String>(8).unwrap_or_default(),
         })
     }
 
     fn map_user_with_pw_row(row: &rusqlite::Row) -> rusqlite::Result<User> {
-            currency: row.get::<_, String>(9).unwrap_or_default(),
         Ok(User {
             id: row.get(0)?,
             name: row.get(1)?,
@@ -345,6 +344,7 @@ impl SqliteBackend {
             token_version: row.get::<_, i64>(6).unwrap_or(0),
             role: row.get::<_, String>(7).unwrap_or_default(),
             concurrency_limit: row.get::<_, u32>(8).unwrap_or(2000),
+            currency: row.get::<_, String>(9).unwrap_or_default(),
         })
     }
 }
