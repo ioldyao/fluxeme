@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { Shield, Plus, Pencil, Trash2, RefreshCw, Power } from 'lucide-react';
+import { Plus, Pencil, Trash2, RefreshCw, Power } from 'lucide-react';
 import { useFilterRules, useCreateFilterRule, useUpdateFilterRule, useDeleteFilterRule } from '@/api/moderation';
 import { useChannels } from '@/api/channels';
 import { api } from '@/api/client';
@@ -227,7 +227,7 @@ export default function ModerationPage() {
                       </td>
                       <td className="py-3 px-4 text-center">{rule.priority}</td>
                       <td className="py-3 px-4 text-center">
-                        <Switch checked={rule.enabled} disabled />
+                        <Switch checked={rule.enabled} onCheckedChange={() => {}} disabled />
                       </td>
                       <td className="py-3 px-4 text-right">
                         <Button variant="ghost" size="sm" onClick={() => openEdit(rule)}>
