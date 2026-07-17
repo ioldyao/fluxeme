@@ -573,18 +573,18 @@ impl DbBackend for SqliteBackend {
         let key = key.to_string();
         self.exec(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
+                "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, u.concurrency_limit, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
                  FROM api_keys a JOIN users u ON u.id = a.user_id WHERE a.key = ?1",
             )?;
             let mut rows = stmt.query_map(params![key], |row| {
-                let allowed_models_str: Option<String> = row.get(13)?;
+                let allowed_models_str: Option<String> = row.get(14)?;
                 let api_key = ApiKey {
-                    key: row.get(7)?,
-                    user_id: row.get(8)?,
-                    name: row.get(9)?,
-                    enabled: row.get::<_, i32>(10)? != 0,
-                    expires_at: row.get(11)?,
-                    spend_limit: row.get(12)?,
+                    key: row.get(8)?,
+                    user_id: row.get(9)?,
+                    name: row.get(10)?,
+                    enabled: row.get::<_, i32>(11)? != 0,
+                    expires_at: row.get(12)?,
+                    spend_limit: row.get(13)?,
                     allowed_models: allowed_models_str
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
@@ -605,6 +605,7 @@ impl DbBackend for SqliteBackend {
                     timezone: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
                     token_version: row.get::<_, i64>(5).unwrap_or(0),
                     role: row.get::<_, String>(6).unwrap_or_default(),
+                    concurrency_limit: row.get::<_, u32>(7).unwrap_or(2000),
                 };
                 Ok((user, api_key))
             })?;
@@ -619,18 +620,18 @@ impl DbBackend for SqliteBackend {
     async fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError> {
         self.exec(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
+                "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, u.concurrency_limit, a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models
                  FROM api_keys a JOIN users u ON u.id = a.user_id ORDER BY a.key",
             )?;
             let rows = stmt.query_map([], |row| {
-                let allowed_models_str: Option<String> = row.get(13)?;
+                let allowed_models_str: Option<String> = row.get(14)?;
                 let api_key = ApiKey {
-                    key: row.get(7)?,
-                    user_id: row.get(8)?,
-                    name: row.get(9)?,
-                    enabled: row.get::<_, i32>(10)? != 0,
-                    expires_at: row.get(11)?,
-                    spend_limit: row.get(12)?,
+                    key: row.get(8)?,
+                    user_id: row.get(9)?,
+                    name: row.get(10)?,
+                    enabled: row.get::<_, i32>(11)? != 0,
+                    expires_at: row.get(12)?,
+                    spend_limit: row.get(13)?,
                     allowed_models: allowed_models_str
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
@@ -651,6 +652,7 @@ impl DbBackend for SqliteBackend {
                     timezone: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
                     token_version: row.get::<_, i64>(5).unwrap_or(0),
                     role: row.get::<_, String>(6).unwrap_or_default(),
+                    concurrency_limit: row.get::<_, u32>(7).unwrap_or(2000),
                 };
                 Ok((user, api_key))
             })?;
