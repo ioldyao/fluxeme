@@ -193,7 +193,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                 </Label>
                 <div className="flex items-center gap-2">
                   <Select value={selectedAddChannel} onValueChange={(v) => setSelectedAddChannel(v ?? '')}>
-                    <SelectTrigger className="h-8 w-56 text-xs bg-background">
+                    <SelectTrigger className="h-8 w-72 text-xs bg-background">
                       <SelectValue placeholder={t('form.addChannelPlaceholder')} />
                     </SelectTrigger>
                     <SelectContent>
@@ -204,7 +204,11 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                       ) : (
                         availableChannels.map((ch) => (
                           <SelectItem key={ch.id} value={ch.id}>
-                            <span className="truncate">{ch.name || ch.id} ({ch.provider})</span>
+                            <span className="flex items-center gap-2 min-w-0">
+                              <span className="truncate text-muted-foreground">{ch.id}</span>
+                              <span className="truncate">{ch.name || ch.id}</span>
+                              <span className="shrink-0 text-muted-foreground">({ch.provider})</span>
+                            </span>
                           </SelectItem>
                         ))
                       )}
