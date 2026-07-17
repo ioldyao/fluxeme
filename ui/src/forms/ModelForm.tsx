@@ -203,12 +203,11 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                         </div>
                       ) : (
                         availableChannels.map((ch) => (
-                          <SelectItem key={ch.id} value={ch.id}>
-                            <span className="flex items-center gap-2 min-w-0">
-                              <span className="truncate text-muted-foreground">{ch.id}</span>
-                              <span className="truncate">{ch.name || ch.id}</span>
-                              <span className="shrink-0 text-muted-foreground">({ch.provider})</span>
-                            </span>
+                          <SelectItem key={ch.id} value={ch.id} className="font-mono text-xs">
+                            <span className="truncate text-muted-foreground">{ch.id}</span>
+                            <span className="text-muted-foreground"> - </span>
+                            <span className="truncate">{ch.name || ch.id}</span>
+                            <span className="shrink-0 text-muted-foreground"> ({ch.provider})</span>
                           </SelectItem>
                         ))
                       )}
