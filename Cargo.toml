@@ -31,4 +31,5 @@ url = "2"
 redis = { version = "0.28", features = ["tokio-comp", "json"] }
 sha2 = "0.10"
 hex = "0.4"
+regex = "1"
 dotenvy = "0.15"

@@ -11,6 +11,7 @@ import {
   DollarSign,
   Wallet,
   Receipt,
+  Shield,
 } from 'lucide-react';
 
 export type RouteGuard = 'public' | 'auth' | 'admin';
@@ -48,6 +49,7 @@ export const adminRoutes: RouteConfig[] = [
   { path: '/users', Component: lazy(() => import('@/pages/Users')), guard: 'admin', label: 'nav.users', icon: Users, nav: true },
   { path: '/channels', Component: lazy(() => import('@/pages/Channels')), guard: 'admin', label: 'nav.channels', icon: Radio, nav: true },
   { path: '/models', Component: lazy(() => import('@/pages/Models')), guard: 'admin', label: 'nav.models', icon: Braces, nav: true, end: true },
+  { path: '/moderation', Component: lazy(() => import('@/pages/Moderation')), guard: 'admin', label: 'nav.moderation', icon: Shield, nav: true },
   { path: '/rules', Component: lazy(() => import('@/pages/Rules')), guard: 'admin', label: 'nav.rules', icon: Route, nav: true },
   { path: '/pricing', Component: lazy(() => import('@/pages/ModelPricing')), guard: 'admin', label: 'nav.modelPricing', icon: DollarSign, nav: true },
 ];

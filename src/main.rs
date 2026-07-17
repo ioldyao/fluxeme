@@ -29,7 +29,7 @@ use crate::db::Database;
 use crate::provider::ProviderRegistry;
 use crate::ratelimit::RateLimiter;
 use crate::server::{build_router, AppState};
-use crate::service::{AuthService, HealthService, RoutingService, UsageService};
+use crate::service::{AuthService, ContentFilterService, HealthService, RoutingService, UsageService};
 
 #[tokio::main]
 async fn main() {
@@ -219,6 +219,9 @@ async fn main() {
             .expect("Failed to initialize Casbin authorization module"),
     );
 
+    // Initialize content filter service
+    let content_filter = Arc::new(ContentFilterService::new(db.clone()).await);
+
     let state = Arc::new(AppState {
         config,
         auth,
@@ -235,6 +238,7 @@ async fn main() {
         cache,
         gate_cache,
         concurrency,
+        content_filter,
     });
 
     let app = build_router(state);

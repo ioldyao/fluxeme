@@ -13,7 +13,8 @@ export type Permission =
   | 'admin:recharge-keys'
   | 'admin:health'
   | 'admin:settings'
-  | 'admin:gateway';
+  | 'admin:gateway'
+  | 'admin:moderation';
 
 const ROLE_PERMISSIONS: Record<string, Permission[]> = {
   admin: [
@@ -29,6 +30,7 @@ const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     'admin:health',
     'admin:settings',
     'admin:gateway',
+    'admin:moderation',
   ],
   user: [],
 };

@@ -6,6 +6,7 @@ use crate::config::types::GatewayRuntimeConfig;
 use crate::db::backend::DbBackend;
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, Pricing};
+use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
 use crate::domain::usage::{UsageFilter, UsageRecord};
 use crate::domain::user::{ApiKey, User};
@@ -508,6 +509,20 @@ impl Database {
         offset: usize,
     ) -> Result<Vec<(String, f64, f64)>, DbError> {
         self.backend.get_balances_page(limit, offset).await
+    }
+
+    // ── Content Filter Rules ─────────────────────────────────────────────
+    pub async fn list_filter_rules(&self) -> Result<Vec<ContentFilterRule>, DbError> {
+        self.backend.list_filter_rules().await
+    }
+    pub async fn create_filter_rule(&self, rule: &ContentFilterRule) -> Result<(), DbError> {
+        self.backend.create_filter_rule(rule).await
+    }
+    pub async fn update_filter_rule(&self, rule: &ContentFilterRule) -> Result<(), DbError> {
+        self.backend.update_filter_rule(rule).await
+    }
+    pub async fn delete_filter_rule(&self, id: &str) -> Result<(), DbError> {
+        self.backend.delete_filter_rule(id).await
     }
 
     // ── Batch Operations ────────────────────────────────────────────────

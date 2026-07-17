@@ -23,6 +23,7 @@ use crate::config::types::EndpointConfig;
 use crate::domain::usage::UsageRecord;
 use crate::provider::{is_retryable_error, ErrorKind};
 use crate::server::AppState;
+use crate::service::moderation::FilterBlocked;
 
 // ── Error type ────────────────────────────────────────────────────
 
@@ -96,6 +97,12 @@ impl From<crate::ratelimit::RateLimitError> for GatewayError {
 impl From<crate::provider::ProviderError> for GatewayError {
     fn from(e: crate::provider::ProviderError) -> Self {
         Self::Upstream(e.0)
+    }
+}
+
+impl From<FilterBlocked> for GatewayError {
+    fn from(e: FilterBlocked) -> Self {
+        Self::BadRequest(e.0)
     }
 }
 
@@ -1224,6 +1231,31 @@ pub async fn chat_completions(
 
     tracing::info!(request_id, channel = %channel_id, endpoint = %route.endpoint.url, "Routing resolved");
 
+    // ── Content filter check (request body) ──
+    let content_filter_enabled = state.db.get_setting("content_moderation_enabled").await
+        .ok().flatten()
+        .map(|v| v != "false")
+        .unwrap_or(true);
+    if content_filter_enabled {
+        let body_str = serde_json::to_string(&body).unwrap_or_default();
+        match state.content_filter.check_request(&body_str, Some(&channel_id)) {
+        crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
+            tracing::warn!(request_id, rule = %rule_name, "Request blocked by content filter");
+            return Err(GatewayError::BadRequest(format!(
+                "Request blocked by content filter rule: {}",
+                rule_name
+            )));
+        }
+        crate::service::moderation::FilterOutcome::Masked(masked) => {
+            if let Ok(v) = serde_json::from_str(&masked) {
+                body = v;
+                tracing::info!(request_id, "Request body masked by content filter");
+            }
+        }
+        crate::service::moderation::FilterOutcome::Pass => {}
+        }
+    }
+
     // ── Cache check (non-streaming only) ──
     let cache_key = if !is_streaming {
         let raw_key = format!(
@@ -1330,6 +1362,30 @@ pub async fn messages(
 
     tracing::info!(request_id, channel = %channel_id, endpoint = %route.endpoint.url, "Messages routing resolved");
 
+    // ── Content filter check (request body) ──
+    let content_filter_enabled = state.db.get_setting("content_moderation_enabled").await
+        .ok().flatten()
+        .map(|v| v != "false")
+        .unwrap_or(true);
+    if content_filter_enabled {
+        let body_str = serde_json::to_string(&body).unwrap_or_default();
+        match state.content_filter.check_request(&body_str, Some(&channel_id)) {
+        crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
+            tracing::warn!(request_id, rule = %rule_name, "Messages request blocked by content filter");
+            return Err(GatewayError::BadRequest(format!(
+                "Request blocked by content filter rule: {}",
+                rule_name
+            )));
+        }
+        crate::service::moderation::FilterOutcome::Masked(masked) => {
+            if let Ok(v) = serde_json::from_str(&masked) {
+                body = v;
+                tracing::info!(request_id, "Messages request body masked by content filter");
+            }
+        }
+        crate::service::moderation::FilterOutcome::Pass => {}
+    }
+
     let handler_timeout = Duration::from_secs(
         state.gateway_config.read().unwrap().handler_timeout_secs,
     );
@@ -1402,6 +1458,30 @@ async fn relay_to_upstream(
         body["model"] = Value::String(id.clone());
     }
     let mut route = resolve_route(state, &channel_id)?;
+
+    // ── Content filter check (request body) ──
+    let content_filter_enabled = state.db.get_setting("content_moderation_enabled").await
+        .ok().flatten()
+        .map(|v| v != "false")
+        .unwrap_or(true);
+    if content_filter_enabled {
+        let body_str = serde_json::to_string(&body).unwrap_or_default();
+        match state.content_filter.check_request(&body_str, Some(&channel_id)) {
+        crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
+            tracing::warn!(request_id, rule = %rule_name, "Relay request blocked by content filter");
+            return Err(GatewayError::BadRequest(format!(
+                "Request blocked by content filter rule: {}",
+                rule_name
+            )));
+        }
+        crate::service::moderation::FilterOutcome::Masked(masked) => {
+            if let Ok(v) = serde_json::from_str(&masked) {
+                body = v;
+            }
+        }
+        crate::service::moderation::FilterOutcome::Pass => {}
+    }
+
     let req_body = serde_json::to_string(&body).ok();
     let max_retries = {
         let gw = state.gateway_config.read().unwrap();

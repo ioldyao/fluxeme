@@ -218,3 +218,18 @@ export interface BillingSummary {
   total_cost: number;
   balance: number;
 }
+
+export interface ContentFilterRule {
+  id: string;
+  name: string;
+  pattern_type: 'regex' | 'keyword';
+  pattern: string;
+  action: 'block' | 'mask';
+  scope: 'request' | 'response' | 'both';
+  channel_id?: string | null;
+  replacement?: string;
+  enabled: boolean;
+  priority: number;
+  created_at: string;
+  updated_at: string;
+}
