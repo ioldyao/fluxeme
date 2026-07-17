@@ -667,14 +667,14 @@ impl DbBackend for PgBackend {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.first().map(|r| {
-            let allowed_models_str: Option<String> = r.get(14);
+            let allowed_models_str: Option<String> = r.get(15);
             let api_key = ApiKey {
-                key: r.get(8),
-                user_id: r.get(9),
-                name: r.get(10),
-                enabled: r.get(11),
-                expires_at: r.get(12),
-                spend_limit: r.get(13),
+                key: r.get(9),
+                user_id: r.get(10),
+                name: r.get(11),
+                enabled: r.get(12),
+                expires_at: r.get(13),
+                spend_limit: r.get(14),
                 allowed_models: allowed_models_str
                     .filter(|s| !s.is_empty())
                     .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
@@ -717,14 +717,14 @@ impl DbBackend for PgBackend {
         Ok(rows
             .iter()
             .map(|r| {
-                let allowed_models_str: Option<String> = r.get(14);
+                let allowed_models_str: Option<String> = r.get(15);
                 let api_key = ApiKey {
-                    key: r.get(8),
-                    user_id: r.get(9),
-                    name: r.get(10),
-                    enabled: r.get(11),
-                    expires_at: r.get(12),
-                    spend_limit: r.get(13),
+                    key: r.get(9),
+                    user_id: r.get(10),
+                    name: r.get(11),
+                    enabled: r.get(12),
+                    expires_at: r.get(13),
+                    spend_limit: r.get(14),
                     allowed_models: allowed_models_str
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
