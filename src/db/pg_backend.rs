@@ -632,7 +632,7 @@ impl DbBackend for PgBackend {
 
     async fn lookup_key(&self, key: &str) -> Result<Option<(User, ApiKey)>, DbError> {
         let rows = sqlx::query(
-            "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, \
+            "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, u.concurrency_limit, \
              a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models \
              FROM api_keys a JOIN users u ON u.id = a.user_id WHERE a.key = $1",
         )
@@ -640,14 +640,14 @@ impl DbBackend for PgBackend {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.first().map(|r| {
-            let allowed_models_str: Option<String> = r.get(13);
+            let allowed_models_str: Option<String> = r.get(14);
             let api_key = ApiKey {
-                key: r.get(7),
-                user_id: r.get(8),
-                name: r.get(9),
-                enabled: r.get(10),
-                expires_at: r.get(11),
-                spend_limit: r.get(12),
+                key: r.get(8),
+                user_id: r.get(9),
+                name: r.get(10),
+                enabled: r.get(11),
+                expires_at: r.get(12),
+                spend_limit: r.get(13),
                 allowed_models: allowed_models_str
                     .filter(|s| !s.is_empty())
                     .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
@@ -671,6 +671,7 @@ impl DbBackend for PgBackend {
                     timezone: r.get::<Option<String>, _>(4).unwrap_or_default(),
                     token_version: r.get::<i64, _>(5),
                     role: r.get::<Option<String>, _>(6).unwrap_or_default(),
+                    concurrency_limit: r.get::<i64, _>(7) as u32,
                 }
             };
             (user, api_key)
@@ -679,7 +680,7 @@ impl DbBackend for PgBackend {
 
     async fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError> {
         let rows = sqlx::query(
-            "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, \
+            "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, u.concurrency_limit, \
              a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models \
              FROM api_keys a JOIN users u ON u.id = a.user_id ORDER BY a.key",
         )
@@ -688,14 +689,14 @@ impl DbBackend for PgBackend {
         Ok(rows
             .iter()
             .map(|r| {
-                let allowed_models_str: Option<String> = r.get(13);
+                let allowed_models_str: Option<String> = r.get(14);
                 let api_key = ApiKey {
-                    key: r.get(7),
-                    user_id: r.get(8),
-                    name: r.get(9),
-                    enabled: r.get(10),
-                    expires_at: r.get(11),
-                    spend_limit: r.get(12),
+                    key: r.get(8),
+                    user_id: r.get(9),
+                    name: r.get(10),
+                    enabled: r.get(11),
+                    expires_at: r.get(12),
+                    spend_limit: r.get(13),
                     allowed_models: allowed_models_str
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
@@ -719,6 +720,7 @@ impl DbBackend for PgBackend {
                         timezone: r.get::<Option<String>, _>(4).unwrap_or_default(),
                         token_version: r.get::<i64, _>(5),
                         role: r.get::<Option<String>, _>(6).unwrap_or_default(),
+                        concurrency_limit: r.get::<i64, _>(7) as u32,
                     }
                 };
                 (user, api_key)

@@ -249,6 +249,7 @@ pub async fn seed_from_config(
             timezone: "UTC".to_string(),
             token_version: 0,
             role: "user".to_string(),
+            concurrency_limit: 2000,
         };
         if let Err(e) = db.create_user(&user).await {
             tracing::warn!("Seed user {}: {}", t.id, e);

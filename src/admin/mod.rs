@@ -405,6 +405,7 @@ async fn setup_register(
         timezone: "UTC".to_string(),
         token_version: 0,
         role: "admin".to_string(),
+        concurrency_limit: 2000,
     };
     state.db.create_user(&user).await.map_err(db_err)?;
     state.auth.reload().await;
@@ -1151,6 +1152,7 @@ async fn change_my_password(
         timezone: existing.timezone,
         token_version: existing.token_version + 1,
         role: existing.role,
+        concurrency_limit: existing.concurrency_limit,
     };
     state.db.update_user(&updated).await.map_err(db_err)?;
 
