@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { X } from 'lucide-react';
+import { Plus, X } from 'lucide-react';
 import { useChannels } from '@/api/channels';
 import { Checkbox } from '@/components/ui/checkbox';
 import type { Model } from '@/types';
@@ -192,7 +192,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                   {t('form.bindChannelsCount', { count: bindings.length })}
                 </Label>
                 <div className="flex items-center gap-2">
-                  <Select value={selectedAddChannel} onValueChange={(v) => addBinding(v ?? '')}>
+                  <Select value={selectedAddChannel} onValueChange={(v) => setSelectedAddChannel(v ?? '')}>
                     <SelectTrigger className="h-8 w-56 text-xs bg-background">
                       <SelectValue placeholder={t('form.addChannelPlaceholder')} />
                     </SelectTrigger>
@@ -210,6 +210,15 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                       )}
                     </SelectContent>
                   </Select>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-8 text-xs"
+                    disabled={!selectedAddChannel}
+                    onClick={() => addBinding(selectedAddChannel)}
+                  >
+                    <Plus className="size-3.5 mr-1" />{t('common.add')}
+                  </Button>
                 </div>
               </div>
 
