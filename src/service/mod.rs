@@ -6,5 +6,6 @@ pub mod usage;
 
 pub use auth::AuthService;
 pub use health::HealthService;
+pub use moderation::ContentFilterService;
 pub use routing::RoutingService;
 pub use usage::UsageService;

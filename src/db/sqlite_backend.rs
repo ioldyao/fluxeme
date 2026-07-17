@@ -2829,6 +2829,7 @@ impl DbBackend for SqliteBackend {
             }
             Ok(rules)
         })
+        .await
     }
 
     async fn create_filter_rule(&self, rule: &ContentFilterRule) -> Result<(), DbError> {
@@ -2845,6 +2846,7 @@ impl DbBackend for SqliteBackend {
             )?;
             Ok(())
         })
+        .await
     }
 
     async fn update_filter_rule(&self, rule: &ContentFilterRule) -> Result<(), DbError> {
@@ -2860,6 +2862,7 @@ impl DbBackend for SqliteBackend {
             )?;
             Ok(())
         })
+        .await
     }
 
     async fn delete_filter_rule(&self, id: &str) -> Result<(), DbError> {
@@ -2868,6 +2871,7 @@ impl DbBackend for SqliteBackend {
             conn.execute("DELETE FROM content_filter_rules WHERE id = ?1", params![id])?;
             Ok(())
         })
+        .await
     }
 
     async fn get_balances_page(
