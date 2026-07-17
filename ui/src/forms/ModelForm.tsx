@@ -204,10 +204,10 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                       ) : (
                         availableChannels.map((ch) => (
                           <SelectItem key={ch.id} value={ch.id} className="font-mono text-xs">
-                            <span className="truncate text-muted-foreground">{ch.id}</span>
-                            <span className="text-muted-foreground"> - </span>
                             <span className="truncate">{ch.name || ch.id}</span>
                             <span className="shrink-0 text-muted-foreground"> ({ch.provider})</span>
+                            <span className="text-muted-foreground"> - </span>
+                            <span className="truncate text-muted-foreground">{ch.id}</span>
                           </SelectItem>
                         ))
                       )}
@@ -244,9 +244,10 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                           {(() => {
                             const ch = channels?.find((c) => c.id === b.channel_id);
                             return ch ? (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
-                                {ch.provider}
-                              </span>
+                              <>
+                                <span className="text-xs text-muted-foreground shrink-0">{ch.provider}</span>
+                                <span className="text-xs text-muted-foreground/60 truncate">{ch.id}</span>
+                              </>
                             ) : null;
                           })()}
                         </div>
