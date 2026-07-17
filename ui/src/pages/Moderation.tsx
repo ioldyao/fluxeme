@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { ContentFilterRule } from '@/types';
 
 const SCOPE_LABELS: Record<string, string> = {
@@ -249,13 +250,13 @@ export default function ModerationPage() {
       </Card>
 
       {/* Add/Edit Dialog */}
-      {showAdd && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh]">
-          <div className="fixed inset-0 bg-black/50" onClick={() => setShowAdd(false)} />
-          <div className="relative bg-background rounded-lg shadow-lg w-full max-w-lg mx-4 p-6 space-y-4 max-h-[80vh] overflow-y-auto">
-            <h2 className="text-lg font-semibold">
+      <Dialog open={showAdd} onOpenChange={(open) => { if (!open) { setShowAdd(false); setEditRule(null); } }}>
+        <DialogContent className="sm:max-w-lg p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-semibold">
               {editRule ? t('moderation.editRule') : t('moderation.addRule')}
-            </h2>
+            </DialogTitle>
+          </DialogHeader>
 
             <div className="space-y-1.5">
               <label htmlFor="rule-name" className="text-sm font-medium">{t('moderation.ruleName')}</label>
@@ -383,10 +384,8 @@ export default function ModerationPage() {
               <Button onClick={handleSubmit} disabled={createRule.isPending || updateRule.isPending}>
                 {editRule ? t('common.save') : t('common.create')}
               </Button>
-            </div>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDialog
         open={!!deleteTarget}

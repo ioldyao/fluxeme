@@ -124,6 +124,7 @@ const en: Record<string, string> = {
   'common.edit': 'Edit',
   'common.delete': 'Delete',
   'common.refresh': 'Refresh',
+  'common.enabled': 'Enabled',
   'common.active': 'Active',
   'common.disabled': 'Disabled',
   'common.meltdown': 'Circuit Open',

@@ -124,6 +124,7 @@ const zh: Record<string, string> = {
   'common.edit': '编辑',
   'common.delete': '删除',
   'common.refresh': '刷新',
+  'common.enabled': '启用',
   'common.active': '启用',
   'common.disabled': '禁用',
   'common.meltdown': '熔断中',
