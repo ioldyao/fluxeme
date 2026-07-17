@@ -39,7 +39,7 @@ export default function ModerationPage() {
   const [editRule, setEditRule] = useState<ContentFilterRule | null>(null);
   const updateRule = useUpdateFilterRule(editRule?.id ?? '');
   const [showAdd, setShowAdd] = useState(false);
-  const [enabled, setEnabled] = useState(true);
+  const [enabled, setEnabled] = useState(false);
   const [enabledLoading, setEnabledLoading] = useState(true);
 
   useEffect(() => {

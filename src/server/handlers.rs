@@ -1235,7 +1235,7 @@ pub async fn chat_completions(
     let content_filter_enabled = state.db.get_setting("content_moderation_enabled").await
         .ok().flatten()
         .map(|v| v != "false")
-        .unwrap_or(true);
+        .unwrap_or(false);
     if content_filter_enabled {
         let body_str = serde_json::to_string(&body).unwrap_or_default();
         match state.content_filter.check_request(&body_str, Some(&channel_id)) {
@@ -1366,7 +1366,7 @@ pub async fn messages(
     let content_filter_enabled = state.db.get_setting("content_moderation_enabled").await
         .ok().flatten()
         .map(|v| v != "false")
-        .unwrap_or(true);
+        .unwrap_or(false);
     if content_filter_enabled {
         let body_str = serde_json::to_string(&body).unwrap_or_default();
         match state.content_filter.check_request(&body_str, Some(&channel_id)) {
@@ -1464,7 +1464,7 @@ async fn relay_to_upstream(
     let content_filter_enabled = state.db.get_setting("content_moderation_enabled").await
         .ok().flatten()
         .map(|v| v != "false")
-        .unwrap_or(true);
+        .unwrap_or(false);
     if content_filter_enabled {
         let body_str = serde_json::to_string(&body).unwrap_or_default();
         match state.content_filter.check_request(&body_str, Some(&channel_id)) {
