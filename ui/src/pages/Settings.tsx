@@ -55,7 +55,7 @@ const DEFAULT_GATEWAY_CONFIG: GatewayRuntimeConfig = {
 export default function SettingsPage() {
   const { t } = useTranslation();
   const { currency, rate, setCurrency, setRate } = useCurrency();
-  const { timezone, setTimezone, currency: authCurrency } = useAuth();
+  const { timezone, setTimezone } = useAuth();
   const updateTimezone = useUpdateTimezone();
   const updateCurrency = useUpdateCurrency();
   const [allowPrivateIps, setAllowPrivateIps] = useState(true);
@@ -65,13 +65,6 @@ export default function SettingsPage() {
   const [gatewaySaving, setGatewaySaving] = useState(false);
 
   const isAdmin = usePermission('admin:settings');
-
-  // Sync auth store currency to currency store (handles cross-device login)
-  useEffect(() => {
-    if (authCurrency && authCurrency !== currency) {
-      setCurrency(authCurrency as CurrencyCode);
-    }
-  }, [authCurrency]);
 
   useEffect(() => {
     if (!isAdmin) {
