@@ -73,6 +73,7 @@ export default function Users() {
                     <th className="text-left py-3 px-4">{t('table.name')}</th>
                     <th className="text-left py-3 px-4">{t('table.role')}</th>
                     <th className="text-left py-3 px-4">{t('table.rateLimits')}</th>
+                    <th className="text-center py-3 px-4">{t('table.concurrencyLimit')}</th>
                     <th className="text-right py-3 px-4">{t('table.actions')}</th>
                   </tr>
                 </thead>
@@ -90,6 +91,9 @@ export default function Users() {
                       </td>
                       <td className="py-3 px-4 text-muted-foreground text-xs">
                         {user.rate_limits ? `RPM: ${user.rate_limits.rpm ?? '-'} / TPM: ${user.rate_limits.tpm ?? '-'}` : '-'}
+                      </td>
+                      <td className="py-3 px-4 text-center text-xs text-muted-foreground">
+                        {user.concurrency_limit ?? 2000}
                       </td>
                       <td className="py-3 px-4 text-right">
                         <Button variant="ghost" size="sm" onClick={() => setEditUser(user)}>

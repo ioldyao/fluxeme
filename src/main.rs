@@ -164,7 +164,7 @@ async fn main() {
     // In-memory gate cache (populated by inspection, read by handler when Redis is down)
     let gate_cache: Arc<AsyncRwLock<HashMap<String, GateStatus>>> = Arc::new(AsyncRwLock::new(HashMap::new()));
     // Per-user concurrency limiter (caps in-flight requests per user to 5)
-    let concurrency = Arc::new(PerUserSemaphore::new(5));
+    let concurrency = Arc::new(PerUserSemaphore::new());
 
     // Periodic inspection task: sync user gate status from SQLite to Redis + local cache.
     // Uses pagination to avoid holding the SQLite mutex for too long.

@@ -52,7 +52,8 @@ impl SqliteBackend {
                 name TEXT NOT NULL,
                 password_hash TEXT NOT NULL DEFAULT '',
                 rpm INTEGER,
-                tpm INTEGER
+                tpm INTEGER,
+                concurrency_limit INTEGER NOT NULL DEFAULT 2000
             );
 
             CREATE TABLE IF NOT EXISTS api_keys (
@@ -148,6 +149,7 @@ impl SqliteBackend {
         let _ = conn.execute_batch("ALTER TABLE channels ADD COLUMN name TEXT NOT NULL DEFAULT '';");
         let _ = conn.execute_batch("ALTER TABLE api_keys ADD COLUMN spend_limit REAL;");
         let _ = conn.execute_batch("ALTER TABLE api_keys ADD COLUMN allowed_models TEXT;");
+        let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN concurrency_limit INTEGER NOT NULL DEFAULT 2000;");
         let _ = conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS user_subscriptions (
                 user_id TEXT NOT NULL,
@@ -317,6 +319,7 @@ impl SqliteBackend {
             timezone: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
             token_version: row.get::<_, i64>(5).unwrap_or(0),
             role: row.get::<_, String>(6).unwrap_or_default(),
+            concurrency_limit: row.get::<_, u32>(7).unwrap_or(2000),
         })
     }
 
@@ -337,6 +340,7 @@ impl SqliteBackend {
             timezone: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
             token_version: row.get::<_, i64>(6).unwrap_or(0),
             role: row.get::<_, String>(7).unwrap_or_default(),
+            concurrency_limit: row.get::<_, u32>(8).unwrap_or(2000),
         })
     }
 }
@@ -354,7 +358,7 @@ impl DbBackend for SqliteBackend {
     async fn list_users(&self) -> Result<Vec<User>, DbError> {
         self.exec(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, name, rpm, tpm, timezone, token_version, role FROM users ORDER BY id",
+                "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit FROM users ORDER BY id",
             )?;
             let rows = stmt.query_map([], Self::map_user_row)?;
             let mut users = Vec::new();
@@ -370,7 +374,7 @@ impl DbBackend for SqliteBackend {
         let id = id.to_string();
         self.exec(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, name, rpm, tpm, timezone, token_version, role FROM users WHERE id = ?1",
+                "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit FROM users WHERE id = ?1",
             )?;
             let mut rows = stmt.query_map(params![id], Self::map_user_row)?;
             match rows.next() {
@@ -385,7 +389,7 @@ impl DbBackend for SqliteBackend {
         let id = id.to_string();
         self.exec(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, name, password_hash, rpm, tpm, timezone, token_version, role FROM users WHERE id = ?1",
+                "SELECT id, name, password_hash, rpm, tpm, timezone, token_version, role, concurrency_limit FROM users WHERE id = ?1",
             )?;
             let mut rows = stmt.query_map(params![id], Self::map_user_with_pw_row)?;
             match rows.next() {
@@ -416,8 +420,8 @@ impl DbBackend for SqliteBackend {
                 &user.role
             };
             conn.execute(
-                "INSERT INTO users (id, name, password_hash, rpm, tpm, timezone, token_version, role) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![user.id, user.name, pw_hash, rpm, tpm, tz, user.token_version, role],
+                "INSERT INTO users (id, name, password_hash, rpm, tpm, timezone, token_version, role, concurrency_limit) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![user.id, user.name, pw_hash, rpm, tpm, tz, user.token_version, role, user.concurrency_limit],
             )?;
             Ok(())
         })
@@ -439,13 +443,13 @@ impl DbBackend for SqliteBackend {
             };
             if let Some(ref pw) = user.password_hash {
                 conn.execute(
-                    "UPDATE users SET name = ?1, password_hash = ?2, rpm = ?3, tpm = ?4, timezone = ?5, token_version = ?6, role = ?7 WHERE id = ?8",
-                    params![user.name, pw, rpm, tpm, tz, user.token_version, user.role, user.id],
+                    "UPDATE users SET name = ?1, password_hash = ?2, rpm = ?3, tpm = ?4, timezone = ?5, token_version = ?6, role = ?7, concurrency_limit = ?8 WHERE id = ?9",
+                    params![user.name, pw, rpm, tpm, tz, user.token_version, user.role, user.concurrency_limit, user.id],
                 )?;
             } else {
                 conn.execute(
-                    "UPDATE users SET name = ?1, rpm = ?2, tpm = ?3, timezone = ?4, token_version = ?5, role = ?6 WHERE id = ?7",
-                    params![user.name, rpm, tpm, tz, user.token_version, user.role, user.id],
+                    "UPDATE users SET name = ?1, rpm = ?2, tpm = ?3, timezone = ?4, token_version = ?5, role = ?6, concurrency_limit = ?7 WHERE id = ?8",
+                    params![user.name, rpm, tpm, tz, user.token_version, user.role, user.concurrency_limit, user.id],
                 )?;
             }
             Ok(())

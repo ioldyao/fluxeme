@@ -14,6 +14,12 @@ pub struct User {
     pub token_version: i64,
     #[serde(default)]
     pub role: String,
+    #[serde(default = "default_concurrency")]
+    pub concurrency_limit: u32,
+}
+
+fn default_concurrency() -> u32 {
+    2000
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +56,7 @@ pub struct AuthResult {
     pub rate_limits: Option<(u64, u64)>,
     pub allowed_models: Option<Vec<String>>,
     pub api_key_name: String,
+    pub concurrency_limit: u32,
 }
 
 /// Session info for admin panel login
