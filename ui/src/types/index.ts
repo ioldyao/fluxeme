@@ -10,6 +10,7 @@ export interface User {
   name: string;
   role?: string;
   rate_limits?: RateLimit | null;
+  concurrency_limit?: number;
 }
 
 export interface UserDetail extends User {
@@ -172,6 +173,7 @@ export interface CreateUserReq {
   password?: string | null;
   rate_limits?: RateLimit | null;
   role?: string | null;
+  concurrency_limit?: number;
 }
 
 export interface UpdateUserReq {
@@ -179,6 +181,7 @@ export interface UpdateUserReq {
   password?: string | null;
   rate_limits?: RateLimit | null;
   role?: string | null;
+  concurrency_limit?: number;
 }
 
 export interface CreateKeyReq {

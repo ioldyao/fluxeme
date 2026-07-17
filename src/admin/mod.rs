@@ -1430,6 +1430,12 @@ struct CreateUserReq {
     password: Option<String>,
     rate_limits: Option<crate::domain::user::RateLimit>,
     role: Option<String>,
+    #[serde(default = "default_concurrency")]
+    concurrency_limit: u32,
+}
+
+fn default_concurrency() -> u32 {
+    2000
 }
 
 async fn create_user(
@@ -1463,6 +1469,7 @@ async fn create_user(
         timezone: "UTC".to_string(),
         token_version: 0,
         role: req.role.unwrap_or_else(|| "user".to_string()),
+        concurrency_limit: req.concurrency_limit,
     };
 
     state.db.create_user(&user).await.map_err(db_err)?;
@@ -1486,6 +1493,8 @@ struct UpdateUserReq {
     password: Option<String>,
     rate_limits: Option<crate::domain::user::RateLimit>,
     role: Option<String>,
+    #[serde(default)]
+    concurrency_limit: Option<u32>,
 }
 
 async fn update_user(
@@ -1519,6 +1528,7 @@ async fn update_user(
         timezone: existing.timezone,
         token_version: existing.token_version,
         role: req.role.unwrap_or(existing.role),
+        concurrency_limit: req.concurrency_limit.unwrap_or(existing.concurrency_limit),
     };
 
     state.db.update_user(&user).await.map_err(db_err)?;

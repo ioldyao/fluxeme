@@ -77,6 +77,7 @@ impl AuthService {
                     }),
                     allowed_models: api_key.allowed_models.clone(),
                     api_key_name: api_key.name.clone(),
+                    concurrency_limit: user.concurrency_limit,
                 });
             }
         }

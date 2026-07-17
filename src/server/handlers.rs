@@ -1206,7 +1206,7 @@ pub async fn chat_completions(
     }
 
     // ── Concurrency cap per user (bounds TOCTOU between gate check and deduction) ──
-    let _permit = state.concurrency.try_acquire(&user.user_id).await
+    let _permit = state.concurrency.try_acquire(&user.user_id, user.concurrency_limit).await
         .map_err(|_| GatewayError::RateLimit("Too many concurrent requests".into()))?;
 
     // ── Wallet balance check (Redis gate_status → local cache → SQLite) ──
@@ -1312,7 +1312,7 @@ pub async fn messages(
     }
 
     // ── Concurrency cap per user (bounds TOCTOU between gate check and deduction) ──
-    let _permit = state.concurrency.try_acquire(&user.user_id).await
+    let _permit = state.concurrency.try_acquire(&user.user_id, user.concurrency_limit).await
         .map_err(|_| GatewayError::RateLimit("Too many concurrent requests".into()))?;
 
     // ── Wallet balance check (Redis gate_status → local cache → SQLite) ──
@@ -1389,7 +1389,7 @@ async fn relay_to_upstream(
     }
 
     // ── Concurrency cap per user (bounds TOCTOU between gate check and deduction) ──
-    let _permit = state.concurrency.try_acquire(&user.user_id).await
+    let _permit = state.concurrency.try_acquire(&user.user_id, user.concurrency_limit).await
         .map_err(|_| GatewayError::RateLimit("Too many concurrent requests".into()))?;
 
     // ── Wallet balance check (Redis gate_status → local cache → SQLite) ──

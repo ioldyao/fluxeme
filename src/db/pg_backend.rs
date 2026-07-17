@@ -85,6 +85,7 @@ impl PgBackend {
         let timezone: Option<String> = row.get(*idx); *idx += 1;
         let token_version: i64 = row.get(*idx); *idx += 1;
         let role_val: Option<String> = row.get(*idx); *idx += 1;
+        let concurrency_val: i64 = row.get(*idx); *idx += 1;
         User {
             id,
             name,
@@ -101,6 +102,7 @@ impl PgBackend {
             timezone: timezone.unwrap_or_default(),
             token_version,
             role: role_val.unwrap_or_default(),
+            concurrency_limit: concurrency_val as u32,
         }
     }
 
@@ -113,6 +115,7 @@ impl PgBackend {
         let timezone: Option<String> = row.get(*idx); *idx += 1;
         let token_version: i64 = row.get(*idx); *idx += 1;
         let role_val: Option<String> = row.get(*idx); *idx += 1;
+        let concurrency_val: i64 = row.get(*idx); *idx += 1;
         User {
             id,
             name,
@@ -129,6 +132,7 @@ impl PgBackend {
             timezone: timezone.unwrap_or_default(),
             token_version,
             role: role_val.unwrap_or_default(),
+            concurrency_limit: concurrency_val as u32,
         }
     }
 
@@ -244,7 +248,8 @@ impl DbBackend for PgBackend {
                 name TEXT NOT NULL,
                 password_hash TEXT NOT NULL DEFAULT '',
                 rpm BIGINT,
-                tpm BIGINT
+                tpm BIGINT,
+                concurrency_limit BIGINT NOT NULL DEFAULT 2000
             );
 
             CREATE TABLE IF NOT EXISTS api_keys (
@@ -378,6 +383,7 @@ impl DbBackend for PgBackend {
         add_col!("ALTER TABLE models ADD COLUMN IF NOT EXISTS audio_output_price DOUBLE PRECISION NOT NULL DEFAULT 0.0");
         add_col!("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS spend_limit DOUBLE PRECISION");
         add_col!("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS allowed_models TEXT");
+        add_col!("ALTER TABLE users ADD COLUMN IF NOT EXISTS concurrency_limit BIGINT NOT NULL DEFAULT 2000");
         add_col!("ALTER TABLE endpoints ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT true");
         add_col!("ALTER TABLE models ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT ''");
         add_col!("ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC'");
@@ -417,7 +423,7 @@ impl DbBackend for PgBackend {
 
     async fn list_users(&self) -> Result<Vec<User>, DbError> {
         let rows = sqlx::query(
-            "SELECT id, name, rpm, tpm, timezone, token_version, role FROM users ORDER BY id",
+            "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit FROM users ORDER BY id",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -432,7 +438,7 @@ impl DbBackend for PgBackend {
 
     async fn get_user(&self, id: &str) -> Result<Option<User>, DbError> {
         let rows = sqlx::query(
-            "SELECT id, name, rpm, tpm, timezone, token_version, role FROM users WHERE id = $1",
+            "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit FROM users WHERE id = $1",
         )
         .bind(id)
         .fetch_all(&self.pool)
@@ -445,7 +451,7 @@ impl DbBackend for PgBackend {
 
     async fn get_user_with_password(&self, id: &str) -> Result<Option<User>, DbError> {
         let rows = sqlx::query(
-            "SELECT id, name, password_hash, rpm, tpm, timezone, token_version, role FROM users WHERE id = $1",
+            "SELECT id, name, password_hash, rpm, tpm, timezone, token_version, role, concurrency_limit FROM users WHERE id = $1",
         )
         .bind(id)
         .fetch_all(&self.pool)
@@ -466,7 +472,7 @@ impl DbBackend for PgBackend {
         let tz = if user.timezone.is_empty() { "UTC" } else { &user.timezone };
         let role = if user.role.is_empty() { "user" } else { &user.role };
         sqlx::query(
-            "INSERT INTO users (id, name, password_hash, rpm, tpm, timezone, token_version, role) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            "INSERT INTO users (id, name, password_hash, rpm, tpm, timezone, token_version, role, concurrency_limit) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
         )
         .bind(&user.id)
         .bind(&user.name)
@@ -476,6 +482,7 @@ impl DbBackend for PgBackend {
         .bind(tz)
         .bind(user.token_version)
         .bind(role)
+        .bind(user.concurrency_limit as i64)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -490,7 +497,7 @@ impl DbBackend for PgBackend {
         let tz = if user.timezone.is_empty() { "UTC" } else { &user.timezone };
         if let Some(ref pw) = user.password_hash {
             sqlx::query(
-                "UPDATE users SET name = $1, password_hash = $2, rpm = $3, tpm = $4, timezone = $5, token_version = $6, role = $7 WHERE id = $8",
+                "UPDATE users SET name = $1, password_hash = $2, rpm = $3, tpm = $4, timezone = $5, token_version = $6, role = $7, concurrency_limit = $8 WHERE id = $9",
             )
             .bind(&user.name)
             .bind(pw)
@@ -499,12 +506,13 @@ impl DbBackend for PgBackend {
             .bind(tz)
             .bind(user.token_version)
             .bind(&user.role)
+            .bind(user.concurrency_limit as i64)
             .bind(&user.id)
             .execute(&self.pool)
             .await?;
         } else {
             sqlx::query(
-                "UPDATE users SET name = $1, rpm = $2, tpm = $3, timezone = $4, token_version = $5, role = $6 WHERE id = $7",
+                "UPDATE users SET name = $1, rpm = $2, tpm = $3, timezone = $4, token_version = $5, role = $6, concurrency_limit = $7 WHERE id = $8",
             )
             .bind(&user.name)
             .bind(rpm)
@@ -512,6 +520,7 @@ impl DbBackend for PgBackend {
             .bind(tz)
             .bind(user.token_version)
             .bind(&user.role)
+            .bind(user.concurrency_limit as i64)
             .bind(&user.id)
             .execute(&self.pool)
             .await?;

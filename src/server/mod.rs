@@ -29,20 +29,21 @@ use crate::sso::SsoModule;
 /// automatically when the permit is dropped (no manual release needed).
 pub struct PerUserSemaphore {
     inner: AsyncRwLock<HashMap<String, Arc<Semaphore>>>,
-    max_permits: u32,
 }
 
 impl PerUserSemaphore {
-    pub fn new(max_permits: u32) -> Self {
+    pub fn new() -> Self {
         Self {
             inner: AsyncRwLock::new(HashMap::new()),
-            max_permits,
         }
     }
 
     /// Try to acquire a permit for the given user.
     /// Returns `Err` if the user already has `max_permits` in-flight requests.
-    pub async fn try_acquire(&self, user_id: &str) -> Result<OwnedSemaphorePermit, ()> {
+    pub async fn try_acquire(&self, user_id: &str, max_permits: u32) -> Result<OwnedSemaphorePermit, ()> {
+        if max_permits == 0 {
+            return Err(());
+        }
         let semaphore = {
             let read = self.inner.read().await;
             read.get(user_id).cloned()
@@ -54,7 +55,7 @@ impl PerUserSemaphore {
                 let mut write = self.inner.write().await;
                 // Double-check after acquiring write lock
                 write.get(user_id).cloned().unwrap_or_else(|| {
-                    let s = Arc::new(Semaphore::new(self.max_permits as usize));
+                    let s = Arc::new(Semaphore::new(max_permits as usize));
                     write.insert(user_id.to_string(), s.clone());
                     s
                 })
@@ -67,8 +68,7 @@ impl PerUserSemaphore {
     /// Remove semaphores with all permits available (no in-flight requests).
     pub async fn cleanup(&self) {
         let mut write = self.inner.write().await;
-        let max = self.max_permits as usize;
-        write.retain(|_, s| s.available_permits() < max);
+        write.retain(|_, s| s.available_permits() > 0);
     }
 }
 

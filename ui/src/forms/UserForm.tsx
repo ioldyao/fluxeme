@@ -22,6 +22,7 @@ export function UserForm({ user, open, onOpenChange, onSubmit, isPending }: Prop
   const [password, setPassword] = useState('');
   const [rpm, setRpm] = useState('');
   const [tpm, setTpm] = useState('');
+  const [concurrency, setConcurrency] = useState('2000');
   const [role, setRole] = useState('user');
 
   useEffect(() => {
@@ -30,9 +31,10 @@ export function UserForm({ user, open, onOpenChange, onSubmit, isPending }: Prop
       setName(user.name);
       setRpm(String(user.rate_limits?.rpm ?? ''));
       setTpm(String(user.rate_limits?.tpm ?? ''));
+      setConcurrency(String(user.concurrency_limit ?? 2000));
       setRole(user.role ?? 'user');
     } else {
-      setId(''); setName(''); setPassword(''); setRpm(''); setTpm(''); setRole('user');
+      setId(''); setName(''); setPassword(''); setRpm(''); setTpm(''); setConcurrency('2000'); setRole('user');
     }
   }, [user, open]);
 
@@ -48,6 +50,7 @@ export function UserForm({ user, open, onOpenChange, onSubmit, isPending }: Prop
       if (password) data.password = password;
       if (rateLimits) data.rate_limits = rateLimits;
       if (role !== (user.role ?? 'user')) data.role = role;
+      data.concurrency_limit = Number(concurrency);
       onSubmit(data);
     } else {
       onSubmit({
@@ -55,6 +58,7 @@ export function UserForm({ user, open, onOpenChange, onSubmit, isPending }: Prop
         password: password || null,
         rate_limits: rateLimits ?? null,
         role,
+        concurrency_limit: Number(concurrency),
       });
     }
   };
@@ -111,6 +115,10 @@ export function UserForm({ user, open, onOpenChange, onSubmit, isPending }: Prop
                 <Input type="number" value={tpm} onChange={(e) => setTpm(e.target.value)} placeholder="不限" />
               </div>
             </div>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">{t('form.concurrencyLimit')}</Label>
+            <Input type="number" min="0" value={concurrency} onChange={(e) => setConcurrency(e.target.value)} />
           </div>
           <div className="flex justify-end gap-3 pt-2">
             <Button type="button" variant="outline" size="lg" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
