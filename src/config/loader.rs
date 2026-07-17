@@ -250,6 +250,7 @@ pub async fn seed_from_config(
             token_version: 0,
             role: "user".to_string(),
             concurrency_limit: 2000,
+            currency: "usd".to_string(),
         };
         if let Err(e) = db.create_user(&user).await {
             tracing::warn!("Seed user {}: {}", t.id, e);

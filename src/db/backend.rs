@@ -29,6 +29,8 @@ pub trait DbBackend: Send + Sync {
     async fn count_admins(&self) -> Result<i64, DbError>;
     async fn get_user_timezone(&self, id: &str) -> Result<String, DbError>;
     async fn update_user_timezone(&self, id: &str, timezone: &str) -> Result<(), DbError>;
+    async fn get_user_currency(&self, id: &str) -> Result<String, DbError>;
+    async fn update_user_currency(&self, id: &str, currency: &str) -> Result<(), DbError>;
 
     // ── API Keys ─────────────────────────────────────────────────────────
     async fn list_api_keys(&self, user_id: &str) -> Result<Vec<ApiKey>, DbError>;

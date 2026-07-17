@@ -36,6 +36,20 @@ export function useUpdateTimezone() {
   });
 }
 
+export function useUpdateCurrency() {
+  const setCurrency = useAuth((s) => s.setCurrency);
+  return useMutation({
+    mutationFn: (currency: string) =>
+      api<{ currency: string }>('/me/currency', {
+        method: 'PUT',
+        body: { currency },
+      }),
+    onSuccess: (res) => {
+      setCurrency(res.currency);
+    },
+  });
+}
+
 export function useSetupStatus() {
   return useQuery({
     queryKey: ['setup-status'],
