@@ -1384,6 +1384,7 @@ pub async fn messages(
             }
         }
         crate::service::moderation::FilterOutcome::Pass => {}
+        }
     }
 
     let handler_timeout = Duration::from_secs(
@@ -1480,10 +1481,11 @@ async fn relay_to_upstream(
             }
         }
         crate::service::moderation::FilterOutcome::Pass => {}
+        }
     }
 
     let req_body = serde_json::to_string(&body).ok();
-    let max_retries = {
+        let max_retries = {
         let gw = state.gateway_config.read().unwrap();
         gw.max_retries
     };
