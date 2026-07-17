@@ -19,7 +19,7 @@ use crate::cache::{GateStatus, RedisCache};
 use crate::config::types::{AppConfig, GatewayRuntimeConfig};
 use crate::provider::ProviderRegistry;
 use crate::ratelimit::RateLimiter;
-use crate::service::{AuthService, HealthService, RoutingService, UsageService};
+use crate::service::{AuthService, ContentFilterService, HealthService, RoutingService, UsageService};
 use crate::sso::SsoModule;
 
 /// Per-user concurrency limiter for bounding TOCTOU exposure between
@@ -96,6 +96,8 @@ pub struct AppState {
     /// Per-user concurrency limiter — caps in-flight requests per user
     /// to bound the TOCTOU window between gate check and deduction.
     pub concurrency: Arc<PerUserSemaphore>,
+    /// Content filter service for request/response moderation.
+    pub content_filter: Arc<ContentFilterService>,
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {

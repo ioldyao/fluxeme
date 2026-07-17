@@ -7,6 +7,7 @@ use crate::db::backend::DbBackend;
 use crate::db::{DbError, RechargeKeyRow, WalletTransactionRow};
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, ModelChannel, Pricing};
+use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
 use crate::domain::usage::{UsageFilter, UsageRecord};
 use crate::domain::user::{ApiKey, User};
@@ -416,6 +417,27 @@ impl DbBackend for PgBackend {
         add_idx!("CREATE INDEX IF NOT EXISTS idx_usage_user_timestamp ON usage_logs(user_id, timestamp)");
         add_idx!("CREATE INDEX IF NOT EXISTS idx_wallet_tx_user ON wallet_transactions(user_id)");
         add_idx!("CREATE INDEX IF NOT EXISTS idx_wallet_tx_created ON wallet_transactions(created_at)");
+
+        // Create content_filter_rules table
+        let _ = sqlx::raw_sql(
+            "CREATE TABLE IF NOT EXISTS content_filter_rules (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                pattern_type TEXT NOT NULL DEFAULT 'keyword',
+                pattern TEXT NOT NULL,
+                action TEXT NOT NULL DEFAULT 'block',
+                scope TEXT NOT NULL DEFAULT 'both',
+                channel_id TEXT,
+                replacement TEXT DEFAULT '[REDACTED]',
+                enabled BOOLEAN NOT NULL DEFAULT true,
+                priority INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration error: {}", e)))?;
 
         // Set admin role for any user who was historically created as 'admin'
         let _ = sqlx::raw_sql("UPDATE users SET role='admin' WHERE id='admin' AND role='user'")
@@ -2691,6 +2713,81 @@ impl DbBackend for PgBackend {
         let json = serde_json::to_string(config)
             .map_err(|e| DbError(format!("Failed to serialize gateway config: {}", e)))?;
         self.set_setting("gateway_config", &json).await
+    }
+
+    // ── Content Filter Rules ─────────────────────────────────────────
+
+    async fn list_filter_rules(&self) -> Result<Vec<ContentFilterRule>, DbError> {
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, Option<String>, bool, i32, String, String)>(
+            "SELECT id, name, pattern_type, pattern, action, scope, channel_id, replacement, enabled, priority, created_at, updated_at FROM content_filter_rules ORDER BY priority ASC"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Failed to list filter rules: {}", e)))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, pattern_type, pattern, action, scope, channel_id, replacement, enabled, priority, created_at, updated_at)| ContentFilterRule {
+                id, name, pattern_type, pattern, action, scope, channel_id, replacement,
+                enabled: enabled as bool,
+                priority,
+                created_at,
+                updated_at,
+            })
+            .collect())
+    }
+
+    async fn create_filter_rule(&self, rule: &ContentFilterRule) -> Result<(), DbError> {
+        sqlx::query(
+            "INSERT INTO content_filter_rules (id, name, pattern_type, pattern, action, scope, channel_id, replacement, enabled, priority, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
+        )
+        .bind(&rule.id)
+        .bind(&rule.name)
+        .bind(&rule.pattern_type)
+        .bind(&rule.pattern)
+        .bind(&rule.action)
+        .bind(&rule.scope)
+        .bind(&rule.channel_id)
+        .bind(&rule.replacement)
+        .bind(rule.enabled)
+        .bind(rule.priority)
+        .bind(&rule.created_at)
+        .bind(&rule.updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Failed to create filter rule: {}", e)))?;
+        Ok(())
+    }
+
+    async fn update_filter_rule(&self, rule: &ContentFilterRule) -> Result<(), DbError> {
+        sqlx::query(
+            "UPDATE content_filter_rules SET name=$1, pattern_type=$2, pattern=$3, action=$4, scope=$5, channel_id=$6, replacement=$7, enabled=$8, priority=$9, updated_at=$10 WHERE id=$11"
+        )
+        .bind(&rule.name)
+        .bind(&rule.pattern_type)
+        .bind(&rule.pattern)
+        .bind(&rule.action)
+        .bind(&rule.scope)
+        .bind(&rule.channel_id)
+        .bind(&rule.replacement)
+        .bind(rule.enabled)
+        .bind(rule.priority)
+        .bind(&rule.updated_at)
+        .bind(&rule.id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Failed to update filter rule: {}", e)))?;
+        Ok(())
+    }
+
+    async fn delete_filter_rule(&self, id: &str) -> Result<(), DbError> {
+        sqlx::query("DELETE FROM content_filter_rules WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError(format!("Failed to delete filter rule: {}", e)))?;
+        Ok(())
     }
 
     async fn get_balances_page(

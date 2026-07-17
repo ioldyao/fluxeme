@@ -2,6 +2,7 @@ use async_trait::async_trait;
 
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, Pricing};
+use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
 use crate::domain::usage::UsageFilter;
 use crate::domain::usage::UsageRecord;
@@ -127,6 +128,12 @@ pub trait DbBackend: Send + Sync {
     async fn get_gateway_config(&self) -> Result<crate::config::types::GatewayRuntimeConfig, DbError>;
     async fn set_gateway_config(&self, config: &crate::config::types::GatewayRuntimeConfig) -> Result<(), DbError>;
     async fn get_balances_page(&self, limit: usize, offset: usize) -> Result<Vec<(String, f64, f64)>, DbError>;
+
+    // ── Content Filter Rules ──────────────────────────────────────────────
+    async fn list_filter_rules(&self) -> Result<Vec<ContentFilterRule>, DbError>;
+    async fn create_filter_rule(&self, rule: &ContentFilterRule) -> Result<(), DbError>;
+    async fn update_filter_rule(&self, rule: &ContentFilterRule) -> Result<(), DbError>;
+    async fn delete_filter_rule(&self, id: &str) -> Result<(), DbError>;
 
     // ── Batch Operations (used by background writer) ─────────────────────
     /// Insert a batch of usage records with wallet deduction in a single transaction.

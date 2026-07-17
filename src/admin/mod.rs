@@ -14,6 +14,7 @@ use crate::authz::AuthzModule;
 use crate::domain::channel::Channel;
 use crate::domain::model::Model;
 use crate::domain::model::Pricing;
+use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
 use crate::domain::usage::UsageFilter;
 use crate::domain::user::{ApiKey, SessionInfo, User};
@@ -2563,6 +2564,89 @@ async fn set_gateway_config_handler(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+// ── Content Moderation Handlers ─────────────────────────────────────
+
+async fn get_content_moderation_enabled(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:moderation").await?;
+    let value = state.db.get_setting("content_moderation_enabled").await.map_err(db_err)?;
+    let enabled = value.as_deref() != Some("false");
+    Ok(Json(serde_json::json!({ "enabled": enabled })))
+}
+
+async fn set_content_moderation_enabled(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:moderation").await?;
+    let enabled = body.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+    state.db.set_setting("content_moderation_enabled", if enabled { "true" } else { "false" })
+        .await.map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn list_filter_rules(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:moderation").await?;
+    let rules = state.db.list_filter_rules().await.map_err(db_err)?;
+    Ok(Json(serde_json::to_value(rules).unwrap_or_default()))
+}
+
+async fn create_filter_rule(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(mut rule): Json<ContentFilterRule>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:moderation").await?;
+    if rule.id.is_empty() {
+        rule.id = uuid::Uuid::new_v4().to_string();
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    if rule.created_at.is_empty() {
+        rule.created_at.clone_from(&now);
+    }
+    rule.updated_at = now;
+    state.db.create_filter_rule(&rule).await.map_err(db_err)?;
+    state.content_filter.reload().await;
+    Ok(Json(serde_json::json!({ "ok": true, "id": rule.id })))
+}
+
+async fn update_filter_rule(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(mut rule): Json<ContentFilterRule>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:moderation").await?;
+    rule.id = id;
+    rule.updated_at = chrono::Utc::now().to_rfc3339();
+    state.db.update_filter_rule(&rule).await.map_err(db_err)?;
+    state.content_filter.reload().await;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn delete_filter_rule(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:moderation").await?;
+    state.db.delete_filter_rule(&id).await.map_err(db_err)?;
+    state.content_filter.reload().await;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 // ── Router ────────────────────────────────────────────────────────
 
 pub fn admin_routes() -> Router<Arc<AppState>> {
@@ -2751,5 +2835,19 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
             "/admin/api/gateway/config",
             axum::routing::get(get_gateway_config_handler)
                 .put(set_gateway_config_handler),
+        )
+        // Content Moderation
+        .route(
+            "/admin/api/moderation/rules",
+            axum::routing::get(list_filter_rules).post(create_filter_rule),
+        )
+        .route(
+            "/admin/api/moderation/rules/{id}",
+            axum::routing::put(update_filter_rule).delete(delete_filter_rule),
+        )
+        .route(
+            "/admin/api/moderation/enabled",
+            axum::routing::get(get_content_moderation_enabled)
+                .put(set_content_moderation_enabled),
         )
 }
