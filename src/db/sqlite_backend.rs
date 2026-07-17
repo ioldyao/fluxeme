@@ -306,6 +306,7 @@ impl SqliteBackend {
 
     fn map_user_row(row: &rusqlite::Row) -> rusqlite::Result<User> {
         Ok(User {
+            currency: row.get::<_, String>(8).unwrap_or_default(),
             id: row.get(0)?,
             name: row.get(1)?,
             password_hash: None,
@@ -326,6 +327,7 @@ impl SqliteBackend {
     }
 
     fn map_user_with_pw_row(row: &rusqlite::Row) -> rusqlite::Result<User> {
+            currency: row.get::<_, String>(9).unwrap_or_default(),
         Ok(User {
             id: row.get(0)?,
             name: row.get(1)?,

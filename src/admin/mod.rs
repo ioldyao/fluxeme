@@ -1499,6 +1499,7 @@ async fn create_user(
         token_version: 0,
         role: req.role.unwrap_or_else(|| "user".to_string()),
         concurrency_limit: req.concurrency_limit,
+        currency: "usd".to_string(),
     };
 
     state.db.create_user(&user).await.map_err(db_err)?;
@@ -1558,6 +1559,7 @@ async fn update_user(
         token_version: existing.token_version,
         role: req.role.unwrap_or(existing.role),
         concurrency_limit: req.concurrency_limit.unwrap_or(existing.concurrency_limit),
+        currency: existing.currency.clone(),
     };
 
     state.db.update_user(&user).await.map_err(db_err)?;
