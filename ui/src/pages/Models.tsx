@@ -411,6 +411,7 @@ export default function Models() {
               </tbody>
             </table>
           </div>
+        </>
         )}
 
       </div>
