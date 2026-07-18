@@ -58,6 +58,17 @@ pub struct RechargeKeyRow {
     pub revoked: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProbeResultRow {
+    pub id: String,
+    pub channel_id: String,
+    pub model_id: String,
+    pub success: bool,
+    pub latency_ms: u64,
+    pub error: Option<String>,
+    pub probed_at: String,
+}
+
 pub struct Database {
     pub backend: Box<dyn DbBackend>,
 }
@@ -523,6 +534,14 @@ impl Database {
     }
     pub async fn delete_filter_rule(&self, id: &str) -> Result<(), DbError> {
         self.backend.delete_filter_rule(id).await
+    }
+
+    // ── Health Probe Results ─────────────────────────────────────────────
+    pub async fn insert_probe_result(&self, row: &ProbeResultRow) -> Result<(), DbError> {
+        self.backend.insert_probe_result(row).await
+    }
+    pub async fn all_latest_probe_results(&self) -> Result<Vec<ProbeResultRow>, DbError> {
+        self.backend.all_latest_probe_results().await
     }
 
     // ── Batch Operations ────────────────────────────────────────────────

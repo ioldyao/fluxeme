@@ -6,7 +6,7 @@ use rusqlite::{params, Connection};
 
 use crate::config::types::GatewayRuntimeConfig;
 use crate::db::backend::DbBackend;
-use crate::db::{DbError, RechargeKeyRow, WalletTransactionRow};
+use crate::db::{DbError, ProbeResultRow, RechargeKeyRow, WalletTransactionRow};
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, ModelChannel, Pricing};
 use crate::domain::moderation::ContentFilterRule;
@@ -220,6 +220,19 @@ impl SqliteBackend {
                 updated_at TEXT NOT NULL
             );",
         );
+        let _ = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS probe_results (
+                id TEXT PRIMARY KEY,
+                channel_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                success INTEGER NOT NULL,
+                latency_ms INTEGER NOT NULL,
+                error TEXT,
+                probed_at TEXT NOT NULL
+            );",
+        );
+        let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_probe_channel ON probe_results(channel_id)");
+        let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_probe_model ON probe_results(model_id)");
         Ok(())
     }
 }
@@ -2870,6 +2883,52 @@ impl DbBackend for SqliteBackend {
         self.exec(move |conn| {
             conn.execute("DELETE FROM content_filter_rules WHERE id = ?1", params![id])?;
             Ok(())
+        })
+        .await
+    }
+
+    // ── Health Probe Results ─────────────────────────────────────────
+
+    async fn insert_probe_result(&self, row: &ProbeResultRow) -> Result<(), DbError> {
+        let row = row.clone();
+        self.exec(move |conn| {
+            conn.execute(
+                "INSERT INTO probe_results (id, channel_id, model_id, success, latency_ms, error, probed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![row.id, row.channel_id, row.model_id, row.success as i32, row.latency_ms, row.error, row.probed_at],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn all_latest_probe_results(&self) -> Result<Vec<ProbeResultRow>, DbError> {
+        self.exec(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT p.id, p.channel_id, p.model_id, p.success, p.latency_ms, p.error, p.probed_at
+                 FROM probe_results p
+                 INNER JOIN (
+                     SELECT channel_id, MAX(probed_at) AS max_ts
+                     FROM probe_results
+                     GROUP BY channel_id
+                 ) latest ON p.channel_id = latest.channel_id AND p.probed_at = latest.max_ts
+                 ORDER BY p.channel_id",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(ProbeResultRow {
+                    id: row.get(0)?,
+                    channel_id: row.get(1)?,
+                    model_id: row.get(2)?,
+                    success: row.get::<_, i32>(3)? != 0,
+                    latency_ms: row.get(4)?,
+                    error: row.get(5)?,
+                    probed_at: row.get(6)?,
+                })
+            })?;
+            let mut results = Vec::new();
+            for row in rows {
+                results.push(row?);
+            }
+            Ok(results)
         })
         .await
     }

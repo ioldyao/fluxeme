@@ -3,7 +3,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useModels, useCreateModel, useUpdateModel, useDeleteModel, usePublishModel, useModelHealthCheck } from '@/api/models';
 import { useChannels } from '@/api/channels';
-import type { EndpointHealthItem } from '@/api/balancer';
 import { ModelForm } from '@/forms/ModelForm';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Button } from '@/components/ui/button';
@@ -51,7 +50,7 @@ export default function Models() {
     if (!models || !channels) return;
     const chIds = new Set(models.flatMap((m) => m.channels.map((b) => b.channel_id)));
     chIds.forEach((cid) => {
-      api<{ channel_id: string; endpoints: EndpointHealthItem[]; probe_success?: boolean | null; probe_latency_ms?: number | null }>(`/channels/${encodeURIComponent(cid)}/health`)
+      api<{ channel_id: string; endpoints: { endpoint_id: number; url: string; enabled: boolean; available: boolean }[]; probe_success?: boolean | null; probe_latency_ms?: number | null }>(`/channels/${encodeURIComponent(cid)}/health`)
         .then((res) => {
           const anyAvailable = res.endpoints.some((ep) => ep.enabled && ep.available);
           const allDisabled = res.endpoints.every((ep) => !ep.enabled);

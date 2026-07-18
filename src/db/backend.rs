@@ -8,7 +8,7 @@ use crate::domain::usage::UsageFilter;
 use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
 
-use super::{DbError, RechargeKeyRow, WalletTransactionRow};
+use super::{DbError, ProbeResultRow, RechargeKeyRow, WalletTransactionRow};
 
 /// Trait that abstracts the database backend.
 ///
@@ -134,6 +134,11 @@ pub trait DbBackend: Send + Sync {
     async fn create_filter_rule(&self, rule: &ContentFilterRule) -> Result<(), DbError>;
     async fn update_filter_rule(&self, rule: &ContentFilterRule) -> Result<(), DbError>;
     async fn delete_filter_rule(&self, id: &str) -> Result<(), DbError>;
+
+    // ── Health Probe Results ──────────────────────────────────────────────
+    async fn insert_probe_result(&self, row: &ProbeResultRow) -> Result<(), DbError>;
+    /// Returns the most recent probe result for each channel.
+    async fn all_latest_probe_results(&self) -> Result<Vec<ProbeResultRow>, DbError>;
 
     // ── Batch Operations (used by background writer) ─────────────────────
     /// Insert a batch of usage records with wallet deduction in a single transaction.
