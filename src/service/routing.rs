@@ -18,16 +18,19 @@ pub struct RoutingService {
     models: RwLock<Vec<Model>>,
     rules: RwLock<Vec<RoutingRule>>,
     cache: RouteCache,
+    /// JWT secret used for decrypting stored API keys.
+    enc_key: String,
 }
 
 impl RoutingService {
-    pub async fn new(db: Arc<Database>) -> Self {
+    pub async fn new(db: Arc<Database>, enc_key: &str) -> Self {
         let svc = Self {
             db,
             channels: RwLock::new(HashMap::new()),
             models: RwLock::new(Vec::new()),
             rules: RwLock::new(Vec::new()),
             cache: RwLock::new(HashMap::new()),
+            enc_key: enc_key.to_string(),
         };
         svc.reload().await;
         svc
@@ -49,7 +52,7 @@ impl RoutingService {
                     .map(|ep| EndpointConfig {
                         id: ep.id,
                         url: ep.url.clone(),
-                        api_key: ep.api_key.clone(),
+                        api_key: crate::crypto::decrypt_load(&ep.api_key, &self.enc_key),
                         weight: ep.weight,
                         timeout_secs: ep.timeout_secs,
                         enabled: ep.enabled,
@@ -92,7 +95,7 @@ impl RoutingService {
             .map(|ep| EndpointConfig {
                 id: ep.id,
                 url: ep.url.clone(),
-                api_key: ep.api_key.clone(),
+                api_key: crate::crypto::decrypt_load(&ep.api_key, &self.enc_key),
                 weight: ep.weight,
                 timeout_secs: ep.timeout_secs,
                 enabled: ep.enabled,

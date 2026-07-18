@@ -3,6 +3,7 @@ mod authz;
 mod balancer;
 mod cache;
 mod config;
+mod crypto;
 mod db;
 mod domain;
 mod provider;
@@ -88,7 +89,7 @@ async fn main() {
 
     // Initialize services
     let auth = Arc::new(AuthService::new(db.clone()).await);
-    let routing = Arc::new(RoutingService::new(db.clone()).await);
+    let routing = Arc::new(RoutingService::new(db.clone(), &jwt_secret).await);
     let providers = Arc::new(ProviderRegistry::new());
     let rate_limiter = Arc::new(RateLimiter::new());
     rate_limiter.start_cleanup_task();
