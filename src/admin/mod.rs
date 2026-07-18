@@ -2058,6 +2058,10 @@ async fn model_health_check(
         match result {
             Ok(_) => {
                 route.1.as_health_aware().record_success(endpoint_idx);
+                {
+                    let mut pr = state.routing.probe_results.write().unwrap();
+                    pr.insert(binding.channel_id.clone(), crate::service::routing::ProbeResult { success: true, latency_ms });
+                }
                 channel_results.push(ChannelCheckResult {
                     channel_id: binding.channel_id.clone(),
                     channel_name: ch_name,
@@ -2070,6 +2074,10 @@ async fn model_health_check(
             }
             Err(e) => {
                 route.1.as_health_aware().record_failure(endpoint_idx);
+                {
+                    let mut pr = state.routing.probe_results.write().unwrap();
+                    pr.insert(binding.channel_id.clone(), crate::service::routing::ProbeResult { success: false, latency_ms });
+                }
                 channel_results.push(ChannelCheckResult {
                     channel_id: binding.channel_id.clone(),
                     channel_name: ch_name,
@@ -2613,6 +2621,12 @@ struct EndpointHealthItem {
 struct ChannelHealthResponse {
     channel_id: String,
     endpoints: Vec<EndpointHealthItem>,
+    /// Last health-check probe success for this channel (None = never probed).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    probe_success: Option<bool>,
+    /// Last health-check probe latency in ms.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    probe_latency_ms: Option<u64>,
 }
 
 async fn get_channel_health(
@@ -2625,6 +2639,10 @@ async fn get_channel_health(
     let eps = state.routing.channel_health(&id);
     let ch = state.db.get_channel(&id).await.map_err(db_err)?;
     let channel_id = ch.as_ref().map(|c| c.id.clone()).unwrap_or(id);
+    let (probe_success, probe_latency_ms) = state.routing.probe_results.read().unwrap()
+        .get(&channel_id)
+        .map(|pr| (Some(pr.success), Some(pr.latency_ms)))
+        .unwrap_or((None, None));
     let mut endpoints = Vec::with_capacity(eps.len());
     for (eid, enabled, available) in eps {
         let url = state
@@ -2642,7 +2660,7 @@ async fn get_channel_health(
             available,
         });
     }
-    Ok(Json(ChannelHealthResponse { channel_id, endpoints }))
+    Ok(Json(ChannelHealthResponse { channel_id, endpoints, probe_success, probe_latency_ms }))
 }
 
 async fn toggle_endpoint(

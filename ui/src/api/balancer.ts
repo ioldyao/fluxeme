@@ -11,6 +11,8 @@ export interface EndpointHealthItem {
 export interface ChannelHealthResponse {
   channel_id: string;
   endpoints: EndpointHealthItem[];
+  probe_success?: boolean | null;
+  probe_latency_ms?: number | null;
 }
 
 export function useChannelHealth(channelId: string) {

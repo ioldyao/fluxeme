@@ -11,6 +11,13 @@ use crate::domain::model::Model;
 use crate::domain::routing::RoutingRule;
 use crate::db::Database;
 
+/// Per-channel probe result from a model health check.
+#[derive(Debug, Clone, Copy)]
+pub struct ProbeResult {
+    pub success: bool,
+    pub latency_ms: u64,
+}
+
 /// In-memory route cache, rebuilt from DB on startup and after admin changes.
 pub struct RoutingService {
     db: Arc<Database>,
@@ -18,6 +25,8 @@ pub struct RoutingService {
     models: RwLock<Vec<Model>>,
     rules: RwLock<Vec<RoutingRule>>,
     cache: RouteCache,
+    /// Last health check probe result per channel (survives page refresh, not server restart).
+    pub probe_results: RwLock<HashMap<String, ProbeResult>>,
 }
 
 impl RoutingService {
@@ -28,6 +37,7 @@ impl RoutingService {
             models: RwLock::new(Vec::new()),
             rules: RwLock::new(Vec::new()),
             cache: RwLock::new(HashMap::new()),
+            probe_results: RwLock::new(HashMap::new()),
         };
         svc.reload().await;
         svc

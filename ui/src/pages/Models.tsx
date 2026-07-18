@@ -45,17 +45,17 @@ export default function Models() {
   const [hcLoading, setHcLoading] = useState(false);
   const [hcResults, setHcResults] = useState<Record<string, { channel_id: string; success: boolean; latency_ms: number }[]>>({});
   // Channel health from server-side circuit breaker (persists across refresh)
-  const [channelHealth, setChannelHealth] = useState<Record<string, { available: boolean; enabled: boolean }>>({});
+  const [channelHealth, setChannelHealth] = useState<Record<string, { available: boolean; enabled: boolean; probe_success?: boolean | null; probe_latency_ms?: number | null }>>({});
 
   useEffect(() => {
     if (!models || !channels) return;
     const chIds = new Set(models.flatMap((m) => m.channels.map((b) => b.channel_id)));
     chIds.forEach((cid) => {
-      api<{ channel_id: string; endpoints: EndpointHealthItem[] }>(`/channels/${encodeURIComponent(cid)}/health`)
+      api<{ channel_id: string; endpoints: EndpointHealthItem[]; probe_success?: boolean | null; probe_latency_ms?: number | null }>(`/channels/${encodeURIComponent(cid)}/health`)
         .then((res) => {
           const anyAvailable = res.endpoints.some((ep) => ep.enabled && ep.available);
           const allDisabled = res.endpoints.every((ep) => !ep.enabled);
-          setChannelHealth((prev) => ({ ...prev, [cid]: { available: anyAvailable, enabled: !allDisabled } }));
+          setChannelHealth((prev) => ({ ...prev, [cid]: { available: anyAvailable, enabled: !allDisabled, probe_success: res.probe_success, probe_latency_ms: res.probe_latency_ms } }));
         })
         .catch(() => {});
     });
@@ -160,11 +160,16 @@ export default function Models() {
   );
 
   const channelHc = (modelId: string, chId: string) => {
-    // Prefer probe results (ephemeral), fall back to circuit breaker state (server-side)
+    // 1. Prefer probe results from current session (most recent)
     const probe = hcResults[modelId]?.find((r) => r.channel_id === chId);
     if (probe) return probe;
-    const cb = channelHealth[chId];
-    if (cb) return { channel_id: chId, success: cb.available, latency_ms: 0 };
+    // 2. Fall back to probe results stored on server (survives refresh)
+    const ch = channelHealth[chId];
+    if (ch?.probe_success != null) {
+      return { channel_id: chId, success: ch.probe_success, latency_ms: ch.probe_latency_ms ?? 0 };
+    }
+    // 3. Final fallback: circuit breaker state
+    if (ch) return { channel_id: chId, success: ch.available, latency_ms: 0 };
     return undefined;
   };
 
