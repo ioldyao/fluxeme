@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { useModels, useCreateModel, useUpdateModel, useDeleteModel, usePublishModel, useModelHealthCheck } from '@/api/models';
+import { useModels, useCreateModel, useUpdateModel, useDeleteModel, useModelHealthCheck } from '@/api/models';
 import { useChannels } from '@/api/channels';
 import { ModelForm } from '@/forms/ModelForm';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -31,7 +31,6 @@ export default function Models() {
   const channelName = (id: string) => channels?.find((c) => c.id === id)?.name || id;
   const createModel = useCreateModel();
   const deleteModel = useDeleteModel();
-  const publishModel = usePublishModel();
   const modelHealthCheck = useModelHealthCheck();
   const { currency } = useCurrency();
   const { effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
