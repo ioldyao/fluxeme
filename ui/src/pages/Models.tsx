@@ -50,24 +50,6 @@ export default function Models() {
     }
   };
 
-  const [allHcLoading, setAllHcLoading] = useState(false);
-  const runAllHealthChecks = async () => {
-    if (!models) return;
-    setAllHcLoading(true);
-    let done = 0;
-    const total = models.length;
-    for (const m of models) {
-      try {
-        const res = await modelHealthCheck.mutateAsync(m.id);
-        setHcResults((prev) => ({ ...prev, [m.id]: res.channel_results.map((r) => ({ channel_id: r.channel_id, success: r.success, latency_ms: r.latency_ms })) }));
-      } catch { /* skip */ }
-      done++;
-      toast.loading(`Health check: ${done}/${total}`, { id: 'all-hc' });
-    }
-    toast.success(`Health check complete: ${done}/${total}`, { id: 'all-hc' });
-    setAllHcLoading(false);
-  };
-
   const handleDelete = () => {
     if (!deleteTarget) return;
     deleteModel.mutate(deleteTarget.id, {
@@ -86,13 +68,22 @@ export default function Models() {
   const handleHealthCheck = async () => {
     setHcLoading(true);
     try {
+      // 1. Old: GET /v1/models 检测
       const res = await api<{ models_updated: number; channels_checked: number; channels_failed: number }>('/health-check/models', { method: 'POST' });
-      if (res.channels_failed > 0) {
-        toast.warning(t('model.healthCheckResultWithFailures', { channels: res.channels_checked, models: res.models_updated, failed: res.channels_failed }));
-      } else {
-        toast.success(t('model.healthCheckResult', { channels: res.channels_checked, models: res.models_updated }));
-      }
       refetch();
+
+      // 2. New: 遍历所有模型，对每个绑定渠道发 chat completion 请求
+      if (!models) return;
+      let done = 0;
+      const total = models.length;
+      for (const m of models) {
+        try {
+          const hcRes = await modelHealthCheck.mutateAsync(m.id);
+          setHcResults((prev) => ({ ...prev, [m.id]: hcRes.channel_results.map((r) => ({ channel_id: r.channel_id, success: r.success, latency_ms: r.latency_ms })) }));
+        } catch { /* skip */ }
+        done++;
+      }
+      toast.success(`Health check: ${res.channels_checked} channels, ${done}/${total} models probed`);
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -189,9 +180,6 @@ export default function Models() {
           <>
             <Button variant="outline" size="sm" onClick={() => setSyncOpen(true)}>
               <Import className="size-4 mr-1" />{t('model.syncUpstream')}
-            </Button>
-            <Button variant="outline" size="sm" onClick={runAllHealthChecks} disabled={allHcLoading}>
-              <Activity className={cn('size-4 mr-1', allHcLoading && 'animate-pulse')} />Model Probe
             </Button>
             <Button variant="outline" size="sm" onClick={handleHealthCheck} disabled={hcLoading}>
               <Activity className={cn('size-4 mr-1', hcLoading && 'animate-pulse')} />{t('model.healthCheck')}
