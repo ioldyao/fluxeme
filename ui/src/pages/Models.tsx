@@ -44,7 +44,6 @@ export default function Models() {
   const [hcLoading, setHcLoading] = useState(false);
   const [hcResults, setHcResults] = useState<Record<string, { channel_id: string; success: boolean; latency_ms: number }[]>>({});
 
-  // Filters & sort
   const [search, setSearch] = useState('');
   const [modalFilter, setModalFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -98,10 +97,9 @@ export default function Models() {
     }
   };
 
-  // ── Filter & sort logic ──
+  // ── Filters ──
   const filteredModels = useMemo(() => {
     let rows = models ?? [];
-
     const q = search.toLowerCase().trim();
     if (q) {
       rows = rows.filter((m) =>
@@ -110,56 +108,36 @@ export default function Models() {
         m.channels.some((b) => channelName(b.channel_id).toLowerCase().includes(q))
       );
     }
-
     if (modalFilter !== 'all') {
-      rows = rows.filter((m) => {
-        const cats = m.category?.split(',').filter(Boolean) ?? [];
-        return cats.includes(modalFilter);
-      });
+      rows = rows.filter((m) => m.category?.split(',').filter(Boolean).includes(modalFilter));
     }
-
     if (statusFilter !== 'all') {
-      rows = rows.filter((m) =>
-        statusFilter === 'published' ? m.published : !m.published
-      );
+      rows = rows.filter((m) => statusFilter === 'published' ? m.published : !m.published);
     }
-
     rows.sort((a, b) => {
       let av: any, bv: any;
       switch (sortKey) {
         case 'id': av = a.id; bv = b.id; break;
         case 'name': av = a.name; bv = b.name; break;
         case 'match': av = a.model_pattern; bv = b.model_pattern; break;
-        case 'channel': {
-          const aHc = hcResults[a.id]?.[0];
-          const bHc = hcResults[b.id]?.[0];
-          av = aHc?.latency_ms ?? 99999;
-          bv = bHc?.latency_ms ?? 99999;
-          break;
-        }
+        case 'channel': { const aH = hcResults[a.id]?.[0]; const bH = hcResults[b.id]?.[0]; av = aH?.latency_ms ?? 99999; bv = bH?.latency_ms ?? 99999; break; }
         case 'ctx': av = a.context_length ?? 0; bv = b.context_length ?? 0; break;
         case 'price': av = a.pricing.prompt_price; bv = b.pricing.prompt_price; break;
         case 'status': av = a.published ? 1 : 0; bv = b.published ? 1 : 0; break;
         default: av = a.id; bv = b.id;
       }
-      if (typeof av === 'string') return av.localeCompare(bv) * sortDir;
-      return (av - bv) * sortDir;
+      return typeof av === 'string' ? av.localeCompare(bv) * sortDir : (av - bv) * sortDir;
     });
-
     return rows;
   }, [models, search, modalFilter, statusFilter, sortKey, sortDir, hcResults, channels]);
 
   const handleSort = (key: SortKey) => {
-    if (sortKey === key) {
-      setSortDir((d) => d * -1);
-    } else {
-      setSortKey(key);
-      setSortDir(1);
-    }
+    if (sortKey === key) setSortDir((d) => d * -1);
+    else { setSortKey(key); setSortDir(1); }
   };
 
   const SortArrow = ({ k }: { k: SortKey }) => (
-    <span className={cn('inline-block ml-1.5 text-[10px] opacity-30 transition-all', sortKey === k && 'opacity-100 text-[#5EEAD4]')}>
+    <span className={cn('inline-block ml-1 text-xs opacity-30', sortKey === k && 'opacity-100 text-primary')}>
       {sortKey === k ? (sortDir === 1 ? '▲' : '▼') : '▲'}
     </span>
   );
@@ -168,12 +146,9 @@ export default function Models() {
 
   // Stats
   const totalPublished = models?.filter((m) => m.published).length ?? 0;
-  const totalAlerts = models?.filter((m) => {
-    const results = hcResults[m.id];
-    return results?.some((r) => !r.success);
-  }).length ?? 0;
+  const totalAlerts = models?.filter((m) => hcResults[m.id]?.some((r) => !r.success)).length ?? 0;
 
-  // ── SyncUpstreamDialog ──
+  // ── Sync dialog ──
   const qc = useQueryClient();
   const [syncChannelId, setSyncChannelId] = useState('');
   const [upstreamModels, setUpstreamModels] = useState<UpstreamModel[]>([]);
@@ -199,9 +174,7 @@ export default function Models() {
     finally { setFetching(false); }
   };
 
-  const toggleSelect = (id: string) => setSelectedIds((p) => {
-    const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n;
-  });
+  const toggleSelect = (id: string) => setSelectedIds((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const toggleSelectAll = () => setSelectedIds((p) => p.size === upstreamModels.length ? new Set() : new Set(upstreamModels.map((m) => m.id)));
 
   const handleAddSelected = async () => {
@@ -223,29 +196,29 @@ export default function Models() {
   };
 
   return (
-    <div className="max-w-[1400px] mx-auto px-8 py-10 space-y-6" style={{ fontFamily: "'Inter', sans-serif" }}>
+    <div className="space-y-6 animate-fade-in">
       {/* ── Top Bar ── */}
-      <div className="flex items-end justify-between flex-wrap gap-5 mb-2">
+      <div className="flex items-end justify-between flex-wrap gap-5">
         <div>
-          <div className="flex items-center gap-2 text-xs font-mono tracking-wider text-[#5EEAD4] uppercase mb-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#5EEAD4] shadow-[0_0_8px_#5EEAD4] animate-pulse" />
+          <div className="text-xs font-mono tracking-wider text-primary mb-1.5 flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
             实时监控中
           </div>
-          <h1 className="text-[28px] font-bold tracking-tight m-0">模型控制台</h1>
-          <p className="text-sm text-[#8B98A5] mt-1.5">管理已接入的模型、渠道绑定与发布状态</p>
+          <h1 className="text-2xl font-bold tracking-tight">模型控制台</h1>
+          <p className="text-sm text-muted-foreground mt-1">管理已接入的模型、渠道绑定与发布状态</p>
         </div>
         <div className="flex gap-6">
           <div className="text-right">
-            <div className="font-mono text-[22px] font-semibold">{models?.length ?? '—'}</div>
-            <div className="text-[11px] text-[#5C6773] uppercase tracking-wider mt-0.5">模型总数</div>
+            <div className="font-mono text-xl font-semibold">{models?.length ?? '—'}</div>
+            <div className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">模型总数</div>
           </div>
           <div className="text-right">
-            <div className="font-mono text-[22px] font-semibold text-[#5EEAD4]">{totalPublished}</div>
-            <div className="text-[11px] text-[#5C6773] uppercase tracking-wider mt-0.5">已发布</div>
+            <div className="font-mono text-xl font-semibold text-green-600 dark:text-green-400">{totalPublished}</div>
+            <div className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">已发布</div>
           </div>
           <div className="text-right">
-            <div className={cn('font-mono text-[22px] font-semibold', totalAlerts > 0 ? 'text-[#F0B429]' : 'text-[#5C6773]')}>{totalAlerts}</div>
-            <div className="text-[11px] text-[#5C6773] uppercase tracking-wider mt-0.5">渠道告警</div>
+            <div className={cn('font-mono text-xl font-semibold', totalAlerts > 0 ? 'text-yellow-500' : 'text-muted-foreground')}>{totalAlerts}</div>
+            <div className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">渠道告警</div>
           </div>
         </div>
       </div>
@@ -253,95 +226,95 @@ export default function Models() {
       {/* ── Controls ── */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[220px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5C6773] pointer-events-none" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="搜索 ID、名称或渠道…"
-            className="w-full h-[42px] bg-[#161B22] border border-[#232B36] rounded-lg pl-10 pr-3.5 text-sm text-[#E6EDF3] placeholder-[#5C6773] font-sans outline-none transition-all focus:border-[#2DD4BF] focus:shadow-[0_0_0_3px_rgba(94,234,212,0.08)]"
+            className="w-full h-10 bg-background border border-input rounded-lg pl-9 pr-3 text-sm text-foreground placeholder-muted-foreground outline-none transition-all focus:border-ring focus:ring-1 focus:ring-ring"
           />
         </div>
 
         <div className="flex gap-2 flex-wrap">
-          {['all', 'chat', 'reasoning', 'tools'].map((m) => (
+          {[{ v: 'all', l: '全部模态' }, { v: 'chat', l: '对话' }, { v: 'reasoning', l: '推理' }, { v: 'tools', l: '工具' }].map(({ v, l }) => (
             <button
-              key={m}
-              onClick={() => setModalFilter(m)}
+              key={v}
+              onClick={() => setModalFilter(v)}
               className={cn(
-                'px-3.5 py-2 text-sm font-medium rounded-full border transition-all whitespace-nowrap',
-                modalFilter === m
-                  ? 'bg-[rgba(94,234,212,0.08)] border-[#2DD4BF] text-[#5EEAD4]'
-                  : 'bg-[#161B22] border-[#232B36] text-[#8B98A5] hover:border-[#5C6773] hover:text-[#E6EDF3]'
+                'px-3 py-1.5 text-sm font-medium rounded-full border transition-all whitespace-nowrap',
+                modalFilter === v
+                  ? 'bg-primary/10 border-primary/30 text-primary'
+                  : 'bg-background border-input text-muted-foreground hover:border-muted-foreground/30 hover:text-foreground'
               )}
             >
-              {m === 'all' ? '全部模态' : CATEGORY_LABELS[m] || m}
+              {l}
             </button>
           ))}
         </div>
 
         <div className="flex gap-2 flex-wrap">
-          {[{ v: 'all', l: '全部状态' }, { v: 'published', l: '已发布' }, { v: 'draft', l: '未发布' }].map((s) => (
+          {[{ v: 'all', l: '全部状态' }, { v: 'published', l: '已发布' }, { v: 'draft', l: '未发布' }].map(({ v, l }) => (
             <button
-              key={s.v}
-              onClick={() => setStatusFilter(s.v)}
+              key={v}
+              onClick={() => setStatusFilter(v)}
               className={cn(
-                'px-3.5 py-2 text-sm font-medium rounded-full border transition-all whitespace-nowrap',
-                statusFilter === s.v
-                  ? 'bg-[rgba(94,234,212,0.08)] border-[#2DD4BF] text-[#5EEAD4]'
-                  : 'bg-[#161B22] border-[#232B36] text-[#8B98A5] hover:border-[#5C6773] hover:text-[#E6EDF3]'
+                'px-3 py-1.5 text-sm font-medium rounded-full border transition-all whitespace-nowrap',
+                statusFilter === v
+                  ? 'bg-primary/10 border-primary/30 text-primary'
+                  : 'bg-background border-input text-muted-foreground hover:border-muted-foreground/30 hover:text-foreground'
               )}
             >
-              {s.l}
+              {l}
             </button>
           ))}
         </div>
 
-        <button onClick={() => setShowAdd(true)} className="btn-primary inline-flex items-center gap-1.5 bg-[#5EEAD4] text-[#0A1210] font-semibold text-sm px-[18px] py-[11px] rounded-lg border-none cursor-pointer transition-all hover:shadow-[0_0_0_4px_rgba(94,234,212,0.08)] active:scale-[0.97]">
-          <Plus className="w-3.5 h-3.5" />新增模型
-        </button>
+        <Button onClick={() => setShowAdd(true)}>
+          <Plus className="size-4 mr-1" />新增模型
+        </Button>
       </div>
 
       {/* ── Table ── */}
-      <div className="bg-[#161B22] border border-[#232B36] rounded-2xl overflow-hidden">
+      <div className="border rounded-lg overflow-hidden">
         {isLoading ? (
-          <div className="p-12 text-center text-sm text-[#8B98A5]">加载中...</div>
+          <div className="p-12 text-center text-sm text-muted-foreground">加载中...</div>
         ) : isError ? (
           <div className="p-12 text-center">
-            <p className="text-sm text-[#F87171] mb-3">加载失败</p>
-            <button onClick={() => refetch()} className="btn-primary inline-flex items-center gap-1.5 bg-[#5EEAD4] text-[#0A1210] font-semibold text-sm px-4 py-2 rounded-lg border-none cursor-pointer">重试</button>
+            <p className="text-sm text-destructive mb-3">加载失败</p>
+            <Button variant="outline" onClick={() => refetch()}>重试</Button>
           </div>
         ) : filteredModels.length === 0 ? (
-          <div className="p-16 text-center text-[#5C6773]">
+          <div className="p-16 text-center text-muted-foreground">
             <Search className="w-10 h-10 mx-auto mb-3 opacity-50" />
             <div className="text-sm">没有找到匹配的模型，换个关键词或筛选条件试试</div>
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm border-collapse" style={{ fontFamily: "'Inter', sans-serif" }}>
+            <table className="w-full text-sm">
               <thead>
-                <tr className="bg-[#1B2129]">
+                <tr className="bg-muted/50 border-b">
                   {([{ k: 'id', l: 'ID' }, { k: 'name', l: '名称' }, { k: 'match', l: '模型匹配' }, { k: 'channel', l: '绑定渠道' }] as const).map(({ k, l }) => (
-                    <th key={k} onClick={() => handleSort(k)} className="text-left text-[11px] font-semibold uppercase tracking-wider text-[#5C6773] px-[18px] py-4 border-b border-[#232B36] whitespace-nowrap cursor-pointer select-none hover:text-[#8B98A5]">
+                    <th key={k} onClick={() => handleSort(k)} className="text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground px-4 py-3 border-b border-border whitespace-nowrap cursor-pointer select-none hover:text-foreground">
                       {l}<SortArrow k={k} />
                     </th>
                   ))}
-                  <th className="text-left text-[11px] font-semibold uppercase tracking-wider text-[#5C6773] px-[18px] py-4 border-b border-[#232B36] cursor-default">模态类型</th>
+                  <th className="text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground px-4 py-3 border-b border-border cursor-default">模态类型</th>
                   {([{ k: 'ctx', l: '上下文' }, { k: 'price', l: '定价' }, { k: 'status', l: '发布' }] as const).map(({ k, l }) => (
-                    <th key={k} onClick={() => handleSort(k)} className="text-left text-[11px] font-semibold uppercase tracking-wider text-[#5C6773] px-[18px] py-4 border-b border-[#232B36] whitespace-nowrap cursor-pointer select-none hover:text-[#8B98A5]">
+                    <th key={k} onClick={() => handleSort(k)} className="text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground px-4 py-3 border-b border-border whitespace-nowrap cursor-pointer select-none hover:text-foreground">
                       {l}<SortArrow k={k} />
                     </th>
                   ))}
-                  <th className="text-right text-[11px] font-semibold uppercase tracking-wider text-[#5C6773] px-[18px] py-4 border-b border-[#232B36]">操作</th>
+                  <th className="text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground px-4 py-3 border-b border-border">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredModels.map((m) => (
-                  <tr key={m.id} className="border-b border-[#1D242E] last:border-none hover:bg-[rgba(94,234,212,0.03)] transition-colors">
-                    <td className="px-[18px] py-4"><span className="font-mono text-[13px] font-medium text-[#5EEAD4]">{m.id}</span></td>
-                    <td className="px-[18px] py-4"><span className="font-semibold text-[#E6EDF3]">{m.name}</span></td>
-                    <td className="px-[18px] py-4"><span className="font-mono text-[13px] text-[#8B98A5]">{m.model_pattern}</span></td>
-                    <td className="px-[18px] py-4">
+                  <tr key={m.id} className="border-b last:border-0 hover:bg-muted/50 transition-colors">
+                    <td className="px-4 py-4"><span className="font-mono text-xs font-medium text-primary">{m.id}</span></td>
+                    <td className="px-4 py-4"><span className="font-semibold text-foreground">{m.name}</span></td>
+                    <td className="px-4 py-4"><span className="font-mono text-xs text-muted-foreground">{m.model_pattern}</span></td>
+                    <td className="px-4 py-4">
                       {m.channels.length > 0 ? (
                         <div className="flex flex-col gap-1.5">
                           {m.channels.map((b) => {
@@ -351,12 +324,12 @@ export default function Models() {
                             return (
                               <div key={b.channel_id} className="flex items-center gap-2">
                                 <span className={cn(
-                                  'w-2 h-2 rounded-full relative flex-shrink-0',
-                                  hc ? (ok ? 'bg-[#5EEAD4] shadow-[0_0_6px_#5EEAD4]' : 'bg-[#F87171] shadow-[0_0_6px_#F87171]') : 'bg-[#5C6773]'
+                                  'w-2 h-2 rounded-full flex-shrink-0',
+                                  hc ? (ok ? 'bg-green-500' : 'bg-destructive') : 'bg-muted-foreground/40'
                                 )} />
-                                <span className="text-[13px] text-[#E6EDF3]">{channelName(b.channel_id)}</span>
+                                <span className="text-sm text-foreground">{channelName(b.channel_id)}</span>
                                 {lat != null && (
-                                  <span className={cn('font-mono text-xs', lat > 5000 ? 'text-[#F87171] font-semibold' : 'text-[#5C6773]')}>
+                                  <span className={cn('font-mono text-xs', lat > 5000 ? 'text-destructive font-semibold' : 'text-muted-foreground')}>
                                     {lat}ms
                                   </span>
                                 )}
@@ -364,21 +337,21 @@ export default function Models() {
                             );
                           })}
                         </div>
-                      ) : <span className="text-[#5C6773]">—</span>}
+                      ) : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-[18px] py-4">
-                      <div className="flex gap-1.5 flex-wrap max-w-[180px]">
+                    <td className="px-4 py-4">
+                      <div className="flex gap-1 flex-wrap max-w-[180px]">
                         {(m.category?.split(',').filter(Boolean).sort((a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b)) ?? []).map((cat) => (
-                          <span key={cat} className="text-[11px] px-[9px] py-[4px] rounded-md bg-[#1B2129] border border-[#232B36] text-[#8B98A5] whitespace-nowrap">
+                          <span key={cat} className="text-xs px-2 py-0.5 rounded-md bg-muted border text-muted-foreground whitespace-nowrap">
                             {CATEGORY_LABELS[cat] || cat}
                           </span>
                         ))}
-                        {!m.category && <span className="text-[#5C6773]">—</span>}
+                        {!m.category && <span className="text-muted-foreground">—</span>}
                       </div>
                     </td>
-                    <td className="px-[18px] py-4"><span className="font-mono text-[13px] text-[#E6EDF3]">{formatCtx(m.context_length)}</span></td>
-                    <td className="px-[18px] py-4">
-                      <div className="text-[13px] leading-relaxed">
+                    <td className="px-4 py-4"><span className="font-mono text-sm text-foreground">{formatCtx(m.context_length)}</span></td>
+                    <td className="px-4 py-4">
+                      <div className="text-sm leading-relaxed">
                         {(() => {
                           const sym = CURRENCY_SYMBOL[getEffectiveCurrency(currency, m.id)];
                           const pp = m.pricing.prompt_price;
@@ -387,48 +360,35 @@ export default function Models() {
                           const fmt = (v: number) => v < 0.01 ? v.toFixed(4) : (Number.isInteger(v) ? v.toFixed(0) : v.toFixed(2));
                           return (
                             <>
-                              输入 <span className="font-mono font-medium text-[#E6EDF3]">{sym}{fmt(pp)}</span><span className="text-[#5C6773] mx-0.5">/</span>输出 <span className="font-mono font-medium text-[#E6EDF3]">{sym}{fmt(cp)}</span>
-                              {crp > 0 && <span className="block text-[12px] text-[#5C6773] mt-0.5">缓存 {sym}{fmt(crp)}</span>}
+                              输入 <span className="font-mono font-medium text-foreground">{sym}{fmt(pp)}</span><span className="text-muted-foreground mx-0.5">/</span>输出 <span className="font-mono font-medium text-foreground">{sym}{fmt(cp)}</span>
+                              {crp > 0 && <span className="block text-xs text-muted-foreground mt-0.5">缓存 {sym}{fmt(crp)}</span>}
                             </>
                           );
                         })()}
                       </div>
                     </td>
-                    <td className="px-[18px] py-4">
+                    <td className="px-4 py-4">
                       <span className={cn(
-                        'inline-flex items-center gap-1.5 text-xs font-semibold px-[11px] py-[5px] rounded-full',
+                        'inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full',
                         m.published
-                          ? 'bg-[rgba(94,234,212,0.08)] text-[#5EEAD4] border border-[rgba(94,234,212,0.25)]'
-                          : 'bg-[rgba(139,152,165,0.08)] text-[#8B98A5] border border-[#232B36]'
+                          ? 'bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20'
+                          : 'bg-muted text-muted-foreground border'
                       )}>
                         <span className="w-1.5 h-1.5 rounded-full bg-current" />
                         {m.published ? '已发布' : '未发布'}
                       </span>
                     </td>
-                    <td className="px-[18px] py-4 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() => runHealthCheck(m.id)}
-                          disabled={modelHealthCheck.isPending}
-                          className="w-[30px] h-[30px] flex items-center justify-center rounded-lg border border-transparent bg-transparent text-[#5C6773] cursor-pointer transition-all hover:bg-[#1B2129] hover:border-[#232B36] hover:text-[#E6EDF3]"
-                          title="健康检测"
-                        >
-                          <ChartNoAxesGantt className={cn('w-[15px] h-[15px]', modelHealthCheck.isPending && 'animate-pulse')} />
-                        </button>
-                        <button
-                          onClick={() => setEditModel(m)}
-                          className="w-[30px] h-[30px] flex items-center justify-center rounded-lg border border-transparent bg-transparent text-[#5C6773] cursor-pointer transition-all hover:bg-[#1B2129] hover:border-[#232B36] hover:text-[#E6EDF3]"
-                          title="编辑"
-                        >
-                          <Pencil className="w-[15px] h-[15px]" />
-                        </button>
-                        <button
-                          onClick={() => setDeleteTarget(m)}
-                          className="w-[30px] h-[30px] flex items-center justify-center rounded-lg border border-transparent bg-transparent text-[#5C6773] cursor-pointer transition-all hover:bg-[rgba(248,113,113,0.08)] hover:border-[rgba(248,113,113,0.25)] hover:text-[#F87171]"
-                          title="删除"
-                        >
-                          <Trash2 className="w-[15px] h-[15px]" />
-                        </button>
+                    <td className="px-4 py-4 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => runHealthCheck(m.id)} disabled={modelHealthCheck.isPending} title="健康检测">
+                          <GanttChartSquare className={cn('size-3.5', modelHealthCheck.isPending && 'animate-pulse')} />
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => setEditModel(m)} title="编辑">
+                          <Pencil className="size-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(m)} className="hover:text-destructive" title="删除">
+                          <Trash2 className="size-3.5" />
+                        </Button>
                       </div>
                     </td>
                   </tr>
@@ -440,16 +400,16 @@ export default function Models() {
 
         {/* Bottom bar */}
         {!isLoading && !isError && models && models.length > 0 && (
-          <div className="flex items-center gap-3 px-[18px] py-3 border-t border-[#232B36] bg-[#1B2129]">
-            <button onClick={() => setSyncOpen(true)} className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-[#232B36] bg-transparent text-[#8B98A5] cursor-pointer transition-all hover:border-[#5C6773] hover:text-[#E6EDF3]">
-              <Import className="w-3.5 h-3.5" />{t('model.syncUpstream')}
-            </button>
-            <button onClick={handleHealthCheck} disabled={hcLoading} className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-[#232B36] bg-transparent text-[#8B98A5] cursor-pointer transition-all hover:border-[#5C6773] hover:text-[#E6EDF3] disabled:opacity-50">
-              <Activity className={cn('w-3.5 h-3.5', hcLoading && 'animate-pulse')} />{t('model.healthCheck')}
-            </button>
-            <button onClick={() => refetch()} className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-[#232B36] bg-transparent text-[#8B98A5] cursor-pointer transition-all hover:border-[#5C6773] hover:text-[#E6EDF3]">
-              <RefreshCw className="w-3.5 h-3.5" />{t('common.refresh')}
-            </button>
+          <div className="flex items-center gap-2 px-4 py-2.5 border-t bg-muted/30">
+            <Button variant="outline" size="sm" onClick={() => setSyncOpen(true)}>
+              <Import className="size-3.5 mr-1" />{t('model.syncUpstream')}
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleHealthCheck} disabled={hcLoading}>
+              <Activity className={cn('size-3.5 mr-1', hcLoading && 'animate-pulse')} />{t('model.healthCheck')}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              <RefreshCw className="size-3.5 mr-1" />{t('common.refresh')}
+            </Button>
           </div>
         )}
       </div>
