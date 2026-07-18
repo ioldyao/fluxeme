@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { useModels, useCreateModel, useUpdateModel, useDeleteModel, useModelHealthCheck } from '@/api/models';
+import { useModels, useCreateModel, useUpdateModel, useDeleteModel, usePublishModel, useModelHealthCheck } from '@/api/models';
 import { useChannels } from '@/api/channels';
 import { ModelForm } from '@/forms/ModelForm';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -31,6 +31,7 @@ export default function Models() {
   const channelName = (id: string) => channels?.find((c) => c.id === id)?.name || id;
   const createModel = useCreateModel();
   const deleteModel = useDeleteModel();
+  const publishModel = usePublishModel();
   const modelHealthCheck = useModelHealthCheck();
   const { currency } = useCurrency();
   const { effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
@@ -289,6 +290,18 @@ export default function Models() {
             <div className="text-sm">没有找到匹配的模型，换个关键词或筛选条件试试</div>
           </div>
         ) : (
+          <>
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
+            <Button variant="outline" size="sm" onClick={() => setSyncOpen(true)}>
+              <Import className="size-3.5 mr-1" />{t('model.syncUpstream')}
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleHealthCheck} disabled={hcLoading}>
+              <Activity className={cn('size-3.5 mr-1', hcLoading && 'animate-pulse')} />{t('model.healthCheck')}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              <RefreshCw className="size-3.5 mr-1" />{t('common.refresh')}
+            </Button>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -368,7 +381,7 @@ export default function Models() {
                     </td>
                     <td className="px-4 py-4">
                       <span className={cn(
-                        'inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full',
+                        'inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap',
                         m.published
                           ? 'bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20'
                           : 'bg-muted text-muted-foreground border'
@@ -379,6 +392,9 @@ export default function Models() {
                     </td>
                     <td className="px-4 py-4 text-right">
                       <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => publishModel.mutate(m.id, { onError: (err) => toast.error(err.message) })} disabled={publishModel.isPending} title={m.published ? '取消发布' : '发布'}>
+                          <span className={cn('size-3.5 rounded-full border-2', m.published ? 'bg-green-500 border-green-500' : 'border-muted-foreground')} />
+                        </Button>
                         <Button variant="ghost" size="sm" onClick={() => runHealthCheck(m.id)} disabled={modelHealthCheck.isPending} title="健康检测">
                           <GanttChartSquare className={cn('size-3.5', modelHealthCheck.isPending && 'animate-pulse')} />
                         </Button>
@@ -397,20 +413,6 @@ export default function Models() {
           </div>
         )}
 
-        {/* Bottom bar */}
-        {!isLoading && !isError && models && models.length > 0 && (
-          <div className="flex items-center gap-2 px-4 py-2.5 border-t bg-muted/30">
-            <Button variant="outline" size="sm" onClick={() => setSyncOpen(true)}>
-              <Import className="size-3.5 mr-1" />{t('model.syncUpstream')}
-            </Button>
-            <Button variant="outline" size="sm" onClick={handleHealthCheck} disabled={hcLoading}>
-              <Activity className={cn('size-3.5 mr-1', hcLoading && 'animate-pulse')} />{t('model.healthCheck')}
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => refetch()}>
-              <RefreshCw className="size-3.5 mr-1" />{t('common.refresh')}
-            </Button>
-          </div>
-        )}
       </div>
 
       {/* ── Dialogs ── */}
