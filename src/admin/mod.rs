@@ -82,10 +82,12 @@ impl AdminModule {
     }
 
     fn decode_token(&self, token: &str) -> Result<SessionInfo, AdminError> {
+        let mut validation = Validation::default();
+        validation.required_spec_claims = std::collections::HashSet::from(["sub".to_string(), "exp".to_string()]);
         let data = decode::<JwtClaims>(
             token,
             &DecodingKey::from_secret(self.secret.as_bytes()),
-            &Validation::default(),
+            &validation,
         )
         .map_err(|e| {
             tracing::error!("JWT decode error: {}", e);
@@ -129,12 +131,25 @@ fn validate_password(pw: &str) -> Result<(), AdminError> {
 // ── Auth helpers ──────────────────────────────────────────────────
 
 fn extract_token(headers: &HeaderMap) -> Result<String, AdminError> {
-    headers
+    // Try Authorization header first (for API/programmatic access)
+    if let Some(token) = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|s| s.to_string())
-        .ok_or_else(|| AdminError::unauthorized("Missing or invalid admin token"))
+    {
+        return Ok(token);
+    }
+    // Fall back to httpOnly cookie (for browser-based admin UI)
+    if let Some(cookie) = headers.get("cookie").and_then(|v| v.to_str().ok()) {
+        for pair in cookie.split(';') {
+            let pair = pair.trim();
+            if let Some(value) = pair.strip_prefix("session_token=") {
+                return Ok(value.to_string());
+            }
+        }
+    }
+    Err(AdminError::unauthorized("Missing or invalid admin token"))
 }
 
 async fn require_session(admin: &AdminModule, headers: &HeaderMap) -> Result<SessionInfo, AdminError> {
@@ -211,7 +226,7 @@ impl IntoResponse for AdminError {
             AdminError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
             AdminError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             AdminError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
-            AdminError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            AdminError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string()),
             AdminError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             AdminError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, msg),
         };
@@ -278,7 +293,7 @@ async fn admin_login(
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     Json(req): Json<LoginReq>,
-) -> Result<Json<Value>, AdminError> {
+) -> Result<axum::response::Response, AdminError> {
     // Rate limit login attempts by real peer IP
     let client_ip = addr.ip().to_string();
     if let Some(fwd) = headers
@@ -328,14 +343,27 @@ async fn admin_login(
             token_version: u.token_version,
         };
         let token = state.admin.encode_token(&info)?;
-        return Ok(Json(serde_json::json!({
-            "token": token,
-            "role": u.role,
-            "user_id": u.id,
-            "user_name": u.name,
-            "timezone": u.timezone,
-            "currency": u.currency,
-        })));
+        // Set httpOnly cookie for browser-based admin UI (prevents XSS token theft)
+        let cookie = format!(
+            "session_token={}; HttpOnly; Path=/; SameSite=Strict; Max-Age=86400",
+            token
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::SET_COOKIE,
+            axum::http::HeaderValue::from_str(&cookie).unwrap(),
+        );
+        return Ok((
+            headers,
+            Json(serde_json::json!({
+                "token": token,
+                "role": u.role,
+                "user_id": u.id,
+                "user_name": u.name,
+                "timezone": u.timezone,
+                "currency": u.currency,
+            })),
+        ).into_response());
     }
 
     Err(AdminError::unauthorized("Invalid credentials"))
@@ -1723,7 +1751,7 @@ async fn list_channels(
 async fn create_channel(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(ch): Json<Channel>,
+    Json(mut ch): Json<Channel>,
 ) -> Result<Json<Channel>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:channels").await?;
@@ -1733,6 +1761,14 @@ async fn create_channel(
     }
     if ch.provider.is_empty() {
         return Err(AdminError::bad_request("Provider is required"));
+    }
+
+    // Encrypt endpoint API keys before storing
+    let secret = state.admin.secret.clone();
+    for ep in &mut ch.endpoints {
+        if !ep.api_key.is_empty() {
+            ep.api_key = crate::crypto::encrypt_store(&ep.api_key, &secret);
+        }
     }
 
     state.db.create_channel(&ch).await.map_err(|e| {
@@ -1758,6 +1794,14 @@ async fn update_channel(
 ) -> Result<Json<Channel>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:channels").await?;
+
+    // Encrypt endpoint API keys before storing
+    let secret = state.admin.secret.clone();
+    for ep in &mut ch.endpoints {
+        if !ep.api_key.is_empty() && !ep.api_key.starts_with("enc:") {
+            ep.api_key = crate::crypto::encrypt_store(&ep.api_key, &secret);
+        }
+    }
 
     ch.id = id.clone();
     state.db.update_channel(&ch).await.map_err(db_err)?;

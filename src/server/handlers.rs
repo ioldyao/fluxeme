@@ -731,7 +731,6 @@ async fn handle_streaming(
                 .header("content-type", "text/event-stream")
                 .header("cache-control", "no-cache")
                 .header("connection", "keep-alive")
-                .header("access-control-allow-origin", "*")
                 .body(Body::from_stream(body_stream))
                 .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
         }
@@ -823,7 +822,6 @@ async fn handle_messages_streaming(
                 .header("content-type", "text/event-stream")
                 .header("cache-control", "no-cache")
                 .header("connection", "keep-alive")
-                .header("access-control-allow-origin", "*")
                 .body(Body::from_stream(body_stream))
                 .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
         }
