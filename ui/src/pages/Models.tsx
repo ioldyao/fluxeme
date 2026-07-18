@@ -380,21 +380,22 @@ export default function Models() {
                       </div>
                     </td>
                     <td className="px-4 py-4">
-                      <span className={cn(
-                        'inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap',
-                        m.published
-                          ? 'bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20'
-                          : 'bg-muted text-muted-foreground border'
-                      )}>
+                      <button
+                        onClick={() => publishModel.mutate(m.id, { onError: (err) => toast.error(err.message) })}
+                        disabled={publishModel.isPending}
+                        className={cn(
+                          'inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap cursor-pointer transition-all disabled:opacity-50',
+                          m.published
+                            ? 'bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20 hover:bg-green-500/20'
+                            : 'bg-muted text-muted-foreground border hover:bg-muted/80'
+                        )}
+                      >
                         <span className="w-1.5 h-1.5 rounded-full bg-current" />
                         {m.published ? '已发布' : '未发布'}
-                      </span>
+                      </button>
                     </td>
                     <td className="px-4 py-4 text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => publishModel.mutate(m.id, { onError: (err) => toast.error(err.message) })} disabled={publishModel.isPending} title={m.published ? '取消发布' : '发布'}>
-                          <span className={cn('size-3.5 rounded-full border-2', m.published ? 'bg-green-500 border-green-500' : 'border-muted-foreground')} />
-                        </Button>
                         <Button variant="ghost" size="sm" onClick={() => runHealthCheck(m.id)} disabled={modelHealthCheck.isPending} title="健康检测">
                           <GanttChartSquare className={cn('size-3.5', modelHealthCheck.isPending && 'animate-pulse')} />
                         </Button>
