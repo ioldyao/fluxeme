@@ -4,7 +4,7 @@ use sqlx::{PgPool, QueryBuilder, Row};
 
 use crate::config::types::GatewayRuntimeConfig;
 use crate::db::backend::DbBackend;
-use crate::db::{DbError, RechargeKeyRow, WalletTransactionRow};
+use crate::db::{DbError, ProbeResultRow, RechargeKeyRow, WalletTransactionRow};
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, ModelChannel, Pricing};
 use crate::domain::moderation::ContentFilterRule;
@@ -438,6 +438,26 @@ impl DbBackend for PgBackend {
         .execute(&self.pool)
         .await
         .map_err(|e| DbError(format!("Migration error: {}", e)))?;
+
+        // Create probe_results table
+        let _ = sqlx::raw_sql(
+            "CREATE TABLE IF NOT EXISTS probe_results (
+                id TEXT PRIMARY KEY,
+                channel_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                success BOOLEAN NOT NULL,
+                latency_ms BIGINT NOT NULL,
+                error TEXT,
+                probed_at TEXT NOT NULL
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration error: {}", e)))?;
+        let _ = sqlx::raw_sql("CREATE INDEX IF NOT EXISTS idx_probe_channel ON probe_results(channel_id)")
+            .execute(&self.pool).await;
+        let _ = sqlx::raw_sql("CREATE INDEX IF NOT EXISTS idx_probe_model ON probe_results(model_id)")
+            .execute(&self.pool).await;
 
         // Set admin role for any user who was historically created as 'admin'
         let _ = sqlx::raw_sql("UPDATE users SET role='admin' WHERE id='admin' AND role='user'")
@@ -2788,6 +2808,45 @@ impl DbBackend for PgBackend {
             .await
             .map_err(|e| DbError(format!("Failed to delete filter rule: {}", e)))?;
         Ok(())
+    }
+
+    // ── Health Probe Results ─────────────────────────────────────────
+
+    async fn insert_probe_result(&self, row: &ProbeResultRow) -> Result<(), DbError> {
+        sqlx::query(
+            "INSERT INTO probe_results (id, channel_id, model_id, success, latency_ms, error, probed_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(&row.id)
+        .bind(&row.channel_id)
+        .bind(&row.model_id)
+        .bind(row.success)
+        .bind(row.latency_ms as i64)
+        .bind(&row.error)
+        .bind(&row.probed_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Failed to insert probe result: {}", e)))?;
+        Ok(())
+    }
+
+    async fn all_latest_probe_results(&self) -> Result<Vec<ProbeResultRow>, DbError> {
+        let rows = sqlx::query_as::<_, (String, String, String, bool, i64, Option<String>, String)>(
+            "SELECT p.id, p.channel_id, p.model_id, p.success, p.latency_ms, p.error, p.probed_at
+             FROM probe_results p
+             INNER JOIN (
+                 SELECT channel_id, MAX(probed_at) AS max_ts
+                 FROM probe_results
+                 GROUP BY channel_id
+             ) latest ON p.channel_id = latest.channel_id AND p.probed_at = latest.max_ts
+             ORDER BY p.channel_id"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Failed to list probe results: {}", e)))?;
+
+        Ok(rows.into_iter().map(|(id, channel_id, model_id, success, latency_ms, error, probed_at)| ProbeResultRow {
+            id, channel_id, model_id, success, latency_ms: latency_ms as u64, error, probed_at,
+        }).collect())
     }
 
     async fn get_balances_page(
