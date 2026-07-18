@@ -3,6 +3,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useModels, useCreateModel, useUpdateModel, useDeleteModel, usePublishModel, useModelHealthCheck } from '@/api/models';
 import { useChannels } from '@/api/channels';
+import { api } from '@/api/client';
+import type { EndpointHealthItem } from '@/api/balancer';
 import { ModelForm } from '@/forms/ModelForm';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Button } from '@/components/ui/button';
@@ -43,6 +45,22 @@ export default function Models() {
   const [deleteTarget, setDeleteTarget] = useState<Model | null>(null);
   const [hcLoading, setHcLoading] = useState(false);
   const [hcResults, setHcResults] = useState<Record<string, { channel_id: string; success: boolean; latency_ms: number }[]>>({});
+  // Channel health from server-side circuit breaker (persists across refresh)
+  const [channelHealth, setChannelHealth] = useState<Record<string, { available: boolean; enabled: boolean }>>({});
+
+  useEffect(() => {
+    if (!models || !channels) return;
+    const chIds = new Set(models.flatMap((m) => m.channels.map((b) => b.channel_id)));
+    chIds.forEach((cid) => {
+      api<{ channel_id: string; endpoints: EndpointHealthItem[] }>(`/channels/${encodeURIComponent(cid)}/health`)
+        .then((res) => {
+          const anyAvailable = res.endpoints.some((ep) => ep.enabled && ep.available);
+          const allDisabled = res.endpoints.every((ep) => !ep.enabled);
+          setChannelHealth((prev) => ({ ...prev, [cid]: { available: anyAvailable, enabled: !allDisabled } }));
+        })
+        .catch(() => {});
+    });
+  }, [models, channels]);
 
   const [search, setSearch] = useState('');
   const [modalFilter, setModalFilter] = useState('all');
@@ -142,7 +160,14 @@ export default function Models() {
     </span>
   );
 
-  const channelHc = (modelId: string, chId: string) => hcResults[modelId]?.find((r) => r.channel_id === chId);
+  const channelHc = (modelId: string, chId: string) => {
+    // Prefer probe results (ephemeral), fall back to circuit breaker state (server-side)
+    const probe = hcResults[modelId]?.find((r) => r.channel_id === chId);
+    if (probe) return probe;
+    const cb = channelHealth[chId];
+    if (cb) return { channel_id: chId, success: cb.available, latency_ms: 0 };
+    return undefined;
+  };
 
   // Stats
   const totalPublished = models?.filter((m) => m.published).length ?? 0;
