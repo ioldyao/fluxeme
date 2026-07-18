@@ -123,7 +123,7 @@ impl Default for CacheConfig {
 fn default_cache_enabled() -> bool { true }
 
 fn default_cache_redis_url() -> String {
-    "redis://127.0.0.1:6379".to_string()
+    "redis://127.0.0.1:16379".to_string()
 }
 
 /// Resolved endpoint with credentials, passed to provider adapters.
