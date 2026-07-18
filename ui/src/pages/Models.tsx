@@ -132,7 +132,7 @@ export default function Models() {
       return typeof av === 'string' ? av.localeCompare(bv) * sortDir : (av - bv) * sortDir;
     });
     return rows;
-  }, [models, search, modalFilter, statusFilter, sortKey, sortDir, hcResults, channels]);
+  }, [models, search, modalFilter, statusFilter, sortKey, sortDir, probeResults, channels]);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => d * -1);
