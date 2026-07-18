@@ -1936,165 +1936,36 @@ async fn update_model_pricing(
 
 // ── Model Health Check ─────────────────────────────────────────────
 
-#[derive(Serialize)]
-struct ModelHealthCheckResult {
-    model_id: String,
-    channel_results: Vec<ChannelCheckResult>,
-}
-
-#[derive(Serialize)]
-struct ChannelCheckResult {
-    channel_id: String,
-    channel_name: String,
-    provider: String,
-    endpoint_url: String,
-    success: bool,
-    latency_ms: u64,
-    error: Option<String>,
-}
-
 async fn model_health_check(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(model_id): Path<String>,
-) -> Result<Json<ModelHealthCheckResult>, AdminError> {
+) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:health").await?;
 
-    let model = state
-        .db
-        .get_model(&model_id)
+    let results = state
+        .health_probe
+        .probe_model(&model_id)
         .await
-        .map_err(db_err)?
-        .ok_or_else(|| AdminError::not_found("Model not found"))?;
+        .map_err(|e| AdminError::internal(e))?;
 
-    let mut bindings = model.channels.clone();
-    bindings.sort_by_key(|b| b.priority);
+    Ok(Json(serde_json::json!({
+        "model_id": model_id,
+        "channel_results": results,
+    })))
+}
 
-    // Load all channels for name lookup
-    let all_channels = state.db.list_channels().await.map_err(db_err)?;
-    let channel_map: std::collections::HashMap<_, _> = all_channels
-        .into_iter()
-        .map(|c| (c.id.clone(), c))
-        .collect();
+// ── Probe Results ─────────────────────────────────────────────────
 
-    let mut channel_results = Vec::new();
-
-    for binding in &bindings {
-        let ch_name = channel_map
-            .get(&binding.channel_id)
-            .map(|c| if c.name.is_empty() { c.id.clone() } else { c.name.clone() })
-            .unwrap_or_else(|| binding.channel_id.clone());
-
-        let route = match state.routing.get_route(&binding.channel_id) {
-            Some(r) => r,
-            None => {
-                channel_results.push(ChannelCheckResult {
-                    channel_id: binding.channel_id.clone(),
-                    channel_name: ch_name,
-                    provider: binding.provider.clone(),
-                    endpoint_url: String::new(),
-                    success: false,
-                    latency_ms: 0,
-                    error: Some("Route not available".into()),
-                });
-                continue;
-            }
-        };
-
-        let adapter = match state.providers.get(&route.0) {
-            Some(a) => a,
-            None => {
-                channel_results.push(ChannelCheckResult {
-                    channel_id: binding.channel_id.clone(),
-                    channel_name: ch_name,
-                    provider: route.0.clone(),
-                    endpoint_url: String::new(),
-                    success: false,
-                    latency_ms: 0,
-                    error: Some("Provider adapter not found".into()),
-                });
-                continue;
-            }
-        };
-
-        let (endpoint_idx, endpoint) = match route.1.as_health_aware().select() {
-            Some(r) => r,
-            None => {
-                channel_results.push(ChannelCheckResult {
-                    channel_id: binding.channel_id.clone(),
-                    channel_name: ch_name,
-                    provider: route.0.clone(),
-                    endpoint_url: String::new(),
-                    success: false,
-                    latency_ms: 0,
-                    error: Some("No available endpoints".into()),
-                });
-                continue;
-            }
-        };
-
-        let test_body = serde_json::json!({
-            "model": model.name,
-            "messages": [{"role": "user", "content": "hi"}],
-            "temperature": 0.01,
-            "max_tokens": 512,
-            "top_p": 0.01,
-        });
-
-        let start = std::time::Instant::now();
-        let result = if route.0 == "anthropic" {
-            let anthy_body = serde_json::json!({
-                "model": model.name,
-                "messages": [{"role": "user", "content": "hi"}],
-                "max_tokens": 512,
-            });
-            adapter.messages(endpoint, anthy_body).await
-        } else {
-            adapter.chat_complete(endpoint, test_body).await
-        };
-        let latency_ms = start.elapsed().as_millis() as u64;
-
-        match result {
-            Ok(_) => {
-                route.1.as_health_aware().record_success(endpoint_idx);
-                {
-                    let mut pr = state.routing.probe_results.write().unwrap();
-                    pr.insert(binding.channel_id.clone(), crate::service::routing::ProbeResult { success: true, latency_ms });
-                }
-                channel_results.push(ChannelCheckResult {
-                    channel_id: binding.channel_id.clone(),
-                    channel_name: ch_name,
-                    provider: route.0.clone(),
-                    endpoint_url: endpoint.url.clone(),
-                    success: true,
-                    latency_ms,
-                    error: None,
-                });
-            }
-            Err(e) => {
-                route.1.as_health_aware().record_failure(endpoint_idx);
-                {
-                    let mut pr = state.routing.probe_results.write().unwrap();
-                    pr.insert(binding.channel_id.clone(), crate::service::routing::ProbeResult { success: false, latency_ms });
-                }
-                channel_results.push(ChannelCheckResult {
-                    channel_id: binding.channel_id.clone(),
-                    channel_name: ch_name,
-                    provider: route.0.clone(),
-                    endpoint_url: endpoint.url.clone(),
-                    success: false,
-                    latency_ms,
-                    error: Some(e.0),
-                });
-            }
-        }
-    }
-
-    Ok(Json(ModelHealthCheckResult {
-        model_id,
-        channel_results,
-    }))
+async fn list_probe_results(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::db::ProbeResultRow>>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:health").await?;
+    let results = state.health_probe.all_latest_probes().await.map_err(|e| AdminError::internal(e))?;
+    Ok(Json(results))
 }
 
 // ── User Subscriptions ────────────────────────────────────────────
@@ -2211,10 +2082,18 @@ async fn test_subscription_connection(
     };
     let latency_ms = start.elapsed().as_millis() as u64;
 
-    // Store probe result in routing service (survives page refresh)
+    // Store probe result in database (persistent across restarts)
     {
-        let mut pr = state.routing.probe_results.write().unwrap();
-        pr.insert(channel_id.clone(), crate::service::routing::ProbeResult { success: result.is_ok(), latency_ms });
+        let row = crate::db::ProbeResultRow {
+            id: uuid::Uuid::new_v4().to_string(),
+            channel_id: channel_id.clone(),
+            model_id: model.id.clone(),
+            success: result.is_ok(),
+            latency_ms,
+            error: result.as_ref().err().map(|e| e.0.clone()),
+            probed_at: chrono::Utc::now().to_rfc3339(),
+        };
+        let _ = state.db.insert_probe_result(&row).await;
     }
 
     match result {
@@ -2645,9 +2524,12 @@ async fn get_channel_health(
     let eps = state.routing.channel_health(&id);
     let ch = state.db.get_channel(&id).await.map_err(db_err)?;
     let channel_id = ch.as_ref().map(|c| c.id.clone()).unwrap_or(id);
-    let (probe_success, probe_latency_ms) = state.routing.probe_results.read().unwrap()
-        .get(&channel_id)
-        .map(|pr| (Some(pr.success), Some(pr.latency_ms)))
+    // Read latest probe result from database (persisted across restarts)
+    let latest_probe = state.db.all_latest_probe_results().await.map_err(db_err)?;
+    let (probe_success, probe_latency_ms) = latest_probe
+        .iter()
+        .find(|r| r.channel_id == channel_id)
+        .map(|r| (Some(r.success), Some(r.latency_ms)))
         .unwrap_or((None, None));
     let mut endpoints = Vec::with_capacity(eps.len());
     for (eid, enabled, available) in eps {
@@ -2942,6 +2824,10 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route(
             "/admin/api/models/{id}/health-check",
             axum::routing::post(model_health_check),
+        )
+        .route(
+            "/admin/api/probe-results",
+            axum::routing::get(list_probe_results),
         )
         .route(
             "/admin/api/models/{id}",
