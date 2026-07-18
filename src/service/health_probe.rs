@@ -86,6 +86,7 @@ impl HealthProbeService {
                 "temperature": 0.01,
                 "max_tokens": 512,
                 "top_p": 0.01,
+                "stream": false,
             });
 
             let start = Instant::now();
