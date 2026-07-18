@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useModels, useCreateModel, useUpdateModel, useDeleteModel, usePublishModel, useModelHealthCheck } from '@/api/models';
 import { useChannels } from '@/api/channels';
+import { useProbeResults } from '@/api/probe';
 import { ModelForm } from '@/forms/ModelForm';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Button } from '@/components/ui/button';
@@ -41,25 +42,9 @@ export default function Models() {
   const [showAdd, setShowAdd] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Model | null>(null);
+  const { data: probeResults } = useProbeResults();
+
   const [hcLoading, setHcLoading] = useState(false);
-  const [hcResults, setHcResults] = useState<Record<string, { channel_id: string; success: boolean; latency_ms: number }[]>>({});
-  // Channel health from server-side circuit breaker (persists across refresh)
-  const [channelHealth, setChannelHealth] = useState<Record<string, { available: boolean; enabled: boolean; probe_success?: boolean | null; probe_latency_ms?: number | null }>>({});
-
-  useEffect(() => {
-    if (!models || !channels) return;
-    const chIds = new Set(models.flatMap((m) => m.channels.map((b) => b.channel_id)));
-    chIds.forEach((cid) => {
-      api<{ channel_id: string; endpoints: { endpoint_id: number; url: string; enabled: boolean; available: boolean }[]; probe_success?: boolean | null; probe_latency_ms?: number | null }>(`/channels/${encodeURIComponent(cid)}/health`)
-        .then((res) => {
-          const anyAvailable = res.endpoints.some((ep) => ep.enabled && ep.available);
-          const allDisabled = res.endpoints.every((ep) => !ep.enabled);
-          setChannelHealth((prev) => ({ ...prev, [cid]: { available: anyAvailable, enabled: !allDisabled, probe_success: res.probe_success, probe_latency_ms: res.probe_latency_ms } }));
-        })
-        .catch(() => {});
-    });
-  }, [models, channels]);
-
   const [search, setSearch] = useState('');
   const [modalFilter, setModalFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -68,8 +53,7 @@ export default function Models() {
 
   const runHealthCheck = async (modelId: string) => {
     try {
-      const res = await modelHealthCheck.mutateAsync(modelId);
-      setHcResults((prev) => ({ ...prev, [modelId]: res.channel_results.map((r) => ({ channel_id: r.channel_id, success: r.success, latency_ms: r.latency_ms })) }));
+      await modelHealthCheck.mutateAsync(modelId);
     } catch (e: any) {
       toast.error(e.message);
     }
@@ -100,8 +84,7 @@ export default function Models() {
       const total = models.length;
       for (const m of models) {
         try {
-          const hcRes = await modelHealthCheck.mutateAsync(m.id);
-          setHcResults((prev) => ({ ...prev, [m.id]: hcRes.channel_results.map((r) => ({ channel_id: r.channel_id, success: r.success, latency_ms: r.latency_ms })) }));
+          await modelHealthCheck.mutateAsync(m.id);
         } catch { /* skip */ }
         done++;
       }
@@ -136,7 +119,11 @@ export default function Models() {
         case 'id': av = a.id; bv = b.id; break;
         case 'name': av = a.name; bv = b.name; break;
         case 'match': av = a.model_pattern; bv = b.model_pattern; break;
-        case 'channel': { const aH = hcResults[a.id]?.[0]; const bH = hcResults[b.id]?.[0]; av = aH?.latency_ms ?? 99999; bv = bH?.latency_ms ?? 99999; break; }
+        case 'channel': {
+          const aCh = a.channels[0]?.channel_id; const bCh = b.channels[0]?.channel_id;
+          const aPr = aCh ? probeResults?.find((r) => r.channel_id === aCh) : undefined;
+          const bPr = bCh ? probeResults?.find((r) => r.channel_id === bCh) : undefined;
+          av = aPr?.latency_ms ?? 99999; bv = bPr?.latency_ms ?? 99999; break; }
         case 'ctx': av = a.context_length ?? 0; bv = b.context_length ?? 0; break;
         case 'price': av = a.pricing.prompt_price; bv = b.pricing.prompt_price; break;
         case 'status': av = a.published ? 1 : 0; bv = b.published ? 1 : 0; break;
@@ -158,23 +145,19 @@ export default function Models() {
     </span>
   );
 
-  const channelHc = (modelId: string, chId: string) => {
-    // 1. Prefer probe results from current session (most recent)
-    const probe = hcResults[modelId]?.find((r) => r.channel_id === chId);
-    if (probe) return probe;
-    // 2. Fall back to probe results stored on server (survives refresh)
-    const ch = channelHealth[chId];
-    if (ch?.probe_success != null) {
-      return { channel_id: chId, success: ch.probe_success, latency_ms: ch.probe_latency_ms ?? 0 };
-    }
-    // 3. Final fallback: circuit breaker state
-    if (ch) return { channel_id: chId, success: ch.available, latency_ms: 0 };
-    return undefined;
+  const channelHc = (chId: string) => {
+    // Read from database-persisted probe results (survives refresh & restart)
+    return probeResults?.find((r) => r.channel_id === chId);
   };
 
   // Stats
   const totalPublished = models?.filter((m) => m.published).length ?? 0;
-  const totalAlerts = models?.filter((m) => hcResults[m.id]?.some((r) => !r.success)).length ?? 0;
+  const totalAlerts = models?.filter((m) => {
+    return m.channels.some((b) => {
+      const pr = channelHc(b.channel_id);
+      return pr && !pr.success;
+    });
+  }).length ?? 0;
 
   // ── Sync dialog ──
   const qc = useQueryClient();
@@ -358,7 +341,7 @@ export default function Models() {
                       {m.channels.length > 0 ? (
                         <div className="flex flex-col gap-1.5">
                           {m.channels.map((b) => {
-                            const hc = channelHc(m.id, b.channel_id);
+                            const hc = channelHc(b.channel_id);
                             const ok = hc?.success;
                             const lat = hc?.latency_ms;
                             return (
