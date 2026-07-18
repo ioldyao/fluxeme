@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSubscriptions, useUnsubscribeModel, useTestModelConnection, type ModelTestResult } from '@/api/models';
+import { api } from '@/api/client';
+import type { EndpointHealthItem } from '@/api/balancer';
 import { PageHeader } from '@/components/PageHeader';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
@@ -25,6 +27,27 @@ export default function MyModels() {
   const [results, setResults] = useState<Record<string, ModelTestResult>>({});
   const { currency } = useCurrency();
   const { effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
+
+  // Load probe results from server on mount (survives page refresh)
+  const [serverProbeResults, setServerProbeResults] = useState<Record<string, { success: boolean; latency_ms: number }>>({});
+
+  useEffect(() => {
+    if (!models) return;
+    const seen = new Set<string>();
+    models.forEach((m) => {
+      m.channels?.forEach((b) => {
+        if (seen.has(b.channel_id)) return;
+        seen.add(b.channel_id);
+        api<{ probe_success?: boolean | null; probe_latency_ms?: number | null }>(`/channels/${encodeURIComponent(b.channel_id)}/health`)
+          .then((res) => {
+            if (res.probe_success != null) {
+              setServerProbeResults((prev) => ({ ...prev, [m.id]: { success: res.probe_success!, latency_ms: res.probe_latency_ms ?? 0 } }));
+            }
+          })
+          .catch(() => {});
+      });
+    });
+  }, [models]);
 
   const formatCtx = (v: number | null | undefined) => {
     if (!v) return null;
@@ -88,9 +111,11 @@ export default function MyModels() {
                 <div className="flex items-center justify-between">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      {results[model.id] && (
-                        <span className={`inline-block size-2 rounded-full ${results[model.id].success ? 'bg-green-500' : 'bg-red-500'}`} />
-                      )}
+                      {(() => {
+                        const r = results[model.id] || serverProbeResults[model.id];
+                        if (!r) return null;
+                        return <span className={`inline-block size-2 rounded-full ${r.success ? 'bg-green-500' : 'bg-red-500'}`} />;
+                      })()}
                       <h3
                         className="font-medium cursor-pointer hover:text-brand transition-colors"
                         onClick={() => {
@@ -109,11 +134,11 @@ export default function MyModels() {
                         }}
                       >{model.name}</h3>
                       <span className="text-xs text-muted-foreground font-mono">{model.model_pattern}</span>
-                      {results[model.id]?.latency_ms !== undefined && (
-                        <span className={`text-xs ${results[model.id].success ? 'text-green-600' : 'text-red-500'}`}>
-                          {results[model.id].latency_ms}ms
-                        </span>
-                      )}
+                      {(() => {
+                        const r = results[model.id] || serverProbeResults[model.id];
+                        if (r?.latency_ms === undefined) return null;
+                        return <span className={`text-xs ${r.success ? 'text-green-600' : 'text-red-500'}`}>{r.latency_ms}ms</span>;
+                      })()}
                     </div>
                     {(model.category || model.context_length) && (
                       <div className="flex items-center gap-2 pt-0.5">

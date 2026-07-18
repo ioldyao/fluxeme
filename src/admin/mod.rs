@@ -2190,26 +2190,32 @@ async fn test_subscription_connection(
         .select()
         .ok_or_else(|| AdminError::internal("没有可用的端点"))?;
 
-    // Send a minimal request as a connectivity probe.
-    // Use native /v1/messages format for Anthropic, /v1/chat/completions for others.
+    // Send a connectivity probe with standard parameters.
     let start = std::time::Instant::now();
     let result = if provider_name == "anthropic" {
         let test_body = serde_json::json!({
             "model": model.model_pattern,
             "messages": [{"role": "user", "content": "hi"}],
-            "max_tokens": 1,
+            "max_tokens": 512,
         });
         adapter.messages(endpoint, test_body).await
     } else {
         let test_body = serde_json::json!({
             "model": model.model_pattern,
             "messages": [{"role": "user", "content": "hi"}],
-            "max_tokens": 1,
-            "stream": false,
+            "temperature": 0.01,
+            "max_tokens": 512,
+            "top_p": 0.01,
         });
         adapter.chat_complete(endpoint, test_body).await
     };
     let latency_ms = start.elapsed().as_millis() as u64;
+
+    // Store probe result in routing service (survives page refresh)
+    {
+        let mut pr = state.routing.probe_results.write().unwrap();
+        pr.insert(channel_id.clone(), crate::service::routing::ProbeResult { success: result.is_ok(), latency_ms });
+    }
 
     match result {
         Ok(resp) => {
