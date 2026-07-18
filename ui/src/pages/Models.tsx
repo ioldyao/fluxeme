@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { useModels, useCreateModel, useUpdateModel, useDeleteModel, usePublishModel } from '@/api/models';
+import { useModels, useCreateModel, useUpdateModel, useDeleteModel, usePublishModel, useModelHealthCheck } from '@/api/models';
 import { useChannels } from '@/api/channels';
 import { ModelForm } from '@/forms/ModelForm';
 import { PageHeader } from '@/components/PageHeader';
@@ -38,6 +38,17 @@ export default function Models() {
   const [hcLoading, setHcLoading] = useState(false);
   const { currency } = useCurrency();
   const { effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
+  const modelHealthCheck = useModelHealthCheck();
+  const [hcResults, setHcResults] = useState<Record<string, { channel_id: string; success: boolean; latency_ms: number }[]>>({});
+
+  const runHealthCheck = async (modelId: string) => {
+    try {
+      const res = await modelHealthCheck.mutateAsync(modelId);
+      setHcResults((prev) => ({ ...prev, [modelId]: res.channel_results.map((r) => ({ channel_id: r.channel_id, success: r.success, latency_ms: r.latency_ms })) }));
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
 
   const handleDelete = () => {
     if (!deleteTarget) return;
@@ -207,9 +218,19 @@ export default function Models() {
                       <td className="py-3 px-4">{m.name}</td>
                       <td className="py-3 px-4 text-xs text-muted-foreground font-mono">{m.model_pattern}</td>
                       <td className="py-3 px-4 text-right text-xs">
-                        {m.channels.length > 0
-                          ? m.channels.map((b) => channelName(b.channel_id)).join(', ')
-                          : '-'}
+                        {m.channels.length > 0 ? (
+                          <div className="flex flex-col gap-0.5 items-end">
+                            {m.channels.map((b) => {
+                              const hc = hcResults[m.id]?.find((r) => r.channel_id === b.channel_id);
+                              return (
+                                <span key={b.channel_id} className="whitespace-nowrap">
+                                  {hc ? (hc.success ? '🟢' : '🔴') : '⚪'} {channelName(b.channel_id)}
+                                  {hc ? ` ${hc.latency_ms}ms` : ''}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        ) : '-'}
                       </td>
                       <td className="py-3 px-4 text-xs">
                         {(() => {
@@ -250,6 +271,9 @@ export default function Models() {
                         </Button>
                       </td>
                       <td className="py-3 px-4 text-right">
+                        <Button variant="ghost" size="sm" onClick={() => runHealthCheck(m.id)} disabled={modelHealthCheck.isPending}>
+                          <Activity className={cn('size-3.5', modelHealthCheck.isPending && 'animate-pulse')} />
+                        </Button>
                         <Button variant="ghost" size="sm" onClick={() => setEditModel(m)}>
                           <Pencil className="size-3.5" />
                         </Button>

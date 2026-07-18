@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
-import type { Model, Pricing } from '@/types';
+import type { Model, Pricing, ModelHealthCheckResult } from '@/types';
 
 export function useModels() {
   return useQuery({
@@ -101,5 +101,12 @@ export function useUpdateModelPricing() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['models'] });
     },
+  });
+}
+
+export function useModelHealthCheck() {
+  return useMutation({
+    mutationFn: (modelId: string) =>
+      api<ModelHealthCheckResult>(`/models/${encodeURIComponent(modelId)}/health-check`, { method: 'POST' }),
   });
 }
