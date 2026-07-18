@@ -1934,6 +1934,161 @@ async fn update_model_pricing(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+// ── Model Health Check ─────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct ModelHealthCheckResult {
+    model_id: String,
+    channel_results: Vec<ChannelCheckResult>,
+}
+
+#[derive(Serialize)]
+struct ChannelCheckResult {
+    channel_id: String,
+    channel_name: String,
+    provider: String,
+    endpoint_url: String,
+    success: bool,
+    latency_ms: u64,
+    error: Option<String>,
+}
+
+async fn model_health_check(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(model_id): Path<String>,
+) -> Result<Json<ModelHealthCheckResult>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:health").await?;
+
+    let model = state
+        .db
+        .get_model(&model_id)
+        .await
+        .map_err(db_err)?
+        .ok_or_else(|| AdminError::not_found("Model not found"))?;
+
+    let mut bindings = model.channels.clone();
+    bindings.sort_by_key(|b| b.priority);
+
+    // Load all channels for name lookup
+    let all_channels = state.db.list_channels().await.map_err(db_err)?;
+    let channel_map: std::collections::HashMap<_, _> = all_channels
+        .into_iter()
+        .map(|c| (c.id.clone(), c))
+        .collect();
+
+    let mut channel_results = Vec::new();
+
+    for binding in &bindings {
+        let ch_name = channel_map
+            .get(&binding.channel_id)
+            .map(|c| if c.name.is_empty() { c.id.clone() } else { c.name.clone() })
+            .unwrap_or_else(|| binding.channel_id.clone());
+
+        let route = match state.routing.get_route(&binding.channel_id) {
+            Some(r) => r,
+            None => {
+                channel_results.push(ChannelCheckResult {
+                    channel_id: binding.channel_id.clone(),
+                    channel_name: ch_name,
+                    provider: binding.provider.clone(),
+                    endpoint_url: String::new(),
+                    success: false,
+                    latency_ms: 0,
+                    error: Some("Route not available".into()),
+                });
+                continue;
+            }
+        };
+
+        let adapter = match state.providers.get(&route.0) {
+            Some(a) => a,
+            None => {
+                channel_results.push(ChannelCheckResult {
+                    channel_id: binding.channel_id.clone(),
+                    channel_name: ch_name,
+                    provider: route.0.clone(),
+                    endpoint_url: String::new(),
+                    success: false,
+                    latency_ms: 0,
+                    error: Some("Provider adapter not found".into()),
+                });
+                continue;
+            }
+        };
+
+        let (endpoint_idx, endpoint) = match route.1.as_health_aware().select() {
+            Some(r) => r,
+            None => {
+                channel_results.push(ChannelCheckResult {
+                    channel_id: binding.channel_id.clone(),
+                    channel_name: ch_name,
+                    provider: route.0.clone(),
+                    endpoint_url: String::new(),
+                    success: false,
+                    latency_ms: 0,
+                    error: Some("No available endpoints".into()),
+                });
+                continue;
+            }
+        };
+
+        let test_body = serde_json::json!({
+            "model": model.name,
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0.01,
+            "max_tokens": 512,
+            "top_p": 0.01,
+        });
+
+        let start = std::time::Instant::now();
+        let result = if route.0 == "anthropic" {
+            let anthy_body = serde_json::json!({
+                "model": model.name,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 512,
+            });
+            adapter.messages(endpoint, anthy_body).await
+        } else {
+            adapter.chat_complete(endpoint, test_body).await
+        };
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        match result {
+            Ok(_) => {
+                route.1.as_health_aware().record_success(endpoint_idx);
+                channel_results.push(ChannelCheckResult {
+                    channel_id: binding.channel_id.clone(),
+                    channel_name: ch_name,
+                    provider: route.0.clone(),
+                    endpoint_url: endpoint.url.clone(),
+                    success: true,
+                    latency_ms,
+                    error: None,
+                });
+            }
+            Err(e) => {
+                route.1.as_health_aware().record_failure(endpoint_idx);
+                channel_results.push(ChannelCheckResult {
+                    channel_id: binding.channel_id.clone(),
+                    channel_name: ch_name,
+                    provider: route.0.clone(),
+                    endpoint_url: endpoint.url.clone(),
+                    success: false,
+                    latency_ms,
+                    error: Some(e.0),
+                });
+            }
+        }
+    }
+
+    Ok(Json(ModelHealthCheckResult {
+        model_id,
+        channel_results,
+    }))
+}
+
 // ── User Subscriptions ────────────────────────────────────────────
 
 async fn list_my_subscriptions(
@@ -2759,6 +2914,10 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route(
             "/admin/api/models/{id}/pricing",
             axum::routing::patch(update_model_pricing),
+        )
+        .route(
+            "/admin/api/models/{id}/health-check",
+            axum::routing::post(model_health_check),
         )
         .route(
             "/admin/api/models/{id}",
