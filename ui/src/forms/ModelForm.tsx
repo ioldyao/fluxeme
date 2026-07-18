@@ -26,8 +26,6 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
   const [id, setId] = useState('');
   const [name, setName] = useState('');
   const [modelPattern, setModelPattern] = useState('');
-  const [promptPrice, setPromptPrice] = useState('0');
-  const [completionPrice, setCompletionPrice] = useState('0');
   const [contextLength, setContextLength] = useState('');
   const [bindings, setBindings] = useState<{ channel_id: string; priority: number }[]>([]);
   const [category, setCategory] = useState<string[]>([]);
@@ -37,13 +35,11 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
       setId(model.id);
       setName(model.name);
       setModelPattern(model.model_pattern);
-      setPromptPrice(String(model.pricing.prompt_price));
-      setCompletionPrice(String(model.pricing.completion_price));
       setContextLength(model.context_length ? String(model.context_length) : '');
       setBindings(model.channels);
       setCategory(model.category ? model.category.split(',').filter(Boolean) : []);
     } else {
-      setId(''); setName(''); setModelPattern(''); setPromptPrice('0'); setCompletionPrice('0');
+      setId(''); setName(''); setModelPattern('');
       setContextLength(''); setBindings([]); setCategory([]); setSelectedAddChannel('');
     }
   }, [model, open]);
@@ -64,15 +60,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
     e.preventDefault();
     const data = {
       id, name, model_pattern: modelPattern,
-      pricing: {
-        prompt_price: Number(promptPrice),
-        completion_price: Number(completionPrice),
-        cache_read_price: model?.pricing.cache_read_price ?? 0,
-        cache_write_price: model?.pricing.cache_write_price ?? 0,
-        image_input_price: model?.pricing.image_input_price ?? 0,
-        audio_input_price: model?.pricing.audio_input_price ?? 0,
-        audio_output_price: model?.pricing.audio_output_price ?? 0,
-      },
+      pricing: model?.pricing ?? { prompt_price: 0, completion_price: 0, cache_read_price: 0, cache_write_price: 0, image_input_price: 0, audio_input_price: 0, audio_output_price: 0 },
       context_length: contextLength ? Number(contextLength) : null,
       published: model?.published ?? false,
       category: category.join(','),
@@ -159,31 +147,6 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                 </div>
               </div>
 
-              <div className="space-y-2 pt-1">
-                <Label className="text-xs font-medium text-muted-foreground">{t('form.pricing')}</Label>
-                <div className="space-y-2">
-                  <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">{t('form.promptPricePerK')}</Label>
-                    <Input
-                      className="h-9 bg-background"
-                      type="number"
-                      step="0.0001"
-                      value={promptPrice}
-                      onChange={(e) => setPromptPrice(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">{t('form.completionPricePerK')}</Label>
-                    <Input
-                      className="h-9 bg-background"
-                      type="number"
-                      step="0.0001"
-                      value={completionPrice}
-                      onChange={(e) => setCompletionPrice(e.target.value)}
-                    />
-                  </div>
-                </div>
-              </div>
             </div>
 
             <div className="flex-1 min-h-0 flex flex-col">
