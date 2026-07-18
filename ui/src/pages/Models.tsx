@@ -339,23 +339,31 @@ export default function Models() {
                     <td className="px-4 py-4"><span className="font-mono text-xs text-muted-foreground">{m.model_pattern}</span></td>
                     <td className="px-4 py-4">
                       {m.channels.length > 0 ? (
-                        <div className="flex flex-col gap-1.5">
+                        <div className="flex items-center gap-1.5">
                           {m.channels.map((b) => {
                             const hc = channelHc(b.channel_id);
                             const ok = hc?.success;
                             const lat = hc?.latency_ms;
                             return (
-                              <div key={b.channel_id} className="flex items-center gap-2">
+                              <div key={b.channel_id} className="group relative inline-flex">
                                 <span className={cn(
-                                  'w-2 h-2 rounded-full flex-shrink-0',
+                                  'inline-block w-2.5 h-2.5 rounded-full cursor-help',
                                   hc ? (ok ? 'bg-green-500' : 'bg-destructive') : 'bg-muted-foreground/40'
                                 )} />
-                                <span className="text-sm text-foreground">{channelName(b.channel_id)}</span>
-                                {lat != null && (
-                                  <span className={cn('font-mono text-xs', lat > 5000 ? 'text-destructive font-semibold' : 'text-muted-foreground')}>
-                                    {lat}ms
-                                  </span>
-                                )}
+                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-10">
+                                  <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg px-3 py-2 text-xs whitespace-nowrap space-y-1">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={cn('inline-block w-2 h-2 rounded-full', hc ? (ok ? 'bg-green-500' : 'bg-destructive') : 'bg-muted-foreground/40')} />
+                                      <span className="font-semibold">{channelName(b.channel_id)}</span>
+                                    </div>
+                                    <div className="text-muted-foreground font-mono">{b.channel_id}</div>
+                                    {lat != null && (
+                                      <div className={cn('font-mono', lat > 5000 ? 'text-destructive' : 'text-muted-foreground')}>
+                                        {lat}ms
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
                             );
                           })}
