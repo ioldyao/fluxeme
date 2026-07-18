@@ -54,10 +54,11 @@ pub struct SsoModule {
     enabled: bool,
     http_client: reqwest::Client,
     pending_states: Arc<dashmap::DashMap<String, Instant>>,
+    enc_key: String,
 }
 
 impl SsoModule {
-    pub async fn new(cfg: &SsoConfig) -> Result<Self, String> {
+    pub async fn new(cfg: &SsoConfig, enc_key: &str) -> Result<Self, String> {
         if !cfg.enabled {
             return Ok(Self {
                 metadata: None,
@@ -68,6 +69,7 @@ impl SsoModule {
                 enabled: false,
                 http_client: reqwest::Client::new(),
                 pending_states: Arc::new(dashmap::DashMap::new()),
+                enc_key: String::new(),
             });
         }
 
@@ -101,12 +103,13 @@ impl SsoModule {
         Ok(Self {
             metadata: Some(metadata),
             client_id: cfg.client_id.clone(),
-            client_secret: cfg.client_secret.clone(),
+            client_secret: crate::crypto::encrypt_store(&cfg.client_secret, enc_key),
             redirect_url: cfg.redirect_url.clone(),
             provider_name: cfg.provider_name.clone(),
             enabled: true,
             http_client,
             pending_states: Arc::new(dashmap::DashMap::new()),
+            enc_key: enc_key.to_string(),
         })
     }
 
@@ -171,7 +174,7 @@ impl SsoModule {
             ("code", code),
             ("redirect_uri", &self.redirect_url),
             ("client_id", &self.client_id),
-            ("client_secret", &self.client_secret),
+            ("client_secret", &crate::crypto::decrypt_load(&self.client_secret, &self.enc_key)),
         ];
 
         let token_resp: TokenResponse = self

@@ -97,7 +97,7 @@ async fn main() {
     let admin = Arc::new(AdminModule::new(&jwt_secret, db.clone()));
 
     let sso = Arc::new(
-        match sso::SsoModule::new(&config.read().unwrap().sso).await {
+        match sso::SsoModule::new(&config.read().unwrap().sso, &jwt_secret).await {
             Ok(m) => {
                 let cfg = config.read().unwrap();
                 if cfg.sso.enabled {
