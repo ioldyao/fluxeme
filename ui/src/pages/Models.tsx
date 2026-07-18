@@ -50,6 +50,24 @@ export default function Models() {
     }
   };
 
+  const [allHcLoading, setAllHcLoading] = useState(false);
+  const runAllHealthChecks = async () => {
+    if (!models) return;
+    setAllHcLoading(true);
+    let done = 0;
+    const total = models.length;
+    for (const m of models) {
+      try {
+        const res = await modelHealthCheck.mutateAsync(m.id);
+        setHcResults((prev) => ({ ...prev, [m.id]: res.channel_results.map((r) => ({ channel_id: r.channel_id, success: r.success, latency_ms: r.latency_ms })) }));
+      } catch { /* skip */ }
+      done++;
+      toast.loading(`Health check: ${done}/${total}`, { id: 'all-hc' });
+    }
+    toast.success(`Health check complete: ${done}/${total}`, { id: 'all-hc' });
+    setAllHcLoading(false);
+  };
+
   const handleDelete = () => {
     if (!deleteTarget) return;
     deleteModel.mutate(deleteTarget.id, {
@@ -171,6 +189,9 @@ export default function Models() {
           <>
             <Button variant="outline" size="sm" onClick={() => setSyncOpen(true)}>
               <Import className="size-4 mr-1" />{t('model.syncUpstream')}
+            </Button>
+            <Button variant="outline" size="sm" onClick={runAllHealthChecks} disabled={allHcLoading}>
+              <Activity className={cn('size-4 mr-1', allHcLoading && 'animate-pulse')} />Model Probe
             </Button>
             <Button variant="outline" size="sm" onClick={handleHealthCheck} disabled={hcLoading}>
               <Activity className={cn('size-4 mr-1', hcLoading && 'animate-pulse')} />{t('model.healthCheck')}
