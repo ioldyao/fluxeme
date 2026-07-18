@@ -213,6 +213,21 @@ export interface GatewayRuntimeConfig {
   billing_enabled: boolean;
 }
 
+export interface ChannelCheckResult {
+  channel_id: string;
+  channel_name: string;
+  provider: string;
+  endpoint_url: string;
+  success: boolean;
+  latency_ms: number;
+  error?: string | null;
+}
+
+export interface ModelHealthCheckResult {
+  model_id: string;
+  channel_results: ChannelCheckResult[];
+}
+
 export interface BillingSummary {
   total_requests: number;
   total_cost: number;
