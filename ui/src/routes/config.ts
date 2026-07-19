@@ -12,7 +12,6 @@ import {
   Wallet,
   Receipt,
   Shield,
-  Activity,
 } from 'lucide-react';
 
 export type RouteGuard = 'public' | 'auth' | 'admin';
@@ -36,7 +35,6 @@ export const publicRoutes: RouteConfig[] = [
 
 export const authRoutes: RouteConfig[] = [
   { index: true, path: '/', Component: lazy(() => import('@/pages/Dashboard')), guard: 'auth', label: 'nav.dashboard', icon: LayoutDashboard, nav: true, end: true },
-  { path: '/health/routing', Component: lazy(() => import('@/pages/Health')), guard: 'auth', label: 'nav.health', icon: Activity, nav: true },
   { path: '/models/marketplace', Component: lazy(() => import('@/pages/ModelsMarketplace')), guard: 'auth', label: 'nav.modelMarketplace', icon: Braces, nav: true },
   { path: '/models/mine', Component: lazy(() => import('@/pages/MyModels')), guard: 'auth', label: 'nav.myModels', icon: Braces, nav: true },
   { path: '/api-keys', Component: lazy(() => import('@/pages/ApiKeys')), guard: 'auth', label: 'nav.apiKeys', icon: Key, nav: true },
