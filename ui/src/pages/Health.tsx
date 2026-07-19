@@ -1,16 +1,5 @@
-import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useRoutingHealth, useRecentPaths } from '@/api/health';
-import { useAuth } from '@/store/auth';
-
-function fmtLocalTime(ts: string, tz: string): string {
-  try {
-    const d = new Date(ts);
-    return d.toLocaleTimeString('zh-CN', { timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  } catch {
-    return ts.slice(11, 19);
-  }
-}
+import { useRoutingHealth } from '@/api/health';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, Activity } from 'lucide-react';
@@ -71,9 +60,6 @@ export default function HealthPage() {
           </CardContent>
         </Card>
       </div>
-
-      {/* ── Recent Request Paths ── */}
-      <RecentRequestPaths />
 
       {/* ── Content ── */}
       {isLoading ? (
@@ -192,149 +178,6 @@ export default function HealthPage() {
           })}
         </div>
       )}
-    </div>
-  );
-}
-
-function RecentRequestPaths() {
-  const { data } = useRecentPaths();
-  const paths = data?.paths ?? [];
-  const timezone = useAuth((s) => s.timezone) || 'UTC';
-  const [selectedIdx, setSelectedIdx] = useState(0);
-  const safeIdx = Math.min(selectedIdx, Math.max(0, paths.length - 1));
-  const selected = paths[safeIdx];
-
-  if (paths.length === 0) return null;
-
-  const ok = selected?.success;
-
-  return (
-    <div className="grid grid-cols-[340px_1fr] gap-4">
-      {/* ── Left: Feed ── */}
-      <Card className="h-full flex flex-col overflow-hidden">
-        <div className="px-4 py-3 border-b bg-muted/20 flex items-center gap-2 text-sm font-semibold shrink-0">
-          <span className="w-[7px] h-[7px] rounded-full bg-green-500 shadow-[0_0_0_rgba(34,197,94,0.5)] animate-pulse" />
-          实时请求流
-        </div>
-        <div className="flex-1 overflow-y-auto divide-y min-h-0">
-          {paths.slice(0, 15).map((req, i) => (
-            <div
-              key={req.timestamp}
-              onClick={() => setSelectedIdx(i)}
-              className={cn(
-                'px-4 py-2.5 text-sm cursor-pointer border-b last:border-0 transition-colors',
-                safeIdx === i ? 'bg-primary/5' : 'hover:bg-muted/30'
-              )}
-            >
-              <div className="flex items-center justify-between mb-0.5">
-                <span className="font-semibold text-foreground">{req.model}</span>
-                <span className="text-[11.5px] text-muted-foreground font-mono">
-                  {fmtLocalTime(req.timestamp, timezone)}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className={cn(
-                  'text-[10.5px] font-semibold px-1.5 py-0.5 rounded',
-                  req.success ? 'text-green-600 bg-green-500/10' : 'text-destructive bg-destructive/10'
-                )}>
-                  {req.success ? '成功' : '失败'}
-                </span>
-                <span>{req.channel_id} · {req.latency_ms}ms</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      {/* ── Right: Trace Detail ── */}
-      <Card className="h-full">
-        <div className="p-5 space-y-5">
-          {/* Meta */}
-          <div className="flex flex-wrap gap-5 pb-4 border-b">
-            {[
-              { label: '请求时间', val: fmtLocalTime(selected.timestamp, timezone) },
-              { label: '请求模型', val: selected.model },
-              { label: '路由渠道', val: selected.channel_id },
-              { label: '耗时', val: `${selected.latency_ms}ms` },
-            ].map((item) => (
-              <div key={item.label}>
-                <div className="text-[11px] text-muted-foreground mb-0.5">{item.label}</div>
-                <div className="text-sm font-semibold font-mono">{item.val}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* Path Flow: Model → Channel → Endpoint */}
-          <div>
-            <div className="text-[11px] text-muted-foreground uppercase tracking-wider mb-3">请求路径</div>
-            <div className="flex items-stretch gap-0">
-              {/* Model node */}
-              <div className="min-w-[160px]">
-                <div className="border-2 border-primary rounded-lg px-3 py-2.5 bg-primary/5">
-                  <div className="text-sm font-semibold text-primary">{selected.model}</div>
-                  <div className="text-[11.5px] text-muted-foreground">model pattern</div>
-                </div>
-              </div>
-
-              {/* Arrow */}
-              <div className="flex items-center justify-center min-w-[40px] relative">
-                <div className="absolute left-0 right-0 top-1/2 h-[2px] bg-primary -translate-y-1/2" />
-                <span className="relative z-10 bg-card text-primary text-sm px-1">➜</span>
-              </div>
-
-              {/* Channel node */}
-              <div className="min-w-[160px]">
-                <div className="border-2 border-primary rounded-lg px-3 py-2.5 bg-primary/5">
-                  <div className="text-sm font-semibold text-primary">{selected.channel_id}</div>
-                  <div className="text-[11.5px] text-muted-foreground">channel binding</div>
-                </div>
-              </div>
-
-              {/* Arrow */}
-              <div className="flex items-center justify-center min-w-[40px] relative">
-                <div className={cn(
-                  'absolute left-0 right-0 top-1/2 h-[2px] -translate-y-1/2',
-                  ok ? 'bg-primary' : 'bg-destructive'
-                )} />
-                <span className={cn(
-                  'relative z-10 bg-card text-sm px-1',
-                  ok ? 'text-primary' : 'text-destructive'
-                )}>➜</span>
-              </div>
-
-              {/* Endpoint node */}
-              <div className="min-w-[160px]">
-                <div className={cn(
-                  'border-2 rounded-lg px-3 py-2.5',
-                  ok ? 'border-primary bg-primary/5' : 'border-destructive bg-destructive/5'
-                )}>
-                  <div className={cn(
-                    'text-sm font-semibold',
-                    ok ? 'text-primary' : 'text-destructive'
-                  )}>端点</div>
-                  <div className="text-[11.5px] text-muted-foreground">
-                    {ok ? `已命中 · ${selected.latency_ms}ms` : '请求失败'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Result */}
-          <div className="flex items-center gap-6 pt-4 border-t text-sm">
-            <div>
-              <div className="text-[11px] text-muted-foreground mb-0.5">最终结果</div>
-              <div className={cn('font-semibold', ok ? 'text-green-600' : 'text-destructive')}>
-                {ok ? '成功' : '失败'}
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] text-muted-foreground mb-0.5">总耗时</div>
-              <div className="font-semibold font-mono">{selected.latency_ms}ms</div>
-            </div>
-          </div>
-        </div>
-      </Card>
     </div>
   );
 }
