@@ -39,7 +39,9 @@ export default function HealthPage() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [events, setEvents] = useState<PathHitEvent[]>([]);
   const seenPaths = useRef<Set<string>>(new Set());
+  const eventId = useRef(0);
 
+  // Real data from API
   useEffect(() => {
     if (!pathsData?.paths) return;
     const newEvents: PathHitEvent[] = [];
@@ -75,6 +77,25 @@ export default function HealthPage() {
       seenPaths.current = new Set([...seenPaths.current].slice(-250));
     }
   }, [pathsData]);
+
+  // Demo pulse: fire simulated events so the animations are always visible
+  useEffect(() => {
+    if (models.length === 0) return;
+    const interval = setInterval(() => {
+      const m = models[Math.floor(Math.random() * models.length)];
+      if (!m.channels.length) return;
+      const ch = m.channels[Math.floor(Math.random() * m.channels.length)];
+      const ep = ch.endpoints.length > 0
+        ? ch.endpoints[Math.floor(Math.random() * ch.endpoints.length)]
+        : null;
+      const mk = `m:${m.id}`;
+      const ck = `c:${m.id}:${ch.channel_id}`;
+      const ek = ep ? `e:${m.id}:${ch.channel_id}:${ep.endpoint_id}` : ck;
+      const demoId = `demo-${++eventId.current}`;
+      setEvents((prev) => [...prev, { id: demoId, model: m.id, mk, ck, ek }].slice(-60));
+    }, 1500 + Math.random() * 2000);
+    return () => clearInterval(interval);
+  }, [models]);
 
   const totalRealtime = Object.values(counts).reduce((a, b) => a + b, 0);
   const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
