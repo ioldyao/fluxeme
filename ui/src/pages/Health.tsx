@@ -1,6 +1,16 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useRoutingHealth, useRecentPaths } from '@/api/health';
+import { useAuth } from '@/store/auth';
+
+function fmtLocalTime(ts: string, tz: string): string {
+  try {
+    const d = new Date(ts);
+    return d.toLocaleTimeString('zh-CN', { timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch {
+    return ts.slice(11, 19);
+  }
+}
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, Activity } from 'lucide-react';
@@ -189,6 +199,7 @@ export default function HealthPage() {
 function RecentRequestPaths() {
   const { data } = useRecentPaths();
   const paths = data?.paths ?? [];
+  const timezone = useAuth((s) => s.timezone) || 'UTC';
   const [selectedIdx, setSelectedIdx] = useState(0);
   const safeIdx = Math.min(selectedIdx, Math.max(0, paths.length - 1));
   const selected = paths[safeIdx];
@@ -218,7 +229,7 @@ function RecentRequestPaths() {
               <div className="flex items-center justify-between mb-0.5">
                 <span className="font-semibold text-foreground">{req.model}</span>
                 <span className="text-[11.5px] text-muted-foreground font-mono">
-                  {req.timestamp.slice(11, 19)}
+                  {fmtLocalTime(req.timestamp, timezone)}
                 </span>
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -241,7 +252,7 @@ function RecentRequestPaths() {
           {/* Meta */}
           <div className="flex flex-wrap gap-5 pb-4 border-b">
             {[
-              { label: '请求时间', val: selected.timestamp.slice(11, 19) },
+              { label: '请求时间', val: fmtLocalTime(selected.timestamp, timezone) },
               { label: '请求模型', val: selected.model },
               { label: '路由渠道', val: selected.channel_id },
               { label: '耗时', val: `${selected.latency_ms}ms` },
