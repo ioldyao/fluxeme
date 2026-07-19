@@ -1,6 +1,7 @@
 const en: Record<string, string> = {
   'nav.dashboard': 'Dashboard',
   'nav.routingFlow': 'Routing Flow',
+  'nav.routingHistory': 'History',
   'routingFlow.title': 'Realtime Routing Flow',
   'routingFlow.subtitle': 'Model → Channel (LB) → Endpoint (LB); color shows relative load: ',
   'routingFlow.legendLow': 'Blue=Low',
@@ -35,6 +36,7 @@ const en: Record<string, string> = {
   'routingFlow.tableAvgLatency': 'Avg Latency',
   'routingFlow.tableP95': 'P95 Latency',
   'routingFlow.tableEmpty': 'No data in this time range',
+  'routingFlow.noData': 'Query failed or no data. Check the time range.',
   'nav.users': 'Users',
   'nav.channels': 'Channels',
   'nav.models': 'Models',

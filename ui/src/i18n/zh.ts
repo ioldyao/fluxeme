@@ -1,6 +1,7 @@
 const zh: Record<string, string> = {
   'nav.dashboard': '仪表盘',
   'nav.routingFlow': '路由流量',
+  'nav.routingHistory': '历史查询',
   'routingFlow.title': '实时路由流量面板',
   'routingFlow.subtitle': '模型 → 路由渠道（负载均衡）→ 渠道端点（负载均衡），颜色表示相对负载：',
   'routingFlow.legendLow': '蓝=低',
@@ -35,6 +36,7 @@ const zh: Record<string, string> = {
   'routingFlow.tableAvgLatency': '平均延迟',
   'routingFlow.tableP95': 'P95 延迟',
   'routingFlow.tableEmpty': '该时间段内无数据',
+  'routingFlow.noData': '查询失败或无数据，请检查时间范围',
   'nav.users': '用户管理',
   'nav.channels': '渠道管理',
   'nav.models': '模型管理',
