@@ -209,14 +209,14 @@ function RecentRequestPaths() {
   const ok = selected?.success;
 
   return (
-    <div className="grid grid-cols-[340px_1fr] gap-4 items-start">
+    <div className="grid grid-cols-[340px_1fr] gap-4">
       {/* ── Left: Feed ── */}
-      <Card className="overflow-hidden">
-        <div className="px-4 py-3 border-b bg-muted/20 flex items-center gap-2 text-sm font-semibold">
+      <Card className="h-full flex flex-col overflow-hidden">
+        <div className="px-4 py-3 border-b bg-muted/20 flex items-center gap-2 text-sm font-semibold shrink-0">
           <span className="w-[7px] h-[7px] rounded-full bg-green-500 shadow-[0_0_0_rgba(34,197,94,0.5)] animate-pulse" />
           实时请求流
         </div>
-        <div className="max-h-[480px] overflow-y-auto divide-y">
+        <div className="flex-1 overflow-y-auto divide-y min-h-0">
           {paths.slice(0, 15).map((req, i) => (
             <div
               key={req.timestamp}
@@ -247,7 +247,7 @@ function RecentRequestPaths() {
       </Card>
 
       {/* ── Right: Trace Detail ── */}
-      <Card>
+      <Card className="h-full">
         <div className="p-5 space-y-5">
           {/* Meta */}
           <div className="flex flex-wrap gap-5 pb-4 border-b">
