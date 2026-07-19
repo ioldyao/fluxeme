@@ -151,6 +151,21 @@ export default function HealthPage() {
                               ) : (
                                 <span className="text-xs text-destructive font-medium">熔断中</span>
                               )}
+                              {ch.endpoints.length > 1 && (
+                                <div className="flex items-center gap-1 mt-1.5">
+                                  {ch.endpoints.map((ep) => (
+                                    <span
+                                      key={ep.endpoint_id}
+                                      className={cn(
+                                        'inline-block w-2 h-2 rounded-full',
+                                        !ep.enabled ? 'bg-muted-foreground/30' :
+                                        ep.available ? 'bg-green-500' : 'bg-destructive'
+                                      )}
+                                      title={`端点 #${ep.endpoint_id}: ${ep.enabled ? (ep.available ? '正常' : '熔断') : '已禁用'}`}
+                                    />
+                                  ))}
+                                </div>
+                              )}
                             </td>
                           </tr>
                         );

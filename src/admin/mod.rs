@@ -2063,6 +2063,14 @@ async fn routing_health(
                     }
                 }
 
+                let endpoints: Vec<serde_json::Value> = health.iter().map(|(eid, enabled, available)| {
+                    serde_json::json!({
+                        "endpoint_id": eid,
+                        "enabled": enabled,
+                        "available": available,
+                    })
+                }).collect();
+
                 ch_results.push(serde_json::json!({
                     "channel_id": binding.channel_id,
                     "channel_name": ch_name,
@@ -2074,6 +2082,7 @@ async fn routing_health(
                     "p95_latency_ms": p95,
                     "circuit_ok": circuit_ok,
                     "circuit_enabled": circuit_enabled,
+                    "endpoints": endpoints,
                 }));
             }
         }
