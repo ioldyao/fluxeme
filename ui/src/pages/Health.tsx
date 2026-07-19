@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useRoutingHealth, useRecentPaths } from '@/api/health';
+import { useChannels } from '@/api/channels';
 import { useAuth } from '@/store/auth';
 
 function fmtLocalTime(ts: string, tz: string): string {
@@ -198,8 +199,10 @@ export default function HealthPage() {
 
 function RecentRequestPaths() {
   const { data } = useRecentPaths();
+  const { data: channels } = useChannels();
   const paths = data?.paths ?? [];
   const timezone = useAuth((s) => s.timezone) || 'UTC';
+  const chName = (id: string) => channels?.find((c) => c.id === id)?.name || id;
   const [selectedIdx, setSelectedIdx] = useState(0);
   const safeIdx = Math.min(selectedIdx, Math.max(0, paths.length - 1));
   const selected = paths[safeIdx];
@@ -239,7 +242,7 @@ function RecentRequestPaths() {
                 )}>
                   {req.success ? '成功' : '失败'}
                 </span>
-                <span>{req.channel_id} · {req.latency_ms}ms</span>
+                <span>{chName(req.channel_id)} · {req.latency_ms}ms</span>
               </div>
             </div>
           ))}
@@ -254,7 +257,7 @@ function RecentRequestPaths() {
             {[
               { label: '请求时间', val: fmtLocalTime(selected.timestamp, timezone) },
               { label: '请求模型', val: selected.model },
-              { label: '路由渠道', val: selected.channel_id },
+              { label: '路由渠道', val: `${selected.channel_id} (${chName(selected.channel_id)})` },
               { label: '耗时', val: `${selected.latency_ms}ms` },
             ].map((item) => (
               <div key={item.label}>
@@ -286,7 +289,7 @@ function RecentRequestPaths() {
               <div className="min-w-[160px]">
                 <div className="border-2 border-primary rounded-lg px-3 py-2.5 bg-primary/5">
                   <div className="text-sm font-semibold text-primary">{selected.channel_id}</div>
-                  <div className="text-[11.5px] text-muted-foreground">channel binding</div>
+                  <div className="text-[11.5px] text-muted-foreground">{chName(selected.channel_id)}</div>
                 </div>
               </div>
 
