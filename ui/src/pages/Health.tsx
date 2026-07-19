@@ -14,8 +14,6 @@ function loadClass(cnt: number, siblings: number[]): 'low' | 'mid' | 'high' {
   return 'low';
 }
 
-const L = { low: '#4a7fc9', mid: '#d99a2b', high: '#c94a4a' };
-
 export default function HealthPage() {
   const { data } = useRoutingHealth();
   const summary = data?.summary;
@@ -23,7 +21,6 @@ export default function HealthPage() {
   const stateRef = useRef<Record<string, number>>({});
   const totalRef = useRef(0);
   const topologyRef = useRef<any[]>([]);
-  const wsRef = useRef<WebSocket | null>(null);
 
   const models = data?.models ?? [];
 
@@ -237,7 +234,6 @@ export default function HealthPage() {
         if (!chNode) return;
         const p1 = center(chNode, 'l');
         const p1r = center(chNode, 'r');
-        const mx = (p0.x + p1.x) / 2;
         addPath(svg, p0, p1, keyOf('c', m.model, c.id));
         c.endpoints.forEach((e: any) => {
           const epNode = container.querySelector(`[data-key="${keyOf('e', m.model, c.id, e.id)}"]`) as HTMLElement;
@@ -267,8 +263,6 @@ export default function HealthPage() {
     ['活跃渠道数', `${summary?.active_channels ?? '-'}`],
     ['熔断中渠道', `${summary?.broken_channels ?? '-'}`],
   ];
-
-  const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
 
   return (
     <div style={{ fontFamily: '-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif', color: '#1a1a18' }}>
