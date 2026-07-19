@@ -96,12 +96,12 @@ export default function HealthPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b text-muted-foreground">
-                        <th className="text-left text-[11px] font-medium uppercase tracking-wider px-5 py-2.5">渠道</th>
-                        <th className="text-left text-[11px] font-medium uppercase tracking-wider px-5 py-2.5">请求占比</th>
-                        <th className="text-right text-[11px] font-medium uppercase tracking-wider px-5 py-2.5">请求数</th>
-                        <th className="text-right text-[11px] font-medium uppercase tracking-wider px-5 py-2.5">成功率</th>
-                        <th className="text-right text-[11px] font-medium uppercase tracking-wider px-5 py-2.5">P95 延迟</th>
-                        <th className="text-left text-[11px] font-medium uppercase tracking-wider px-5 py-2.5">状态</th>
+                        <th className="text-left text-[11px] font-medium uppercase tracking-wider px-5 py-3">渠道</th>
+                        <th className="text-left text-[11px] font-medium uppercase tracking-wider px-5 py-3">请求占比</th>
+                        <th className="text-right text-[11px] font-medium uppercase tracking-wider px-5 py-3">请求数</th>
+                        <th className="text-right text-[11px] font-medium uppercase tracking-wider px-5 py-3">成功率</th>
+                        <th className="text-right text-[11px] font-medium uppercase tracking-wider px-5 py-3">P95 延迟</th>
+                        <th className="text-left text-[11px] font-medium uppercase tracking-wider px-5 py-3">状态</th>
                       </tr>
                     </thead>
                     <tbody>
