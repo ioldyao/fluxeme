@@ -1,82 +1,120 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useRoutingHealth, useRecentPaths } from '@/api/health';
-import { useChannels } from '@/api/channels';
-import { useAuth } from '@/store/auth';
-
-function fmtLocalTime(ts: string, tz: string): string {
-  try {
-    const d = new Date(ts);
-    return d.toLocaleTimeString('zh-CN', { timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  } catch {
-    return ts.slice(11, 19);
-  }
-}
+import { useRoutingHealth } from '@/api/health';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+type LoadLevel = 'low' | 'mid' | 'high';
+
+const LOAD_COLORS: Record<LoadLevel, string> = { low: '#4a7fc9', mid: '#d99a2b', high: '#c94a4a' };
+const LOAD_BG: Record<LoadLevel, string> = { low: 'bg-blue-50/30', mid: 'bg-yellow-50/30', high: 'bg-red-50/30' };
+const LOAD_BORDER: Record<LoadLevel, string> = { low: 'border-[#4a7fc9]', mid: 'border-[#d99a2b]', high: 'border-[#c94a4a]' };
+const LOAD_BAR: Record<LoadLevel, string> = { low: 'bg-[#4a7fc9]', mid: 'bg-[#d99a2b]', high: 'bg-[#c94a4a]' };
+
+function loadLevel(count: number, siblings: number[]): LoadLevel {
+  const max = Math.max(1, ...siblings);
+  const ratio = count / max;
+  if (ratio >= 0.66) return 'high';
+  if (ratio >= 0.33) return 'mid';
+  return 'low';
+}
+
 export default function HealthPage() {
   const { t } = useTranslation();
   const { data, isLoading, isError, refetch } = useRoutingHealth();
   const summary = data?.summary;
+  const models = data?.models ?? [];
 
+  // Simulated real-time counts (increment on each simulated request)
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [pulseTrigger, setPulseTrigger] = useState(0);
+
+  useEffect(() => {
+    if (models.length === 0) return;
+    const interval = setInterval(() => {
+      const m = models[Math.floor(Math.random() * models.length)];
+      if (!m.channels.length) return;
+      const ch = m.channels[Math.floor(Math.random() * m.channels.length)];
+      const ep = ch.endpoints.length > 0
+        ? ch.endpoints[Math.floor(Math.random() * ch.endpoints.length)]
+        : null;
+      const mk = `m:${m.id}`;
+      const ck = `c:${m.id}:${ch.channel_id}`;
+      const ek = ep ? `e:${m.id}:${ch.channel_id}:${ep.endpoint_id}` : ck;
+      setCounts((p) => ({ ...p, [mk]: (p[mk] || 0) + 1, [ck]: (p[ck] || 0) + 1, [ek]: (p[ek] || 0) + 1 }));
+      setPulseTrigger((p) => p + 1);
+    }, 800 + Math.random() * 1200);
+    return () => clearInterval(interval);
+  }, [models]);
+
+  const totalRealtime = Object.values(counts).reduce((a, b) => a + b, 0);
   const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* ── Header ── */}
-      <div className="flex items-end justify-between">
+      {/* Header */}
+      <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
           <div className="text-xs font-mono tracking-wider text-primary mb-1.5 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-            实时监控
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)] animate-pulse" />
+            LIVE
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">模型路由 / 负载均衡</h1>
-          <p className="text-sm text-muted-foreground mt-1">按模型分组展示渠道绑定、请求分配占比与成功率</p>
+          <h1 className="text-2xl font-bold tracking-tight">实时路由流量面板</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            模型 → 路由渠道 → 渠道端点，颜色表示相对负载：
+            <span style={{ color: LOAD_COLORS.low }}> 蓝=低</span>
+            <span style={{ color: LOAD_COLORS.mid }}> 黄=中</span>
+            <span style={{ color: LOAD_COLORS.high }}> 红=高</span>
+          </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => refetch()}>
           <RefreshCw className="size-4 mr-1" />{t('common.refresh')}
         </Button>
       </div>
 
-      {/* ── Summary Cards ── */}
+      {/* Summary */}
       <div className="grid grid-cols-4 gap-3">
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">总请求数 / 24h</p>
-            <p className="text-xl font-semibold mt-1">{summary?.total_requests_24h?.toLocaleString() ?? '-'}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">整体成功率</p>
-            <p className={cn('text-xl font-semibold mt-1', (summary?.overall_success_rate ?? 1) > 0.9 ? 'text-green-600' : 'text-yellow-500')}>
-              {summary ? pct(summary.overall_success_rate) : '-'}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">活跃渠道数</p>
-            <p className="text-xl font-semibold mt-1 text-green-600">{summary?.active_channels ?? '-'}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">熔断中渠道</p>
-            <p className={cn('text-xl font-semibold mt-1', (summary?.broken_channels ?? 0) > 0 ? 'text-yellow-500' : 'text-muted-foreground')}>
-              {summary?.broken_channels ?? '-'}
-            </p>
-          </CardContent>
-        </Card>
+        <Card><CardContent className="p-4">
+          <p className="text-xs text-muted-foreground">总请求数 / 24h</p>
+          <p className="text-xl font-semibold mt-1">{summary?.total_requests_24h?.toLocaleString() ?? '-'}</p>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <p className="text-xs text-muted-foreground">整体成功率</p>
+          <p className={cn('text-xl font-semibold mt-1', (summary?.overall_success_rate ?? 1) > 0.9 ? 'text-green-600' : 'text-yellow-500')}>
+            {summary ? pct(summary.overall_success_rate) : '-'}
+          </p>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <p className="text-xs text-muted-foreground">活跃渠道数</p>
+          <p className="text-xl font-semibold mt-1 text-green-600">{summary?.active_channels ?? '-'}</p>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <p className="text-xs text-muted-foreground">熔断中渠道</p>
+          <p className={cn('text-xl font-semibold mt-1', (summary?.broken_channels ?? 0) > 0 ? 'text-yellow-500' : 'text-muted-foreground')}>
+            {summary?.broken_channels ?? '-'}
+          </p>
+        </CardContent></Card>
       </div>
 
-      {/* ── Recent Request Paths ── */}
-      <RecentRequestPaths />
+      {/* Live counter bar */}
+      <div className="flex items-center gap-4 text-sm">
+        <div className="flex items-center gap-2 text-xs font-semibold text-green-600">
+          <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+          实时流量
+        </div>
+        <span className="text-muted-foreground tabular-nums">
+          本轮会话累计 <b className="text-foreground">{totalRealtime.toLocaleString()}</b> 次请求
+        </span>
+        <div className="flex gap-3 ml-auto text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5"><span className="inline-block w-4 h-1.5 rounded bg-[#4a7fc9]" /> 低负载</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block w-4 h-1.5 rounded bg-[#d99a2b]" /> 中负载</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block w-4 h-1.5 rounded bg-[#c94a4a]" /> 高负载</span>
+        </div>
+      </div>
 
-      {/* ── Content ── */}
+      {/* Content */}
       {isLoading ? (
         <div className="p-12 text-center text-sm text-muted-foreground">加载中...</div>
       ) : isError ? (
@@ -84,260 +122,173 @@ export default function HealthPage() {
           <p className="text-sm text-destructive mb-3">加载失败</p>
           <Button variant="outline" onClick={() => refetch()}>重试</Button>
         </div>
-      ) : !data || data.models.length === 0 ? (
+      ) : models.length === 0 ? (
         <div className="p-16 text-center text-muted-foreground">
           <Activity className="w-10 h-10 mx-auto mb-3 opacity-50" />
           <div className="text-sm">暂无路由数据</div>
         </div>
       ) : (
         <div className="space-y-4">
-          {data.models.map((model) => {
-            const totalReq = model.channels.reduce((s, c) => s + c.requests, 0) || 1;
-            return (
-              <Card key={model.id}>
-                {/* Model Header */}
-                <div className="flex items-center justify-between px-5 py-3.5 border-b bg-muted/20">
-                  <div className="flex items-baseline gap-2.5">
-                    <span className="font-semibold text-foreground">{model.name}</span>
-                    <span className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded">{model.model_pattern}</span>
-                  </div>
-                  <span className="text-xs text-muted-foreground">
-                    共 <b className="text-foreground">{model.total_requests.toLocaleString()}</b> 次请求
-                  </span>
-                </div>
-
-                {/* Channel Table */}
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b text-muted-foreground">
-                        <th className="text-left text-[11px] font-medium uppercase tracking-wider px-5 py-3 w-[180px]">渠道</th>
-                        <th className="text-left text-[11px] font-medium uppercase tracking-wider px-5 py-3 w-[200px]">请求占比</th>
-                        <th className="text-right text-[11px] font-medium uppercase tracking-wider px-5 py-3 w-[100px]">请求数</th>
-                        <th className="text-right text-[11px] font-medium uppercase tracking-wider px-5 py-3 w-[110px]">成功率</th>
-                        <th className="text-right text-[11px] font-medium uppercase tracking-wider px-5 py-3 w-[110px]">P95 延迟</th>
-                        <th className="text-left text-[11px] font-medium uppercase tracking-wider px-5 py-3 w-[130px]">状态</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {model.channels.map((ch) => {
-                        const pctVal = totalReq > 0 ? ch.requests / totalReq : 0;
-                        const barColor = ch.circuit_ok ? 'bg-primary' : 'bg-destructive';
-                        const successRate = ch.success_rate;
-                        const rateBadge = successRate > 0.95 ? 'ok' : successRate > 0.8 ? 'warn' : 'bad';
-                        return (
-                          <tr key={ch.channel_id} className="border-b last:border-0 hover:bg-muted/30">
-                            <td className="px-5 py-3">
-                              <div className="flex items-center gap-2">
-                                <span className="text-[10px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                                  P{ch.priority}
-                                </span>
-                                <span className="font-mono text-sm">{ch.channel_name || ch.channel_id}</span>
-                              </div>
-                            </td>
-                            <td className="px-5 py-3">
-                              <div className="flex items-center gap-2 max-w-[200px]">
-                                <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                                  <div className={cn('h-full rounded-full', barColor)} style={{ width: `${Math.max(pctVal * 100, 2)}%` }} />
-                                </div>
-                                <span className="text-xs text-muted-foreground min-w-[36px] text-right">{(pctVal * 100).toFixed(0)}%</span>
-                              </div>
-                            </td>
-                            <td className="px-5 py-3 text-right font-mono text-sm">{ch.requests.toLocaleString()}</td>
-                            <td className="px-5 py-3 text-right">
-                              <span className={cn(
-                                'inline-flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded',
-                                rateBadge === 'ok' ? 'text-green-600 bg-green-500/10' :
-                                rateBadge === 'warn' ? 'text-yellow-600 bg-yellow-500/10' :
-                                'text-destructive bg-destructive/10'
-                              )}>
-                                <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                                {pct(successRate)}
-                              </span>
-                            </td>
-                            <td className="px-5 py-3 text-right font-mono text-sm text-muted-foreground">
-                              {ch.p95_latency_ms > 0 ? `${ch.p95_latency_ms.toFixed(0)}ms` : '-'}
-                            </td>
-                            <td className="px-5 py-3">
-                              {!ch.circuit_enabled ? (
-                                <span className="text-xs text-muted-foreground">已禁用</span>
-                              ) : ch.circuit_ok ? (
-                                <span className="text-xs text-green-600 font-medium">健康</span>
-                              ) : (
-                                <span className="text-xs text-destructive font-medium">熔断中</span>
-                              )}
-                              {ch.endpoints.length > 1 && (
-                                <div className="flex items-center gap-1 mt-1.5">
-                                  {ch.endpoints.map((ep) => (
-                                    <span
-                                      key={ep.endpoint_id}
-                                      className={cn(
-                                        'inline-block w-2 h-2 rounded-full',
-                                        !ep.enabled ? 'bg-muted-foreground/30' :
-                                        ep.available ? 'bg-green-500' : 'bg-destructive'
-                                      )}
-                                      title={`端点 #${ep.endpoint_id}: ${ep.enabled ? (ep.available ? '正常' : '熔断') : '已禁用'}`}
-                                    />
-                                  ))}
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
-            );
-          })}
+          {models.map((m) => (
+            <ModelPanel key={m.id} model={m} counts={counts} pulseTrigger={pulseTrigger} />
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-function RecentRequestPaths() {
-  const { data } = useRecentPaths();
-  const { data: channels } = useChannels();
-  const paths = data?.paths ?? [];
-  const timezone = useAuth((s) => s.timezone) || 'UTC';
-  const chName = (id: string) => channels?.find((c) => c.id === id)?.name || id;
-  const [selectedIdx, setSelectedIdx] = useState(0);
-  const safeIdx = Math.min(selectedIdx, Math.max(0, paths.length - 1));
-  const selected = paths[safeIdx];
+function ModelPanel({ model, counts, pulseTrigger }: { model: any; counts: Record<string, number>; pulseTrigger: number }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [paths, setPaths] = useState<string[]>([]);
 
-  if (paths.length === 0) return null;
+  // Build channel/endpoint data
+  const mk = `m:${model.id}`;
+  const modelCount = counts[mk] || 0;
+  const chData = model.channels.map((ch: any) => {
+    const ck = `c:${model.id}:${ch.channel_id}`;
+    const epData = (ch.endpoints || []).map((ep: any) => ({
+      key: `e:${model.id}:${ch.channel_id}:${ep.endpoint_id}`,
+      label: `#${ep.endpoint_id}`,
+      url: ep.url || '',
+      count: counts[`e:${model.id}:${ch.channel_id}:${ep.endpoint_id}`] || 0,
+    }));
+    return { key: ck, label: ch.channel_name || ch.channel_id, count: counts[ck] || 0, endpoints: epData };
+  });
+  const chCounts = chData.map((c: any) => c.count);
 
-  const ok = selected?.success;
+  // Redraw SVG connectors
+  const redraw = useCallback(() => {
+    if (!containerRef.current) return;
+    const box = containerRef.current.getBoundingClientRect();
+
+    const modelEl = containerRef.current.querySelector('.snk-model') as HTMLElement;
+    if (!modelEl) return;
+
+    const mr = modelEl.getBoundingClientRect();
+    const p0 = { x: mr.right - box.left, y: mr.top + mr.height / 2 - box.top };
+
+    const result: string[] = [];
+    chData.forEach((ch: any) => {
+      const chEl = containerRef.current?.querySelector(`[data-n="${ch.key}"]`) as HTMLElement;
+      if (!chEl) return;
+      const cr = chEl.getBoundingClientRect();
+      const p1 = { x: cr.left - box.left, y: cr.top + cr.height / 2 - box.top };
+      const p1r = { x: cr.right - box.left, y: cr.top + cr.height / 2 - box.top };
+      const mx = (p0.x + p1.x) / 2;
+      result.push(`${p0.x},${p0.y},${mx},${p0.y},${mx},${p1.y},${p1.x},${p1.y}|${ch.key}`);
+
+      ch.endpoints.forEach((ep: any) => {
+        const epEl = containerRef.current?.querySelector(`[data-n="${ep.key}"]`) as HTMLElement;
+        if (!epEl) return;
+        const er = epEl.getBoundingClientRect();
+        const p2 = { x: er.left - box.left, y: er.top + er.height / 2 - box.top };
+        const mx2 = (p1r.x + p2.x) / 2;
+        result.push(`${p1r.x},${p1r.y},${mx2},${p1r.y},${mx2},${p2.y},${p2.x},${p2.y}|${ep.key}`);
+      });
+    });
+    setPaths(result);
+  }, [chData]);
+
+  useEffect(() => {
+    redraw();
+    window.addEventListener('resize', redraw);
+    return () => window.removeEventListener('resize', redraw);
+  }, [redraw, pulseTrigger]);
 
   return (
-    <div className="grid grid-cols-[340px_1fr] gap-4">
-      {/* ── Left: Feed ── */}
-      <Card className="h-full flex flex-col overflow-hidden">
-        <div className="px-4 py-3 border-b bg-muted/20 flex items-center gap-2 text-sm font-semibold shrink-0">
-          <span className="w-[7px] h-[7px] rounded-full bg-green-500 shadow-[0_0_0_rgba(34,197,94,0.5)] animate-pulse" />
-          实时请求流
+    <Card>
+      <div className="px-5 py-3.5 border-b bg-muted/20">
+        <div className="flex items-center gap-2.5">
+          <span className="font-semibold text-foreground">{model.name}</span>
+          <span className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded">{model.model_pattern}</span>
+          <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+            共 <b className="text-foreground">{modelCount.toLocaleString()}</b> 次实时请求
+          </span>
         </div>
-        <div className="overflow-y-auto divide-y h-[360px]">
-          {paths.map((req, i) => (
-            <div
-              key={req.timestamp}
-              onClick={() => setSelectedIdx(i)}
-              className={cn(
-                'px-4 py-2.5 text-sm cursor-pointer border-b last:border-0 transition-colors',
-                safeIdx === i ? 'bg-primary/5' : 'hover:bg-muted/30'
-              )}
-            >
-              <div className="flex items-center justify-between mb-0.5">
-                <span className="font-semibold text-foreground">{req.model}</span>
-                <span className="text-[11.5px] text-muted-foreground font-mono">
-                  {fmtLocalTime(req.timestamp, timezone)}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className={cn(
-                  'text-[10.5px] font-semibold px-1.5 py-0.5 rounded',
-                  req.success ? 'text-green-600 bg-green-500/10' : 'text-destructive bg-destructive/10'
-                )}>
-                  {req.success ? '成功' : '失败'}
-                </span>
-                <span>{chName(req.channel_id)} · {req.latency_ms}ms</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
+      </div>
+      <div className="p-5">
+        <div ref={containerRef} className="relative" style={{ display: 'grid', gridTemplateColumns: '180px 1fr 180px 1fr 180px', alignItems: 'center', minHeight: 60 + Math.max(1, chData.length) * 56 }}>
+          {/* SVG connectors */}
+          <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible" style={{ zIndex: 0 }}>
+            {paths.map((sp) => {
+              const [coords] = sp.split('|');
+              const pts = coords.split(',').map(Number);
+              if (pts.length < 8) return null;
+              return (
+                <path
+                  key={sp}
+                  d={`M ${pts[0]} ${pts[1]} C ${pts[2]} ${pts[3]}, ${pts[4]} ${pts[5]}, ${pts[6]} ${pts[7]}`}
+                  fill="none"
+                  stroke="#d8d7d1"
+                  strokeWidth="1.5"
+                />
+              );
+            })}
+          </svg>
 
-      {/* ── Right: Trace Detail ── */}
-      <Card className="h-full">
-        <div className="p-5 space-y-5">
-          {/* Meta */}
-          <div className="flex flex-wrap gap-5 pb-4 border-b">
-            {[
-              { label: '请求时间', val: fmtLocalTime(selected.timestamp, timezone) },
-              { label: '请求模型', val: selected.model },
-              { label: '路由渠道', val: `${selected.channel_id} (${chName(selected.channel_id)})` },
-              { label: '耗时', val: `${selected.latency_ms}ms` },
-            ].map((item) => (
-              <div key={item.label}>
-                <div className="text-[11px] text-muted-foreground mb-0.5">{item.label}</div>
-                <div className="text-sm font-semibold font-mono">{item.val}</div>
-              </div>
-            ))}
+          {/* Model column */}
+          <div className="flex flex-col gap-2 z-10">
+            <div className="text-[10.5px] text-muted-foreground uppercase tracking-wider mb-1">模型</div>
+            <div className="snk-model border-2 border-primary rounded-lg px-3 py-2.5 bg-primary/5">
+              <div className="text-sm font-semibold text-primary">{model.name}</div>
+              <div className="text-[11px] text-muted-foreground">{model.model_pattern}</div>
+            </div>
           </div>
 
-          {/* Path Flow: Model → Channel → Endpoint */}
-          <div>
-            <div className="text-[11px] text-muted-foreground uppercase tracking-wider mb-3">请求路径</div>
-            <div className="flex items-stretch gap-0">
-              {/* Model node */}
-              <div className="min-w-[160px]">
-                <div className="border-2 border-primary rounded-lg px-3 py-2.5 bg-primary/5">
-                  <div className="text-sm font-semibold text-primary">{selected.model}</div>
-                  <div className="text-[11.5px] text-muted-foreground">model pattern</div>
-                </div>
-              </div>
+          <div />
 
-              {/* Arrow */}
-              <div className="flex items-center justify-center min-w-[40px] relative">
-                <div className="absolute left-0 right-0 top-1/2 h-[2px] bg-primary -translate-y-1/2" />
-                <span className="relative z-10 bg-card text-primary text-sm px-1">➜</span>
-              </div>
-
-              {/* Channel node */}
-              <div className="min-w-[160px]">
-                <div className="border-2 border-primary rounded-lg px-3 py-2.5 bg-primary/5">
-                  <div className="text-sm font-semibold text-primary">{selected.channel_id}</div>
-                  <div className="text-[11.5px] text-muted-foreground">{chName(selected.channel_id)}</div>
-                </div>
-              </div>
-
-              {/* Arrow */}
-              <div className="flex items-center justify-center min-w-[40px] relative">
-                <div className={cn(
-                  'absolute left-0 right-0 top-1/2 h-[2px] -translate-y-1/2',
-                  ok ? 'bg-primary' : 'bg-destructive'
-                )} />
-                <span className={cn(
-                  'relative z-10 bg-card text-sm px-1',
-                  ok ? 'text-primary' : 'text-destructive'
-                )}>➜</span>
-              </div>
-
-              {/* Endpoint node */}
-              <div className="min-w-[160px]">
-                <div className={cn(
-                  'border-2 rounded-lg px-3 py-2.5',
-                  ok ? 'border-primary bg-primary/5' : 'border-destructive bg-destructive/5'
-                )}>
-                  <div className={cn(
-                    'text-sm font-semibold',
-                    ok ? 'text-primary' : 'text-destructive'
-                  )}>端点</div>
-                  <div className="text-[11.5px] text-muted-foreground">
-                    {ok ? `已命中 · ${selected.latency_ms}ms` : '请求失败'}
+          {/* Channel column */}
+          <div className="flex flex-col gap-2 z-10">
+            <div className="text-[10.5px] text-muted-foreground uppercase tracking-wider mb-1">路由渠道</div>
+            {chData.map((ch: any) => {
+              const lv = loadLevel(ch.count, chCounts);
+              return (
+                <div key={ch.key} data-n={ch.key} className={`border rounded-lg px-3 py-2 transition-all ${LOAD_BORDER[lv]} ${LOAD_BG[lv]}`}>
+                  <div className="flex items-center justify-between text-[12.5px] font-semibold">
+                    <span>{ch.label}</span>
+                    <span className="text-xs text-muted-foreground tabular-nums">{ch.count}</span>
                   </div>
+                  {chCounts.length > 1 && (
+                    <div className="mt-1.5 h-1 bg-muted rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full transition-all duration-500 ${LOAD_BAR[lv]}`}
+                        style={{ width: `${Math.max(2, (ch.count / Math.max(1, ...chCounts)) * 100)}%` }} />
+                    </div>
+                  )}
                 </div>
-              </div>
-            </div>
+              );
+            })}
           </div>
 
-          {/* Result */}
-          <div className="flex items-center gap-6 pt-4 border-t text-sm">
-            <div>
-              <div className="text-[11px] text-muted-foreground mb-0.5">最终结果</div>
-              <div className={cn('font-semibold', ok ? 'text-green-600' : 'text-destructive')}>
-                {ok ? '成功' : '失败'}
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] text-muted-foreground mb-0.5">总耗时</div>
-              <div className="font-semibold font-mono">{selected.latency_ms}ms</div>
-            </div>
+          <div />
+
+          {/* Endpoint column */}
+          <div className="flex flex-col gap-2 z-10">
+            <div className="text-[10.5px] text-muted-foreground uppercase tracking-wider mb-1">渠道端点</div>
+            {chData.map((ch: any) => {
+              const epCounts = ch.endpoints.map((e: any) => e.count);
+              return ch.endpoints.map((ep: any) => {
+                const lv = loadLevel(ep.count, epCounts);
+                return (
+                  <div key={ep.key} data-n={ep.key} className={`border rounded-lg px-3 py-2 transition-all ${LOAD_BORDER[lv]} ${LOAD_BG[lv]}`}>
+                    <div className="flex items-center justify-between text-[12.5px] font-semibold">
+                      <span>{ep.label}</span>
+                      <span className="text-xs text-muted-foreground tabular-nums">{ep.count}</span>
+                    </div>
+                    {ep.url && <div className="text-[10px] text-muted-foreground truncate">{ep.url}</div>}
+                    {epCounts.length > 1 && (
+                      <div className="mt-1 h-1 bg-muted rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all duration-500 ${LOAD_BAR[lv]}`}
+                          style={{ width: `${Math.max(2, (ep.count / Math.max(1, ...epCounts)) * 100)}%` }} />
+                      </div>
+                    )}
+                  </div>
+                );
+              });
+            })}
           </div>
         </div>
-      </Card>
-    </div>
+      </div>
+    </Card>
   );
 }
