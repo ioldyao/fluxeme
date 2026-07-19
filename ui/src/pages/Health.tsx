@@ -17,7 +17,7 @@ const LOAD_COLORS: Record<string, string> = { low: '#4a7fc9', mid: '#d99a2b', hi
 
 /* ── Data topology built from real models ── */
 interface TopoEndpoint { id: string; url: string; weight: number; }
-interface TopoChannel { id: string; weight: number; endpoints: TopoEndpoint[]; }
+interface TopoChannel { id: string; name?: string; weight: number; endpoints: TopoEndpoint[]; }
 interface TopoModel { model: string; pattern: string; channels: TopoChannel[]; }
 
 /* ── Component ── */
