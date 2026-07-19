@@ -16,20 +16,36 @@ pub struct UsageService {
     sender: Sender<UsageRecord>,
     db: Arc<Database>,
     cache: Arc<RedisCache>,
+    event_tx: broadcast::Sender<RequestEvent>,
 }
 
 impl UsageService {
     pub fn new(db: Arc<Database>, cache: Arc<RedisCache>, event_tx: broadcast::Sender<RequestEvent>) -> (Self, JoinHandle<()>) {
         let (tx, rx) = mpsc::channel::<UsageRecord>(4096);
-        let handle = tokio::spawn(background_writer(db.clone(), cache.clone(), rx, event_tx));
+        let et = event_tx.clone();
+        let handle = tokio::spawn(background_writer(db.clone(), cache.clone(), rx));
 
-        (Self { sender: tx, db, cache }, handle)
+        (Self { sender: tx, db, cache, event_tx: et }, handle)
     }
 
     pub fn record(&self, record: UsageRecord) {
+        self.record_with_endpoint(record, None);
+    }
+
+    /// Record usage and broadcast a real-time event with endpoint_id.
+    pub fn record_with_endpoint(&self, record: UsageRecord, endpoint_id: Option<i64>) {
+        let event = RequestEvent {
+            timestamp: record.timestamp.clone(),
+            model: record.model.clone(),
+            channel_id: record.channel_id.clone(),
+            endpoint_id,
+            latency_ms: record.latency_ms,
+            success: record.success,
+        };
         if let Err(e) = self.sender.try_send(record) {
             tracing::warn!("Usage channel full, dropping record: {:?}", e.into_inner());
         }
+        let _ = self.event_tx.send(event);
     }
 
     pub async fn query(&self, limit: usize, offset: usize, filter: &UsageFilter) -> Result<Vec<UsageRecord>, String> {
@@ -72,7 +88,7 @@ impl UsageService {
     }
 }
 
-async fn background_writer(db: Arc<Database>, cache: Arc<RedisCache>, mut rx: Receiver<UsageRecord>, event_tx: broadcast::Sender<RequestEvent>) {
+async fn background_writer(db: Arc<Database>, cache: Arc<RedisCache>, mut rx: Receiver<UsageRecord>) {
     while let Some(record) = rx.recv().await {
         let mut batch = vec![record];
         let deadline = tokio::time::sleep(Duration::from_millis(10));
@@ -87,19 +103,6 @@ async fn background_writer(db: Arc<Database>, cache: Arc<RedisCache>, mut rx: Re
                 },
                 _ = &mut deadline => break,
             }
-        }
-
-        // Broadcast each record as a real-time event BEFORE writing to DB
-        for r in &batch {
-            let event = RequestEvent {
-                timestamp: r.timestamp.clone(),
-                model: r.model.clone(),
-                channel_id: r.channel_id.clone(),
-                endpoint_id: None,
-                latency_ms: r.latency_ms,
-                success: r.success,
-            };
-            let _ = event_tx.send(event);
         }
 
         // Read billing_enabled from gateway config
