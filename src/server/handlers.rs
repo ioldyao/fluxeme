@@ -693,17 +693,8 @@ async fn handle_streaming(
 
     match stream_result {
         Ok(stream) => {
-            // Broadcast a real-time routing event once the upstream stream is
-            // established (streaming requests are recorded here; non-streaming
-            // requests broadcast in handle_non_streaming).
-            state.request_events.send(crate::server::ws::RequestEvent {
-                timestamp: Utc::now().to_rfc3339(),
-                model: model.clone(),
-                channel_id: channel_id.clone(),
-                endpoint_id: endpoint.id,
-                latency_ms: start.elapsed().as_millis() as u64,
-                success: true,
-            }).ok();
+            // Real-time routing event is broadcast by UsageService.record() when
+            // the UsageTrackingStream completes (avoids double-counting).
             let (first_byte_timeout, idle_timeout) = {
                 let gw = state.gateway_config.read().unwrap();
                 (
@@ -796,16 +787,8 @@ async fn handle_messages_streaming(
 
     match stream_result {
         Ok(stream) => {
-            // Broadcast a real-time routing event once the upstream stream is
-            // established (mirrors the non-streaming path in handle_messages).
-            state.request_events.send(crate::server::ws::RequestEvent {
-                timestamp: Utc::now().to_rfc3339(),
-                model: model.clone(),
-                channel_id: channel_id.clone(),
-                endpoint_id: endpoint.id,
-                latency_ms: start.elapsed().as_millis() as u64,
-                success: true,
-            }).ok();
+            // Real-time routing event is broadcast by UsageService.record() when
+            // the UsageTrackingStream completes (avoids double-counting).
             let (first_byte_timeout, idle_timeout) = {
                 let gw = state.gateway_config.read().unwrap();
                 (
@@ -919,15 +902,7 @@ async fn handle_non_streaming(
                     .map(|s| s.to_string());
 
                 let latency_ms = start.elapsed().as_millis() as u64;
-                                state.request_events.send(crate::server::ws::RequestEvent {
-                    timestamp: Utc::now().to_rfc3339(),
-                    model: model.to_string(),
-                    channel_id: channel_id.to_string(),
-                    endpoint_id: route.endpoint.id,
-                    latency_ms,
-                    success: true,
-                }).ok();
-                state.usage.record(UsageRecord {
+                state.usage.record_with_endpoint(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
                     request_id,
                     user_id: user_id.clone(),
@@ -952,8 +927,7 @@ async fn handle_non_streaming(
                     completion_price: 0.0,
                     cache_read_price: 0.0,
                     client_ip: Some(client_ip.clone()),
-                });
-
+                }, route.endpoint.id);
 
                 // Cache the response for non-streaming requests
                 if let Some(ref ck) = cache_key {
