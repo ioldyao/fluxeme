@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
 
@@ -8,6 +9,7 @@ use crate::cache::{compute_gate_status, RedisCache};
 use crate::db::Database;
 use crate::domain::usage::UsageFilter;
 use crate::domain::usage::UsageRecord;
+use crate::server::ws::RequestEvent;
 
 #[derive(Clone)]
 pub struct UsageService {
@@ -17,9 +19,9 @@ pub struct UsageService {
 }
 
 impl UsageService {
-    pub fn new(db: Arc<Database>, cache: Arc<RedisCache>) -> (Self, JoinHandle<()>) {
+    pub fn new(db: Arc<Database>, cache: Arc<RedisCache>, event_tx: broadcast::Sender<RequestEvent>) -> (Self, JoinHandle<()>) {
         let (tx, rx) = mpsc::channel::<UsageRecord>(4096);
-        let handle = tokio::spawn(background_writer(db.clone(), cache.clone(), rx));
+        let handle = tokio::spawn(background_writer(db.clone(), cache.clone(), rx, event_tx));
 
         (Self { sender: tx, db, cache }, handle)
     }
@@ -70,7 +72,7 @@ impl UsageService {
     }
 }
 
-async fn background_writer(db: Arc<Database>, cache: Arc<RedisCache>, mut rx: Receiver<UsageRecord>) {
+async fn background_writer(db: Arc<Database>, cache: Arc<RedisCache>, mut rx: Receiver<UsageRecord>, event_tx: broadcast::Sender<RequestEvent>) {
     while let Some(record) = rx.recv().await {
         let mut batch = vec![record];
         let deadline = tokio::time::sleep(Duration::from_millis(10));
@@ -85,6 +87,19 @@ async fn background_writer(db: Arc<Database>, cache: Arc<RedisCache>, mut rx: Re
                 },
                 _ = &mut deadline => break,
             }
+        }
+
+        // Broadcast each record as a real-time event BEFORE writing to DB
+        for r in &batch {
+            let event = RequestEvent {
+                timestamp: r.timestamp.clone(),
+                model: r.model.clone(),
+                channel_id: r.channel_id.clone(),
+                endpoint_id: None,
+                latency_ms: r.latency_ms,
+                success: r.success,
+            };
+            let _ = event_tx.send(event);
         }
 
         // Read billing_enabled from gateway config

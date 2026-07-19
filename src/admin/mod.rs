@@ -152,6 +152,10 @@ fn extract_token(headers: &HeaderMap) -> Result<String, AdminError> {
     Err(AdminError::unauthorized("Missing or invalid admin token"))
 }
 
+pub(crate) async fn require_session_internal(admin: &AdminModule, headers: &HeaderMap) -> Result<SessionInfo, AdminError> {
+    require_session(admin, headers).await
+}
+
 async fn require_session(admin: &AdminModule, headers: &HeaderMap) -> Result<SessionInfo, AdminError> {
     let token = extract_token(headers)?;
     let session = admin.decode_token(&token)?;
@@ -3102,5 +3106,10 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
             "/admin/api/moderation/enabled",
             axum::routing::get(get_content_moderation_enabled)
                 .put(set_content_moderation_enabled),
+        )
+        // WebSocket real-time events
+        .route(
+            "/admin/api/health/ws",
+            axum::routing::get(crate::server::ws::ws_handler),
         )
 }
