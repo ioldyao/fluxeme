@@ -482,6 +482,7 @@ const zh: Record<string, string> = {
   'bills.compareTooltip': '多周期对比',
   'bills.compareTitle': '多周期对比（年度消费趋势）',
 
+  'nav.health': '健康',
   'nav.moderation': '内容审核',
   'moderation.title': '内容审核',
   'moderation.subtitle': '管理请求和响应的内容过滤规则',
