@@ -102,15 +102,17 @@ function ModelPanel({ m, counts, lastEvent }: { m: any; counts: Record<string, n
   const draw = useCallback(() => {
     const box = containerRef.current?.getBoundingClientRect();
     if (!box) return;
-    setPaths(pairs.map(({ key, from, to }) => {
-      const f = from?.current?.getBoundingClientRect();
-      const t = to?.current?.getBoundingClientRect();
-      if (!f || !t) return null;
-      const p0 = { x: f.right - box.left, y: f.top + f.height / 2 - box.top };
-      const p1 = { x: t.left - box.left, y: t.top + t.height / 2 - box.top };
-      const mx = (p0.x + p1.x) / 2;
-      return { key, d: `M ${p0.x} ${p0.y} C ${mx} ${p0.y},${mx} ${p1.y},${p1.x} ${p1.y}` };
-    }).filter((x: any) => x !== null);
+    var result: any[] = [];
+    for (var p of pairs) {
+      var f = p.from?.current?.getBoundingClientRect();
+      var t = p.to?.current?.getBoundingClientRect();
+      if (!f || !t) continue;
+      var x0 = f.right - box.left, y0 = f.top + f.height / 2 - box.top;
+      var x1 = t.left - box.left, y1 = t.top + t.height / 2 - box.top;
+      var mx = (x0 + x1) / 2;
+      result.push({ key: p.key, d: "M " + x0 + " " + y0 + " C " + mx + " " + y0 + "," + mx + " " + y1 + "," + x1 + " " + y1 });
+    }
+    setPaths(result);
   }, [pairs]);
 
   useEffect(() => { draw(); window.addEventListener("resize", draw); return () => window.removeEventListener("resize", draw); }, [draw]);
