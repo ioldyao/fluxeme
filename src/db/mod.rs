@@ -548,6 +548,10 @@ impl Database {
         self.backend.channel_usage_24h().await
     }
 
+    pub async fn recent_request_paths(&self, limit: usize) -> Result<Vec<(String, String, String, Option<i64>, u64, bool)>, DbError> {
+        self.backend.recent_request_paths(limit).await
+    }
+
     // ── Batch Operations ────────────────────────────────────────────────
     pub async fn batch_insert_usage_with_billing(
         &self,

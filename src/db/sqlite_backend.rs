@@ -141,6 +141,7 @@ impl SqliteBackend {
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN api_key_name TEXT;");
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN client_ip TEXT;");
         let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN cache_read_price REAL NOT NULL DEFAULT 0.0;");
+        let _ = conn.execute_batch("ALTER TABLE usage_logs ADD COLUMN endpoint_id BIGINT;");
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN published INTEGER NOT NULL DEFAULT 0;");
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN context_length INTEGER;");
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN cache_read_price REAL NOT NULL DEFAULT 0.0;");
@@ -2953,6 +2954,31 @@ impl DbBackend for SqliteBackend {
                     row.get::<_, u64>(3)?,
                     row.get::<_, f64>(4)?,
                     row.get::<_, f64>(5)?,
+                ))
+            })?;
+            let mut results = Vec::new();
+            for row in rows {
+                results.push(row?);
+            }
+            Ok(results)
+        })
+        .await
+    }
+
+    async fn recent_request_paths(&self, limit: usize) -> Result<Vec<(String, String, String, Option<i64>, u64, bool)>, DbError> {
+        let limit_i64 = limit as i64;
+        self.exec(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT timestamp, model, channel_id, endpoint_id, latency_ms, success FROM usage_logs ORDER BY id DESC LIMIT ?1",
+            )?;
+            let rows = stmt.query_map(params![limit_i64], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, u64>(4)?,
+                    row.get::<_, bool>(5)?,
                 ))
             })?;
             let mut results = Vec::new();
