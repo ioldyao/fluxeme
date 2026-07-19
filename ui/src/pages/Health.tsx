@@ -1,332 +1,298 @@
-import { useEffect, useRef } from 'react';
-import { useRoutingHealth } from '@/api/health';
-import { Card } from '@/components/ui/card';
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useRoutingHealth } from "@/api/health";
+import { Card } from "@/components/ui/card";
 
-/* ── Pure vanilla-JS flow panel, same pattern as the reference HTML ── */
+const C = {
+  bg: "#f5f5f3", cardBg: "#ffffff", border: "#e4e3de", line: "#d8d7d1",
+  textPrimary: "#1a1a18", textSecondary: "#6b6a64", textMuted: "#9a988f",
+  nodeBg: "#fafaf8", barTrack: "#eeede8", green: "#1a8a3d",
+  low: "#4a7fc9", mid: "#d99a2b", high: "#c94a4a",
+};
 
-function keyOf(...parts: (string | number)[]) { return parts.join('>'); }
+const LOAD_COLOR = { low: C.low, mid: C.mid, high: C.high };
 
-function loadClass(cnt: number, siblings: number[]): 'low' | 'mid' | 'high' {
-  const max = Math.max(1, ...siblings);
-  const r = cnt / max;
-  if (r >= 0.66) return 'high';
-  if (r >= 0.33) return 'mid';
-  return 'low';
+const keyFor = (...parts) => parts.join(">");
+
+function loadClass(count, siblingCounts) {
+  const max = Math.max(1, ...siblingCounts);
+  const r = count / max;
+  if (r >= 0.66) return "high";
+  if (r >= 0.33) return "mid";
+  return "low";
 }
 
-export default function HealthPage() {
-  const { data } = useRoutingHealth();
-  const summary = data?.summary;
-  const panelsRef = useRef<HTMLDivElement>(null);
-  const stateRef = useRef<Record<string, number>>({});
-  const totalRef = useRef(0);
-  const topologyRef = useRef<any[]>([]);
+// ── FlowNode ──
+function FlowNode({ nodeRef, title, subtitle, count, loadCls, pinged, showBar = true }) {
+  const color = loadCls ? LOAD_COLOR[loadCls] : null;
+  const pcts = loadCls === "high" ? 100 : loadCls === "mid" ? 60 : 25;
+  return (
+    <div ref={nodeRef} style={{
+      borderRadius: 8, border: `1.5px solid ${color || C.border}`, background: C.nodeBg,
+      padding: "9px 12px", fontSize: 12.5,
+      transition: "transform 150ms, border-color 300ms",
+      transform: pinged ? "scale(1.03)" : "scale(1)",
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <span style={{ fontWeight: 600, color: color || C.textPrimary }}>{title}</span>
+        <span style={{ fontSize: 12, color: C.textSecondary, fontVariantNumeric: "tabular-nums" }}>{count}</span>
+      </div>
+      {subtitle && <div style={{ fontSize: 10.5, color: C.textMuted, marginTop: 2 }}>{subtitle}</div>}
+      {showBar && (
+        <div style={{ marginTop: 6, height: 4, borderRadius: 2, background: C.barTrack, overflow: "hidden" }}>
+          <div style={{ height: "100%", borderRadius: 2, width: `${pcts}%`, background: color || "transparent", transition: "width 400ms ease, background-color 400ms ease" }} />
+        </div>
+      )}
+    </div>
+  );
+}
 
-  const models = data?.models ?? [];
-
-  // Build topology once
+// ── FlowPulse ──
+function FlowPulse({ pathD, duration = 550, onDone }) {
+  const dotRef = useRef(null);
+  const pathElRef = useRef(null);
   useEffect(() => {
-    if (!models.length) return;
-    topologyRef.current = models.map((m: any) => ({
-      model: m.name,
-      pattern: m.model_pattern,
-      channels: m.channels.map((ch: any) => ({
-        id: ch.channel_id,
-        label: ch.channel_name || ch.channel_id,
-        weight: Math.max(1, ch.requests || 1),
-        endpoints: (ch.endpoints || []).map((ep: any) => ({
-          id: `端点 ${ep.endpoint_id}`,
-          url: ep.url || '',
-          weight: Math.max(1, ep.available ? 1 : 0.1),
-        })),
-        ...((ch.endpoints?.length ? {} : { endpoints: [{ id: '端点 1', url: '', weight: 1 }] })),
-      })),
-    }));
+    const pathEl = pathElRef.current;
+    if (!pathEl) return;
+    const len = pathEl.getTotalLength();
+    const start = performance.now();
+    let raf;
+    function step(now) {
+      const t = Math.min(1, (now - start) / duration);
+      const pt = pathEl.getPointAtLength(t * len);
+      if (dotRef.current) {
+        dotRef.current.setAttribute("cx", pt.x);
+        dotRef.current.setAttribute("cy", pt.y);
+        dotRef.current.setAttribute("opacity", String(1 - t * 0.3));
+      }
+      if (t < 1) raf = requestAnimationFrame(step);
+      else onDone();
+    }
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [duration, onDone]);
+  return <><path ref={pathElRef} d={pathD} fill="none" stroke="none" /><circle ref={dotRef} r="3.5" fill={C.low} /></>;
+}
 
-    renderPanels();
-  }, [models]);
-
-  // WebSocket
+// ── useConnectors ──
+function useConnectors(containerRef, pairs) {
+  const svgRef = useRef(null);
+  const [paths, setPaths] = useState([]);
+  const recompute = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const cRect = container.getBoundingClientRect();
+    const next = pairs.map(({ key, fromRef, toRef }) => {
+      const fromEl = fromRef.current, toEl = toRef.current;
+      if (!fromEl || !toEl) return null;
+      const fr = fromEl.getBoundingClientRect(), tr = toEl.getBoundingClientRect();
+      const p0 = { x: fr.right - cRect.left, y: fr.top + fr.height / 2 - cRect.top };
+      const p1 = { x: tr.left - cRect.left, y: tr.top + tr.height / 2 - cRect.top };
+      const midX = (p0.x + p1.x) / 2;
+      return { key, d: `M ${p0.x} ${p0.y} C ${midX} ${p0.y}, ${midX} ${p1.y}, ${p1.x} ${p1.y}` };
+    }).filter(Boolean);
+    setPaths(next);
+  }, [containerRef, pairs]);
   useEffect(() => {
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    recompute();
+    const ro = new ResizeObserver(recompute);
+    if (containerRef.current) ro.observe(containerRef.current);
+    window.addEventListener("resize", recompute);
+    return () => { ro.disconnect(); window.removeEventListener("resize", recompute); };
+  }, [recompute, containerRef]);
+  return { svgRef, paths };
+}
+
+// ── ModelPanel ──
+function ModelPanel({ model, counts, lastEvent }) {
+  const containerRef = useRef(null);
+  const modelNodeRef = useRef(null);
+  const channelRefs = useRef({});
+  const endpointRefs = useRef({});
+  const [pulses, setPulses] = useState([]);
+  const [pinged, setPinged] = useState({});
+
+  if (!channelRefs.current.initialized) {
+    model.channels.forEach((c) => { channelRefs.current[c.id] ||= { current: null }; });
+    model.channels.forEach((c) =>
+      c.endpoints.forEach((e) => { const k = `${c.id}>${e.id}`; endpointRefs.current[k] ||= { current: null }; })
+    );
+    channelRefs.current.initialized = true;
+  }
+
+  const topology = model;
+  const pairs = useMemo(() => {
+    const p = [];
+    topology.channels.forEach((c) => {
+      p.push({ key: keyFor(topology.model, c.id), fromRef: modelNodeRef, toRef: channelRefs.current[c.id] });
+      c.endpoints.forEach((e) => {
+        p.push({ key: keyFor(topology.model, c.id, e.id), fromRef: channelRefs.current[c.id], toRef: endpointRefs.current[`${c.id}>${e.id}`] });
+      });
+    });
+    return p;
+  }, [topology]);
+
+  const { svgRef, paths } = useConnectors(containerRef, pairs);
+
+  useEffect(() => {
+    if (!lastEvent || lastEvent.model !== topology.model) return;
+    const { channel, endpoint, ts } = lastEvent;
+    const chPath = paths.find((p) => p.key === keyFor(topology.model, channel));
+    const epPath = paths.find((p) => p.key === keyFor(topology.model, channel, endpoint));
+    if (chPath) setPulses((prev) => [...prev, { id: `${ts}-ch`, pathD: chPath.d }]);
+    let epTimer;
+    if (epPath) { epTimer = setTimeout(() => setPulses((prev) => [...prev, { id: `${ts}-ep`, pathD: epPath.d }]), 200); }
+    const keys = [keyFor(topology.model), keyFor(topology.model, channel), keyFor(topology.model, channel, endpoint)];
+    const timers = keys.map((k, i) => setTimeout(() => { setPinged((p) => ({ ...p, [k]: true })); setTimeout(() => setPinged((p) => ({ ...p, [k]: false })), 200); }, i * 150));
+    return () => { clearTimeout(epTimer); timers.forEach(clearTimeout); };
+  }, [lastEvent]);
+
+  const removePulse = useCallback((id) => setPulses((prev) => prev.filter((p) => p.id !== id)), []);
+
+  const modelCount = counts[keyFor(topology.model)] || 0;
+  const chCounts = topology.channels.map((c) => counts[keyFor(topology.model, c.id)] || 0);
+
+  return (
+    <div style={{ marginBottom: 16, borderRadius: 10, border: `1px solid ${C.border}`, background: C.cardBg, padding: "20px 24px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, fontSize: 14, fontWeight: 600 }}>
+        <span>{topology.model}</span>
+        <span style={{ fontSize: 11, fontWeight: 400, color: C.textMuted, background: "#f0efe9", padding: "1px 8px", borderRadius: 4, fontFamily: "SF Mono, Consolas, monospace" }}>{topology.pattern}</span>
+        <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 400, color: C.textSecondary }}>共 <b style={{ color: C.textPrimary, fontWeight: 600 }}>{modelCount}</b> 次请求</span>
+      </div>
+
+      <div ref={containerRef} style={{ position: "relative", display: "grid", gridTemplateColumns: "200px 1fr 200px 1fr 200px", alignItems: "center", minHeight: 60 }}>
+        <svg ref={svgRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", overflow: "visible", pointerEvents: "none" }}>
+          {paths.map((p) => <path key={p.key} d={p.d} fill="none" stroke={C.line} strokeWidth="1.5" />)}
+          {pulses.map((p) => <FlowPulse key={p.id} pathD={p.pathD} onDone={() => removePulse(p.id)} />)}
+        </svg>
+
+        <div style={{ zIndex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ fontSize: 10.5, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>模型</div>
+          <FlowNode nodeRef={modelNodeRef} title={topology.model} count={modelCount} pinged={pinged[keyFor(topology.model)]} showBar={false} />
+        </div>
+        <div />
+
+        <div style={{ zIndex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ fontSize: 10.5, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>路由渠道（负载均衡）</div>
+          {topology.channels.map((c) => {
+            const cnt = counts[keyFor(topology.model, c.id)] || 0;
+            return <FlowNode key={c.id} nodeRef={channelRefs.current[c.id]} title={c.id} count={cnt} loadCls={loadClass(cnt, chCounts)} pinged={pinged[keyFor(topology.model, c.id)]} />;
+          })}
+        </div>
+        <div />
+
+        <div style={{ zIndex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ fontSize: 10.5, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>渠道端点（负载均衡）</div>
+          {topology.channels.flatMap((c) => {
+            const epCounts = c.endpoints.map((e) => counts[keyFor(topology.model, c.id, e.id)] || 0);
+            return c.endpoints.map((e) => {
+              const k = keyFor(topology.model, c.id, e.id);
+              return <FlowNode key={k} nodeRef={endpointRefs.current[`${c.id}>${e.id}`]} title={e.id} subtitle={`${e.url} · ${c.id}`} count={counts[k] || 0} loadCls={loadClass(counts[k] || 0, epCounts)} pinged={pinged[k]} />;
+            });
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── useRequestStream (WebSocket only, no simulation) ──
+function useRequestStream(topology) {
+  const [totalCount, setTotalCount] = useState(0);
+  const [counts, setCounts] = useState({});
+  const [lastEvent, setLastEvent] = useState(null);
+  const seen = useRef(new Set());
+
+  useEffect(() => {
+    if (!topology.length) return;
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${proto}//${window.location.host}/admin/api/health/ws`;
-    let ws: WebSocket;
 
     function connect() {
-      ws = new WebSocket(url);
+      const ws = new WebSocket(url);
       ws.onmessage = (e) => {
         try {
           const ev = JSON.parse(e.data);
           if (!ev.model || !ev.channel_id) return;
+          const uid = `${ev.timestamp || performance.now()}-${ev.model}-${ev.channel_id}-${ev.endpoint_id || ""}`;
+          if (seen.current.has(uid)) return;
+          seen.current.add(uid);
+          if (seen.current.size > 500) seen.current = new Set([...seen.current].slice(-250));
 
-          const s = stateRef.current;
-          const mk = keyOf('m', ev.model);
-          s[mk] = (s[mk] || 0) + 1;
-          const ck = keyOf('c', ev.model, ev.channel_id);
-          s[ck] = (s[ck] || 0) + 1;
-          if (ev.endpoint_id) {
-            const ek = keyOf('e', ev.model, ev.channel_id, ev.endpoint_id);
-            s[ek] = (s[ek] || 0) + 1;
-          }
-          totalRef.current++;
-
-          // Update counters and bars via direct DOM
-          updateDOM();
-
-          // Pulse animation
-          const panel = document.querySelector(`[data-model="${ev.model}"]`);
-          if (panel) {
-            const svg = panel.querySelector('svg.connectors') as SVGSVGElement;
-            if (svg) {
-              const cKey = keyOf('c', ev.model, ev.channel_id);
-              pulseAlongPath(svg, cKey);
-              pingNode(panel as HTMLElement, mk);
-              setTimeout(() => pingNode(panel as HTMLElement, cKey), 150);
-              if (ev.endpoint_id) {
-                const eKey = keyOf('e', ev.model, ev.channel_id, ev.endpoint_id);
-                setTimeout(() => pulseAlongPath(svg, eKey), 200);
-                setTimeout(() => pingNode(panel as HTMLElement, eKey), 350);
-              }
-            }
-          }
-
-          document.getElementById('totalCount')!.textContent = totalRef.current.toLocaleString();
+          const endpoint = ev.endpoint_id ? `端点 ${ev.endpoint_id}` : undefined;
+          setCounts((prev) => ({ ...prev, [keyFor(ev.model)]: (prev[keyFor(ev.model)] || 0) + 1, [keyFor(ev.model, ev.channel_id)]: (prev[keyFor(ev.model, ev.channel_id)] || 0) + 1, ...(endpoint ? { [keyFor(ev.model, ev.channel_id, endpoint)]: (prev[keyFor(ev.model, ev.channel_id, endpoint)] || 0) + 1 } : {}) }));
+          setTotalCount((c) => c + 1);
+          setLastEvent({ model: ev.model, channel: ev.channel_id, endpoint, ts: performance.now() });
         } catch { /* ignore */ }
       };
       ws.onclose = () => setTimeout(connect, 3000);
       ws.onerror = () => ws.close();
     }
     connect();
-    return () => { try { ws.close(); } catch {} };
-  }, []);
+  }, [topology]);
 
-  function updateDOM() {
-    const s = stateRef.current;
-    const panels = document.getElementById('panels');
-    if (!panels) return;
+  return { counts, totalCount, lastEvent };
+}
 
-    topologyRef.current.forEach((m: any) => {
-      const panel = panels.querySelector(`[data-model="${m.model}"]`) as HTMLElement;
-      if (!panel) return;
+// ── Top-level ──
+export default function HealthPage() {
+  const { data } = useRoutingHealth();
+  const summary = data?.summary;
 
-      // Model total
-      const mk = keyOf('m', m.model);
-      const mt = panel.querySelector('.model-total');
-      if (mt) mt.textContent = (s[mk] || 0).toLocaleString();
+  const topology = useMemo(() => (data?.models ?? []).map((m) => ({
+    model: m.name,
+    pattern: m.model_pattern,
+    channels: m.channels.map((ch) => ({
+      id: ch.channel_id,
+      weight: Math.max(1, ch.requests || 1),
+      endpoints: (ch.endpoints || []).length > 0
+        ? (ch.endpoints || []).map((ep) => ({ id: `端点 ${ep.endpoint_id}`, url: ep.url || "", weight: Math.max(1, ep.available ? 1 : 0.1) }))
+        : [{ id: "端点 1", url: "", weight: 1 }],
+    })),
+  })), [data]);
 
-      const chCounts = m.channels.map((c: any) => s[keyOf('c', m.model, c.id)] || 0);
-
-      m.channels.forEach((c: any) => {
-        const ck = keyOf('c', m.model, c.id);
-        const cnt = s[ck] || 0;
-        const node = panel.querySelector(`[data-key="${ck}"]`) as HTMLElement;
-        if (!node) return;
-
-        const nCount = node.querySelector('.n-count');
-        if (nCount) nCount.textContent = String(cnt);
-
-        const cls = loadClass(cnt, chCounts);
-        const fill = node.querySelector('.n-bar-fill') as HTMLElement;
-        if (fill) {
-          fill.className = 'n-bar-fill load-' + cls;
-          const max = Math.max(1, ...chCounts);
-          fill.style.width = Math.round((cnt / max) * 100) + '%';
-        }
-        node.classList.remove('hl-low', 'hl-mid', 'hl-high');
-        node.classList.add('hl-' + cls);
-
-        const epCounts = c.endpoints.map((e: any) => s[keyOf('e', m.model, c.id, e.id)] || 0);
-        c.endpoints.forEach((e: any) => {
-          const ek = keyOf('e', m.model, c.id, e.id);
-          const ecnt = s[ek] || 0;
-          const enode = panel.querySelector(`[data-key="${ek}"]`) as HTMLElement;
-          if (!enode) return;
-
-          const eCount = enode.querySelector('.n-count');
-          if (eCount) eCount.textContent = String(ecnt);
-
-          const ecls = loadClass(ecnt, epCounts);
-          const efill = enode.querySelector('.n-bar-fill') as HTMLElement;
-          if (efill) {
-            efill.className = 'n-bar-fill load-' + ecls;
-            const emax = Math.max(1, ...epCounts);
-            efill.style.width = Math.round((ecnt / emax) * 100) + '%';
-          }
-          enode.classList.remove('hl-low', 'hl-mid', 'hl-high');
-          enode.classList.add('hl-' + ecls);
-        });
-      });
-    });
-  }
-
-  function renderPanels() {
-    const container = document.getElementById('panels');
-    if (!container) return;
-
-    container.innerHTML = topologyRef.current.map((m: any) => {
-      const chNodes = m.channels.map((c: any) => `
-        <div class="flow-node" data-key="${keyOf('c', m.model, c.id)}">
-          <div class="n-title"><span>${c.label}</span><span class="n-count">0</span></div>
-          <div class="n-bar-track"><div class="n-bar-fill load-low" style="width:0%"></div></div>
-        </div>`).join('');
-
-      const epNodes = m.channels.flatMap((c: any) => c.endpoints.map((e: any) => `
-        <div class="flow-node" data-key="${keyOf('e', m.model, c.id, e.id)}" data-channel="${c.id}">
-          <div class="n-title"><span>${e.id}</span><span class="n-count">0</span></div>
-          <div class="n-sub">${e.url}<span class="channel-tag">${c.id}</span></div>
-          <div class="n-bar-track"><div class="n-bar-fill load-low" style="width:0%"></div></div>
-        </div>`)).join('');
-
-      return `<div class="model-panel" data-model="${m.model}">
-        <div class="model-panel-title">
-          <span>${m.model}</span>
-          <span class="pattern">${m.pattern}</span>
-          <span class="count">共 <b class="model-total">0</b> 次请求</span>
-        </div>
-        <div class="flow-container">
-          <svg class="connectors"></svg>
-          <div class="col col-model">
-            <div class="col-label">模型</div>
-            <div class="flow-node" data-key="${keyOf('m', m.model)}">
-              <div class="n-title"><span>${m.model}</span><span class="n-count">0</span></div>
-            </div>
-          </div>
-          <div></div>
-          <div class="col col-channel">
-            <div class="col-label">路由渠道（负载均衡）</div>
-            ${chNodes}
-          </div>
-          <div></div>
-          <div class="col col-endpoint">
-            <div class="col-label">渠道端点（负载均衡）</div>
-            ${epNodes}
-          </div>
-        </div>
-      </div>`;
-    }).join('');
-
-    // Draw connectors after render
-    setTimeout(() => drawAllConnectors(), 50);
-    window.addEventListener('resize', drawAllConnectors);
-  }
-
-  function drawAllConnectors() {
-    document.querySelectorAll('.model-panel').forEach((panel) => {
-      const m = topologyRef.current.find((t: any) => t.model === (panel as HTMLElement).dataset.model);
-      if (!m) return;
-      const container = panel.querySelector('.flow-container') as HTMLElement;
-      const svg = panel.querySelector('svg.connectors') as SVGSVGElement;
-      if (!container || !svg) return;
-      const box = container.getBoundingClientRect();
-      svg.innerHTML = '';
-
-      function center(el: HTMLElement, side: 'l' | 'r') {
-        const r = el.getBoundingClientRect();
-        return { x: side === 'r' ? r.right - box.left : r.left - box.left, y: r.top + r.height / 2 - box.top };
-      }
-
-      const modelNode = container.querySelector(`.col-model .flow-node`) as HTMLElement;
-      if (!modelNode) return;
-      const p0 = center(modelNode, 'r');
-
-      m.channels.forEach((c: any) => {
-        const chNode = container.querySelector(`[data-key="${keyOf('c', m.model, c.id)}"]`) as HTMLElement;
-        if (!chNode) return;
-        const p1 = center(chNode, 'l');
-        const p1r = center(chNode, 'r');
-        addPath(svg, p0, p1, keyOf('c', m.model, c.id));
-        c.endpoints.forEach((e: any) => {
-          const epNode = container.querySelector(`[data-key="${keyOf('e', m.model, c.id, e.id)}"]`) as HTMLElement;
-          if (!epNode) return;
-          const p2 = center(epNode, 'l');
-          addPath(svg, p1r, p2, keyOf('e', m.model, c.id, e.id));
-        });
-      });
-    });
-  }
-
-  function addPath(svg: SVGSVGElement, p0: {x: number, y: number}, p1: {x: number, y: number}, key: string) {
-    const mx = (p0.x + p1.x) / 2;
-    const d = `M ${p0.x} ${p0.y} C ${mx} ${p0.y},${mx} ${p1.y},${p1.x} ${p1.y}`;
-    const el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    el.setAttribute('d', d);
-    el.setAttribute('fill', 'none');
-    el.setAttribute('stroke', '#d8d7d1');
-    el.setAttribute('stroke-width', '1.5');
-    el.setAttribute('data-path-key', key);
-    svg.appendChild(el);
-  }
-
-  const summaryData = [
-    ['总请求数 / 24h', summary?.total_requests_24h?.toLocaleString() ?? '-'],
-    ['整体成功率', summary ? `${(summary.overall_success_rate * 100).toFixed(1)}%` : '-'],
-    ['活跃渠道数', `${summary?.active_channels ?? '-'}`],
-    ['熔断中渠道', `${summary?.broken_channels ?? '-'}`],
-  ];
+  const { counts, totalCount, lastEvent } = useRequestStream(topology);
 
   return (
-    <div style={{ fontFamily: '-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif', color: '#1a1a18' }}>
-      <h1 style={{ fontSize: 20, fontWeight: 600, margin: '0 0 4px' }}>实时路由流量面板</h1>
-      <p style={{ fontSize: 13, color: '#6b6a64', margin: '0 0 20px' }}>
-        模型&nbsp;→&nbsp;路由渠道（负载均衡）→&nbsp;渠道端点（负载均衡），颜色表示相对负载：
-        <span style={{ color: '#4a7fc9' }}> 蓝=低</span>
-        <span style={{ color: '#d99a2b' }}> · 黄=中</span>
-        <span style={{ color: '#c94a4a' }}> · 红=高</span>
+    <div style={{ background: C.bg, padding: 28, fontFamily: '-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif', color: C.textPrimary }}>
+      <h1 style={{ fontSize: 20, fontWeight: 600, margin: "0 0 4px" }}>实时路由流量面板</h1>
+      <p style={{ fontSize: 13, color: C.textSecondary, margin: "0 0 20px" }}>
+        模型 → 路由渠道（负载均衡）→ 渠道端点（负载均衡），颜色表示相对负载：
+        <span style={{ color: C.low }}> 蓝=低</span> · <span style={{ color: C.mid }}> 黄=中</span> · <span style={{ color: C.high }}> 红=高</span>
       </p>
 
-      <div className="top-bar" style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
-        <div className="live-badge" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: '#1a8a3d' }}>
-          <span className="live-dot" style={{ width: 7, height: 7, borderRadius: '50%', background: '#1a8a3d', boxShadow: '0 0 0 0 rgba(26,138,61,0.5)', animation: 'pulse-dot 1.6s infinite' }} />
-          LIVE
+      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: C.green }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.green, boxShadow: "0 0 0 0 rgba(26,138,61,0.5)", animation: "gw-pulse 1.6s infinite" }} />LIVE
         </div>
-        <div className="total-counter" style={{ fontSize: 12, color: '#6b6a64' }}>
-          总请求数 <b id="totalCount" style={{ fontSize: 15, color: '#1a1a18', fontVariantNumeric: 'tabular-nums' }}>0</b>
+        <div style={{ fontSize: 12, color: C.textSecondary }}>
+          总请求数 <b style={{ fontSize: 15, color: C.textPrimary, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{totalCount.toLocaleString()}</b>
         </div>
-        <div className="legend" style={{ display: 'flex', gap: 16, marginLeft: 'auto', fontSize: 11.5, color: '#6b6a64' }}>
-          {[{ c: '#4a7fc9', l: '低负载' }, { c: '#d99a2b', l: '中负载' }, { c: '#c94a4a', l: '高负载' }].map((x) => (
-            <span key={x.l} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-              <span style={{ width: 22, height: 6, borderRadius: 3, background: x.c }} />{x.l}
-            </span>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 16, fontSize: 11.5, color: C.textSecondary }}>
+          {[{ c: C.low, l: "低负载" }, { c: C.mid, l: "中负载" }, { c: C.high, l: "高负载" }].map((x) => (
+            <span key={x.l} style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 22, height: 6, borderRadius: 3, background: x.c }} />{x.l}</span>
           ))}
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
-        {summaryData.map(([label, val]) => (
-          <Card key={label as string} style={{ padding: '14px 16px' }}>
-            <div style={{ fontSize: 12, color: '#6b6a64', marginBottom: 6 }}>{label}</div>
-            <div style={{ fontSize: 22, fontWeight: 600 }}>{val as string}</div>
-          </Card>
-        ))}
-      </div>
+      {summary && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
+          {[
+            ["总请求数 / 24h", summary.total_requests_24h.toLocaleString()],
+            ["整体成功率", `${(summary.overall_success_rate * 100).toFixed(1)}%`],
+            ["活跃渠道数", `${summary.active_channels}`],
+            ["熔断中渠道", `${summary.broken_channels}`],
+          ].map(([label, val]) => (
+            <Card key={label} style={{ padding: "14px 16px" }}>
+              <div style={{ fontSize: 12, color: C.textSecondary, marginBottom: 6 }}>{label}</div>
+              <div style={{ fontSize: 22, fontWeight: 600 }}>{val}</div>
+            </Card>
+          ))}
+        </div>
+      )}
 
-      <div id="panels" ref={panelsRef} />
+      {topology.map((m) => <ModelPanel key={m.model} model={m} counts={counts} lastEvent={lastEvent} />)}
+
+      <style>{`@keyframes gw-pulse { 0% { box-shadow: 0 0 0 0 rgba(26,138,61,0.5); } 70% { box-shadow: 0 0 0 6px rgba(26,138,61,0); } 100% { box-shadow: 0 0 0 0 rgba(26,138,61,0); } }`}</style>
     </div>
   );
-}
-
-function pulseAlongPath(svg: SVGSVGElement, key: string) {
-  const path = svg.querySelector(`path[data-path-key="${key}"]`) as SVGPathElement;
-  if (!path) return;
-  const len = path.getTotalLength();
-  const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-  dot.setAttribute('r', '3.5'); dot.setAttribute('fill', '#4a7fc9');
-  svg.appendChild(dot);
-  const dur = 550;
-  const start = performance.now();
-  function step(now: number) {
-    const t = Math.min(1, (now - start) / dur);
-    const pt = path.getPointAtLength(t * len);
-    dot.setAttribute('cx', String(pt.x)); dot.setAttribute('cy', String(pt.y));
-    dot.setAttribute('opacity', String(1 - t * 0.3));
-    if (t < 1) requestAnimationFrame(step); else dot.remove();
-  }
-  requestAnimationFrame(step);
-}
-
-function pingNode(panel: HTMLElement, key: string) {
-  const node = panel.querySelector(`[data-key="${key}"]`) as HTMLElement;
-  if (!node) return;
-  node.classList.add('pinged');
-  setTimeout(() => node.classList.remove('pinged'), 200);
 }
