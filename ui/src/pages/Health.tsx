@@ -35,7 +35,8 @@ export default function HealthPage() {
     model: m.name,
     pattern: m.model_pattern,
     channels: m.channels.map((ch: any) => ({
-      id: ch.channel_name || ch.channel_id,
+      id: ch.channel_id,
+      name: ch.channel_name || ch.channel_id,
       weight: Math.max(1, ch.requests || 1),
       endpoints: (ch.endpoints || []).map((ep: any) => ({
         id: `端点 ${ep.endpoint_id}`,
@@ -151,7 +152,7 @@ function ModelPanel({ m, counts }: { m: TopoModel; counts: Record<string, number
   const mk = keyOf('m', m.model);
   const chData = m.channels.map((c) => ({
     key: keyOf('c', m.model, c.id),
-    label: c.id,
+    label: c.name || c.id,
     count: counts[keyOf('c', m.model, c.id)] || 0,
     endpoints: c.endpoints.map((e) => ({
       key: keyOf('e', m.model, c.id, e.id),
