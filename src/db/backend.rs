@@ -148,6 +148,23 @@ pub trait DbBackend: Send + Sync {
     /// Returns Vec<(timestamp, model, channel_id, Option<endpoint_id>, latency_ms, success)>.
     async fn recent_request_paths(&self, limit: usize) -> Result<Vec<(String, String, String, Option<i64>, u64, bool)>, DbError>;
 
+    /// Time-bucketed aggregates for routing flow history charts.
+    /// Bucket size: hourly when span < 2 days, daily otherwise.
+    async fn routing_history_buckets(
+        &self,
+        start: &str,
+        end: &str,
+        model: Option<&str>,
+    ) -> Result<Vec<super::RoutingHistoryBucket>, DbError>;
+
+    /// Per-endpoint aggregate stats with P95 for routing flow history summary table.
+    async fn routing_history_endpoint_stats(
+        &self,
+        start: &str,
+        end: &str,
+        model: Option<&str>,
+    ) -> Result<Vec<super::RoutingEndpointStat>, DbError>;
+
     // ── Batch Operations (used by background writer) ─────────────────────
     /// Insert a batch of usage records with wallet deduction in a single transaction.
     /// Returns Vec<(user_id, new_balance, frozen)> for each deduction that occurred.

@@ -2610,6 +2610,104 @@ async fn model_activity(
     ))
 }
 
+// ── Routing Flow History ──────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct RoutingHistoryQuery {
+    start: String,
+    end: String,
+    model: Option<String>,
+}
+
+#[derive(Serialize)]
+struct RoutingHistoryResponse {
+    buckets: Vec<String>,
+    series: std::collections::HashMap<String, ChannelSeries>,
+    summary: Vec<ChannelSummary>,
+}
+
+#[derive(Serialize)]
+struct ChannelSeries {
+    channel_name: String,
+    volume: Vec<u64>,
+    success_rate: Vec<f64>,
+}
+
+#[derive(Serialize)]
+struct ChannelSummary {
+    channel_id: String,
+    requests: u64,
+    success_rate: f64,
+    avg_latency: f64,
+    p95_latency: f64,
+}
+
+async fn routing_history(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<RoutingHistoryQuery>,
+) -> Result<Json<RoutingHistoryResponse>, AdminError> {
+    let _session = require_session(&state.admin, &headers).await?;
+
+    let model_filter: Option<&str> = q.model.as_deref().filter(|m| !m.is_empty() && *m != "all");
+
+    let buckets = state
+        .db
+        .routing_history_buckets(&q.start, &q.end, model_filter)
+        .await
+        .map_err(|e| AdminError::internal(e.to_string()))?;
+
+    let stats = state
+        .db
+        .routing_history_endpoint_stats(&q.start, &q.end, model_filter)
+        .await
+        .map_err(|e| AdminError::internal(e.to_string()))?;
+
+    // Build time-series: one series per channel
+    let mut channel_map: std::collections::HashMap<String, Vec<(String, u64, u64)>> = std::collections::HashMap::new();
+    let mut all_buckets: Vec<String> = Vec::new();
+    for b in &buckets {
+        if all_buckets.last() != Some(&b.bucket) {
+            all_buckets.push(b.bucket.clone());
+        }
+        channel_map
+            .entry(b.channel_id.clone())
+            .or_default()
+            .push((b.bucket.clone(), b.requests, b.successes));
+    }
+
+    let mut series = std::collections::HashMap::new();
+    for (ch_id, points) in &channel_map {
+        let ch_name = state
+            .routing
+            .get_channel(ch_id)
+            .map(|c| c.name)
+            .unwrap_or_else(|| ch_id.clone());
+        let volume: Vec<u64> = all_buckets.iter().map(|bk| {
+            points.iter().find(|(b, _, _)| b == bk).map(|(_, v, _)| *v).unwrap_or(0)
+        }).collect();
+        let success_rate: Vec<f64> = all_buckets.iter().map(|bk| {
+            points.iter().find(|(b, _, _)| b == bk).map(|(_, v, s)| {
+                if *v > 0 { (*s as f64 / *v as f64) * 100.0 } else { 0.0 }
+            }).unwrap_or(0.0)
+        }).collect();
+        series.insert(ch_id.clone(), ChannelSeries { channel_name: ch_name, volume, success_rate });
+    }
+
+    let summary: Vec<ChannelSummary> = stats.iter().map(|s| {
+        let rate = if s.requests > 0 { (s.successes as f64 / s.requests as f64) * 100.0 } else { 0.0 };
+        ChannelSummary {
+            channel_id: s.channel_id.clone(),
+            requests: s.requests,
+            success_rate: (rate * 10.0).round() / 10.0,
+            avg_latency: (s.avg_latency * 10.0).round() / 10.0,
+            p95_latency: (s.p95_latency * 10.0).round() / 10.0,
+        }
+    }).collect();
+
+    Ok(Json(RoutingHistoryResponse { buckets: all_buckets, series, summary }))
+}
+
 // ── Health Check ──────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -3048,6 +3146,7 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route("/admin/api/usage/daily", axum::routing::get(daily_usage))
         .route("/admin/api/usage/aggregate", axum::routing::get(usage_aggregate))
         .route("/admin/api/usage/model-activity", axum::routing::get(model_activity))
+        .route("/admin/api/routing/history", axum::routing::get(routing_history))
         .route(
             "/admin/api/usage/{request_id}",
             axum::routing::get(get_usage_detail),
