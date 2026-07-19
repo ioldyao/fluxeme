@@ -216,8 +216,8 @@ function RecentRequestPaths() {
           <span className="w-[7px] h-[7px] rounded-full bg-green-500 shadow-[0_0_0_rgba(34,197,94,0.5)] animate-pulse" />
           实时请求流
         </div>
-        <div className="flex-1 overflow-y-auto divide-y min-h-0">
-          {paths.slice(0, 15).map((req, i) => (
+        <div className="flex-1 overflow-y-auto divide-y min-h-0 max-h-[400px]">
+          {paths.slice(0, 12).map((req, i) => (
             <div
               key={req.timestamp}
               onClick={() => setSelectedIdx(i)}
@@ -246,8 +246,8 @@ function RecentRequestPaths() {
         </div>
       </Card>
 
-      {/* ── Right: Trace Detail (determines row height) ── */}
-      <Card className="h-full min-h-[360px]">
+      {/* ── Right: Trace Detail ── */}
+      <Card className="h-full">
         <div className="p-5 space-y-5">
           {/* Meta */}
           <div className="flex flex-wrap gap-5 pb-4 border-b">
