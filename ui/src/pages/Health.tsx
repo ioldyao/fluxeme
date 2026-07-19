@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import { useRoutingHealth } from '@/api/health';
 import { Card } from '@/components/ui/card';
 
@@ -23,7 +22,6 @@ interface TopoModel { model: string; pattern: string; channels: TopoChannel[]; }
 
 /* ── Component ── */
 export default function HealthPage() {
-  const { t } = useTranslation();
   const { data } = useRoutingHealth();
   const summary = data?.summary;
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -116,7 +114,7 @@ export default function HealthPage() {
 
       {/* Panels */}
       {topology.map((m) => (
-        <ModelPanel key={m.model} m={m} counts={counts} countsKey={counts} />
+        <ModelPanel key={m.model} m={m} counts={counts} />
       ))}
     </div>
   );
