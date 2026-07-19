@@ -2112,6 +2112,37 @@ async fn routing_health(
     })))
 }
 
+// ── Recent Request Paths ──────────────────────────────────────────
+
+async fn recent_request_paths(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:dashboard").await?;
+
+    let records = state
+        .db
+        .query_usage(15, 0, &crate::domain::usage::UsageFilter::default())
+        .await
+        .map_err(db_err)?;
+
+    let paths: Vec<serde_json::Value> = records
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "timestamp": r.timestamp,
+                "model": r.model,
+                "channel_id": r.channel_id,
+                "latency_ms": r.latency_ms,
+                "success": r.success,
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({ "paths": paths })))
+}
+
 // ── User Subscriptions ────────────────────────────────────────────
 
 async fn list_my_subscriptions(
@@ -2976,6 +3007,10 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route(
             "/admin/api/health/routing",
             axum::routing::get(routing_health),
+        )
+        .route(
+            "/admin/api/health/recent-paths",
+            axum::routing::get(recent_request_paths),
         )
         .route(
             "/admin/api/models/{id}",
