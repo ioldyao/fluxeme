@@ -544,6 +544,10 @@ impl Database {
         self.backend.all_latest_probe_results().await
     }
 
+    pub async fn channel_usage_24h(&self) -> Result<Vec<(String, String, u64, u64, f64, f64)>, DbError> {
+        self.backend.channel_usage_24h().await
+    }
+
     // ── Batch Operations ────────────────────────────────────────────────
     pub async fn batch_insert_usage_with_billing(
         &self,

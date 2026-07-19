@@ -2849,6 +2849,22 @@ impl DbBackend for PgBackend {
         }).collect())
     }
 
+    async fn channel_usage_24h(&self) -> Result<Vec<(String, String, u64, u64, f64, f64)>, DbError> {
+        let rows = sqlx::query_as::<_, (String, String, i64, i64, f64, f64)>(
+            "SELECT channel_id, model, COUNT(*)::bigint, SUM(CASE WHEN success THEN 1 ELSE 0 END)::bigint, COALESCE(AVG(latency_ms), 0), COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms), 0)
+             FROM usage_logs
+             WHERE timestamp >= NOW() - INTERVAL '1 day'
+             GROUP BY channel_id, model ORDER BY COUNT(*) DESC"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Failed to query channel usage: {}", e)))?;
+
+        Ok(rows.into_iter().map(|(ch, m, req, suc, avg, p95)| {
+            (ch, m, req as u64, suc as u64, avg, p95)
+        }).collect())
+    }
+
     async fn get_balances_page(
         &self,
         limit: usize,
