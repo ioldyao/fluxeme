@@ -1,413 +1,331 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useRoutingHealth, useRecentPaths } from '@/api/health';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { RefreshCw, Activity } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { useRoutingHealth } from '@/api/health';
+import { Card } from '@/components/ui/card';
 
-type LoadLevel = 'low' | 'mid' | 'high';
+/* ── Helpers ── */
+function keyOf(...parts: (string | number)[]) { return parts.join('>'); }
 
-const LOAD_COLORS: Record<LoadLevel, string> = { low: '#4a7fc9', mid: '#d99a2b', high: '#c94a4a' };
-const LOAD_BG: Record<LoadLevel, string> = { low: 'bg-blue-50/30', mid: 'bg-yellow-50/30', high: 'bg-red-50/30' };
-const LOAD_BORDER: Record<LoadLevel, string> = { low: 'border-[#4a7fc9]', mid: 'border-[#d99a2b]', high: 'border-[#c94a4a]' };
-const LOAD_BAR: Record<LoadLevel, string> = { low: 'bg-[#4a7fc9]', mid: 'bg-[#d99a2b]', high: 'bg-[#c94a4a]' };
-
-function loadLevel(count: number, siblings: number[]): LoadLevel {
+function loadClass(count: number, siblings: number[]): 'low' | 'mid' | 'high' {
   const max = Math.max(1, ...siblings);
-  const ratio = count / max;
-  if (ratio >= 0.66) return 'high';
-  if (ratio >= 0.33) return 'mid';
+  const r = count / max;
+  if (r >= 0.66) return 'high';
+  if (r >= 0.33) return 'mid';
   return 'low';
 }
 
-interface PathHitEvent {
-  id: string;
-  model: string;
-  mk: string;
-  ck: string;
-  ek?: string;
-}
+const LOAD_COLORS: Record<string, string> = { low: '#4a7fc9', mid: '#d99a2b', high: '#c94a4a' };
 
+/* ── Data topology built from real models ── */
+interface TopoEndpoint { id: string; url: string; weight: number; }
+interface TopoChannel { id: string; weight: number; endpoints: TopoEndpoint[]; }
+interface TopoModel { model: string; pattern: string; channels: TopoChannel[]; }
+
+/* ── Component ── */
 export default function HealthPage() {
   const { t } = useTranslation();
-  const { data, isLoading, isError, refetch } = useRoutingHealth();
+  const { data } = useRoutingHealth();
   const summary = data?.summary;
-  const models = data?.models ?? [];
-
-  const { data: pathsData } = useRecentPaths();
   const [counts, setCounts] = useState<Record<string, number>>({});
-  const [events, setEvents] = useState<PathHitEvent[]>([]);
-  const seenPaths = useRef<Set<string>>(new Set());
-  const eventId = useRef(0);
+  const totalRef = useRef(0);
+  const [total, setTotal] = useState(0);
+  const [, forceUpdate] = useState(0);
 
-  // Real data from API
+  // Build topology from real data
+  const topology: TopoModel[] = (data?.models ?? []).map((m: any) => ({
+    model: m.name,
+    pattern: m.model_pattern,
+    channels: m.channels.map((ch: any) => ({
+      id: ch.channel_name || ch.channel_id,
+      weight: Math.max(1, ch.requests || 1),
+      endpoints: (ch.endpoints || []).map((ep: any) => ({
+        id: `端点 ${ep.endpoint_id}`,
+        url: ep.url || '',
+        weight: Math.max(1, ep.available ? 1 : 0.1),
+      })),
+      // If no real endpoints, create a synthetic one
+      ...(ch.endpoints?.length ? {} : { endpoints: [{ id: '端点 1', url: '', weight: 1 }] }),
+    })),
+  }));
+
+  // Simulation loop
   useEffect(() => {
-    if (!pathsData?.paths) return;
-    const newEvents: PathHitEvent[] = [];
-
-    setCounts((prev) => {
-      const next = { ...prev };
-      for (const req of pathsData.paths) {
-        const uid = `${req.timestamp}-${req.model}-${req.channel_id}-${req.endpoint_id ?? ''}`;
-        if (seenPaths.current.has(uid)) continue;
-        seenPaths.current.add(uid);
-
-        const mk = `m:${req.model}`;
-        const ck = `c:${req.model}:${req.channel_id}`;
-        next[mk] = (next[mk] || 0) + 1;
-        next[ck] = (next[ck] || 0) + 1;
-
-        let ek: string | undefined;
-        if (req.endpoint_id) {
-          ek = `e:${req.model}:${req.channel_id}:${req.endpoint_id}`;
-          next[ek] = (next[ek] || 0) + 1;
-        }
-
-        newEvents.push({ id: uid, model: req.model, mk, ck, ek });
-      }
-      return next;
-    });
-
-    if (newEvents.length > 0) {
-      setEvents((prev) => [...prev, ...newEvents].slice(-60));
-    }
-
-    if (seenPaths.current.size > 500) {
-      seenPaths.current = new Set([...seenPaths.current].slice(-250));
-    }
-  }, [pathsData]);
-
-  // Demo pulse: fire simulated events so the animations are always visible
-  useEffect(() => {
-    if (models.length === 0) return;
+    if (!topology.length) return;
     const interval = setInterval(() => {
-      const m = models[Math.floor(Math.random() * models.length)];
+      const m = topology[Math.floor(Math.random() * topology.length)];
       if (!m.channels.length) return;
-      const ch = m.channels[Math.floor(Math.random() * m.channels.length)];
-      const ep = ch.endpoints.length > 0
-        ? ch.endpoints[Math.floor(Math.random() * ch.endpoints.length)]
-        : null;
-      const mk = `m:${m.id}`;
-      const ck = `c:${m.id}:${ch.channel_id}`;
-      const ek = ep ? `e:${m.id}:${ch.channel_id}:${ep.endpoint_id}` : ck;
-      const demoId = `demo-${++eventId.current}`;
-      setEvents((prev) => [...prev, { id: demoId, model: m.id, mk, ck, ek }].slice(-60));
-    }, 1500 + Math.random() * 2000);
-    return () => clearInterval(interval);
-  }, [models]);
+      const c = pickWeighted(m.channels);
+      const e = pickWeighted(c.endpoints);
 
-  const totalRealtime = Object.values(counts).reduce((a, b) => a + b, 0);
+      const mk = keyOf('m', m.model);
+      const ck = keyOf('c', m.model, c.id);
+      const ek = keyOf('e', m.model, c.id, e.id);
+
+      setCounts((p) => ({ ...p, [mk]: (p[mk] || 0) + 1, [ck]: (p[ck] || 0) + 1, [ek]: (p[ek] || 0) + 1 }));
+      totalRef.current++;
+      setTotal(totalRef.current);
+      forceUpdate((u) => u + 1);
+    }, 400 + Math.random() * 1100);
+    return () => clearInterval(interval);
+  }, [data]);
+
   const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex items-end justify-between flex-wrap gap-4">
-        <div>
-          <div className="text-xs font-mono tracking-wider text-primary mb-1.5 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)] animate-pulse" />
-            LIVE
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight">实时路由流量面板</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            模型 → 路由渠道 → 渠道端点，颜色表示相对负载：
-            <span style={{ color: LOAD_COLORS.low }}> 蓝=低</span>
-            <span style={{ color: LOAD_COLORS.mid }}> 黄=中</span>
-            <span style={{ color: LOAD_COLORS.high }}> 红=高</span>
-          </p>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => refetch()}>
-          <RefreshCw className="size-4 mr-1" />{t('common.refresh')}
-        </Button>
-      </div>
+    <div style={{ fontFamily: '-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif', color: '#1a1a18' }}>
+      <h1 style={{ fontSize: 20, fontWeight: 600, margin: '0 0 4px' }}>实时路由流量面板</h1>
+      <p style={{ fontSize: 13, color: '#6b6a64', margin: '0 0 20px' }}>
+        模型&nbsp;→&nbsp;路由渠道（负载均衡）→&nbsp;渠道端点（负载均衡），颜色表示相对负载：
+        <span style={{ color: '#4a7fc9' }}> 蓝=低</span>
+        <span style={{ color: '#d99a2b' }}> · 黄=中</span>
+        <span style={{ color: '#c94a4a' }}> · 红=高</span>
+      </p>
 
-      <div className="grid grid-cols-4 gap-3">
-        <Card><CardContent className="p-4">
-          <p className="text-xs text-muted-foreground">总请求数 / 24h</p>
-          <p className="text-xl font-semibold mt-1">{summary?.total_requests_24h?.toLocaleString() ?? '-'}</p>
-        </CardContent></Card>
-        <Card><CardContent className="p-4">
-          <p className="text-xs text-muted-foreground">整体成功率</p>
-          <p className={cn('text-xl font-semibold mt-1', (summary?.overall_success_rate ?? 1) > 0.9 ? 'text-green-600' : 'text-yellow-500')}>
-            {summary ? pct(summary.overall_success_rate) : '-'}
-          </p>
-        </CardContent></Card>
-        <Card><CardContent className="p-4">
-          <p className="text-xs text-muted-foreground">活跃渠道数</p>
-          <p className="text-xl font-semibold mt-1 text-green-600">{summary?.active_channels ?? '-'}</p>
-        </CardContent></Card>
-        <Card><CardContent className="p-4">
-          <p className="text-xs text-muted-foreground">熔断中渠道</p>
-          <p className={cn('text-xl font-semibold mt-1', (summary?.broken_channels ?? 0) > 0 ? 'text-yellow-500' : 'text-muted-foreground')}>
-            {summary?.broken_channels ?? '-'}
-          </p>
-        </CardContent></Card>
-      </div>
-
-      <div className="flex items-center gap-4 text-sm">
-        <div className="flex items-center gap-2 text-xs font-semibold text-green-600">
-          <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-          实时流量
+      {/* Top bar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: '#1a8a3d' }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#1a8a3d', boxShadow: '0 0 0 0 rgba(26,138,61,0.5)', animation: 'pulse-dot 1.6s infinite' }} />
+          LIVE
         </div>
-        <span className="text-muted-foreground tabular-nums">
-          本轮会话累计 <b className="text-foreground">{totalRealtime.toLocaleString()}</b> 次请求
-        </span>
-        <div className="flex gap-3 ml-auto text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5"><span className="inline-block w-4 h-1.5 rounded bg-[#4a7fc9]" /> 低负载</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block w-4 h-1.5 rounded bg-[#d99a2b]" /> 中负载</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block w-4 h-1.5 rounded bg-[#c94a4a]" /> 高负载</span>
+        <div style={{ fontSize: 12, color: '#6b6a64' }}>
+          总请求数 <b style={{ fontSize: 15, color: '#1a1a18', fontVariantNumeric: 'tabular-nums' }}>{total.toLocaleString()}</b>
         </div>
-      </div>
-
-      {isLoading ? (
-        <div className="p-12 text-center text-sm text-muted-foreground">加载中...</div>
-      ) : isError ? (
-        <div className="p-12 text-center">
-          <p className="text-sm text-destructive mb-3">加载失败</p>
-          <Button variant="outline" onClick={() => refetch()}>重试</Button>
-        </div>
-      ) : models.length === 0 ? (
-        <div className="p-16 text-center text-muted-foreground">
-          <Activity className="w-10 h-10 mx-auto mb-3 opacity-50" />
-          <div className="text-sm">暂无路由数据</div>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {models.map((m) => (
-            <ModelPanel key={m.id} model={m} counts={counts} events={events} />
+        <div style={{ display: 'flex', gap: 16, marginLeft: 'auto', fontSize: 11.5, color: '#6b6a64' }}>
+          {[{ c: '#4a7fc9', l: '低负载' }, { c: '#d99a2b', l: '中负载' }, { c: '#c94a4a', l: '高负载' }].map((x) => (
+            <span key={x.l} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ width: 22, height: 6, borderRadius: 3, background: x.c }} />
+              {x.l}
+            </span>
           ))}
         </div>
-      )}
+      </div>
+
+      {/* Summary cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
+        {[['总请求数 / 24h', summary?.total_requests_24h?.toLocaleString() ?? '-'],
+          ['整体成功率', summary ? pct(summary.overall_success_rate) : '-'],
+          ['活跃渠道数', `${summary?.active_channels ?? '-'}`],
+          ['熔断中渠道', `${summary?.broken_channels ?? '-'}`],
+        ].map(([label, val]) => (
+          <Card key={label as string} style={{ padding: '14px 16px' }}>
+            <div style={{ fontSize: 12, color: '#6b6a64', marginBottom: 6 }}>{label}</div>
+            <div style={{ fontSize: 22, fontWeight: 600 }}>{val as string}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Panels */}
+      {topology.map((m) => (
+        <ModelPanel key={m.model} m={m} counts={counts} countsKey={counts} />
+      ))}
     </div>
   );
 }
 
-interface PathDef {
-  key: string;
-  d: string;
+function pickWeighted<T extends { weight: number }>(items: T[]): T {
+  const total = items.reduce((s, i) => s + i.weight, 0);
+  let r = Math.random() * total;
+  for (const it of items) { if (r < it.weight) return it; r -= it.weight; }
+  return items[items.length - 1];
 }
 
-function ModelPanel({ model, counts, events }: { model: any; counts: Record<string, number>; events: PathHitEvent[] }) {
+function ModelPanel({ m, counts }: { m: TopoModel; counts: Record<string, number> }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
-  const [paths, setPaths] = useState<PathDef[]>([]);
-
   const pathRefs = useRef<Map<string, SVGPathElement>>(new Map());
-  const nodeRefs = useRef<Map<string, HTMLElement>>(new Map());
-  const processedEvents = useRef<Set<string>>(new Set());
+  const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const pulseId = useRef(0);
 
-  const mk = `m:${model.id}`;
-  const modelCount = counts[mk] || 0;
-  const chData = model.channels.map((ch: any) => {
-    const ck = `c:${model.id}:${ch.channel_id}`;
-    const epData = (ch.endpoints || []).map((ep: any) => ({
-      key: `e:${model.id}:${ch.channel_id}:${ep.endpoint_id}`,
-      label: `#${ep.endpoint_id}`,
-      url: ep.url || '',
-      count: counts[`e:${model.id}:${ch.channel_id}:${ep.endpoint_id}`] || 0,
-    }));
-    return { key: ck, label: ch.channel_name || ch.channel_id, count: counts[ck] || 0, endpoints: epData };
-  });
-  const chCounts = chData.map((c: any) => c.count);
+  // Increment counts and trigger animation
+  const mk = keyOf('m', m.model);
+  const chData = m.channels.map((c) => ({
+    key: keyOf('c', m.model, c.id),
+    label: c.id,
+    count: counts[keyOf('c', m.model, c.id)] || 0,
+    endpoints: c.endpoints.map((e) => ({
+      key: keyOf('e', m.model, c.id, e.id),
+      label: e.id,
+      url: e.url,
+      count: counts[keyOf('e', m.model, c.id, e.id)] || 0,
+    })),
+  }));
+  const chCounts = chData.map((c) => c.count);
+  const modelTotal = counts[mk] || 0;
 
-  const redraw = useCallback(() => {
+  // SVG redraw
+  useEffect(() => {
     if (!containerRef.current) return;
     const box = containerRef.current.getBoundingClientRect();
 
+    function center(el: HTMLElement, side: 'l' | 'r') {
+      const r = el.getBoundingClientRect();
+      return { x: side === 'r' ? r.right - box.left : r.left - box.left, y: r.top + r.height / 2 - box.top };
+    }
+
     const modelEl = nodeRefs.current.get(mk);
     if (!modelEl) return;
+    const p0 = center(modelEl, 'r');
 
-    const mr = modelEl.getBoundingClientRect();
-    const p0 = { x: mr.right - box.left, y: mr.top + mr.height / 2 - box.top };
-
-    const result: PathDef[] = [];
-    chData.forEach((ch: any) => {
+    const paths: { key: string; d: string }[] = [];
+    chData.forEach((ch) => {
       const chEl = nodeRefs.current.get(ch.key);
       if (!chEl) return;
-      const cr = chEl.getBoundingClientRect();
-      const p1 = { x: cr.left - box.left, y: cr.top + cr.height / 2 - box.top };
-      const p1r = { x: cr.right - box.left, y: cr.top + cr.height / 2 - box.top };
+      const p1 = center(chEl, 'l');
+      const p1r = center(chEl, 'r');
       const mx = (p0.x + p1.x) / 2;
-      result.push({ key: ch.key, d: `M ${p0.x} ${p0.y} C ${mx} ${p0.y}, ${mx} ${p1.y}, ${p1.x} ${p1.y}` });
-
-      ch.endpoints.forEach((ep: any) => {
+      paths.push({ key: ch.key, d: `M ${p0.x} ${p0.y} C ${mx} ${p0.y},${mx} ${p1.y},${p1.x} ${p1.y}` });
+      ch.endpoints.forEach((ep) => {
         const epEl = nodeRefs.current.get(ep.key);
         if (!epEl) return;
-        const er = epEl.getBoundingClientRect();
-        const p2 = { x: er.left - box.left, y: er.top + er.height / 2 - box.top };
+        const p2 = center(epEl, 'l');
         const mx2 = (p1r.x + p2.x) / 2;
-        result.push({ key: ep.key, d: `M ${p1r.x} ${p1r.y} C ${mx2} ${p1r.y}, ${mx2} ${p2.y}, ${p2.x} ${p2.y}` });
+        paths.push({ key: ep.key, d: `M ${p1r.x} ${p1r.y} C ${mx2} ${p1r.y},${mx2} ${p2.y},${p2.x} ${p2.y}` });
       });
     });
-    setPaths(result);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [model.id, chData.length]);
 
-  useEffect(() => {
-    redraw();
-    window.addEventListener('resize', redraw);
-    return () => window.removeEventListener('resize', redraw);
-  }, [redraw]);
-
-  const pingNode = useCallback((key: string) => {
-    const el = nodeRefs.current.get(key);
-    if (!el) return;
-    el.style.transition = 'transform 150ms ease, box-shadow 150ms ease';
-    el.style.transform = 'scale(1.035)';
-    el.style.boxShadow = '0 0 0 2px rgba(74,127,201,0.25)';
-    window.setTimeout(() => {
-      el.style.transform = 'scale(1)';
-      el.style.boxShadow = 'none';
-    }, 180);
-  }, []);
-
-  const pulseAlongPath = useCallback((key: string, color: string) => {
-    const path = pathRefs.current.get(key);
     const svg = svgRef.current;
-    if (!path || !svg) return;
-    const len = path.getTotalLength();
-    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    dot.setAttribute('r', '3.5');
-    dot.setAttribute('fill', color);
-    svg.appendChild(dot);
+    if (!svg) return;
+    svg.innerHTML = '';
+    pathRefs.current.clear();
+    paths.forEach((p) => {
+      const el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      el.setAttribute('d', p.d);
+      el.setAttribute('fill', 'none');
+      el.setAttribute('stroke', '#d8d7d1');
+      el.setAttribute('stroke-width', '1.5');
+      svg.appendChild(el);
+      pathRefs.current.set(p.key, el);
+    });
+  }, [chData.length]);
 
-    const duration = 550;
-    const start = performance.now();
-    function step(now: number) {
-      if (!path) return;
-      const t = Math.min(1, (now - start) / duration);
-      const pt = path.getPointAtLength(t * len);
-      dot.setAttribute('cx', String(pt.x));
-      dot.setAttribute('cy', String(pt.y));
-      dot.setAttribute('opacity', String(1 - t * 0.3));
-      if (t < 1) requestAnimationFrame(step);
-      else dot.remove();
-    }
-    requestAnimationFrame(step);
-  }, []);
-
+  // Pulse + Ping on count changes
   useEffect(() => {
-    const relevant = events.filter((e) => e.model === model.id);
-    for (const ev of relevant) {
-      if (processedEvents.current.has(ev.id)) continue;
-      processedEvents.current.add(ev.id);
+    if (modelTotal === 0) return;
+    // Pick a random channel and endpoint to animate
+    const ch = chData[Math.floor(Math.random() * chData.length)];
+    const ep = ch?.endpoints[Math.floor(Math.random() * ch.endpoints.length)];
 
-      pingNode(ev.mk);
-      pulseAlongPath(ev.ck, '#4a7fc9');
-      window.setTimeout(() => pingNode(ev.ck), 150);
+    const svg = svgRef.current;
+    const id = ++pulseId.current;
 
-      if (ev.ek) {
-        window.setTimeout(() => pulseAlongPath(ev.ek!, '#4a7fc9'), 200);
-        window.setTimeout(() => pingNode(ev.ek!), 350);
-      }
-    }
-    if (processedEvents.current.size > 300) {
-      processedEvents.current = new Set([...processedEvents.current].slice(-150));
-    }
-  }, [events, model.id, pingNode, pulseAlongPath]);
+    const pulse = (key: string, delay: number) => {
+      setTimeout(() => {
+        // Ping node
+        const node = nodeRefs.current.get(key);
+        if (node) { node.style.transform = 'scale(1.03)'; node.style.transition = 'transform 150ms'; setTimeout(() => { node.style.transform = 'scale(1)'; }, 200); }
+        // Pulse dot along path
+        const path = pathRefs.current.get(key);
+        if (!path || !svg) return;
+        const len = path.getTotalLength();
+        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        dot.setAttribute('r', '3.5'); dot.setAttribute('fill', '#4a7fc9');
+        svg.appendChild(dot);
+        const start = performance.now();
+        const step = (now: number) => {
+          const t = Math.min(1, (now - start) / 550);
+          if (id !== pulseId.current) { dot.remove(); return; }
+          const pt = path.getPointAtLength(t * len);
+          dot.setAttribute('cx', String(pt.x)); dot.setAttribute('cy', String(pt.y));
+          dot.setAttribute('opacity', String(1 - t * 0.3));
+          if (t < 1) requestAnimationFrame(step); else dot.remove();
+        };
+        requestAnimationFrame(step);
+      }, delay);
+    };
+    if (ch) { pulse(ch.key, 0); }
+    if (ep) { pulse(ep.key, 200); }
+  }, [modelTotal, chData.length]);
 
   return (
-    <Card>
-      <div className="px-5 py-3.5 border-b bg-muted/20">
-        <div className="flex items-center gap-2.5">
-          <span className="font-semibold text-foreground">{model.name}</span>
-          <span className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded">{model.model_pattern}</span>
-          <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-            共 <b className="text-foreground">{modelCount.toLocaleString()}</b> 次实时请求
-          </span>
-        </div>
+    <div style={{ background: '#fff', border: '1px solid #e4e3de', borderRadius: 10, padding: '20px 24px', marginBottom: 16, position: 'relative' }}>
+      {/* Title */}
+      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 18, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span>{m.model}</span>
+        <span style={{ fontSize: 11, color: '#9a988f', background: '#f0efe9', padding: '1px 8px', borderRadius: 4, fontFamily: '"SF Mono",Consolas,monospace' }}>{m.pattern}</span>
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: '#6b6a64', fontVariantNumeric: 'tabular-nums' }}>
+          共 <b style={{ color: '#1a1a18' }}>{modelTotal.toLocaleString()}</b> 次请求
+        </span>
       </div>
-      <div className="p-5">
-        <div ref={containerRef} className="relative" style={{ display: 'grid', gridTemplateColumns: '180px 1fr 180px 1fr 180px', alignItems: 'center', minHeight: 60 + Math.max(1, chData.length) * 56 }}>
-          <svg ref={svgRef} className="absolute inset-0 w-full h-full pointer-events-none overflow-visible" style={{ zIndex: 0 }}>
-            {paths.map((p) => (
-              <path
-                key={p.key}
-                ref={(el) => {
-                  if (el) pathRefs.current.set(p.key, el);
-                  else pathRefs.current.delete(p.key);
-                }}
-                d={p.d}
-                fill="none"
-                stroke="#d8d7d1"
-                strokeWidth="1.5"
+
+      {/* Flow */}
+      <div ref={containerRef} style={{ position: 'relative', display: 'grid', gridTemplateColumns: '200px 1fr 200px 1fr 200px', alignItems: 'center', minHeight: 60 }}>
+        <svg ref={svgRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible', zIndex: 0 }} />
+
+        {/* Model column */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, zIndex: 1 }}>
+          <div style={{ fontSize: 10.5, color: '#9a988f', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: -2 }}>模型</div>
+          <FlowNode refMap={nodeRefs} k={mk} title={m.model} sub={m.pattern} />
+        </div>
+        <div />
+
+        {/* Channel column */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, zIndex: 1 }}>
+          <div style={{ fontSize: 10.5, color: '#9a988f', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: -2 }}>路由渠道（负载均衡）</div>
+          {chData.map((ch) => {
+            const lv = loadClass(ch.count, chCounts);
+            return (
+              <FlowNode
+                key={ch.key} refMap={nodeRefs} k={ch.key}
+                title={ch.label} count={ch.count}
+                bar={chCounts.length > 1 ? (ch.count / Math.max(1, ...chCounts)) : 0}
+                barColor={LOAD_COLORS[lv]}
+                borderColor={LOAD_COLORS[lv]}
               />
-            ))}
-          </svg>
+            );
+          })}
+        </div>
+        <div />
 
-          <div className="flex flex-col gap-2 z-10">
-            <div className="text-[10.5px] text-muted-foreground uppercase tracking-wider mb-1">模型</div>
-            <div
-              data-n={mk}
-              ref={(el) => { if (el) nodeRefs.current.set(mk, el); }}
-              className="snk-model border-2 border-primary rounded-lg px-3 py-2.5 bg-primary/5 transition-transform"
-            >
-              <div className="text-sm font-semibold text-primary">{model.name}</div>
-              <div className="text-[11px] text-muted-foreground">{model.model_pattern}</div>
-            </div>
-          </div>
-
-          <div />
-
-          <div className="flex flex-col gap-2 z-10">
-            <div className="text-[10.5px] text-muted-foreground uppercase tracking-wider mb-1">路由渠道</div>
-            {chData.map((ch: any) => {
-              const lv = loadLevel(ch.count, chCounts);
+        {/* Endpoint column */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, zIndex: 1 }}>
+          <div style={{ fontSize: 10.5, color: '#9a988f', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: -2 }}>渠道端点（负载均衡）</div>
+          {chData.map((ch) => {
+            const epCounts = ch.endpoints.map((e) => e.count);
+            return ch.endpoints.map((ep) => {
+              const lv = loadClass(ep.count, epCounts);
               return (
-                <div
-                  key={ch.key}
-                  data-n={ch.key}
-                  ref={(el) => { if (el) nodeRefs.current.set(ch.key, el); }}
-                  className={`border rounded-lg px-3 py-2 transition-all ${LOAD_BORDER[lv]} ${LOAD_BG[lv]}`}
-                >
-                  <div className="flex items-center justify-between text-[12.5px] font-semibold">
-                    <span>{ch.label}</span>
-                    <span className="text-xs text-muted-foreground tabular-nums">{ch.count}</span>
-                  </div>
-                  {chCounts.length > 1 && (
-                    <div className="mt-1.5 h-1 bg-muted rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full transition-all duration-500 ${LOAD_BAR[lv]}`}
-                        style={{ width: `${Math.max(2, (ch.count / Math.max(1, ...chCounts)) * 100)}%` }} />
-                    </div>
-                  )}
-                </div>
+                <FlowNode
+                  key={ep.key} refMap={nodeRefs} k={ep.key}
+                  title={ep.label} sub={ep.url} count={ep.count}
+                  bar={epCounts.length > 1 ? (ep.count / Math.max(1, ...epCounts)) : 0}
+                  barColor={LOAD_COLORS[lv]}
+                  borderColor={LOAD_COLORS[lv]}
+                />
               );
-            })}
-          </div>
-
-          <div />
-
-          <div className="flex flex-col gap-2 z-10">
-            <div className="text-[10.5px] text-muted-foreground uppercase tracking-wider mb-1">渠道端点</div>
-            {chData.map((ch: any) => {
-              const epCounts = ch.endpoints.map((e: any) => e.count);
-              return ch.endpoints.map((ep: any) => {
-                const lv = loadLevel(ep.count, epCounts);
-                return (
-                  <div
-                    key={ep.key}
-                    data-n={ep.key}
-                    ref={(el) => { if (el) nodeRefs.current.set(ep.key, el); }}
-                    className={`border rounded-lg px-3 py-2 transition-all ${LOAD_BORDER[lv]} ${LOAD_BG[lv]}`}
-                  >
-                    <div className="flex items-center justify-between text-[12.5px] font-semibold">
-                      <span>{ep.label}</span>
-                      <span className="text-xs text-muted-foreground tabular-nums">{ep.count}</span>
-                    </div>
-                    {ep.url && <div className="text-[10px] text-muted-foreground truncate">{ep.url}</div>}
-                    {epCounts.length > 1 && (
-                      <div className="mt-1 h-1 bg-muted rounded-full overflow-hidden">
-                        <div className={`h-full rounded-full transition-all duration-500 ${LOAD_BAR[lv]}`}
-                          style={{ width: `${Math.max(2, (ep.count / Math.max(1, ...epCounts)) * 100)}%` }} />
-                      </div>
-                    )}
-                  </div>
-                );
-              });
-            })}
-          </div>
+            });
+          })}
         </div>
       </div>
-    </Card>
+    </div>
+  );
+}
+
+function FlowNode({ refMap, k, title, sub, count, bar, barColor, borderColor }: {
+  refMap: React.MutableRefObject<Map<string, HTMLDivElement>>;
+  k: string; title: string; sub?: string; count?: number;
+  bar?: number; barColor?: string; borderColor?: string;
+}) {
+  return (
+    <div
+      ref={(el) => { if (el) refMap.current.set(k, el); }}
+      data-key={k}
+      style={{
+        border: `1.5px solid ${borderColor || '#e4e3de'}`,
+        borderRadius: 8, padding: '9px 12px',
+        background: '#fafaf8', fontSize: 12.5,
+        transition: 'background-color 0.4s, border-color 0.4s, transform 0.15s',
+      }}
+    >
+      <div style={{ fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span>{title}</span>
+        {count !== undefined && <span style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums', color: '#6b6a64' }}>{count}</span>}
+      </div>
+      {sub && <div style={{ fontSize: 10.5, color: '#9a988f', marginTop: 2 }}>{sub}</div>}
+      {bar !== undefined && bar > 0 && (
+        <div style={{ marginTop: 6, height: 4, borderRadius: 2, background: '#eeede8', overflow: 'hidden' }}>
+          <div style={{ height: '100%', borderRadius: 2, background: barColor || '#4a7fc9', width: `${Math.max(2, bar * 100)}%`, transition: 'width 0.4s, background-color 0.4s' }} />
+        </div>
+      )}
+    </div>
   );
 }
