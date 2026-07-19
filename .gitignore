@@ -17,3 +17,5 @@ ai_ex/
 !.env.example
 data/
 web/
+# Added by code-review-graph
+.code-review-graph/
