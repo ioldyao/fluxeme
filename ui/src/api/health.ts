@@ -42,22 +42,6 @@ export interface RoutingHealthData {
   summary: RoutingHealthSummary;
 }
 
-export interface RecentPath {
-  timestamp: string;
-  model: string;
-  channel_id: string;
-  latency_ms: number;
-  success: boolean;
-}
-
-export function useRecentPaths() {
-  return useQuery({
-    queryKey: ['health', 'recent-paths'],
-    queryFn: () => api<{ paths: RecentPath[] }>('/health/recent-paths'),
-    refetchInterval: 5_000,
-  });
-}
-
 export function useRoutingHealth() {
   return useQuery({
     queryKey: ['health', 'routing'],
