@@ -333,11 +333,9 @@ function FlowNode({ refMap, k, title, sub, count, bar, barColor, borderColor }: 
         {count !== undefined && <span style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums', color: '#6b6a64' }}>{count}</span>}
       </div>
       {sub && <div style={{ fontSize: 10.5, color: '#9a988f', marginTop: 2 }}>{sub}</div>}
-      {bar !== undefined && bar > 0 && (
-        <div style={{ marginTop: 6, height: 4, borderRadius: 2, background: '#eeede8', overflow: 'hidden' }}>
-          <div style={{ height: '100%', borderRadius: 2, background: barColor || '#4a7fc9', width: `${Math.max(2, bar * 100)}%`, transition: 'width 0.4s, background-color 0.4s' }} />
-        </div>
-      )}
+      <div style={{ marginTop: 6, height: 4, borderRadius: 2, background: '#eeede8', overflow: 'hidden' }}>
+        <div style={{ height: '100%', borderRadius: 2, background: barColor || '#4a7fc9', width: `${Math.max(bar !== undefined ? bar * 100 : 0, 2)}%`, transition: 'width 0.4s, background-color 0.4s' }} />
+      </div>
     </div>
   );
 }
