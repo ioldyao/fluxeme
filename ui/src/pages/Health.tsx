@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useRoutingHealth } from '@/api/health';
+import { useRoutingHealth, useRecentPaths } from '@/api/health';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, Activity } from 'lucide-react';
@@ -27,27 +27,29 @@ export default function HealthPage() {
   const summary = data?.summary;
   const models = data?.models ?? [];
 
-  // Simulated real-time counts (increment on each simulated request)
+  // Real-time counts from actual request paths (useRecentPaths polls /health/recent-paths every 5s)
+  const { data: pathsData } = useRecentPaths();
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [pulseTrigger, setPulseTrigger] = useState(0);
+  const seenPaths = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (models.length === 0) return;
-    const interval = setInterval(() => {
-      const m = models[Math.floor(Math.random() * models.length)];
-      if (!m.channels.length) return;
-      const ch = m.channels[Math.floor(Math.random() * m.channels.length)];
-      const ep = ch.endpoints.length > 0
-        ? ch.endpoints[Math.floor(Math.random() * ch.endpoints.length)]
-        : null;
-      const mk = `m:${m.id}`;
-      const ck = `c:${m.id}:${ch.channel_id}`;
-      const ek = ep ? `e:${m.id}:${ch.channel_id}:${ep.endpoint_id}` : ck;
-      setCounts((p) => ({ ...p, [mk]: (p[mk] || 0) + 1, [ck]: (p[ck] || 0) + 1, [ek]: (p[ek] || 0) + 1 }));
+    if (!pathsData?.paths) return;
+    for (const req of pathsData.paths) {
+      const uid = `${req.timestamp}-${req.model}-${req.channel_id}`;
+      if (seenPaths.current.has(uid)) continue;
+      seenPaths.current.add(uid);
+
+      const mk = `m:${req.model}`;
+      const ck = `c:${req.model}:${req.channel_id}`;
+      setCounts((p) => ({ ...p, [mk]: (p[mk] || 0) + 1, [ck]: (p[ck] || 0) + 1 }));
       setPulseTrigger((p) => p + 1);
-    }, 800 + Math.random() * 1200);
-    return () => clearInterval(interval);
-  }, [models]);
+    }
+    // Keep set from growing unboundedly
+    if (seenPaths.current.size > 500) {
+      seenPaths.current = new Set([...seenPaths.current].slice(-250));
+    }
+  }, [pathsData]);
 
   const totalRealtime = Object.values(counts).reduce((a, b) => a + b, 0);
   const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
