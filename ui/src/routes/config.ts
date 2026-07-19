@@ -12,6 +12,7 @@ import {
   Wallet,
   Receipt,
   Shield,
+  Activity,
 } from 'lucide-react';
 
 export type RouteGuard = 'public' | 'auth' | 'admin';
