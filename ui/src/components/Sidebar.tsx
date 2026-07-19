@@ -5,7 +5,7 @@ import { Cog, Settings, User, Wallet, Receipt } from 'lucide-react';
 import { navRoutes } from '@/routes/config';
 
 const NAV_GROUPS: { label: string; items: string[] }[] = [
-  { label: '', items: ['nav.dashboard'] },
+  { label: '', items: ['nav.dashboard', 'nav.health'] },
   { label: 'nav.group.models', items: ['nav.modelMarketplace', 'nav.myModels'] },
   { label: 'nav.group.management', items: ['nav.users', 'nav.channels', 'nav.models', 'nav.rules', 'nav.modelPricing', 'nav.moderation'] },
   { label: 'nav.group.developer', items: ['nav.apiKeys', 'nav.usage'] },

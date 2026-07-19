@@ -482,6 +482,7 @@ const en: Record<string, string> = {
   'bills.compareTooltip': 'Compare periods',
   'bills.compareTitle': 'Period Comparison',
 
+  'nav.health': 'Health',
   'nav.moderation': 'Content Moderation',
   'moderation.title': 'Content Moderation',
   'moderation.subtitle': 'Manage content filter rules for requests and responses',
