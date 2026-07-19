@@ -253,6 +253,7 @@ function ModelPanel({ model, counts, events }: { model: any; counts: Record<stri
     const duration = 550;
     const start = performance.now();
     function step(now: number) {
+      if (!path) return;
       const t = Math.min(1, (now - start) / duration);
       const pt = path.getPointAtLength(t * len);
       dot.setAttribute('cx', String(pt.x));
