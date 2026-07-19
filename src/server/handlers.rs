@@ -898,12 +898,21 @@ async fn handle_non_streaming(
                     .map(|s| s.to_string());
 
                 let latency_ms = start.elapsed().as_millis() as u64;
+                                state.request_events.send(crate::server::ws::RequestEvent {
+                    timestamp: Utc::now().to_rfc3339(),
+                    model: model.to_string(),
+                    channel_id: channel_id.to_string(),
+                    endpoint_id: route.endpoint.id,
+                    latency_ms,
+                    success: true,
+                }).ok();
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
                     request_id,
                     user_id: user_id.clone(),
                     user_name,
                     channel_id,
+
                     model,
                     prompt_tokens,
                     completion_tokens,
@@ -923,6 +932,7 @@ async fn handle_non_streaming(
                     cache_read_price: 0.0,
                     client_ip: Some(client_ip.clone()),
                 });
+
 
                 // Cache the response for non-streaming requests
                 if let Some(ref ck) = cache_key {
