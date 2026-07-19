@@ -279,7 +279,7 @@ function ModelPanel({ m, counts }: { m: TopoModel; counts: Record<string, number
               <FlowNode
                 key={ch.key} refMap={nodeRefs} k={ch.key}
                 title={ch.label} count={ch.count}
-                bar={chCounts.length > 1 ? (ch.count / Math.max(1, ...chCounts)) : 0}
+                bar={chCounts.length > 1 ? (ch.count / Math.max(1, ...chCounts)) : 1}
                 barColor={LOAD_COLORS[lv]}
                 borderColor={LOAD_COLORS[lv]}
               />
@@ -299,7 +299,7 @@ function ModelPanel({ m, counts }: { m: TopoModel; counts: Record<string, number
                 <FlowNode
                   key={ep.key} refMap={nodeRefs} k={ep.key}
                   title={ep.label} sub={ep.url} count={ep.count}
-                  bar={epCounts.length > 1 ? (ep.count / Math.max(1, ...epCounts)) : 0}
+                  bar={epCounts.length > 1 ? (ep.count / Math.max(1, ...epCounts)) : 1}
                   barColor={LOAD_COLORS[lv]}
                   borderColor={LOAD_COLORS[lv]}
                 />
