@@ -211,7 +211,7 @@ function RecentRequestPaths() {
   return (
     <div className="grid grid-cols-[340px_1fr] gap-4">
       {/* ── Left: Feed ── */}
-      <Card className="flex flex-col">
+      <Card className="flex flex-col h-full min-h-[480px]">
         <div className="px-4 py-3 border-b bg-muted/20 flex items-center gap-2 text-sm font-semibold shrink-0">
           <span className="w-[7px] h-[7px] rounded-full bg-green-500 shadow-[0_0_0_rgba(34,197,94,0.5)] animate-pulse" />
           实时请求流
@@ -247,7 +247,7 @@ function RecentRequestPaths() {
       </Card>
 
       {/* ── Right: Trace Detail ── */}
-      <Card>
+      <Card className="min-h-[480px]">
         <div className="p-5 space-y-5">
           {/* Meta */}
           <div className="flex flex-wrap gap-5 pb-4 border-b">
