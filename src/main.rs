@@ -159,8 +159,11 @@ async fn main() {
         },
     );
 
+    // Broadcast channel for WebSocket real-time events (buffer 256 events)
+    let (event_tx, _) = tokio::sync::broadcast::channel(256);
+
     // Initialize usage service (background writer for usage logs + billing deductions)
-    let (usage, usage_handle) = UsageService::new(db.clone(), cache.clone());
+    let (usage, usage_handle) = UsageService::new(db.clone(), cache.clone(), event_tx.clone());
 
     // In-memory gate cache (populated by inspection, read by handler when Redis is down)
     let gate_cache: Arc<AsyncRwLock<HashMap<String, GateStatus>>> = Arc::new(AsyncRwLock::new(HashMap::new()));
@@ -244,6 +247,7 @@ async fn main() {
         concurrency,
         content_filter,
         health_probe,
+        request_events: event_tx.clone(),
     });
 
     let app = build_router(state);

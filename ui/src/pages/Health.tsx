@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRoutingHealth } from '@/api/health';
 import { Card } from '@/components/ui/card';
 
@@ -27,6 +27,7 @@ export default function HealthPage() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const totalRef = useRef(0);
   const [total, setTotal] = useState(0);
+  const wsRef = useRef<WebSocket | null>(null);
   const [, forceUpdate] = useState(0);
 
   // Build topology from real data
@@ -41,31 +42,50 @@ export default function HealthPage() {
         url: ep.url || '',
         weight: Math.max(1, ep.available ? 1 : 0.1),
       })),
-      // If no real endpoints, create a synthetic one
       ...(ch.endpoints?.length ? {} : { endpoints: [{ id: '端点 1', url: '', weight: 1 }] }),
     })),
   }));
 
-  // Simulation loop
+  // WebSocket: connect and receive real-time request events
+  const connectWs = useCallback(() => {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${proto}//${window.location.host}/admin/api/health/ws`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onmessage = (event) => {
+      try {
+        const ev = JSON.parse(event.data);
+        if (!ev.model || !ev.channel_id) return;
+        const mk = keyOf('m', ev.model);
+        const ck = keyOf('c', ev.model, ev.channel_id);
+        const ek = ev.endpoint_id ? keyOf('e', ev.model, ev.channel_id, ev.endpoint_id) : undefined;
+
+        setCounts((prev) => ({
+          ...prev,
+          [mk]: (prev[mk] || 0) + 1,
+          [ck]: (prev[ck] || 0) + 1,
+          ...(ek ? { [ek]: (prev[ek] || 0) + 1 } : {}),
+        }));
+        totalRef.current++;
+        setTotal(totalRef.current);
+        forceUpdate((u) => u + 1);
+      } catch { /* ignore parse errors */ }
+    };
+
+    ws.onclose = () => {
+      wsRef.current = null;
+      // Auto-reconnect after 3 seconds
+      setTimeout(connectWs, 3000);
+    };
+
+    ws.onerror = () => { ws.close(); };
+    wsRef.current = ws;
+  }, []);
+
   useEffect(() => {
-    if (!topology.length) return;
-    const interval = setInterval(() => {
-      const m = topology[Math.floor(Math.random() * topology.length)];
-      if (!m.channels.length) return;
-      const c = pickWeighted(m.channels);
-      const e = pickWeighted(c.endpoints);
-
-      const mk = keyOf('m', m.model);
-      const ck = keyOf('c', m.model, c.id);
-      const ek = keyOf('e', m.model, c.id, e.id);
-
-      setCounts((p) => ({ ...p, [mk]: (p[mk] || 0) + 1, [ck]: (p[ck] || 0) + 1, [ek]: (p[ek] || 0) + 1 }));
-      totalRef.current++;
-      setTotal(totalRef.current);
-      forceUpdate((u) => u + 1);
-    }, 400 + Math.random() * 1100);
-    return () => clearInterval(interval);
-  }, [data]);
+    connectWs();
+    return () => { wsRef.current?.close(); };
+  }, [connectWs]);
 
   const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
 

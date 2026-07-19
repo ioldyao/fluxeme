@@ -1,10 +1,12 @@
 pub mod handlers;
+pub mod ws;
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use axum::Router;
 use axum::http::HeaderValue;
+use tokio::sync::broadcast;
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::sync::Semaphore;
 use tokio::sync::RwLock as AsyncRwLock;
@@ -100,6 +102,8 @@ pub struct AppState {
     pub content_filter: Arc<ContentFilterService>,
     /// Health probe service for model channel health checks (DB-persisted).
     pub health_probe: Arc<HealthProbeService>,
+    /// Broadcast channel for real-time request path events (WebSocket push).
+    pub request_events: broadcast::Sender<crate::server::ws::RequestEvent>,
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
