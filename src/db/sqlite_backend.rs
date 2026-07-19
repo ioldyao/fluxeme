@@ -2990,6 +2990,107 @@ impl DbBackend for SqliteBackend {
         .await
     }
 
+    async fn routing_history_buckets(
+        &self,
+        start: &str,
+        end: &str,
+        model: Option<&str>,
+    ) -> Result<Vec<super::RoutingHistoryBucket>, DbError> {
+        let start = start.to_string();
+        let end = end.to_string();
+        let model = model.map(|s| s.to_string());
+        self.exec(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT
+                    CASE WHEN (julianday(?2) - julianday(?1)) < 2
+                      THEN strftime('%Y-%m-%dT%H:00:00', timestamp)
+                      ELSE strftime('%Y-%m-%d', timestamp)
+                    END AS bucket,
+                    channel_id,
+                    COUNT(*) AS requests,
+                    SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) AS successes,
+                    AVG(latency_ms) AS avg_latency
+                 FROM usage_logs
+                 WHERE timestamp >= ?1 AND timestamp <= ?2
+                   AND (?3 IS NULL OR model = ?3)
+                 GROUP BY bucket, channel_id
+                 ORDER BY bucket ASC",
+            )?;
+            let rows = stmt.query_map(
+                rusqlite::params![start, end, model],
+                |row| {
+                    Ok(super::RoutingHistoryBucket {
+                        bucket: row.get::<_, String>(0)?,
+                        channel_id: row.get::<_, String>(1)?,
+                        endpoint_id: None,
+                        requests: row.get::<_, u64>(2)?,
+                        successes: row.get::<_, u64>(3)?,
+                        avg_latency: row.get::<_, f64>(4)?,
+                    })
+                },
+            )?;
+            let mut results = Vec::new();
+            for row in rows {
+                results.push(row?);
+            }
+            Ok(results)
+        })
+        .await
+    }
+
+    async fn routing_history_endpoint_stats(
+        &self,
+        start: &str,
+        end: &str,
+        model: Option<&str>,
+    ) -> Result<Vec<super::RoutingEndpointStat>, DbError> {
+        let start = start.to_string();
+        let end = end.to_string();
+        let model = model.map(|s| s.to_string());
+        self.exec(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT channel_id, requests, successes, avg_latency, p95_latency
+                 FROM (
+                     SELECT
+                         channel_id,
+                         COUNT(*) AS requests,
+                         SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) AS successes,
+                         AVG(latency_ms) AS avg_latency,
+                         COALESCE(AVG(CASE WHEN percentile >= 0.95 THEN latency_ms END), 0) AS p95_latency
+                     FROM (
+                         SELECT channel_id, success, latency_ms,
+                             (CAST(ROW_NUMBER() OVER (PARTITION BY channel_id ORDER BY latency_ms) AS REAL) - 1)
+                             / CAST(COUNT(*) OVER (PARTITION BY channel_id) AS REAL) AS percentile
+                         FROM usage_logs
+                         WHERE timestamp >= ?1 AND timestamp <= ?2
+                           AND (?3 IS NULL OR model = ?3)
+                     )
+                     GROUP BY channel_id
+                 )
+                 ORDER BY requests DESC",
+            )?;
+            let rows = stmt.query_map(
+                rusqlite::params![start, end, model],
+                |row| {
+                    Ok(super::RoutingEndpointStat {
+                        channel_id: row.get::<_, String>(0)?,
+                        endpoint_id: None,
+                        requests: row.get::<_, u64>(1)?,
+                        successes: row.get::<_, u64>(2)?,
+                        avg_latency: row.get::<_, f64>(3)?,
+                        p95_latency: row.get::<_, f64>(4)?,
+                    })
+                },
+            )?;
+            let mut results = Vec::new();
+            for row in rows {
+                results.push(row?);
+            }
+            Ok(results)
+        })
+        .await
+    }
+
     async fn get_balances_page(
         &self,
         limit: usize,

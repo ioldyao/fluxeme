@@ -69,6 +69,28 @@ pub struct ProbeResultRow {
     pub probed_at: String,
 }
 
+/// Per-time-bucket per-channel per-endpoint aggregate for routing flow history charts.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RoutingHistoryBucket {
+    pub bucket: String,
+    pub channel_id: String,
+    pub endpoint_id: Option<i64>,
+    pub requests: u64,
+    pub successes: u64,
+    pub avg_latency: f64,
+}
+
+/// Per-endpoint summary with P95 latency for routing flow history table.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RoutingEndpointStat {
+    pub channel_id: String,
+    pub endpoint_id: Option<i64>,
+    pub requests: u64,
+    pub successes: u64,
+    pub avg_latency: f64,
+    pub p95_latency: f64,
+}
+
 pub struct Database {
     pub backend: Box<dyn DbBackend>,
 }
@@ -550,6 +572,24 @@ impl Database {
 
     pub async fn recent_request_paths(&self, limit: usize) -> Result<Vec<(String, String, String, Option<i64>, u64, bool)>, DbError> {
         self.backend.recent_request_paths(limit).await
+    }
+
+    pub async fn routing_history_buckets(
+        &self,
+        start: &str,
+        end: &str,
+        model: Option<&str>,
+    ) -> Result<Vec<RoutingHistoryBucket>, DbError> {
+        self.backend.routing_history_buckets(start, end, model).await
+    }
+
+    pub async fn routing_history_endpoint_stats(
+        &self,
+        start: &str,
+        end: &str,
+        model: Option<&str>,
+    ) -> Result<Vec<RoutingEndpointStat>, DbError> {
+        self.backend.routing_history_endpoint_stats(start, end, model).await
     }
 
     // ── Batch Operations ────────────────────────────────────────────────

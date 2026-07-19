@@ -2880,6 +2880,74 @@ impl DbBackend for PgBackend {
         }).collect())
     }
 
+    async fn routing_history_buckets(
+        &self,
+        start: &str,
+        end: &str,
+        model: Option<&str>,
+    ) -> Result<Vec<super::RoutingHistoryBucket>, DbError> {
+        use sqlx::Row;
+        let rows = sqlx::query(
+            "SELECT
+                CASE WHEN (EXTRACT(EPOCH FROM $2::timestamp - $1::timestamp)) < 172800
+                  THEN to_char(timestamp, 'YYYY-MM-DD\"T\"HH24:00:00')
+                  ELSE to_char(timestamp, 'YYYY-MM-DD')
+                END AS bucket,
+                channel_id,
+                COUNT(*)::bigint AS requests,
+                SUM(CASE WHEN success THEN 1 ELSE 0 END)::bigint AS successes,
+                AVG(latency_ms)::float8 AS avg_latency
+             FROM usage_logs
+             WHERE timestamp >= $1::timestamp AND timestamp <= $2::timestamp
+               AND ($3::text IS NULL OR model = $3)
+             GROUP BY bucket, channel_id
+             ORDER BY bucket ASC",
+        )
+        .bind(start).bind(end).bind(model)
+        .fetch_all(&self.pool).await
+        .map_err(|e| DbError(format!("routing_history_buckets: {}", e)))?;
+        Ok(rows.iter().map(|r| super::RoutingHistoryBucket {
+            bucket: r.try_get::<String, _>(0).unwrap_or_default(),
+            channel_id: r.try_get::<String, _>(1).unwrap_or_default(),
+            endpoint_id: None,
+            requests: r.try_get::<i64, _>(2).unwrap_or(0) as u64,
+            successes: r.try_get::<i64, _>(3).unwrap_or(0) as u64,
+            avg_latency: r.try_get::<f64, _>(4).unwrap_or(0.0),
+        }).collect())
+    }
+
+    async fn routing_history_endpoint_stats(
+        &self,
+        start: &str,
+        end: &str,
+        model: Option<&str>,
+    ) -> Result<Vec<super::RoutingEndpointStat>, DbError> {
+        use sqlx::Row;
+        let rows = sqlx::query(
+            "SELECT channel_id,
+                    COUNT(*)::bigint AS requests,
+                    SUM(CASE WHEN success THEN 1 ELSE 0 END)::bigint AS successes,
+                    AVG(latency_ms)::float8 AS avg_latency,
+                    COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms), 0)::float8 AS p95_latency
+             FROM usage_logs
+             WHERE timestamp >= $1::timestamp AND timestamp <= $2::timestamp
+               AND ($3::text IS NULL OR model = $3)
+             GROUP BY channel_id
+             ORDER BY requests DESC",
+        )
+        .bind(start).bind(end).bind(model)
+        .fetch_all(&self.pool).await
+        .map_err(|e| DbError(format!("routing_history_endpoint_stats: {}", e)))?;
+        Ok(rows.iter().map(|r| super::RoutingEndpointStat {
+            channel_id: r.try_get::<String, _>(0).unwrap_or_default(),
+            endpoint_id: None,
+            requests: r.try_get::<i64, _>(1).unwrap_or(0) as u64,
+            successes: r.try_get::<i64, _>(2).unwrap_or(0) as u64,
+            avg_latency: r.try_get::<f64, _>(3).unwrap_or(0.0),
+            p95_latency: r.try_get::<f64, _>(4).unwrap_or(0.0),
+        }).collect())
+    }
+
     async fn get_balances_page(
         &self,
         limit: usize,
