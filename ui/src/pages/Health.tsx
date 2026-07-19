@@ -140,13 +140,6 @@ export default function HealthPage() {
   );
 }
 
-function pickWeighted<T extends { weight: number }>(items: T[]): T {
-  const total = items.reduce((s, i) => s + i.weight, 0);
-  let r = Math.random() * total;
-  for (const it of items) { if (r < it.weight) return it; r -= it.weight; }
-  return items[items.length - 1];
-}
-
 function ModelPanel({ m, counts }: { m: TopoModel; counts: Record<string, number> }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
