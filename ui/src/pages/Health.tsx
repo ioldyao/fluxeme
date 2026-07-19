@@ -110,7 +110,7 @@ function ModelPanel({ m, counts, lastEvent }: { m: any; counts: Record<string, n
       const p1 = { x: t.left - box.left, y: t.top + t.height / 2 - box.top };
       const mx = (p0.x + p1.x) / 2;
       return { key, d: `M ${p0.x} ${p0.y} C ${mx} ${p0.y},${mx} ${p1.y},${p1.x} ${p1.y}` };
-    }).filter(Boolean);
+    }).filter((x: any) => x !== null);
   }, [pairs]);
 
   useEffect(() => { draw(); window.addEventListener("resize", draw); return () => window.removeEventListener("resize", draw); }, [draw]);
