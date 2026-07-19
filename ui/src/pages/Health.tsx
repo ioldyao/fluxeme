@@ -246,8 +246,8 @@ function RecentRequestPaths() {
         </div>
       </Card>
 
-      {/* ── Right: Trace Detail ── */}
-      <Card className="h-full">
+      {/* ── Right: Trace Detail (determines row height) ── */}
+      <Card className="h-full min-h-[360px]">
         <div className="p-5 space-y-5">
           {/* Meta */}
           <div className="flex flex-wrap gap-5 pb-4 border-b">
