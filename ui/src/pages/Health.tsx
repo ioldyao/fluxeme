@@ -216,8 +216,8 @@ function RecentRequestPaths() {
           <span className="w-[7px] h-[7px] rounded-full bg-green-500 shadow-[0_0_0_rgba(34,197,94,0.5)] animate-pulse" />
           实时请求流
         </div>
-        <div className="flex-1 overflow-y-auto divide-y min-h-0 max-h-[400px]">
-          {paths.slice(0, 12).map((req, i) => (
+        <div className="overflow-y-auto divide-y h-[360px]">
+          {paths.map((req, i) => (
             <div
               key={req.timestamp}
               onClick={() => setSelectedIdx(i)}
