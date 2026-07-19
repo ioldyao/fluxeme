@@ -1,8 +1,8 @@
 import { useTranslation } from 'react-i18next';
-import { useRoutingHealth } from '@/api/health';
+import { useRoutingHealth, useRecentPaths } from '@/api/health';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, Activity } from 'lucide-react';
+import { RefreshCw, Activity, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export default function HealthPage() {
@@ -60,6 +60,9 @@ export default function HealthPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── Recent Request Paths ── */}
+      <RecentRequestPaths />
 
       {/* ── Content ── */}
       {isLoading ? (
@@ -179,5 +182,70 @@ export default function HealthPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function RecentRequestPaths() {
+  const { data } = useRecentPaths();
+  const paths = data?.paths ?? [];
+
+  if (paths.length === 0) return null;
+
+  return (
+    <Card className="overflow-hidden">
+      <div className="px-5 py-3.5 border-b bg-muted/20 backdrop-blur-sm">
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)]" />
+          <h2 className="text-sm font-semibold tracking-tight">实时请求路径</h2>
+          <span className="ml-auto text-[11px] font-mono text-muted-foreground">
+            {paths.length} 条最近请求
+          </span>
+        </div>
+      </div>
+      <div className="divide-y divide-border/50">
+        {paths.slice(0, 10).map((req, i) => (
+          <div
+            key={i}
+            className="flex items-center gap-4 px-5 py-2.5 text-sm transition-all duration-150 hover:bg-muted/30 hover:pl-6"
+            style={{ animationDelay: `${i * 20}ms` }}
+          >
+            {/* Time — monospace, muted */}
+            <span className="text-[11px] font-mono text-muted-foreground/60 w-14 shrink-0 tabular-nums select-none">
+              {req.timestamp.slice(11, 19)}
+            </span>
+
+            {/* Path: Model → Channel */}
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <span className="font-medium text-foreground truncate tracking-tight">
+                {req.model}
+              </span>
+              <ArrowRight className="size-3 text-muted-foreground/40 shrink-0" />
+              <span className="text-muted-foreground truncate font-mono text-xs">
+                {req.channel_id}
+              </span>
+            </div>
+
+            {/* Latency badge */}
+            <span
+              className={cn(
+                'font-mono text-xs font-medium shrink-0 tabular-nums px-2 py-0.5 rounded-md',
+                req.success
+                  ? req.latency_ms < 1000
+                    ? 'text-green-600 bg-green-500/8'
+                    : 'text-yellow-600 bg-yellow-500/8'
+                  : 'text-destructive bg-destructive/10'
+              )}
+            >
+              {req.latency_ms}ms
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="px-5 py-2 border-t border-border/30 bg-muted/10">
+        <p className="text-[11px] text-muted-foreground/50 font-mono tracking-tight">
+          每 5 秒自动更新 · {new Date().toLocaleTimeString('zh-CN', { hour12: false })}
+        </p>
+      </div>
+    </Card>
   );
 }
