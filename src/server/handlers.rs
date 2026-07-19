@@ -563,7 +563,7 @@ impl<S> UsageTrackingStream<S> {
             user_id: self.user_id.clone(),
             user_name: self.user_name.clone(),
             channel_id: self.channel_id.clone(),
-            model: self.model.clone(),
+                model: self.model.clone(),
             prompt_tokens: p_tokens,
             completion_tokens: c_tokens,
             total_tokens: p_tokens + c_tokens,
