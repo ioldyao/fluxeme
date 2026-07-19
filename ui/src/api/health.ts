@@ -1,6 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from './client';
 
+export interface EndpointHealth {
+  endpoint_id: number;
+  enabled: boolean;
+  available: boolean;
+}
+
 export interface ChannelRouteHealth {
   channel_id: string;
   channel_name: string;
@@ -12,6 +18,7 @@ export interface ChannelRouteHealth {
   p95_latency_ms: number;
   circuit_ok: boolean;
   circuit_enabled: boolean;
+  endpoints: EndpointHealth[];
 }
 
 export interface ModelRouteHealth {
