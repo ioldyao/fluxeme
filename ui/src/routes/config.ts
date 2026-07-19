@@ -12,6 +12,7 @@ import {
   Wallet,
   Receipt,
   Shield,
+  Waypoints,
 } from 'lucide-react';
 
 export type RouteGuard = 'public' | 'auth' | 'admin';
@@ -46,6 +47,7 @@ export const authRoutes: RouteConfig[] = [
 ];
 
 export const adminRoutes: RouteConfig[] = [
+  { path: '/routing-flow', Component: lazy(() => import('@/pages/RoutingFlow')), guard: 'admin', label: 'nav.routingFlow', icon: Waypoints, nav: true },
   { path: '/users', Component: lazy(() => import('@/pages/Users')), guard: 'admin', label: 'nav.users', icon: Users, nav: true },
   { path: '/channels', Component: lazy(() => import('@/pages/Channels')), guard: 'admin', label: 'nav.channels', icon: Radio, nav: true },
   { path: '/models', Component: lazy(() => import('@/pages/Models')), guard: 'admin', label: 'nav.models', icon: Braces, nav: true, end: true },

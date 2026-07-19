@@ -693,6 +693,17 @@ async fn handle_streaming(
 
     match stream_result {
         Ok(stream) => {
+            // Broadcast a real-time routing event once the upstream stream is
+            // established (streaming requests are recorded here; non-streaming
+            // requests broadcast in handle_non_streaming).
+            state.request_events.send(crate::server::ws::RequestEvent {
+                timestamp: Utc::now().to_rfc3339(),
+                model: model.clone(),
+                channel_id: channel_id.clone(),
+                endpoint_id: endpoint.id,
+                latency_ms: start.elapsed().as_millis() as u64,
+                success: true,
+            }).ok();
             let (first_byte_timeout, idle_timeout) = {
                 let gw = state.gateway_config.read().unwrap();
                 (
@@ -785,6 +796,16 @@ async fn handle_messages_streaming(
 
     match stream_result {
         Ok(stream) => {
+            // Broadcast a real-time routing event once the upstream stream is
+            // established (mirrors the non-streaming path in handle_messages).
+            state.request_events.send(crate::server::ws::RequestEvent {
+                timestamp: Utc::now().to_rfc3339(),
+                model: model.clone(),
+                channel_id: channel_id.clone(),
+                endpoint_id: endpoint.id,
+                latency_ms: start.elapsed().as_millis() as u64,
+                success: true,
+            }).ok();
             let (first_byte_timeout, idle_timeout) = {
                 let gw = state.gateway_config.read().unwrap();
                 (
