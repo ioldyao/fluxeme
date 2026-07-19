@@ -168,7 +168,7 @@ export default function HealthPage() {
 
     container.innerHTML = topologyRef.current.map((m: any) => {
       const chNodes = m.channels.map((c: any) => `
-        <div class="flow-node" data-key="${keyOf('m', m.model, c.id)}">
+        <div class="flow-node" data-key="${keyOf('c', m.model, c.id)}">
           <div class="n-title"><span>${c.label}</span><span class="n-count">0</span></div>
           <div class="n-bar-track"><div class="n-bar-fill load-low" style="width:0%"></div></div>
         </div>`).join('');
