@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, type RefObject } from "react";
 import { useRoutingHealth } from "@/api/health";
 import { Card } from "@/components/ui/card";
 
@@ -9,11 +9,11 @@ const C = {
   low: "#4a7fc9", mid: "#d99a2b", high: "#c94a4a",
 };
 
-const LOAD_COLOR = { low: C.low, mid: C.mid, high: C.high };
+const LOAD_COLOR: Record<string, string> = { low: C.low, mid: C.mid, high: C.high };
 
-const keyFor = (...parts) => parts.join(">");
+function keyFor(...parts: (string | number)[]) { return parts.join(">"); }
 
-function loadClass(count, siblingCounts) {
+function loadClass(count: number, siblingCounts: number[]): string {
   const max = Math.max(1, ...siblingCounts);
   const r = count / max;
   if (r >= 0.66) return "high";
@@ -21,9 +21,16 @@ function loadClass(count, siblingCounts) {
   return "low";
 }
 
+interface TopoEndpoint { id: string; url: string; weight: number; }
+interface TopoChannel { id: string; weight: number; endpoints: TopoEndpoint[]; }
+interface TopoModel { model: string; pattern: string; channels: TopoChannel[]; }
+
 // ── FlowNode ──
-function FlowNode({ nodeRef, title, subtitle, count, loadCls, pinged, showBar = true }) {
-  const color = loadCls ? LOAD_COLOR[loadCls] : null;
+function FlowNode({ nodeRef, title, subtitle, count, loadCls, pinged, showBar = true }: {
+  nodeRef: RefObject<HTMLDivElement | null>;
+  title: string; subtitle?: string; count: number; loadCls?: string; pinged?: boolean; showBar?: boolean;
+}) {
+  const color = loadCls ? LOAD_COLOR[loadCls] : undefined;
   const pcts = loadCls === "high" ? 100 : loadCls === "mid" ? 60 : 25;
   return (
     <div ref={nodeRef} style={{
@@ -47,21 +54,21 @@ function FlowNode({ nodeRef, title, subtitle, count, loadCls, pinged, showBar = 
 }
 
 // ── FlowPulse ──
-function FlowPulse({ pathD, duration = 550, onDone }) {
-  const dotRef = useRef(null);
-  const pathElRef = useRef(null);
+function FlowPulse({ pathD, duration = 550, onDone }: { pathD: string; duration?: number; onDone: () => void }) {
+  const dotRef = useRef<SVGCircleElement>(null);
+  const pathElRef = useRef<SVGPathElement>(null);
   useEffect(() => {
     const pathEl = pathElRef.current;
     if (!pathEl) return;
     const len = pathEl.getTotalLength();
     const start = performance.now();
-    let raf;
-    function step(now) {
+    let raf: number;
+    function step(now: number) {
       const t = Math.min(1, (now - start) / duration);
-      const pt = pathEl.getPointAtLength(t * len);
+      const pt = pathEl!.getPointAtLength(t * len);
       if (dotRef.current) {
-        dotRef.current.setAttribute("cx", pt.x);
-        dotRef.current.setAttribute("cy", pt.y);
+        dotRef.current.setAttribute("cx", String(pt.x));
+        dotRef.current.setAttribute("cy", String(pt.y));
         dotRef.current.setAttribute("opacity", String(1 - t * 0.3));
       }
       if (t < 1) raf = requestAnimationFrame(step);
@@ -74,9 +81,12 @@ function FlowPulse({ pathD, duration = 550, onDone }) {
 }
 
 // ── useConnectors ──
-function useConnectors(containerRef, pairs) {
-  const svgRef = useRef(null);
-  const [paths, setPaths] = useState([]);
+interface ConnectorPair { key: string; fromRef: RefObject<HTMLDivElement | null>; toRef: RefObject<HTMLDivElement | null>; }
+
+function useConnectors(containerRef: RefObject<HTMLDivElement | null>, pairs: ConnectorPair[]) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [paths, setPaths] = useState<{ key: string; d: string }[]>([]);
+
   const recompute = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -89,9 +99,10 @@ function useConnectors(containerRef, pairs) {
       const p1 = { x: tr.left - cRect.left, y: tr.top + tr.height / 2 - cRect.top };
       const midX = (p0.x + p1.x) / 2;
       return { key, d: `M ${p0.x} ${p0.y} C ${midX} ${p0.y}, ${midX} ${p1.y}, ${p1.x} ${p1.y}` };
-    }).filter(Boolean);
+    }).filter((x): x is { key: string; d: string } => x !== null);
     setPaths(next);
   }, [containerRef, pairs]);
+
   useEffect(() => {
     recompute();
     const ro = new ResizeObserver(recompute);
@@ -99,63 +110,63 @@ function useConnectors(containerRef, pairs) {
     window.addEventListener("resize", recompute);
     return () => { ro.disconnect(); window.removeEventListener("resize", recompute); };
   }, [recompute, containerRef]);
+
   return { svgRef, paths };
 }
 
 // ── ModelPanel ──
-function ModelPanel({ model, counts, lastEvent }) {
-  const containerRef = useRef(null);
-  const modelNodeRef = useRef(null);
-  const channelRefs = useRef({});
-  const endpointRefs = useRef({});
-  const [pulses, setPulses] = useState([]);
-  const [pinged, setPinged] = useState({});
+function ModelPanel({ model, counts, lastEvent }: { model: TopoModel; counts: Record<string, number>; lastEvent: { model: string; channel: string; endpoint?: string; ts: number } | null }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const modelNodeRef = useRef<HTMLDivElement>(null);
+  const channelRefs = useRef<Record<string, RefObject<HTMLDivElement | null>>>({});
+  const endpointRefs = useRef<Record<string, RefObject<HTMLDivElement | null>>>({});
+  const initRef = useRef(false);
+  const [pulses, setPulses] = useState<{ id: string; pathD: string }[]>([]);
+  const [pinged, setPinged] = useState<Record<string, boolean>>({});
 
-  if (!channelRefs.current.initialized) {
-    model.channels.forEach((c) => { channelRefs.current[c.id] ||= { current: null }; });
+  if (!initRef.current) {
+    model.channels.forEach((c) => { if (!channelRefs.current[c.id]) channelRefs.current[c.id] = { current: null }; });
     model.channels.forEach((c) =>
-      c.endpoints.forEach((e) => { const k = `${c.id}>${e.id}`; endpointRefs.current[k] ||= { current: null }; })
+      c.endpoints.forEach((e) => { const k = `${c.id}>${e.id}`; if (!endpointRefs.current[k]) endpointRefs.current[k] = { current: null }; })
     );
-    channelRefs.current.initialized = true;
+    initRef.current = true;
   }
 
-  const topology = model;
   const pairs = useMemo(() => {
-    const p = [];
-    topology.channels.forEach((c) => {
-      p.push({ key: keyFor(topology.model, c.id), fromRef: modelNodeRef, toRef: channelRefs.current[c.id] });
+    const p: ConnectorPair[] = [];
+    model.channels.forEach((c) => {
+      p.push({ key: keyFor(model.model, c.id), fromRef: modelNodeRef, toRef: channelRefs.current[c.id] || { current: null } });
       c.endpoints.forEach((e) => {
-        p.push({ key: keyFor(topology.model, c.id, e.id), fromRef: channelRefs.current[c.id], toRef: endpointRefs.current[`${c.id}>${e.id}`] });
+        p.push({ key: keyFor(model.model, c.id, e.id), fromRef: channelRefs.current[c.id] || { current: null }, toRef: endpointRefs.current[`${c.id}>${e.id}`] || { current: null } });
       });
     });
     return p;
-  }, [topology]);
+  }, [model]);
 
   const { svgRef, paths } = useConnectors(containerRef, pairs);
 
   useEffect(() => {
-    if (!lastEvent || lastEvent.model !== topology.model) return;
+    if (!lastEvent || lastEvent.model !== model.model) return;
     const { channel, endpoint, ts } = lastEvent;
-    const chPath = paths.find((p) => p.key === keyFor(topology.model, channel));
-    const epPath = paths.find((p) => p.key === keyFor(topology.model, channel, endpoint));
+    const chPath = paths.find((p) => p.key === keyFor(model.model, channel));
+    const epPath = endpoint ? paths.find((p) => p.key === keyFor(model.model, channel, endpoint)) : undefined;
     if (chPath) setPulses((prev) => [...prev, { id: `${ts}-ch`, pathD: chPath.d }]);
-    let epTimer;
-    if (epPath) { epTimer = setTimeout(() => setPulses((prev) => [...prev, { id: `${ts}-ep`, pathD: epPath.d }]), 200); }
-    const keys = [keyFor(topology.model), keyFor(topology.model, channel), keyFor(topology.model, channel, endpoint)];
+    const epTimer = epPath ? setTimeout(() => setPulses((prev) => [...prev, { id: `${ts}-ep`, pathD: epPath.d }]), 200) : undefined;
+    const keys = [keyFor(model.model), keyFor(model.model, channel), ...(endpoint ? [keyFor(model.model, channel, endpoint)] : [])];
     const timers = keys.map((k, i) => setTimeout(() => { setPinged((p) => ({ ...p, [k]: true })); setTimeout(() => setPinged((p) => ({ ...p, [k]: false })), 200); }, i * 150));
     return () => { clearTimeout(epTimer); timers.forEach(clearTimeout); };
   }, [lastEvent]);
 
-  const removePulse = useCallback((id) => setPulses((prev) => prev.filter((p) => p.id !== id)), []);
+  const removePulse = useCallback((id: string) => setPulses((prev) => prev.filter((p) => p.id !== id)), []);
 
-  const modelCount = counts[keyFor(topology.model)] || 0;
-  const chCounts = topology.channels.map((c) => counts[keyFor(topology.model, c.id)] || 0);
+  const modelCount = counts[keyFor(model.model)] || 0;
+  const chCounts = model.channels.map((c) => counts[keyFor(model.model, c.id)] || 0);
 
   return (
     <div style={{ marginBottom: 16, borderRadius: 10, border: `1px solid ${C.border}`, background: C.cardBg, padding: "20px 24px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, fontSize: 14, fontWeight: 600 }}>
-        <span>{topology.model}</span>
-        <span style={{ fontSize: 11, fontWeight: 400, color: C.textMuted, background: "#f0efe9", padding: "1px 8px", borderRadius: 4, fontFamily: "SF Mono, Consolas, monospace" }}>{topology.pattern}</span>
+        <span>{model.model}</span>
+        <span style={{ fontSize: 11, fontWeight: 400, color: C.textMuted, background: "#f0efe9", padding: "1px 8px", borderRadius: 4, fontFamily: "SF Mono, Consolas, monospace" }}>{model.pattern}</span>
         <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 400, color: C.textSecondary }}>共 <b style={{ color: C.textPrimary, fontWeight: 600 }}>{modelCount}</b> 次请求</span>
       </div>
 
@@ -167,26 +178,26 @@ function ModelPanel({ model, counts, lastEvent }) {
 
         <div style={{ zIndex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ fontSize: 10.5, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>模型</div>
-          <FlowNode nodeRef={modelNodeRef} title={topology.model} count={modelCount} pinged={pinged[keyFor(topology.model)]} showBar={false} />
+          <FlowNode nodeRef={modelNodeRef} title={model.model} count={modelCount} pinged={!!pinged[keyFor(model.model)]} showBar={false} />
         </div>
         <div />
 
         <div style={{ zIndex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ fontSize: 10.5, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>路由渠道（负载均衡）</div>
-          {topology.channels.map((c) => {
-            const cnt = counts[keyFor(topology.model, c.id)] || 0;
-            return <FlowNode key={c.id} nodeRef={channelRefs.current[c.id]} title={c.id} count={cnt} loadCls={loadClass(cnt, chCounts)} pinged={pinged[keyFor(topology.model, c.id)]} />;
+          {model.channels.map((c) => {
+            const cnt = counts[keyFor(model.model, c.id)] || 0;
+            return <FlowNode key={c.id} nodeRef={channelRefs.current[c.id] || { current: null }} title={c.id} count={cnt} loadCls={loadClass(cnt, chCounts)} pinged={!!pinged[keyFor(model.model, c.id)]} />;
           })}
         </div>
         <div />
 
         <div style={{ zIndex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ fontSize: 10.5, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>渠道端点（负载均衡）</div>
-          {topology.channels.flatMap((c) => {
-            const epCounts = c.endpoints.map((e) => counts[keyFor(topology.model, c.id, e.id)] || 0);
+          {model.channels.flatMap((c) => {
+            const epCounts = c.endpoints.map((e) => counts[keyFor(model.model, c.id, e.id)] || 0);
             return c.endpoints.map((e) => {
-              const k = keyFor(topology.model, c.id, e.id);
-              return <FlowNode key={k} nodeRef={endpointRefs.current[`${c.id}>${e.id}`]} title={e.id} subtitle={`${e.url} · ${c.id}`} count={counts[k] || 0} loadCls={loadClass(counts[k] || 0, epCounts)} pinged={pinged[k]} />;
+              const k = keyFor(model.model, c.id, e.id);
+              return <FlowNode key={k} nodeRef={endpointRefs.current[`${c.id}>${e.id}`] || { current: null }} title={e.id} subtitle={`${e.url} · ${c.id}`} count={counts[k] || 0} loadCls={loadClass(counts[k] || 0, epCounts)} pinged={!!pinged[k]} />;
             });
           })}
         </div>
@@ -195,12 +206,12 @@ function ModelPanel({ model, counts, lastEvent }) {
   );
 }
 
-// ── useRequestStream (WebSocket only, no simulation) ──
-function useRequestStream(topology) {
+// ── useRequestStream (WebSocket only) ──
+function useRequestStream(topology: TopoModel[]) {
   const [totalCount, setTotalCount] = useState(0);
-  const [counts, setCounts] = useState({});
-  const [lastEvent, setLastEvent] = useState(null);
-  const seen = useRef(new Set());
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [lastEvent, setLastEvent] = useState<{ model: string; channel: string; endpoint?: string; ts: number } | null>(null);
+  const seen = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!topology.length) return;
@@ -211,15 +222,20 @@ function useRequestStream(topology) {
       const ws = new WebSocket(url);
       ws.onmessage = (e) => {
         try {
-          const ev = JSON.parse(e.data);
+          const ev = JSON.parse(e.data) as { model?: string; channel_id?: string; endpoint_id?: number | null; timestamp?: string };
           if (!ev.model || !ev.channel_id) return;
-          const uid = `${ev.timestamp || performance.now()}-${ev.model}-${ev.channel_id}-${ev.endpoint_id || ""}`;
+          const uid = `${ev.timestamp || performance.now()}-${ev.model}-${ev.channel_id}-${ev.endpoint_id ?? ""}`;
           if (seen.current.has(uid)) return;
           seen.current.add(uid);
           if (seen.current.size > 500) seen.current = new Set([...seen.current].slice(-250));
 
           const endpoint = ev.endpoint_id ? `端点 ${ev.endpoint_id}` : undefined;
-          setCounts((prev) => ({ ...prev, [keyFor(ev.model)]: (prev[keyFor(ev.model)] || 0) + 1, [keyFor(ev.model, ev.channel_id)]: (prev[keyFor(ev.model, ev.channel_id)] || 0) + 1, ...(endpoint ? { [keyFor(ev.model, ev.channel_id, endpoint)]: (prev[keyFor(ev.model, ev.channel_id, endpoint)] || 0) + 1 } : {}) }));
+          setCounts((prev) => ({
+            ...prev,
+            [keyFor(ev.model!)]: (prev[keyFor(ev.model!)] || 0) + 1,
+            [keyFor(ev.model!, ev.channel_id!)]: (prev[keyFor(ev.model!, ev.channel_id!)] || 0) + 1,
+            ...(endpoint ? { [keyFor(ev.model!, ev.channel_id!, endpoint)]: (prev[keyFor(ev.model!, ev.channel_id!, endpoint)] || 0) + 1 } : {}),
+          }));
           setTotalCount((c) => c + 1);
           setLastEvent({ model: ev.model, channel: ev.channel_id, endpoint, ts: performance.now() });
         } catch { /* ignore */ }
@@ -238,14 +254,14 @@ export default function HealthPage() {
   const { data } = useRoutingHealth();
   const summary = data?.summary;
 
-  const topology = useMemo(() => (data?.models ?? []).map((m) => ({
-    model: m.name,
-    pattern: m.model_pattern,
-    channels: m.channels.map((ch) => ({
-      id: ch.channel_id,
+  const topology = useMemo(() => (data?.models ?? []).map((m: any) => ({
+    model: m.name as string,
+    pattern: m.model_pattern as string,
+    channels: (m.channels as any[]).map((ch: any) => ({
+      id: ch.channel_id as string,
       weight: Math.max(1, ch.requests || 1),
       endpoints: (ch.endpoints || []).length > 0
-        ? (ch.endpoints || []).map((ep) => ({ id: `端点 ${ep.endpoint_id}`, url: ep.url || "", weight: Math.max(1, ep.available ? 1 : 0.1) }))
+        ? (ch.endpoints as any[]).map((ep: any) => ({ id: `端点 ${ep.endpoint_id}`, url: ep.url || "", weight: Math.max(1, ep.available ? 1 : 0.1) }))
         : [{ id: "端点 1", url: "", weight: 1 }],
     })),
   })), [data]);
