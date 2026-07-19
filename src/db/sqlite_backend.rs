@@ -2933,6 +2933,37 @@ impl DbBackend for SqliteBackend {
         .await
     }
 
+    async fn channel_usage_24h(&self) -> Result<Vec<(String, String, u64, u64, f64, f64)>, DbError> {
+        self.exec(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT channel_id, model, COUNT(*), SUM(CASE WHEN success=1 THEN 1 ELSE 0 END), AVG(latency_ms), COALESCE(AVG(CASE WHEN percentile = 1 THEN latency_ms END), 0)
+                 FROM (
+                     SELECT channel_id, model, success, latency_ms,
+                            (CAST(ROW_NUMBER() OVER (PARTITION BY channel_id, model ORDER BY latency_ms) AS REAL) - 1) / COUNT(*) OVER (PARTITION BY channel_id, model) >= 0.95 AS percentile
+                     FROM usage_logs
+                     WHERE timestamp >= datetime('now', '-1 day')
+                 )
+                 GROUP BY channel_id, model ORDER BY COUNT(*) DESC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u64>(2)?,
+                    row.get::<_, u64>(3)?,
+                    row.get::<_, f64>(4)?,
+                    row.get::<_, f64>(5)?,
+                ))
+            })?;
+            let mut results = Vec::new();
+            for row in rows {
+                results.push(row?);
+            }
+            Ok(results)
+        })
+        .await
+    }
+
     async fn get_balances_page(
         &self,
         limit: usize,

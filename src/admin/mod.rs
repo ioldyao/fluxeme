@@ -2012,6 +2012,97 @@ async fn list_probe_results(
     Ok(Json(results))
 }
 
+// ── Health Routing Dashboard ──────────────────────────────────────
+
+async fn routing_health(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:dashboard").await?;
+
+    let models = state.db.list_models().await.map_err(db_err)?;
+    let usage = state.db.channel_usage_24h().await.map_err(db_err)?;
+
+    let mut usage_map: std::collections::HashMap<(String, String), (u64, u64, f64, f64)> = std::collections::HashMap::new();
+    for (ch, md, req, suc, avg, p95) in &usage {
+        usage_map.insert((ch.clone(), md.clone()), (*req, *suc, *avg, *p95));
+    }
+
+    let mut model_results = Vec::new();
+    let mut total_requests_24h: u64 = 0;
+    let mut total_success: u64 = 0;
+    let mut active_channels = std::collections::HashSet::new();
+    let mut broken_channels = std::collections::HashSet::new();
+
+    for m in &models {
+        let mut ch_results = Vec::new();
+        let mut model_total: u64 = 0;
+
+        for binding in &m.channels {
+            let key = (binding.channel_id.clone(), m.name.clone());
+            let (req, suc, avg, p95) = usage_map.get(&key).copied().unwrap_or((0, 0, 0.0, 0.0));
+            if req > 0 { model_total += req; }
+
+            let health = state.routing.channel_health(&binding.channel_id);
+            let circuit_ok = health.iter().any(|(_, enabled, available)| *enabled && *available);
+            let any_enabled = health.iter().any(|(_, enabled, _)| *enabled);
+            let circuit_enabled = any_enabled || health.is_empty();
+
+            if req > 0 || any_enabled {
+                let ch_name = state.routing.get_channel(&binding.channel_id)
+                    .map(|c| if c.name.is_empty() { c.id } else { c.name })
+                    .unwrap_or_else(|| binding.channel_id.clone());
+
+                if req > 0 {
+                    total_requests_24h += req;
+                    total_success += suc;
+                    active_channels.insert(binding.channel_id.clone());
+                    if !circuit_ok && circuit_enabled {
+                        broken_channels.insert(binding.channel_id.clone());
+                    }
+                }
+
+                ch_results.push(serde_json::json!({
+                    "channel_id": binding.channel_id,
+                    "channel_name": ch_name,
+                    "priority": binding.priority,
+                    "provider": binding.provider,
+                    "requests": req,
+                    "success_rate": if req > 0 { suc as f64 / req as f64 } else { 0.0 },
+                    "avg_latency_ms": avg,
+                    "p95_latency_ms": p95,
+                    "circuit_ok": circuit_ok,
+                    "circuit_enabled": circuit_enabled,
+                }));
+            }
+        }
+
+        if !ch_results.is_empty() {
+            model_results.push(serde_json::json!({
+                "id": m.id,
+                "name": m.name,
+                "model_pattern": m.model_pattern,
+                "category": m.category,
+                "total_requests": model_total,
+                "channels": ch_results,
+            }));
+        }
+    }
+
+    let overall_rate = if total_requests_24h > 0 { total_success as f64 / total_requests_24h as f64 } else { 0.0 };
+
+    Ok(Json(serde_json::json!({
+        "models": model_results,
+        "summary": {
+            "total_requests_24h": total_requests_24h,
+            "overall_success_rate": overall_rate,
+            "active_channels": active_channels.len(),
+            "broken_channels": broken_channels.len(),
+        },
+    })))
+}
+
 // ── User Subscriptions ────────────────────────────────────────────
 
 async fn list_my_subscriptions(
@@ -2872,6 +2963,10 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route(
             "/admin/api/probe-results",
             axum::routing::get(list_probe_results),
+        )
+        .route(
+            "/admin/api/health/routing",
+            axum::routing::get(routing_health),
         )
         .route(
             "/admin/api/models/{id}",

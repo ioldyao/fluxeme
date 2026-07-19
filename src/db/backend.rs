@@ -140,6 +140,10 @@ pub trait DbBackend: Send + Sync {
     /// Returns the most recent probe result for each channel.
     async fn all_latest_probe_results(&self) -> Result<Vec<ProbeResultRow>, DbError>;
 
+    /// Per-model per-channel usage stats for the health/routing dashboard.
+    /// Returns Vec<(channel_id, model, requests_count, success_count, avg_latency, p95_latency)>.
+    async fn channel_usage_24h(&self) -> Result<Vec<(String, String, u64, u64, f64, f64)>, DbError>;
+
     // ── Batch Operations (used by background writer) ─────────────────────
     /// Insert a batch of usage records with wallet deduction in a single transaction.
     /// Returns Vec<(user_id, new_balance, frozen)> for each deduction that occurred.
