@@ -2123,19 +2123,20 @@ async fn recent_request_paths(
 
     let records = state
         .db
-        .query_usage(15, 0, &crate::domain::usage::UsageFilter::default())
+        .recent_request_paths(15)
         .await
         .map_err(db_err)?;
 
     let paths: Vec<serde_json::Value> = records
         .into_iter()
-        .map(|r| {
+        .map(|(ts, m, ch, eid, lat, suc)| {
             serde_json::json!({
-                "timestamp": r.timestamp,
-                "model": r.model,
-                "channel_id": r.channel_id,
-                "latency_ms": r.latency_ms,
-                "success": r.success,
+                "timestamp": ts,
+                "model": m,
+                "channel_id": ch,
+                "endpoint_id": eid,
+                "latency_ms": lat,
+                "success": suc,
             })
         })
         .collect();

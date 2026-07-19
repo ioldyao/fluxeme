@@ -21,31 +21,56 @@ function loadLevel(count: number, siblings: number[]): LoadLevel {
   return 'low';
 }
 
+interface PathHitEvent {
+  id: string;
+  model: string;
+  mk: string;
+  ck: string;
+  ek?: string;
+}
+
 export default function HealthPage() {
   const { t } = useTranslation();
   const { data, isLoading, isError, refetch } = useRoutingHealth();
   const summary = data?.summary;
   const models = data?.models ?? [];
 
-  // Real-time counts from actual request paths (useRecentPaths polls /health/recent-paths every 5s)
   const { data: pathsData } = useRecentPaths();
   const [counts, setCounts] = useState<Record<string, number>>({});
-  const [pulseTrigger, setPulseTrigger] = useState(0);
+  const [events, setEvents] = useState<PathHitEvent[]>([]);
   const seenPaths = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!pathsData?.paths) return;
-    for (const req of pathsData.paths) {
-      const uid = `${req.timestamp}-${req.model}-${req.channel_id}`;
-      if (seenPaths.current.has(uid)) continue;
-      seenPaths.current.add(uid);
+    const newEvents: PathHitEvent[] = [];
 
-      const mk = `m:${req.model}`;
-      const ck = `c:${req.model}:${req.channel_id}`;
-      setCounts((p) => ({ ...p, [mk]: (p[mk] || 0) + 1, [ck]: (p[ck] || 0) + 1 }));
-      setPulseTrigger((p) => p + 1);
+    setCounts((prev) => {
+      const next = { ...prev };
+      for (const req of pathsData.paths) {
+        const uid = `${req.timestamp}-${req.model}-${req.channel_id}-${req.endpoint_id ?? ''}`;
+        if (seenPaths.current.has(uid)) continue;
+        seenPaths.current.add(uid);
+
+        const mk = `m:${req.model}`;
+        const ck = `c:${req.model}:${req.channel_id}`;
+        next[mk] = (next[mk] || 0) + 1;
+        next[ck] = (next[ck] || 0) + 1;
+
+        let ek: string | undefined;
+        if (req.endpoint_id) {
+          ek = `e:${req.model}:${req.channel_id}:${req.endpoint_id}`;
+          next[ek] = (next[ek] || 0) + 1;
+        }
+
+        newEvents.push({ id: uid, model: req.model, mk, ck, ek });
+      }
+      return next;
+    });
+
+    if (newEvents.length > 0) {
+      setEvents((prev) => [...prev, ...newEvents].slice(-60));
     }
-    // Keep set from growing unboundedly
+
     if (seenPaths.current.size > 500) {
       seenPaths.current = new Set([...seenPaths.current].slice(-250));
     }
@@ -56,7 +81,6 @@ export default function HealthPage() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Header */}
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
           <div className="text-xs font-mono tracking-wider text-primary mb-1.5 flex items-center gap-1.5">
@@ -76,7 +100,6 @@ export default function HealthPage() {
         </Button>
       </div>
 
-      {/* Summary */}
       <div className="grid grid-cols-4 gap-3">
         <Card><CardContent className="p-4">
           <p className="text-xs text-muted-foreground">总请求数 / 24h</p>
@@ -100,7 +123,6 @@ export default function HealthPage() {
         </CardContent></Card>
       </div>
 
-      {/* Live counter bar */}
       <div className="flex items-center gap-4 text-sm">
         <div className="flex items-center gap-2 text-xs font-semibold text-green-600">
           <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
@@ -116,7 +138,6 @@ export default function HealthPage() {
         </div>
       </div>
 
-      {/* Content */}
       {isLoading ? (
         <div className="p-12 text-center text-sm text-muted-foreground">加载中...</div>
       ) : isError ? (
@@ -132,7 +153,7 @@ export default function HealthPage() {
       ) : (
         <div className="space-y-4">
           {models.map((m) => (
-            <ModelPanel key={m.id} model={m} counts={counts} pulseTrigger={pulseTrigger} />
+            <ModelPanel key={m.id} model={m} counts={counts} events={events} />
           ))}
         </div>
       )}
@@ -140,11 +161,20 @@ export default function HealthPage() {
   );
 }
 
-function ModelPanel({ model, counts, pulseTrigger }: { model: any; counts: Record<string, number>; pulseTrigger: number }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [paths, setPaths] = useState<string[]>([]);
+interface PathDef {
+  key: string;
+  d: string;
+}
 
-  // Build channel/endpoint data
+function ModelPanel({ model, counts, events }: { model: any; counts: Record<string, number>; events: PathHitEvent[] }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [paths, setPaths] = useState<PathDef[]>([]);
+
+  const pathRefs = useRef<Map<string, SVGPathElement>>(new Map());
+  const nodeRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const processedEvents = useRef<Set<string>>(new Set());
+
   const mk = `m:${model.id}`;
   const modelCount = counts[mk] || 0;
   const chData = model.channels.map((ch: any) => {
@@ -159,44 +189,100 @@ function ModelPanel({ model, counts, pulseTrigger }: { model: any; counts: Recor
   });
   const chCounts = chData.map((c: any) => c.count);
 
-  // Redraw SVG connectors
   const redraw = useCallback(() => {
     if (!containerRef.current) return;
     const box = containerRef.current.getBoundingClientRect();
 
-    const modelEl = containerRef.current.querySelector('.snk-model') as HTMLElement;
+    const modelEl = nodeRefs.current.get(mk);
     if (!modelEl) return;
 
     const mr = modelEl.getBoundingClientRect();
     const p0 = { x: mr.right - box.left, y: mr.top + mr.height / 2 - box.top };
 
-    const result: string[] = [];
+    const result: PathDef[] = [];
     chData.forEach((ch: any) => {
-      const chEl = containerRef.current?.querySelector(`[data-n="${ch.key}"]`) as HTMLElement;
+      const chEl = nodeRefs.current.get(ch.key);
       if (!chEl) return;
       const cr = chEl.getBoundingClientRect();
       const p1 = { x: cr.left - box.left, y: cr.top + cr.height / 2 - box.top };
       const p1r = { x: cr.right - box.left, y: cr.top + cr.height / 2 - box.top };
       const mx = (p0.x + p1.x) / 2;
-      result.push(`${p0.x},${p0.y},${mx},${p0.y},${mx},${p1.y},${p1.x},${p1.y}|${ch.key}`);
+      result.push({ key: ch.key, d: `M ${p0.x} ${p0.y} C ${mx} ${p0.y}, ${mx} ${p1.y}, ${p1.x} ${p1.y}` });
 
       ch.endpoints.forEach((ep: any) => {
-        const epEl = containerRef.current?.querySelector(`[data-n="${ep.key}"]`) as HTMLElement;
+        const epEl = nodeRefs.current.get(ep.key);
         if (!epEl) return;
         const er = epEl.getBoundingClientRect();
         const p2 = { x: er.left - box.left, y: er.top + er.height / 2 - box.top };
         const mx2 = (p1r.x + p2.x) / 2;
-        result.push(`${p1r.x},${p1r.y},${mx2},${p1r.y},${mx2},${p2.y},${p2.x},${p2.y}|${ep.key}`);
+        result.push({ key: ep.key, d: `M ${p1r.x} ${p1r.y} C ${mx2} ${p1r.y}, ${mx2} ${p2.y}, ${p2.x} ${p2.y}` });
       });
     });
     setPaths(result);
-  }, [chData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model.id, chData.length]);
 
   useEffect(() => {
     redraw();
     window.addEventListener('resize', redraw);
     return () => window.removeEventListener('resize', redraw);
-  }, [redraw, pulseTrigger]);
+  }, [redraw]);
+
+  const pingNode = useCallback((key: string) => {
+    const el = nodeRefs.current.get(key);
+    if (!el) return;
+    el.style.transition = 'transform 150ms ease, box-shadow 150ms ease';
+    el.style.transform = 'scale(1.035)';
+    el.style.boxShadow = '0 0 0 2px rgba(74,127,201,0.25)';
+    window.setTimeout(() => {
+      el.style.transform = 'scale(1)';
+      el.style.boxShadow = 'none';
+    }, 180);
+  }, []);
+
+  const pulseAlongPath = useCallback((key: string, color: string) => {
+    const path = pathRefs.current.get(key);
+    const svg = svgRef.current;
+    if (!path || !svg) return;
+    const len = path.getTotalLength();
+    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    dot.setAttribute('r', '3.5');
+    dot.setAttribute('fill', color);
+    svg.appendChild(dot);
+
+    const duration = 550;
+    const start = performance.now();
+    function step(now: number) {
+      const t = Math.min(1, (now - start) / duration);
+      const pt = path.getPointAtLength(t * len);
+      dot.setAttribute('cx', String(pt.x));
+      dot.setAttribute('cy', String(pt.y));
+      dot.setAttribute('opacity', String(1 - t * 0.3));
+      if (t < 1) requestAnimationFrame(step);
+      else dot.remove();
+    }
+    requestAnimationFrame(step);
+  }, []);
+
+  useEffect(() => {
+    const relevant = events.filter((e) => e.model === model.id);
+    for (const ev of relevant) {
+      if (processedEvents.current.has(ev.id)) continue;
+      processedEvents.current.add(ev.id);
+
+      pingNode(ev.mk);
+      pulseAlongPath(ev.ck, '#4a7fc9');
+      window.setTimeout(() => pingNode(ev.ck), 150);
+
+      if (ev.ek) {
+        window.setTimeout(() => pulseAlongPath(ev.ek!, '#4a7fc9'), 200);
+        window.setTimeout(() => pingNode(ev.ek!), 350);
+      }
+    }
+    if (processedEvents.current.size > 300) {
+      processedEvents.current = new Set([...processedEvents.current].slice(-150));
+    }
+  }, [events, model.id, pingNode, pulseAlongPath]);
 
   return (
     <Card>
@@ -211,28 +297,29 @@ function ModelPanel({ model, counts, pulseTrigger }: { model: any; counts: Recor
       </div>
       <div className="p-5">
         <div ref={containerRef} className="relative" style={{ display: 'grid', gridTemplateColumns: '180px 1fr 180px 1fr 180px', alignItems: 'center', minHeight: 60 + Math.max(1, chData.length) * 56 }}>
-          {/* SVG connectors */}
-          <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible" style={{ zIndex: 0 }}>
-            {paths.map((sp) => {
-              const [coords] = sp.split('|');
-              const pts = coords.split(',').map(Number);
-              if (pts.length < 8) return null;
-              return (
-                <path
-                  key={sp}
-                  d={`M ${pts[0]} ${pts[1]} C ${pts[2]} ${pts[3]}, ${pts[4]} ${pts[5]}, ${pts[6]} ${pts[7]}`}
-                  fill="none"
-                  stroke="#d8d7d1"
-                  strokeWidth="1.5"
-                />
-              );
-            })}
+          <svg ref={svgRef} className="absolute inset-0 w-full h-full pointer-events-none overflow-visible" style={{ zIndex: 0 }}>
+            {paths.map((p) => (
+              <path
+                key={p.key}
+                ref={(el) => {
+                  if (el) pathRefs.current.set(p.key, el);
+                  else pathRefs.current.delete(p.key);
+                }}
+                d={p.d}
+                fill="none"
+                stroke="#d8d7d1"
+                strokeWidth="1.5"
+              />
+            ))}
           </svg>
 
-          {/* Model column */}
           <div className="flex flex-col gap-2 z-10">
             <div className="text-[10.5px] text-muted-foreground uppercase tracking-wider mb-1">模型</div>
-            <div className="snk-model border-2 border-primary rounded-lg px-3 py-2.5 bg-primary/5">
+            <div
+              data-n={mk}
+              ref={(el) => { if (el) nodeRefs.current.set(mk, el); }}
+              className="snk-model border-2 border-primary rounded-lg px-3 py-2.5 bg-primary/5 transition-transform"
+            >
               <div className="text-sm font-semibold text-primary">{model.name}</div>
               <div className="text-[11px] text-muted-foreground">{model.model_pattern}</div>
             </div>
@@ -240,13 +327,17 @@ function ModelPanel({ model, counts, pulseTrigger }: { model: any; counts: Recor
 
           <div />
 
-          {/* Channel column */}
           <div className="flex flex-col gap-2 z-10">
             <div className="text-[10.5px] text-muted-foreground uppercase tracking-wider mb-1">路由渠道</div>
             {chData.map((ch: any) => {
               const lv = loadLevel(ch.count, chCounts);
               return (
-                <div key={ch.key} data-n={ch.key} className={`border rounded-lg px-3 py-2 transition-all ${LOAD_BORDER[lv]} ${LOAD_BG[lv]}`}>
+                <div
+                  key={ch.key}
+                  data-n={ch.key}
+                  ref={(el) => { if (el) nodeRefs.current.set(ch.key, el); }}
+                  className={`border rounded-lg px-3 py-2 transition-all ${LOAD_BORDER[lv]} ${LOAD_BG[lv]}`}
+                >
                   <div className="flex items-center justify-between text-[12.5px] font-semibold">
                     <span>{ch.label}</span>
                     <span className="text-xs text-muted-foreground tabular-nums">{ch.count}</span>
@@ -264,7 +355,6 @@ function ModelPanel({ model, counts, pulseTrigger }: { model: any; counts: Recor
 
           <div />
 
-          {/* Endpoint column */}
           <div className="flex flex-col gap-2 z-10">
             <div className="text-[10.5px] text-muted-foreground uppercase tracking-wider mb-1">渠道端点</div>
             {chData.map((ch: any) => {
@@ -272,7 +362,12 @@ function ModelPanel({ model, counts, pulseTrigger }: { model: any; counts: Recor
               return ch.endpoints.map((ep: any) => {
                 const lv = loadLevel(ep.count, epCounts);
                 return (
-                  <div key={ep.key} data-n={ep.key} className={`border rounded-lg px-3 py-2 transition-all ${LOAD_BORDER[lv]} ${LOAD_BG[lv]}`}>
+                  <div
+                    key={ep.key}
+                    data-n={ep.key}
+                    ref={(el) => { if (el) nodeRefs.current.set(ep.key, el); }}
+                    className={`border rounded-lg px-3 py-2 transition-all ${LOAD_BORDER[lv]} ${LOAD_BG[lv]}`}
+                  >
                     <div className="flex items-center justify-between text-[12.5px] font-semibold">
                       <span>{ep.label}</span>
                       <span className="text-xs text-muted-foreground tabular-nums">{ep.count}</span>

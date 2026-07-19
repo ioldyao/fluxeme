@@ -46,6 +46,7 @@ export interface RecentPath {
   timestamp: string;
   model: string;
   channel_id: string;
+  endpoint_id?: number | null;
   latency_ms: number;
   success: boolean;
 }

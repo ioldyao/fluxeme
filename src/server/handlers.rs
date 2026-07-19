@@ -247,7 +247,6 @@ struct RouteTarget {
     endpoint: EndpointConfig,
     adapter: Arc<dyn crate::provider::ProviderAdapter>,
     balancer: Arc<LoadBalancer>,
-    endpoint_idx: usize,
 }
 
 impl RouteTarget {
@@ -255,7 +254,6 @@ impl RouteTarget {
     /// Returns `false` if no more endpoints available.
     fn retry_next(&mut self) -> bool {
         if let Some((idx, ep)) = self.balancer.as_health_aware().select() {
-            self.endpoint_idx = idx;
             self.endpoint = ep.clone();
             true
         } else {
@@ -285,7 +283,6 @@ fn resolve_route(state: &AppState, channel_id: &str) -> Result<RouteTarget, Gate
         endpoint: endpoint.clone(),
         adapter,
         balancer,
-        endpoint_idx: idx,
     })
 }
 
@@ -886,7 +883,6 @@ async fn handle_non_streaming(
 
         match result {
             Ok(mut resp) => {
-                route.balancer.as_health_aware().record_success(route.endpoint_idx);
                 normalize_reasoning_inner(&mut resp);
 
                 let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
@@ -949,7 +945,6 @@ async fn handle_non_streaming(
                 continue;
             }
             Err(e) if is_retryable_error(&e) => {
-                route.balancer.as_health_aware().record_failure(route.endpoint_idx);
                 if retry_count >= max_retries {
                     break e.0;
                 }
@@ -1050,7 +1045,6 @@ async fn handle_messages_non_streaming(
 
         match result {
             Ok(resp) => {
-                route.balancer.as_health_aware().record_success(route.endpoint_idx);
 
                 let prompt_tokens = resp["usage"]["input_tokens"].as_u64().unwrap_or(0);
                 let completion_tokens = resp["usage"]["output_tokens"].as_u64().unwrap_or(0);
@@ -1108,7 +1102,6 @@ async fn handle_messages_non_streaming(
                 continue;
             }
             Err(e) if is_retryable_error(&e) => {
-                route.balancer.as_health_aware().record_failure(route.endpoint_idx);
                 if retry_count >= max_retries {
                     break e.0;
                 }
@@ -1494,7 +1487,6 @@ async fn relay_to_upstream(
 
         match result {
             Ok(mut resp) => {
-                route.balancer.as_health_aware().record_success(route.endpoint_idx);
                 normalize_reasoning_inner(&mut resp);
                 let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
                 let completion_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0);
@@ -1544,7 +1536,6 @@ async fn relay_to_upstream(
                 continue;
             }
             Err(e) if is_retryable_error(&e) => {
-                route.balancer.as_health_aware().record_failure(route.endpoint_idx);
                 if retry_count >= max_retries {
                     break e.0;
                 }

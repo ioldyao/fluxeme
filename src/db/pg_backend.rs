@@ -402,6 +402,7 @@ impl DbBackend for PgBackend {
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS revoked BOOLEAN NOT NULL DEFAULT false");
         add_col!("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS client_ip TEXT");
         add_col!("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS cache_read_price DOUBLE PRECISION NOT NULL DEFAULT 0.0");
+        add_col!("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS endpoint_id BIGINT");
 
         // Indexes
         macro_rules! add_idx {
@@ -2862,6 +2863,20 @@ impl DbBackend for PgBackend {
 
         Ok(rows.into_iter().map(|(ch, m, req, suc, avg, p95)| {
             (ch, m, req as u64, suc as u64, avg, p95)
+        }).collect())
+    }
+
+    async fn recent_request_paths(&self, limit: usize) -> Result<Vec<(String, String, String, Option<i64>, u64, bool)>, DbError> {
+        let rows = sqlx::query_as::<_, (String, String, String, Option<i64>, i64, bool)>(
+            "SELECT timestamp, model, channel_id, endpoint_id, latency_ms, success FROM usage_logs ORDER BY id DESC LIMIT $1"
+        )
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Failed to query recent paths: {}", e)))?;
+
+        Ok(rows.into_iter().map(|(ts, m, ch, eid, lat, suc)| {
+            (ts, m, ch, eid, lat as u64, suc)
         }).collect())
     }
 
