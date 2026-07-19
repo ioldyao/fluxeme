@@ -3002,7 +3002,7 @@ impl DbBackend for SqliteBackend {
         self.exec(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT
-                    CASE WHEN (julianday(?2) - julianday(?1)) < 2
+                    CASE WHEN (julianday(datetime(?2)) - julianday(datetime(?1))) < 2
                       THEN strftime('%Y-%m-%dT%H:00:00', timestamp)
                       ELSE strftime('%Y-%m-%d', timestamp)
                     END AS bucket,
@@ -3011,7 +3011,7 @@ impl DbBackend for SqliteBackend {
                     SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) AS successes,
                     AVG(latency_ms) AS avg_latency
                  FROM usage_logs
-                 WHERE timestamp >= ?1 AND timestamp <= ?2
+                 WHERE datetime(timestamp) >= datetime(?1) AND datetime(timestamp) <= datetime(?2)
                    AND (?3 IS NULL OR model = ?3)
                  GROUP BY bucket, channel_id
                  ORDER BY bucket ASC",
@@ -3062,7 +3062,7 @@ impl DbBackend for SqliteBackend {
                              (CAST(ROW_NUMBER() OVER (PARTITION BY channel_id ORDER BY latency_ms) AS REAL) - 1)
                              / CAST(COUNT(*) OVER (PARTITION BY channel_id) AS REAL) AS percentile
                          FROM usage_logs
-                         WHERE timestamp >= ?1 AND timestamp <= ?2
+                         WHERE datetime(timestamp) >= datetime(?1) AND datetime(timestamp) <= datetime(?2)
                            AND (?3 IS NULL OR model = ?3)
                      )
                      GROUP BY channel_id
