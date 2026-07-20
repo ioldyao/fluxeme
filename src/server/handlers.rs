@@ -603,10 +603,10 @@ impl<S> UsageTrackingStream<S> {
         let latency_ms = self.start.elapsed().as_millis() as u64;
         let (mut p_tokens, mut c_tokens, cache_hit) = parse_sse_usage(&self.resp_buf);
 
-        // For cancelled streams (status 499): if SSE has content but no usage
-        // data arrived (usage is only in the final chunk), estimate from text
-        // length. Rough: ~4 chars/token for English, ~2 for CJK.
-        if !completed && p_tokens == 0 && c_tokens == 0 {
+        // If no token usage data was in the SSE stream (some upstream
+        // providers omit usage in streaming mode), estimate from content
+        // length.  Rough: ~4 chars/token for English, ~2 for CJK.
+        if p_tokens == 0 && c_tokens == 0 {
             let (reasoning, content) = extract_sse_content(&self.resp_buf);
             let total_content = reasoning.len() + content.len();
             if total_content > 0 {

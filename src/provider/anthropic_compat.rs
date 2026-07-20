@@ -68,7 +68,19 @@ impl ProviderAdapter for AnthropicCompatAdapter {
             .to_string();
         let openai_body = anthropic_to_openai(&body);
         let resp = self.inner.chat_complete(endpoint, openai_body).await?;
-        Ok(openai_to_anthropic_response(&resp, &model))
+        tracing::info!(
+            model = %model,
+            openai_usage = %resp.get("usage").map(|u| u.to_string()).unwrap_or_default(),
+            "anthropic_compat: raw OpenAI response usage"
+        );
+        let converted = openai_to_anthropic_response(&resp, &model);
+        tracing::info!(
+            model = %model,
+            input_tokens = converted["usage"]["input_tokens"].as_u64().unwrap_or(0),
+            output_tokens = converted["usage"]["output_tokens"].as_u64().unwrap_or(0),
+            "anthropic_compat: converted Anthropic response usage"
+        );
+        Ok(converted)
     }
 
     async fn messages_stream(
@@ -154,13 +166,21 @@ pub fn openai_to_anthropic_response(openai_resp: &Value, model: &str) -> Value {
         .unwrap_or("");
 
     let usage = openai_resp.get("usage");
+    // Try standard OpenAI field names first, then fall back to
+    // alternative naming used by some OpenAI-compatible endpoints.
     let input_tokens = usage
-        .and_then(|u| u.get("prompt_tokens"))
-        .and_then(|v| v.as_u64())
+        .and_then(|u| {
+            u.get("prompt_tokens")
+                .or_else(|| u.get("input_tokens"))
+                .and_then(|v| v.as_u64())
+        })
         .unwrap_or(0);
     let output_tokens = usage
-        .and_then(|u| u.get("completion_tokens"))
-        .and_then(|v| v.as_u64())
+        .and_then(|u| {
+            u.get("completion_tokens")
+                .or_else(|| u.get("output_tokens"))
+                .and_then(|v| v.as_u64())
+        })
         .unwrap_or(0);
     let cache_read = usage
         .and_then(|u| u.get("prompt_tokens_details"))
@@ -291,14 +311,26 @@ impl ConvertState {
 
         // accumulate usage
         if let Some(u) = val.get("usage") {
-            self.input_tokens = u
-                .get("prompt_tokens")
+            let p = u.get("prompt_tokens")
+                .or_else(|| u.get("input_tokens"))
                 .and_then(|v| v.as_u64())
-                .unwrap_or(self.input_tokens);
-            self.output_tokens = u
-                .get("completion_tokens")
+                .unwrap_or(0);
+            let c = u.get("completion_tokens")
+                .or_else(|| u.get("output_tokens"))
                 .and_then(|v| v.as_u64())
-                .unwrap_or(self.output_tokens);
+                .unwrap_or(0);
+            if p > 0 {
+                self.input_tokens = p;
+            }
+            if c > 0 {
+                self.output_tokens = c;
+            }
+            tracing::info!(
+                p, c,
+                input_tokens = self.input_tokens,
+                output_tokens = self.output_tokens,
+                "anthropic_compat stream: usage chunk received"
+            );
         }
 
         let choices = val
@@ -377,6 +409,11 @@ impl ConvertState {
         if matches!(self.phase, Phase::Done | Phase::Start) {
             return;
         }
+        tracing::info!(
+            input_tokens = self.input_tokens,
+            output_tokens = self.output_tokens,
+            "anthropic_compat stream: finish — emitting message_delta"
+        );
         self.phase = Phase::Done;
 
         let _ = tx
