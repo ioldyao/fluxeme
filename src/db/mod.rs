@@ -574,6 +574,10 @@ impl Database {
         self.backend.recent_request_paths(limit).await
     }
 
+    pub async fn routing_flow_snapshot(&self, hours: u32) -> Result<Vec<(String, String, Option<i64>, u64)>, DbError> {
+        self.backend.routing_flow_snapshot(hours).await
+    }
+
     pub async fn routing_history_buckets(
         &self,
         start: &str,

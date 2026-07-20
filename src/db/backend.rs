@@ -144,6 +144,9 @@ pub trait DbBackend: Send + Sync {
     /// Returns Vec<(channel_id, model, requests_count, success_count, avg_latency, p95_latency)>.
     async fn channel_usage_24h(&self) -> Result<Vec<(String, String, u64, u64, f64, f64)>, DbError>;
 
+    /// Aggregated (model, channel_id, endpoint_id, count) for the last N hours.
+    /// Used by the routing flow panel to restore history on page load.
+    async fn routing_flow_snapshot(&self, hours: u32) -> Result<Vec<(String, String, Option<i64>, u64)>, DbError>;
     /// Recent request paths with endpoint_id for the routing flow panel.
     /// Returns Vec<(timestamp, model, channel_id, Option<endpoint_id>, latency_ms, success)>.
     async fn recent_request_paths(&self, limit: usize) -> Result<Vec<(String, String, String, Option<i64>, u64, bool)>, DbError>;

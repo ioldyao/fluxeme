@@ -30,6 +30,18 @@ export interface RoutingHistoryResponse {
   summary: RoutingHistorySummary[];
 }
 
+export async function fetchRoutingFlowSnapshot(): Promise<Record<string, number>> {
+  const raw = await api<[string, string, number | null, number][]>("/routing/snapshot");
+  const counts: Record<string, number> = {};
+  for (const [model, chId, epId, cnt] of raw) {
+    const keyFor = (...p: (string | number)[]) => p.join(">");
+    counts[keyFor(model)] = (counts[keyFor(model)] || 0) + cnt;
+    counts[keyFor(model, chId)] = (counts[keyFor(model, chId)] || 0) + cnt;
+    if (epId != null) counts[keyFor(model, chId, `id:${epId}`)] = (counts[keyFor(model, chId, `id:${epId}`)] || 0) + cnt;
+  }
+  return counts;
+}
+
 export async function fetchRoutingHistory(
   start: string,
   end: string,

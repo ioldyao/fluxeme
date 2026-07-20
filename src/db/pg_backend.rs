@@ -2880,6 +2880,14 @@ impl DbBackend for PgBackend {
         }).collect())
     }
 
+    async fn routing_flow_snapshot(&self, hours: u32) -> Result<Vec<(String, String, Option<i64>, u64)>, DbError> {
+        use sqlx::Row;
+        let since = (chrono::Utc::now() - chrono::Duration::hours(hours as i64)).format("%Y-%m-%dT%H:%M:%S").to_string();
+        let rows = sqlx::query("SELECT model, channel_id, endpoint_id, COUNT(*)::bigint FROM usage_logs WHERE \"timestamp\"::timestamp >= $1::timestamp GROUP BY model, channel_id, endpoint_id")
+            .bind(&since).fetch_all(&self.pool).await.map_err(|e| DbError(format!("routing_flow_snapshot: {}", e)))?;
+        Ok(rows.iter().map(|r| (r.try_get::<String,_>(0).unwrap_or_default(), r.try_get::<String,_>(1).unwrap_or_default(), r.try_get::<Option<i64>,_>(2).unwrap_or(None), r.try_get::<i64,_>(3).unwrap_or(0) as u64)).collect())
+    }
+
     async fn routing_history_buckets(
         &self,
         start: &str,
