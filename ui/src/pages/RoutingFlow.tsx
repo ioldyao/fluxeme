@@ -103,16 +103,23 @@ function resolveEvent(
 
 // ---------------------------------------------------------------------------
 // 拓扑组装：models（含渠道绑定）× channels（含端点）
+// 同名的模型会合并为一个面板（多个模型条目可能绑定不同渠道）。
 // ---------------------------------------------------------------------------
 function buildTopology(models: Model[], channels: Channel[]): TopoModel[] {
   const channelMap = new Map(channels.map((c) => [c.id, c]));
-  return models.map((m) => ({
-    model: m.name,
-    pattern: m.model_pattern,
-    channels: m.channels
-      .map((mc) => channelMap.get(mc.channel_id))
-      .filter((c): c is Channel => !!c)
-      .map((ch) => ({
+  const merged = new Map<string, TopoModel>();
+  for (const m of models) {
+    const key = m.name;
+    let entry = merged.get(key);
+    if (!entry) {
+      entry = { model: m.name, pattern: m.model_pattern, channels: [] };
+      merged.set(key, entry);
+    }
+    for (const mc of m.channels) {
+      const ch = channelMap.get(mc.channel_id);
+      if (!ch) continue;
+      if (entry.channels.some((ec) => ec.id === ch.id)) continue;
+      entry.channels.push({
         id: ch.id,
         name: ch.name || ch.id,
         endpoints: ch.endpoints.map((e, i) => ({
@@ -121,8 +128,10 @@ function buildTopology(models: Model[], channels: Channel[]): TopoModel[] {
           label: `端点 ${i + 1}`,
           url: e.url,
         })),
-      })),
-  }));
+      });
+    }
+  }
+  return [...merged.values()];
 }
 
 // ---------------------------------------------------------------------------
