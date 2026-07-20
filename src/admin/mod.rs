@@ -2651,17 +2651,25 @@ async fn routing_history(
 
     let model_filter: Option<&str> = q.model.as_deref().filter(|m| !m.is_empty() && *m != "all");
 
+    tracing::info!(start = %q.start, end = %q.end, model = ?model_filter, "routing_history query");
+
     let buckets = state
         .db
         .routing_history_buckets(&q.start, &q.end, model_filter)
         .await
-        .map_err(|e| AdminError::internal(e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!(error = %e.0, start = %q.start, end = %q.end, "routing_history_buckets query failed");
+            AdminError::internal(e.to_string())
+        })?;
 
     let stats = state
         .db
         .routing_history_endpoint_stats(&q.start, &q.end, model_filter)
         .await
-        .map_err(|e| AdminError::internal(e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!(error = %e.0, start = %q.start, end = %q.end, "routing_history_endpoint_stats query failed");
+            AdminError::internal(e.to_string())
+        })?;
 
     // Build time-series: one series per channel
     let mut channel_map: std::collections::HashMap<String, Vec<(String, u64, u64)>> = std::collections::HashMap::new();

@@ -3048,45 +3048,65 @@ impl DbBackend for SqliteBackend {
         let end = end.to_string();
         let model = model.map(|s| s.to_string());
         self.exec(move |conn| {
+            // Simple aggregation without window functions (avoids nested-subquery issues).
+            // P95 computed via a second per-channel ordered query below.
             let mut stmt = conn.prepare(
-                "SELECT channel_id, requests, successes, avg_latency, p95_latency
-                 FROM (
-                     SELECT
-                         channel_id,
-                         COUNT(*) AS requests,
-                         SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) AS successes,
-                         AVG(latency_ms) AS avg_latency,
-                         COALESCE(AVG(CASE WHEN percentile >= 0.95 THEN latency_ms END), 0) AS p95_latency
-                     FROM (
-                         SELECT channel_id, success, latency_ms,
-                             (CAST(ROW_NUMBER() OVER (PARTITION BY channel_id ORDER BY latency_ms) AS REAL) - 1)
-                             / CAST(COUNT(*) OVER (PARTITION BY channel_id) AS REAL) AS percentile
-                         FROM usage_logs
-                         WHERE datetime(timestamp) >= datetime(?1) AND datetime(timestamp) <= datetime(?2)
-                           AND (?3 IS NULL OR model = ?3)
-                     )
-                     GROUP BY channel_id
-                 )
+                "SELECT
+                    channel_id,
+                    COUNT(*) AS requests,
+                    SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) AS successes,
+                    AVG(latency_ms) AS avg_latency
+                 FROM usage_logs
+                 WHERE datetime(timestamp) >= datetime(?1) AND datetime(timestamp) <= datetime(?2)
+                   AND (?3 IS NULL OR model = ?3)
+                 GROUP BY channel_id
                  ORDER BY requests DESC",
             )?;
             let rows = stmt.query_map(
                 rusqlite::params![start, end, model],
                 |row| {
-                    Ok(super::RoutingEndpointStat {
-                        channel_id: row.get::<_, String>(0)?,
-                        endpoint_id: None,
-                        requests: row.get::<_, u64>(1)?,
-                        successes: row.get::<_, u64>(2)?,
-                        avg_latency: row.get::<_, f64>(3)?,
-                        p95_latency: row.get::<_, f64>(4)?,
-                    })
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, u64>(1)?,
+                        row.get::<_, u64>(2)?,
+                        row.get::<_, f64>(3)?,
+                    ))
                 },
             )?;
-            let mut results = Vec::new();
+            let mut raw: Vec<(String, u64, u64, f64)> = Vec::new();
             for row in rows {
-                results.push(row?);
+                raw.push(row?);
             }
-            Ok(results)
+
+            let mut out = Vec::new();
+            for (ch_id, reqs, succs, avg) in raw {
+                let ch = ch_id.clone();
+                let mut p_stmt = conn.prepare(
+                    "SELECT latency_ms FROM usage_logs
+                     WHERE channel_id = ?1
+                       AND datetime(timestamp) >= datetime(?2) AND datetime(timestamp) <= datetime(?3)
+                       AND (?4 IS NULL OR model = ?4)
+                     ORDER BY latency_ms ASC",
+                )?;
+                let latencies: Vec<f64> = p_stmt.query_map(
+                    rusqlite::params![&ch, &start, &end, &model],
+                    |row| row.get::<_, f64>(0),
+                )?.filter_map(|r| r.ok()).collect();
+
+                let p95 = if latencies.is_empty() { 0.0 } else {
+                    let idx = ((latencies.len() as f64) * 0.95).ceil() as usize;
+                    latencies[std::cmp::min(idx, latencies.len()) - 1]
+                };
+                out.push(super::RoutingEndpointStat {
+                    channel_id: ch,
+                    endpoint_id: None,
+                    requests: reqs,
+                    successes: succs,
+                    avg_latency: avg,
+                    p95_latency: p95,
+                });
+            }
+            Ok(out)
         })
         .await
     }
