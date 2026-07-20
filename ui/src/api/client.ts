@@ -36,7 +36,8 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
 
   if (!r.ok) {
     const d = await r.json().catch(() => ({}));
-    throw new Error(d.error || 'Request failed');
+    const msg = typeof d.error === 'string' ? d.error : d.error?.message || d.message || 'Request failed';
+    throw new Error(msg);
   }
 
   return r.json();
