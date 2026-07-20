@@ -1416,6 +1416,18 @@ pub async fn messages(
     // in the messages array (only "user"/"assistant" are allowed).
     normalize_messages_body(&mut body);
     let mut route = resolve_route(&state, &channel_id)?;
+
+    // If the resolved channel has anthropic_compat enabled (OpenAI provider
+    // accepting Anthropic-format requests), wrap the adapter so that
+    // messages()/messages_stream() transparently convert between formats.
+    if let Some(ref ch) = state.routing.get_channel(&channel_id) {
+        if ch.anthropic_compat && ch.provider == "openai" {
+            route.adapter = Arc::new(
+                crate::provider::anthropic_compat::AnthropicCompatAdapter::new(route.adapter.clone()),
+            );
+        }
+    }
+
     let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
     let client_ip = extract_client_ip(&headers, addr);
 

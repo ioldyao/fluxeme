@@ -89,7 +89,11 @@ export default function Channels() {
                     <tr key={ch.id} className="border-b last:border-0 hover:bg-muted/50">
                       <td className="py-3 px-4 font-mono text-xs">{ch.id}</td>
                       <td className="py-3 px-4">{ch.name || ch.id}</td>
-                      <td className="py-3 px-4 capitalize">{ch.provider}</td>
+                      <td className="py-3 px-4 capitalize">{ch.provider}{ch.anthropic_compat && (
+                        <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
+                          Anthropic
+                        </span>
+                      )}</td>
                       <td className="py-3 px-4 text-center">{ch.priority}</td>
                       <td className="py-3 px-4 text-center">{ch.endpoints.length}</td>
                       <td className="py-3 px-4 text-center">

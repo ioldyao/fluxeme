@@ -100,6 +100,8 @@ const en: Record<string, string> = {
   'channel.edit': 'Edit Channel',
   'channel.new': 'New Channel',
   'channel.baseUrl': 'Base URL',
+  'channel.anthropicCompat': 'Anthropic Compat',
+  'channel.anthropicCompatDesc': 'Accept Anthropic /v1/messages format and convert to OpenAI format upstream',
   'apikey.title': 'API Keys',
   'apikey.subtitle': 'Manage your personal API keys',
   'apikey.add': 'Add API Key',

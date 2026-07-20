@@ -279,6 +279,7 @@ pub async fn seed_from_config(
                 provider: c.provider.clone(),
                 priority: c.priority,
                 enabled: c.enabled,
+                anthropic_compat: false,
                 endpoints: c
                     .endpoints
                     .iter()
