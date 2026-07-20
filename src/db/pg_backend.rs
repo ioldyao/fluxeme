@@ -2890,15 +2890,16 @@ impl DbBackend for PgBackend {
         let rows = sqlx::query(
             "SELECT
                 CASE WHEN (EXTRACT(EPOCH FROM $2::timestamp - $1::timestamp)) < 172800
-                  THEN to_char(timestamp, 'YYYY-MM-DD\"T\"HH24:00:00')
-                  ELSE to_char(timestamp, 'YYYY-MM-DD')
+                  THEN date_trunc('hour', \"timestamp\"::timestamp)::text
+                  ELSE date_trunc('day',  \"timestamp\"::timestamp)::text
                 END AS bucket,
                 channel_id,
                 COUNT(*)::bigint AS requests,
                 SUM(CASE WHEN success THEN 1 ELSE 0 END)::bigint AS successes,
                 AVG(latency_ms)::float8 AS avg_latency
              FROM usage_logs
-             WHERE timestamp >= $1::timestamp AND timestamp <= $2::timestamp
+             WHERE \"timestamp\"::timestamp >= $1::timestamp
+               AND \"timestamp\"::timestamp <= $2::timestamp
                AND ($3::text IS NULL OR model = $3)
              GROUP BY bucket, channel_id
              ORDER BY bucket ASC",
@@ -2930,7 +2931,8 @@ impl DbBackend for PgBackend {
                     AVG(latency_ms)::float8 AS avg_latency,
                     COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms), 0)::float8 AS p95_latency
              FROM usage_logs
-             WHERE timestamp >= $1::timestamp AND timestamp <= $2::timestamp
+             WHERE \"timestamp\"::timestamp >= $1::timestamp
+               AND \"timestamp\"::timestamp <= $2::timestamp
                AND ($3::text IS NULL OR model = $3)
              GROUP BY channel_id
              ORDER BY requests DESC",
