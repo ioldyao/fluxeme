@@ -122,6 +122,62 @@ fn trim_model(body: &mut Value) -> Result<String, GatewayError> {
     Ok(s)
 }
 
+/// Move inline `role: "system"` messages to the top-level Anthropic `system`
+/// field. Claude Code occasionally sends system prompts as inline messages
+/// with role="system", which SGLang's /v1/messages rejects (only "user" and
+/// "assistant" are allowed in the messages array).
+fn normalize_messages_body(body: &mut Value) {
+    let existing_system = body
+        .get("system")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return;
+    };
+
+    // Collect inline system messages into a single string
+    let mut system_text = String::new();
+    let mut filtered = Vec::new();
+
+    for msg in messages.drain(..) {
+        if msg.get("role").and_then(|r| r.as_str()) == Some("system") {
+            if let Some(content) = msg.get("content") {
+                match content {
+                    Value::String(s) => {
+                        if !system_text.is_empty() { system_text.push('\n'); }
+                        system_text.push_str(s);
+                    }
+                    Value::Array(blocks) => {
+                        for block in blocks {
+                            if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
+                                if !system_text.is_empty() { system_text.push('\n'); }
+                                system_text.push_str(t);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            filtered.push(msg);
+        }
+    }
+
+    *messages = filtered;
+
+    // Merge extracted inline system text with any pre-existing top-level system
+    if !system_text.is_empty() {
+        let merged = if existing_system.is_empty() {
+            system_text
+        } else {
+            format!("{}\n{}", system_text, existing_system)
+        };
+        body["system"] = Value::String(merged);
+    }
+}
+
 /// Check whether the user's wallet balance is sufficient for this request.
 ///
 /// Three-tier check:
@@ -1355,6 +1411,10 @@ pub async fn messages(
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
+    // Normalize Claude-Code-style inline system messages to the Anthropic
+    // top-level "system" field.  SGLang's /v1/messages rejects role=system
+    // in the messages array (only "user"/"assistant" are allowed).
+    normalize_messages_body(&mut body);
     let mut route = resolve_route(&state, &channel_id)?;
     let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
     let client_ip = extract_client_ip(&headers, addr);
