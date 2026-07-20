@@ -138,12 +138,35 @@ function useRoutingStream(topology: TopoModel[]) {
   const topoRef = useRef(topology);
   topoRef.current = topology;
 
-  // Load 24h snapshot on mount as initial counts
+  // Load 24h snapshot on mount as initial counts.
+  // Historical records often lack endpoint_id (NULL); this pass spreads
+  // channel-level counts across known endpoints so the panel doesn't
+  // show zero for endpoints that actually served traffic.
   useEffect(() => {
     fetchRoutingFlowSnapshot().then((snap) => {
       if (Object.keys(snap).length > 0) {
-        setCounts(snap);
-        const total = Object.entries(snap)
+        const patched = { ...snap };
+        for (const m of topoRef.current) {
+          
+          for (const c of m.channels) {
+            const ck = keyFor(m.model, c.id);
+            const chCount = patched[ck] || 0;
+            const epSum = c.endpoints.reduce((s, e) => s + (patched[keyFor(m.model, c.id, e.key)] || 0), 0);
+            // If channel has traffic but endpoint-level is missing/null, spread evenly
+            if (chCount > epSum && c.endpoints.length > 0) {
+              const missing = chCount - epSum;
+              const each = Math.floor(missing / c.endpoints.length);
+              let rem = missing - each * c.endpoints.length;
+              for (const e of c.endpoints) {
+                const ek = keyFor(m.model, c.id, e.key);
+                patched[ek] = (patched[ek] || 0) + each + (rem > 0 ? 1 : 0);
+                if (rem > 0) rem--;
+              }
+            }
+          }
+        }
+        setCounts(patched);
+        const total = Object.entries(patched)
           .filter(([k]) => k.split(">").length === 1)
           .reduce((s, [, v]) => s + v, 0);
         setTotalCount(total);
