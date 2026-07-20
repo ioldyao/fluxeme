@@ -434,6 +434,9 @@ fn parse_sse_usage(data: &str) -> (u64, u64, u64) {
             // Anthropic message_delta: {type: "message_delta", usage: {output_tokens}}
             if val.get("type").and_then(|t| t.as_str()) == Some("message_delta") {
                 if let Some(usage) = val.get("usage") {
+                    if let Some(p) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
+                        if p > p_tokens { p_tokens = p; }
+                    }
                     if let Some(c) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
                         if c > c_tokens { c_tokens = c; }
                     }

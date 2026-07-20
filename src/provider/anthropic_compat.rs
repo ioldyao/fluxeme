@@ -394,7 +394,7 @@ impl ConvertState {
         let delta = json!({
             "type": "message_delta",
             "delta": {"stop_reason": stop, "stop_sequence": null},
-            "usage": {"output_tokens": self.output_tokens},
+            "usage": {"input_tokens": self.input_tokens, "output_tokens": self.output_tokens},
         });
         let _ = tx
             .send(format!(
