@@ -505,6 +505,7 @@ struct UsageTrackingStream<S> {
     api_format: String,
     recorded: bool,
     client_ip: String,
+    endpoint_id: Option<i64>,
 }
 
 impl<S: Stream<Item = String> + Unpin> Stream for UsageTrackingStream<S> {
@@ -557,7 +558,7 @@ impl<S> UsageTrackingStream<S> {
             }
         }
 
-        self.usage.record(UsageRecord {
+        self.usage.record_with_endpoint(UsageRecord {
             timestamp: Utc::now().to_rfc3339(),
             request_id: self.request_id.clone(),
             user_id: self.user_id.clone(),
@@ -596,7 +597,7 @@ impl<S> UsageTrackingStream<S> {
             completion_price: 0.0,
             cache_read_price: 0.0,
             client_ip: Some(self.client_ip.clone()),
-        });
+        }, self.endpoint_id);
     }
 }
 
@@ -720,6 +721,7 @@ async fn handle_streaming(
                 api_format: "openai".to_string(),
                 recorded: false,
                 client_ip,
+                endpoint_id: endpoint.id,
             };
 
             let body_stream = usage_stream.map(|data| {
@@ -813,6 +815,7 @@ async fn handle_messages_streaming(
                 api_format: "anthropic".to_string(),
                 recorded: false,
                 client_ip,
+                endpoint_id: endpoint.id,
             };
 
             let body_stream = usage_stream.map(|data| {
