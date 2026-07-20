@@ -592,6 +592,12 @@ impl Database {
         self.backend.routing_history_endpoint_stats(start, end, model).await
     }
 
+    pub async fn routing_history_endpoint_details(
+        &self, start: &str, end: &str, model: Option<&str>,
+    ) -> Result<Vec<(String, Option<i64>, Option<String>, u64, u64, f64, f64)>, DbError> {
+        self.backend.routing_history_endpoint_details(start, end, model).await
+    }
+
     // ── Batch Operations ────────────────────────────────────────────────
     pub async fn batch_insert_usage_with_billing(
         &self,

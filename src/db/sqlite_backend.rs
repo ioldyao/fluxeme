@@ -3111,6 +3111,49 @@ impl DbBackend for SqliteBackend {
         .await
     }
 
+    async fn routing_history_endpoint_details(
+        &self, start: &str, end: &str, model: Option<&str>,
+    ) -> Result<Vec<(String, Option<i64>, Option<String>, u64, u64, f64, f64)>, DbError> {
+        let start = start.to_string(); let end = end.to_string();
+        let model = model.map(|s| s.to_string());
+        self.exec(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT ul.channel_id, ul.endpoint_id, e.url,
+                        COUNT(*) AS requests,
+                        SUM(CASE WHEN ul.success=1 THEN 1 ELSE 0 END) AS successes,
+                        AVG(ul.latency_ms) AS avg_latency
+                 FROM usage_logs ul LEFT JOIN endpoints e ON e.id = ul.endpoint_id
+                 WHERE datetime(ul.timestamp) >= datetime(?1) AND datetime(ul.timestamp) <= datetime(?2)
+                   AND (?3 IS NULL OR ul.model = ?3)
+                 GROUP BY ul.channel_id, ul.endpoint_id
+                 ORDER BY ul.channel_id, requests DESC",
+            )?;
+            let raw: Vec<_> = stmt.query_map(rusqlite::params![start, end, model], |r| Ok((
+                r.get::<_,String>(0)?, r.get::<_,Option<i64>>(1)?, r.get::<_,Option<String>>(2)?,
+                r.get::<_,u64>(3)?, r.get::<_,u64>(4)?, r.get::<_,f64>(5)?,
+            )))?.filter_map(|r| r.ok()).collect();
+
+            let mut out = Vec::new();
+            for (ch, ep_id, ep_url, reqs, succs, avg) in raw {
+                let mut ps = conn.prepare(
+                    "SELECT latency_ms FROM usage_logs
+                     WHERE channel_id=?1 AND (endpoint_id IS NULL OR endpoint_id=?2)
+                       AND datetime(timestamp)>=datetime(?3) AND datetime(timestamp)<=datetime(?4)
+                       AND (?5 IS NULL OR model=?5) ORDER BY latency_ms ASC",
+                )?;
+                let lats: Vec<f64> = ps.query_map(
+                    rusqlite::params![&ch, &ep_id, &start, &end, &model],
+                    |r| r.get::<_,f64>(0),
+                )?.filter_map(|r| r.ok()).collect();
+                let p95 = if lats.is_empty() { 0.0 } else {
+                    lats[std::cmp::min(((lats.len() as f64)*0.95).ceil() as usize, lats.len())-1]
+                };
+                out.push((ch, ep_id, ep_url, reqs, succs, avg, p95));
+            }
+            Ok(out)
+        }).await
+    }
+
     async fn get_balances_page(
         &self,
         limit: usize,

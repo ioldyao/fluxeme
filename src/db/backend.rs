@@ -165,6 +165,16 @@ pub trait DbBackend: Send + Sync {
         model: Option<&str>,
     ) -> Result<Vec<super::RoutingEndpointStat>, DbError>;
 
+    /// Per-(channel, endpoint_id) aggregate stats with P95 for the detail rows
+    /// under each channel in the history summary table.
+    /// Returns Vec<(channel_id, endpoint_id, endpoint_url, requests, successes, avg_latency, p95_latency)>.
+    async fn routing_history_endpoint_details(
+        &self,
+        start: &str,
+        end: &str,
+        model: Option<&str>,
+    ) -> Result<Vec<(String, Option<i64>, Option<String>, u64, u64, f64, f64)>, DbError>;
+
     // ── Batch Operations (used by background writer) ─────────────────────
     /// Insert a batch of usage records with wallet deduction in a single transaction.
     /// Returns Vec<(user_id, new_balance, frozen)> for each deduction that occurred.

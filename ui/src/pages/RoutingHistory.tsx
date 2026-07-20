@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useModels } from '@/api/models';
+import { useChannels } from '@/api/channels';
 import { fetchRoutingHistory } from '@/api/routing';
 import type { RoutingHistoryResponse } from '@/api/routing';
 import {
@@ -50,7 +51,16 @@ function formatBucket(bucket: string): string {
 export default function RoutingHistory() {
   const { t } = useTranslation();
   const { data: models } = useModels();
+  const { data: channels } = useChannels();
   const modelList = models || [];
+
+  const ChannelNameMap = useMemo(() => {
+    const m = new Map<string, string>();
+    if (channels) for (const c of channels) m.set(c.id, c.name || c.id);
+    return m;
+  }, [channels]);
+
+  const channelName = (id: string) => ChannelNameMap.get(id) || id;
 
   const [preset, setPreset] = useState('24h');
   const [customStart, setCustomStart] = useState('');
@@ -226,9 +236,10 @@ export default function RoutingHistory() {
                   const pct = totalReq > 0 ? Math.round((s.requests / totalReq) * 100) : 0;
                   const barColor = pct >= 66 ? C.high : pct >= 33 ? C.mid : C.low;
                   const rs = RATE_STYLE[rateClass(s.success_rate)];
-                  return (
-                    <tr key={s.channel_id} style={{ fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>
-                      <td style={{ padding: '11px 18px', fontSize: 13, verticalAlign: 'middle' }}>{s.channel_id}</td>
+                  const rows = [];
+                  rows.push(
+                    <tr key={s.channel_id} style={{ fontWeight: 600, background: '#fbfbf9', borderBottom: `1px solid ${C.border}` }}>
+                      <td style={{ padding: '11px 18px', fontSize: 13, verticalAlign: 'middle' }}>{channelName(s.channel_id)}</td>
                       <td style={{ padding: '11px 18px', fontSize: 13, verticalAlign: 'middle', minWidth: 140 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <div style={{ flex: 1, height: 6, background: C.barTrack, borderRadius: 3, overflow: 'hidden' }}>
@@ -248,7 +259,37 @@ export default function RoutingHistory() {
                       <td style={{ padding: '11px 18px', fontSize: 13, textAlign: 'right', verticalAlign: 'middle' }}>{s.p95_latency}ms</td>
                     </tr>
                   );
-                })}
+                  s.endpoints.forEach((ep) => {
+                    const epct = s.requests > 0 ? Math.round((ep.requests / s.requests) * 100) : 0;
+                    const ers = RATE_STYLE[rateClass(ep.success_rate)];
+                    const label = ep.url
+                      ? `${ep.url} (${t('routingFlow.endpointLabel')} ${s.endpoints.indexOf(ep) + 1})`
+                      : `${t('routingFlow.endpointLabel')} ${s.endpoints.indexOf(ep) + 1}`;
+                    rows.push(
+                      <tr key={`${s.channel_id}-${ep.endpoint_id ?? 'ep'}-${s.endpoints.indexOf(ep)}`} style={{ borderBottom: `1px solid ${C.border}` }}>
+                        <td style={{ padding: '11px 18px', paddingLeft: 34, fontSize: 13, color: C.textSecondary, fontWeight: 400, verticalAlign: 'middle' }}>{label}</td>
+                        <td style={{ padding: '11px 18px', fontSize: 13, verticalAlign: 'middle', minWidth: 140 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{ flex: 1, height: 6, background: C.barTrack, borderRadius: 3, overflow: 'hidden' }}>
+                              <div style={{ height: '100%', borderRadius: 3, width: `${epct}%`, background: C.mid }} />
+                            </div>
+                            <span style={{ fontSize: 12, color: C.textSecondary, minWidth: 34, textAlign: 'right' }}>{epct}%</span>
+                          </div>
+                        </td>
+                        <td style={{ padding: '11px 18px', fontSize: 13, textAlign: 'right', verticalAlign: 'middle' }}>{ep.requests.toLocaleString()}</td>
+                        <td style={{ padding: '11px 18px', fontSize: 13, textAlign: 'right', verticalAlign: 'middle' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12.5, fontWeight: 500, padding: '3px 9px', borderRadius: 6, color: ers.color, background: ers.bg }}>
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: ers.color }} />
+                            {ep.success_rate}%
+                          </span>
+                        </td>
+                        <td style={{ padding: '11px 18px', fontSize: 13, textAlign: 'right', verticalAlign: 'middle' }}>{ep.avg_latency}ms</td>
+                        <td style={{ padding: '11px 18px', fontSize: 13, textAlign: 'right', verticalAlign: 'middle' }}>{ep.p95_latency}ms</td>
+                      </tr>
+                    );
+                  });
+                  return rows;
+                }).flat()}
                 {data!.summary.length === 0 && (
                   <tr><td colSpan={6} style={{ padding: 30, textAlign: 'center', fontSize: 13, color: C.textMuted }}>{t('routingFlow.tableEmpty')}</td></tr>
                 )}

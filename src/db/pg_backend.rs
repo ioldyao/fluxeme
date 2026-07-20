@@ -2950,6 +2950,32 @@ impl DbBackend for PgBackend {
         }).collect())
     }
 
+    async fn routing_history_endpoint_details(
+        &self, start: &str, end: &str, model: Option<&str>,
+    ) -> Result<Vec<(String, Option<i64>, Option<String>, u64, u64, f64, f64)>, DbError> {
+        use sqlx::Row;
+        let rows = sqlx::query(
+            "SELECT ul.channel_id, ul.endpoint_id, e.url,
+                    COUNT(*)::bigint, SUM(CASE WHEN ul.success THEN 1 ELSE 0 END)::bigint,
+                    AVG(ul.latency_ms)::float8,
+                    COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY ul.latency_ms),0)::float8
+             FROM usage_logs ul LEFT JOIN endpoints e ON e.id=ul.endpoint_id
+             WHERE \"ul\".\"timestamp\"::timestamp>=$1::timestamp AND \"ul\".\"timestamp\"::timestamp<=$2::timestamp
+               AND ($3::text IS NULL OR ul.model=$3)
+             GROUP BY ul.channel_id, ul.endpoint_id, e.url ORDER BY ul.channel_id, COUNT(*) DESC",
+        ).bind(start).bind(end).bind(model).fetch_all(&self.pool).await
+        .map_err(|e| DbError(format!("routing_history_endpoint_details: {}", e)))?;
+        Ok(rows.iter().map(|r| (
+            r.try_get::<String,_>(0).unwrap_or_default(),
+            r.try_get::<Option<i64>,_>(1).unwrap_or(None),
+            r.try_get::<Option<String>,_>(2).unwrap_or(None),
+            r.try_get::<i64,_>(3).unwrap_or(0) as u64,
+            r.try_get::<i64,_>(4).unwrap_or(0) as u64,
+            r.try_get::<f64,_>(5).unwrap_or(0.0),
+            r.try_get::<f64,_>(6).unwrap_or(0.0),
+        )).collect())
+    }
+
     async fn get_balances_page(
         &self,
         limit: usize,

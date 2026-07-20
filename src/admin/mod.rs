@@ -2640,6 +2640,17 @@ struct ChannelSummary {
     success_rate: f64,
     avg_latency: f64,
     p95_latency: f64,
+    endpoints: Vec<EndptDetail>,
+}
+
+#[derive(Serialize)]
+struct EndptDetail {
+    endpoint_id: Option<i64>,
+    url: String,
+    requests: u64,
+    success_rate: f64,
+    avg_latency: f64,
+    p95_latency: f64,
 }
 
 async fn routing_history(
@@ -2670,6 +2681,17 @@ async fn routing_history(
             tracing::error!(error = %e.0, start = %q.start, end = %q.end, "routing_history_endpoint_stats query failed");
             AdminError::internal(e.to_string())
         })?;
+
+    let details = state.db.routing_history_endpoint_details(&q.start, &q.end, model_filter).await
+        .map_err(|e| { tracing::error!(error=%e.0,"routing_history_endpoint_details query failed"); AdminError::internal(e.to_string()) })?;
+    let mut ep_by_channel: std::collections::HashMap<String, Vec<EndptDetail>> = std::collections::HashMap::new();
+    for (ch, eid, url, reqs, succs, avg, p95) in &details {
+        let rate = if *reqs > 0 { (*succs as f64 / *reqs as f64) * 100.0 } else { 0.0 };
+        ep_by_channel.entry(ch.clone()).or_default().push(EndptDetail {
+            endpoint_id: *eid, url: url.clone().unwrap_or_default(), requests: *reqs,
+            success_rate: (rate*10.0).round()/10.0, avg_latency: (avg*10.0).round()/10.0, p95_latency: (p95*10.0).round()/10.0,
+        });
+    }
 
     // Build time-series: one series per channel
     let mut channel_map: std::collections::HashMap<String, Vec<(String, u64, u64)>> = std::collections::HashMap::new();
@@ -2710,6 +2732,7 @@ async fn routing_history(
             success_rate: (rate * 10.0).round() / 10.0,
             avg_latency: (s.avg_latency * 10.0).round() / 10.0,
             p95_latency: (s.p95_latency * 10.0).round() / 10.0,
+            endpoints: ep_by_channel.remove(&s.channel_id).unwrap_or_default(),
         }
     }).collect();
 

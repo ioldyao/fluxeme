@@ -12,6 +12,16 @@ export interface RoutingHistorySummary {
   success_rate: number;
   avg_latency: number;
   p95_latency: number;
+  endpoints: RoutingHistoryEndpoint[];
+}
+
+export interface RoutingHistoryEndpoint {
+  endpoint_id: number | null;
+  url: string;
+  requests: number;
+  success_rate: number;
+  avg_latency: number;
+  p95_latency: number;
 }
 
 export interface RoutingHistoryResponse {
