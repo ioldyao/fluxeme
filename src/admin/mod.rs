@@ -2653,6 +2653,11 @@ struct EndptDetail {
     p95_latency: f64,
 }
 
+async fn routing_flow_snapshot_handler(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Result<Json<Vec<(String, String, Option<i64>, u64)>>, AdminError> {
+    let _session = require_session(&state.admin, &headers).await?;
+    state.db.routing_flow_snapshot(24).await.map(Json).map_err(|e| AdminError::internal(e.to_string()))
+}
+
 async fn routing_history(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -3177,6 +3182,7 @@ pub fn admin_routes() -> Router<Arc<AppState>> {
         .route("/admin/api/usage/daily", axum::routing::get(daily_usage))
         .route("/admin/api/usage/aggregate", axum::routing::get(usage_aggregate))
         .route("/admin/api/usage/model-activity", axum::routing::get(model_activity))
+        .route("/admin/api/routing/snapshot", axum::routing::get(routing_flow_snapshot_handler))
         .route("/admin/api/routing/history", axum::routing::get(routing_history))
         .route(
             "/admin/api/usage/{request_id}",

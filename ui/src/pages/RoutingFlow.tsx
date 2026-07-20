@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useModels } from '@/api/models';
 import { useChannels } from '@/api/channels';
+import { fetchRoutingFlowSnapshot } from '@/api/routing';
 import type { Channel, Model } from '@/types';
 
 /**
@@ -137,6 +138,18 @@ function useRoutingStream(topology: TopoModel[]) {
   const topoRef = useRef(topology);
   topoRef.current = topology;
 
+  // Load 24h snapshot on mount as initial counts
+  useEffect(() => {
+    fetchRoutingFlowSnapshot().then((snap) => {
+      if (Object.keys(snap).length > 0) {
+        setCounts(snap);
+        const total = Object.entries(snap)
+          .filter(([k]) => k.split(">").length === 1)
+          .reduce((s, [, v]) => s + v, 0);
+        setTotalCount(total);
+      }
+    }).catch(() => {});
+  }, []);
   useEffect(() => {
     let ws: WebSocket | null = null;
     let closed = false;

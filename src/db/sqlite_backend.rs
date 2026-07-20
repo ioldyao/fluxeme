@@ -2990,6 +2990,16 @@ impl DbBackend for SqliteBackend {
         .await
     }
 
+    async fn routing_flow_snapshot(&self, hours: u32) -> Result<Vec<(String, String, Option<i64>, u64)>, DbError> {
+        let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
+        let since = cutoff.format("%Y-%m-%dT%H:%M:%S").to_string();
+        self.exec(move |conn| {
+            let mut stmt = conn.prepare("SELECT model, channel_id, endpoint_id, COUNT(*) as cnt FROM usage_logs WHERE timestamp >= ?1 GROUP BY model, channel_id, endpoint_id")?;
+            let rows = stmt.query_map(rusqlite::params![since], |row| Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?, row.get::<_,Option<i64>>(2)?, row.get::<_,u64>(3)?)))?;
+            let mut r = Vec::new(); for row in rows { r.push(row?); } Ok(r)
+        }).await
+    }
+
     async fn routing_history_buckets(
         &self,
         start: &str,
