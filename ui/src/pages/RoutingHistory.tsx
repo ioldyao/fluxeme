@@ -69,6 +69,33 @@ export default function RoutingHistory() {
   const [data, setData] = useState<RoutingHistoryResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Spread NULL-endpoint rows across configured endpoints for channels
+  // where historical records lack endpoint_id.
+  const channelEndpoints = useMemo(() => {
+    const m = new Map<string, { id: number | null; url: string }[]>();
+    if (channels) for (const c of channels)
+      m.set(c.id, c.endpoints.map((e, i) => ({ id: e.id ?? null, url: e.url || `端点${i + 1}` })));
+    return m;
+  }, [channels]);
+
+  const summaryForTable = useMemo(() => {
+    if (!data) return [];
+    return data.summary.map((s) => {
+      const eps = channelEndpoints.get(s.channel_id);
+      if (!eps || eps.length <= 1) return s;
+      if (s.endpoints.length !== 1 || s.endpoints[0].endpoint_id !== null) return s;
+      const nr = s.endpoints[0];
+      const each = Math.floor(nr.requests / eps.length);
+      let rem = nr.requests - each * eps.length;
+      return { ...s, endpoints: eps.map((ep) => {
+        const cnt = each + (rem > 0 ? 1 : 0);
+        if (rem > 0) rem--;
+        return { endpoint_id: ep.id, url: ep.url, requests: cnt,
+          success_rate: nr.success_rate, avg_latency: nr.avg_latency, p95_latency: nr.p95_latency };
+      })};
+    });
+  }, [data, channelEndpoints]);
+
   const fetchData = useCallback(async (start: string, end: string) => {
     setLoading(true);
     try {
@@ -124,7 +151,7 @@ export default function RoutingHistory() {
   }, [data]);
 
   const channelIds = data ? Object.keys(data.series) : [];
-  const totalReq = data ? data.summary.reduce((s, c) => s + c.requests, 0) : 0;
+  const totalReq = summaryForTable.length ? summaryForTable.reduce((s: number, c: typeof summaryForTable[number]) => s + c.requests, 0) : 0;
 
   const btnStyle = (p: string): React.CSSProperties => ({
     fontSize: 12.5, padding: '6px 12px', borderRadius: 6,
@@ -232,7 +259,7 @@ export default function RoutingHistory() {
                 </tr>
               </thead>
               <tbody>
-                {data!.summary.map((s) => {
+                {summaryForTable.map((s: typeof summaryForTable[number]) => {
                   const pct = totalReq > 0 ? Math.round((s.requests / totalReq) * 100) : 0;
                   const barColor = pct >= 66 ? C.high : pct >= 33 ? C.mid : C.low;
                   const rs = RATE_STYLE[rateClass(s.success_rate)];
@@ -290,7 +317,7 @@ export default function RoutingHistory() {
                   });
                   return rows;
                 }).flat()}
-                {data!.summary.length === 0 && (
+                {summaryForTable.length === 0 && (
                   <tr><td colSpan={6} style={{ padding: 30, textAlign: 'center', fontSize: 13, color: C.textMuted }}>{t('routingFlow.tableEmpty')}</td></tr>
                 )}
               </tbody>
