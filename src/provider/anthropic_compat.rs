@@ -68,13 +68,13 @@ impl ProviderAdapter for AnthropicCompatAdapter {
             .to_string();
         let openai_body = anthropic_to_openai(&body);
         let resp = self.inner.chat_complete(endpoint, openai_body).await?;
-        tracing::info!(
+        tracing::debug!(
             model = %model,
             openai_usage = %resp.get("usage").map(|u| u.to_string()).unwrap_or_default(),
             "anthropic_compat: raw OpenAI response usage"
         );
         let converted = openai_to_anthropic_response(&resp, &model);
-        tracing::info!(
+        tracing::debug!(
             model = %model,
             input_tokens = converted["usage"]["input_tokens"].as_u64().unwrap_or(0),
             output_tokens = converted["usage"]["output_tokens"].as_u64().unwrap_or(0),
@@ -325,7 +325,7 @@ impl ConvertState {
             if c > 0 {
                 self.output_tokens = c;
             }
-            tracing::info!(
+            tracing::debug!(
                 p, c,
                 input_tokens = self.input_tokens,
                 output_tokens = self.output_tokens,
@@ -409,7 +409,7 @@ impl ConvertState {
         if matches!(self.phase, Phase::Done | Phase::Start) {
             return;
         }
-        tracing::info!(
+        tracing::debug!(
             input_tokens = self.input_tokens,
             output_tokens = self.output_tokens,
             "anthropic_compat stream: finish — emitting message_delta"
