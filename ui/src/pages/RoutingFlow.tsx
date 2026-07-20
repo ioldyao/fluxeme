@@ -552,7 +552,7 @@ function ModelPanel({
           {model.channels.map((c) => {
             const cnt = counts[keyFor(model.model, c.id)] || 0;
             const cls = loadClass(cnt, channelCounts);
-            const max = Math.max(1, ...channelCounts);
+            const sum = channelCounts.reduce((a, b) => a + b, 0) || 1;
             return (
               <FlowNode
                 key={c.id}
@@ -560,7 +560,7 @@ function ModelPanel({
                 title={c.name}
                 count={cnt}
                 loadCls={cls}
-                barPct={Math.round((cnt / max) * 100)}
+                barPct={Math.round((cnt / sum) * 100)}
                 pinged={pinged[keyFor(model.model, c.id)]}
               />
             );
@@ -573,7 +573,7 @@ function ModelPanel({
           <div style={colLabelStyle}>{t('routingFlow.colEndpoint')}</div>
           {model.channels.flatMap((c) => {
             const epCounts = c.endpoints.map((e) => counts[keyFor(model.model, c.id, e.key)] || 0);
-            const emax = Math.max(1, ...epCounts);
+            const esum = epCounts.reduce((a, b) => a + b, 0) || 1;
             return c.endpoints.map((e) => {
               const cnt = counts[keyFor(model.model, c.id, e.key)] || 0;
               const cls = loadClass(cnt, epCounts);
@@ -585,7 +585,7 @@ function ModelPanel({
                   subtitle={`${e.url} · ${c.name}`}
                   count={cnt}
                   loadCls={cls}
-                  barPct={Math.round((cnt / emax) * 100)}
+                  barPct={Math.round((cnt / esum) * 100)}
                   pinged={pinged[keyFor(model.model, c.id, e.key)]}
                 />
               );
