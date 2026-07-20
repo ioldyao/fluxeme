@@ -1,5 +1,6 @@
 pub mod openai;
 pub mod anthropic;
+pub mod anthropic_compat;
 pub mod vllm;
 pub mod sglang;
 pub mod deepseek;

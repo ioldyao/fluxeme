@@ -150,6 +150,7 @@ impl SqliteBackend {
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN audio_input_price REAL NOT NULL DEFAULT 0.0;");
         let _ = conn.execute_batch("ALTER TABLE models ADD COLUMN audio_output_price REAL NOT NULL DEFAULT 0.0;");
         let _ = conn.execute_batch("ALTER TABLE channels ADD COLUMN name TEXT NOT NULL DEFAULT '';");
+        let _ = conn.execute_batch("ALTER TABLE channels ADD COLUMN anthropic_compat INTEGER NOT NULL DEFAULT 0;");
         let _ = conn.execute_batch("ALTER TABLE api_keys ADD COLUMN spend_limit REAL;");
         let _ = conn.execute_batch("ALTER TABLE api_keys ADD COLUMN allowed_models TEXT;");
         let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN concurrency_limit INTEGER NOT NULL DEFAULT 2000;");
@@ -733,7 +734,7 @@ impl DbBackend for SqliteBackend {
     async fn list_channels(&self) -> Result<Vec<Channel>, DbError> {
         self.exec(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, name, provider, priority, enabled FROM channels ORDER BY priority, id",
+                "SELECT id, name, provider, priority, enabled, anthropic_compat FROM channels ORDER BY priority, id",
             )?;
             let mut channels: Vec<Channel> = stmt
                 .query_map([], |row| {
@@ -743,6 +744,7 @@ impl DbBackend for SqliteBackend {
                         provider: row.get(2)?,
                         priority: row.get(3)?,
                         enabled: row.get::<_, i32>(4)? != 0,
+                        anthropic_compat: row.get::<_, i32>(5)? != 0,
                         endpoints: Vec::new(),
                     })
                 })?
@@ -787,7 +789,7 @@ impl DbBackend for SqliteBackend {
         let id = id.to_string();
         self.exec(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, name, provider, priority, enabled FROM channels WHERE id = ?1",
+                "SELECT id, name, provider, priority, enabled, anthropic_compat FROM channels WHERE id = ?1",
             )?;
             let mut rows = stmt.query_map(params![id], |row| {
                 Ok(Channel {
@@ -796,6 +798,7 @@ impl DbBackend for SqliteBackend {
                     provider: row.get(2)?,
                     priority: row.get(3)?,
                     enabled: row.get::<_, i32>(4)? != 0,
+                    anthropic_compat: row.get::<_, i32>(5)? != 0,
                     endpoints: Vec::new(),
                 })
             })?;
@@ -830,8 +833,8 @@ impl DbBackend for SqliteBackend {
         let ch = ch.clone();
         self.exec(move |conn| {
             conn.execute(
-                "INSERT INTO channels (id, name, provider, priority, enabled) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![ch.id, ch.name, ch.provider, ch.priority, ch.enabled as i32],
+                "INSERT INTO channels (id, name, provider, priority, enabled, anthropic_compat) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![ch.id, ch.name, ch.provider, ch.priority, ch.enabled as i32, ch.anthropic_compat as i32],
             )?;
             for ep in &ch.endpoints {
                 conn.execute(
@@ -848,8 +851,8 @@ impl DbBackend for SqliteBackend {
         let ch = ch.clone();
         self.exec(move |conn| {
             conn.execute(
-                "UPDATE channels SET name = ?1, provider = ?2, priority = ?3, enabled = ?4 WHERE id = ?5",
-                params![ch.name, ch.provider, ch.priority, ch.enabled as i32, ch.id],
+                "UPDATE channels SET name = ?1, provider = ?2, priority = ?3, enabled = ?4, anthropic_compat = ?5 WHERE id = ?6",
+                params![ch.name, ch.provider, ch.priority, ch.enabled as i32, ch.anthropic_compat as i32, ch.id],
             )?;
             conn.execute("DELETE FROM endpoints WHERE channel_id = ?1", params![ch.id])?;
             for ep in &ch.endpoints {

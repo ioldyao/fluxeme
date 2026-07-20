@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import { Plus, X } from 'lucide-react';
 import { useChannelHealth } from '@/api/balancer';
 import type { Channel, Endpoint } from '@/types';
@@ -38,6 +39,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
   const [provider, setProvider] = useState('');
   const [priority, setPriority] = useState('0');
   const [enabled, setEnabled] = useState(true);
+  const [anthropicCompat, setAnthropicCompat] = useState(false);
   const [endpoints, setEndpoints] = useState<Endpoint[]>([emptyEp()]);
 
   useEffect(() => {
@@ -46,9 +48,10 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       setProvider(channel.provider);
       setPriority(String(channel.priority));
       setEnabled(channel.enabled);
+      setAnthropicCompat(channel.anthropic_compat ?? false);
       setEndpoints(channel.endpoints.length ? channel.endpoints : [emptyEp()]);
     } else {
-      setName(''); setProvider(''); setPriority('0'); setEnabled(true); setEndpoints([emptyEp()]);
+      setName(''); setProvider(''); setPriority('0'); setEnabled(true); setAnthropicCompat(false); setEndpoints([emptyEp()]);
     }
   }, [channel, open]);
 
@@ -85,6 +88,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       provider,
       priority: Number(priority),
       enabled,
+      anthropic_compat: anthropicCompat,
       ...(channel ? {} : { id: randomId() }),
       endpoints: endpoints.map(({ id: _id, ...rest }) => ({
         ...rest,
@@ -143,6 +147,21 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                 <Checkbox checked={enabled} onCheckedChange={(v) => setEnabled(!!v)} />
                 {t('form.enabled')}
               </label>
+
+              {provider === 'openai' && (
+                <div className="space-y-1 pt-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">{t('channel.anthropicCompat')}</Label>
+                    <Switch
+                      checked={anthropicCompat}
+                      onCheckedChange={(v) => setAnthropicCompat(!!v)}
+                    />
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-tight">
+                    {t('channel.anthropicCompatDesc')}
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="flex-1 min-h-0 flex flex-col">

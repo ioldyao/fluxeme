@@ -271,7 +271,8 @@ impl DbBackend for PgBackend {
                 name TEXT NOT NULL DEFAULT '',
                 provider TEXT NOT NULL,
                 priority INTEGER NOT NULL DEFAULT 1,
-                enabled BOOLEAN NOT NULL DEFAULT true
+                enabled BOOLEAN NOT NULL DEFAULT true,
+                anthropic_compat BOOLEAN NOT NULL DEFAULT false
             );
 
             CREATE TABLE IF NOT EXISTS endpoints (
@@ -397,6 +398,7 @@ impl DbBackend for PgBackend {
         add_col!("ALTER TABLE users ADD COLUMN IF NOT EXISTS balance DOUBLE PRECISION NOT NULL DEFAULT 0.0");
         add_col!("ALTER TABLE users ADD COLUMN IF NOT EXISTS frozen DOUBLE PRECISION NOT NULL DEFAULT 0.0");
         add_col!("ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version BIGINT NOT NULL DEFAULT 0");
+        add_col!("ALTER TABLE channels ADD COLUMN IF NOT EXISTS anthropic_compat BOOLEAN NOT NULL DEFAULT false");
         add_col!("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'");
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS expires_at TEXT");
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS revoked BOOLEAN NOT NULL DEFAULT false");
@@ -804,7 +806,7 @@ impl DbBackend for PgBackend {
 
     async fn list_channels(&self) -> Result<Vec<Channel>, DbError> {
         let ch_rows = sqlx::query(
-            "SELECT id, name, provider, priority, enabled FROM channels ORDER BY priority, id",
+            "SELECT id, name, provider, priority, enabled, anthropic_compat FROM channels ORDER BY priority, id",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -823,6 +825,7 @@ impl DbBackend for PgBackend {
                 provider: r.get(2),
                 priority: r.get(3),
                 enabled: r.get(4),
+                anthropic_compat: r.get(5),
                 endpoints: Vec::new(),
             })
             .collect();
@@ -857,7 +860,7 @@ impl DbBackend for PgBackend {
 
     async fn get_channel(&self, id: &str) -> Result<Option<Channel>, DbError> {
         let rows = sqlx::query(
-            "SELECT id, name, provider, priority, enabled FROM channels WHERE id = $1",
+            "SELECT id, name, provider, priority, enabled, anthropic_compat FROM channels WHERE id = $1",
         )
         .bind(id)
         .fetch_all(&self.pool)
@@ -870,6 +873,7 @@ impl DbBackend for PgBackend {
                 provider: r.get(2),
                 priority: r.get(3),
                 enabled: r.get(4),
+                anthropic_compat: r.get(5),
                 endpoints: Vec::new(),
             };
             let eps = sqlx::query(
@@ -904,13 +908,14 @@ impl DbBackend for PgBackend {
 
     async fn create_channel(&self, ch: &Channel) -> Result<(), DbError> {
         sqlx::query(
-            "INSERT INTO channels (id, name, provider, priority, enabled) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO channels (id, name, provider, priority, enabled, anthropic_compat) VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(&ch.id)
         .bind(&ch.name)
         .bind(&ch.provider)
         .bind(ch.priority)
         .bind(ch.enabled)
+        .bind(ch.anthropic_compat)
         .execute(&self.pool)
         .await?;
         for ep in &ch.endpoints {
@@ -931,12 +936,13 @@ impl DbBackend for PgBackend {
 
     async fn update_channel(&self, ch: &Channel) -> Result<(), DbError> {
         sqlx::query(
-            "UPDATE channels SET name = $1, provider = $2, priority = $3, enabled = $4 WHERE id = $5",
+            "UPDATE channels SET name = $1, provider = $2, priority = $3, enabled = $4, anthropic_compat = $5 WHERE id = $6",
         )
         .bind(&ch.name)
         .bind(&ch.provider)
         .bind(ch.priority)
         .bind(ch.enabled)
+        .bind(ch.anthropic_compat)
         .bind(&ch.id)
         .execute(&self.pool)
         .await?;

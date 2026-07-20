@@ -11,6 +11,10 @@ pub struct Channel {
     pub priority: i32,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    /// When true, this OpenAI channel also accepts Anthropic-format /v1/messages
+    /// requests alongside native OpenAI /v1/chat/completions requests.
+    #[serde(default)]
+    pub anthropic_compat: bool,
     #[serde(default)]
     pub endpoints: Vec<Endpoint>,
 }
