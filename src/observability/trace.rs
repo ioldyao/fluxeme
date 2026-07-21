@@ -1,33 +1,39 @@
 //! OTLP trace export initialisation.
 //!
-//! When the `OTLP_ENDPOINT` environment variable is set this module builds a
-//! gRPC span exporter, registers it as the global OpenTelemetry tracer provider,
-//! and returns the provider handle.
-//!
-//! When the variable is absent the function is a no-op — no OTLP traffic is
-//! generated and no connection is attempted.
-//!
-//! ## Usage
-//!
-//! Call `init_otlp()` early in `main()` after the tracing subscriber is set up.
-//! Keep the returned provider alive for the lifetime of the program, and call
-//! `.shutdown()` on it before exit.
+//! `init_subscriber()` replaces the plain `tracing_subscriber::fmt().init()` in
+//! `main.rs`.  When the `OTLP_ENDPOINT` environment variable is set it composes
+//! a `tracing-opentelemetry` layer into the subscriber so that every
+//! `tracing::span!` / `tracing::info!` is automatically exported as an OTLP
+//! span to Jaeger / Tempo / any OTel Collector.
 
+use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
-/// Initialise the global OTLP tracer provider.
+/// Initialise the tracing subscriber, optionally with OTLP export.
 ///
-/// Returns `Some(provider)` when `OTLP_ENDPOINT` is set and the exporter was
-/// successfully created.  The caller must keep the provider alive across the
-/// program lifetime and call `.shutdown()` before exit to flush buffered spans.
-pub fn init_otlp(
+/// Returns `Some(provider)` when OTLP was configured; keep it alive and call
+/// `.shutdown()` before exit.
+pub fn init_subscriber(
+    default_filter: &str,
     service_name: &str,
 ) -> Option<opentelemetry_sdk::trace::SdkTracerProvider> {
-    let endpoint = std::env::var("OTLP_ENDPOINT").ok()?;
-    if endpoint.is_empty() {
-        return None;
-    }
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(default_filter));
+
+    let endpoint = match std::env::var("OTLP_ENDPOINT") {
+        Ok(v) if !v.is_empty() => v,
+        _ => {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(tracing_subscriber::fmt::layer())
+                .init();
+            return None;
+        }
+    };
 
     let exporter = match opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
@@ -38,6 +44,10 @@ pub fn init_otlp(
         Ok(e) => e,
         Err(e) => {
             tracing::warn!("Failed to build OTLP exporter: {}", e);
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(tracing_subscriber::fmt::layer())
+                .init();
             return None;
         }
     };
@@ -51,9 +61,19 @@ pub fn init_otlp(
         .with_batch_exporter(exporter)
         .build();
 
-    // Register as the global tracer provider so that any code using
-    // opentelemetry::global::tracer() picks it up.
-    opentelemetry::global::set_tracer_provider(provider.clone());
+    let tracer = provider.tracer("aigateway");
+
+    // Use the free function `layer()` (not `OpenTelemetryLayer::new()`) so
+    // the subscriber type parameter `S` stays generic and can be inferred
+    // from the composition context — `with_tracer` preserves the generic `S`.
+    let otlp_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(tracing_subscriber::fmt::layer())
+        .with(otlp_layer)
+        .try_init()
+        .ok();
 
     tracing::info!(
         endpoint = %endpoint,
