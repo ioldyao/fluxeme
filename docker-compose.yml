@@ -25,7 +25,7 @@ services:
 
   # ── Observability ────────────────────────────────────────────
   jaeger:
-    image: jaegertracing/all-in-one:latest
+    image: jaegertracing/all-in-one:2
     container_name: ai-gateway-jaeger
     restart: unless-stopped
     network_mode: host
