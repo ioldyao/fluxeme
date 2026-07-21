@@ -203,11 +203,11 @@ function useConnectors(containerRef: React.RefObject<HTMLDivElement | null>, pai
 // ── FlowNode (3. latency tag on ping) ───────────────────────────────
 function FlowNode({
   nodeRef, title, subtitle, count, loadCls, skeleton,
-  pinged, latencyMs, showBar = true, barPct,
+  pinged, showBar = true, barPct,
 }: {
   nodeRef?: React.RefObject<HTMLDivElement | null>; title: string; subtitle?: string;
   count: number; loadCls?: 'low' | 'mid' | 'high' | null; skeleton?: boolean;
-  pinged?: boolean; latencyMs?: number; showBar?: boolean; barPct?: number;
+  pinged?: boolean; showBar?: boolean; barPct?: number;
 }) {
   const color = loadCls ? LOAD_COLOR[loadCls] : null;
   const width = barPct != null ? barPct : loadCls === 'high' ? 100 : loadCls === 'mid' ? 60 : 25;
@@ -236,15 +236,6 @@ function FlowNode({
         </div>
       )}
       {showBar && skeleton && <SkeletonBar />}
-      {/* 3. Latency flash */}
-      {pinged && latencyMs != null && (
-        <div style={{
-          marginTop: 4, fontSize: 10, color: C.textSecondary, fontWeight: 500,
-          animation: 'rfl-fade-up 500ms ease-out forwards',
-        }}>
-          {latencyMs}ms
-        </div>
-      )}
     </div>
   );
 }
@@ -254,7 +245,7 @@ function ModelPanel({
   model, counts, lastEvent,
 }: {
   model: TopoModel; counts: Record<string, number>;
-  lastEvent: { model: string; channel: string; endpoint: string | null; ts: number; latencyMs?: number } | null;
+  lastEvent: { model: string; channel: string; endpoint: string | null; ts: number } | null;
 }) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -263,7 +254,6 @@ function ModelPanel({
   const endpointNodeRefs = useRef<Record<string, React.RefObject<HTMLDivElement | null>>>({});
   const [pulses, setPulses] = useState<{ id: string; pathD: string }[]>([]);
   const [pinged, setPinged] = useState<Record<string, boolean>>({});
-  const [pingLatency, setPingLatency] = useState<Record<string, number | undefined>>({});
 
   model.channels.forEach((c) => {
     if (!channelNodeRefs.current[c.id]) channelNodeRefs.current[c.id] = { current: null };
@@ -288,7 +278,7 @@ function ModelPanel({
 
   useEffect(() => {
     if (!lastEvent || lastEvent.model !== model.model) return;
-    const { channel, endpoint, ts, latencyMs } = lastEvent;
+    const { channel, endpoint, ts } = lastEvent;
     const chPath = paths.find((p) => p.key === keyFor(model.model, channel));
     const epPath = endpoint ? paths.find((p) => p.key === keyFor(model.model, channel, endpoint)) : undefined;
 
@@ -302,7 +292,6 @@ function ModelPanel({
       const pingTimers = keysToPing.map((k, i) =>
         setTimeout(() => {
           setPinged((prev) => ({ ...prev, [k]: true }));
-          setPingLatency((prev) => ({ ...prev, [k]: latencyMs }));
           setTimeout(() => setPinged((prev) => ({ ...prev, [k]: false })), 300);
         }, i * 150),
       );
@@ -339,7 +328,7 @@ function ModelPanel({
 
         <div style={{ zIndex: 1, gridColumn: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={colLabelStyle}>{t('routingFlow.colModel')}</div>
-          <FlowNode nodeRef={modelNodeRef} title={model.model} count={modelCount} pinged={pinged[keyFor(model.model)]} latencyMs={pingLatency[keyFor(model.model)]} showBar={false} />
+          <FlowNode nodeRef={modelNodeRef} title={model.model} count={modelCount} pinged={pinged[keyFor(model.model)]} showBar={false} />
         </div>
         <div />
 
@@ -350,7 +339,7 @@ function ModelPanel({
             const cls = loadClass(cnt, channelCounts);
             const sum = channelCounts.reduce((a, b) => a + b, 0) || 1;
             const k = keyFor(model.model, c.id);
-            return <FlowNode key={c.id} nodeRef={channelNodeRefs.current[c.id]} title={c.name} count={cnt} loadCls={cls} barPct={Math.round((cnt / sum) * 100)} pinged={pinged[k]} latencyMs={pingLatency[k]} />;
+            return <FlowNode key={c.id} nodeRef={channelNodeRefs.current[c.id]} title={c.name} count={cnt} loadCls={cls} barPct={Math.round((cnt / sum) * 100)} pinged={pinged[k]} />;
           })}
         </div>
         <div />
@@ -364,7 +353,7 @@ function ModelPanel({
               const cnt = counts[keyFor(model.model, c.id, e.key)] || 0;
               const cls = loadClass(cnt, epCounts);
               const k = keyFor(model.model, c.id, e.key);
-              return <FlowNode key={e.key} nodeRef={endpointNodeRefs.current[e.key]} title={e.label} subtitle={`${e.url} · ${c.name}`} count={cnt} loadCls={cls} barPct={Math.round((cnt / esum) * 100)} pinged={pinged[k]} latencyMs={pingLatency[k]} />;
+              return <FlowNode key={e.key} nodeRef={endpointNodeRefs.current[e.key]} title={e.label} subtitle={`${e.url} · ${c.name}`} count={cnt} loadCls={cls} barPct={Math.round((cnt / esum) * 100)} pinged={pinged[k]} />;
             });
           })}
         </div>
@@ -398,7 +387,7 @@ function SkeletonPanel() {
 function useRoutingStream(topology: TopoModel[]) {
   const [totalCount, setTotalCount] = useState(0);
   const [counts, setCounts] = useState<Record<string, number>>({});
-  const [lastEvent, setLastEvent] = useState<{ model: string; channel: string; endpoint: string | null; ts: number; latencyMs?: number } | null>(null);
+  const [lastEvent, setLastEvent] = useState<{ model: string; channel: string; endpoint: string | null; ts: number } | null>(null);
   const [connected, setConnected] = useState(false);
   const [reconnectIn, setReconnectIn] = useState(0);
   const reconnectTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -458,7 +447,7 @@ function useRoutingStream(topology: TopoModel[]) {
           return next;
         });
         setTotalCount((c) => c + 1);
-        setLastEvent({ model: modelName, channel: channelId, endpoint: endpointKey, ts: performance.now(), latencyMs: ev.latency_ms });
+        setLastEvent({ model: modelName, channel: channelId, endpoint: endpointKey, ts: performance.now() });
       };
 
       ws.onclose = () => {
@@ -545,10 +534,6 @@ export default function RoutingFlow() {
           0% { box-shadow: 0 0 0 0 rgba(26,138,61,0.5); }
           70% { box-shadow: 0 0 0 6px rgba(26,138,61,0); }
           100% { box-shadow: 0 0 0 0 rgba(26,138,61,0); }
-        }
-        @keyframes rfl-fade-up {
-          0% { opacity: 1; transform: translateY(0); }
-          100% { opacity: 0; transform: translateY(-6px); }
         }
         @keyframes sk-shimmer {
           0% { background-position: 200% 0; }
