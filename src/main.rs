@@ -93,7 +93,7 @@ async fn main() {
     let providers = Arc::new(ProviderRegistry::new());
     let rate_limiter = Arc::new(RateLimiter::new());
     rate_limiter.start_cleanup_task();
-    let health = Arc::new(HealthService::new(db.clone()).expect("Failed to create HealthService"));
+    let health = Arc::new(HealthService::new(db.clone(), &jwt_secret).expect("Failed to create HealthService"));
     let admin = Arc::new(AdminModule::new(&jwt_secret, db.clone()));
 
     let sso = Arc::new(
