@@ -20,6 +20,7 @@ interface TopoEndpoint { key: string; matchId: number | null; label: string; url
 interface TopoChannel { id: string; name: string; endpoints: TopoEndpoint[] }
 interface TopoModel { model: string; pattern: string; channels: TopoChannel[] }
 interface Pair { key: string; fromRef: React.RefObject<HTMLDivElement | null>; toRef: React.RefObject<HTMLDivElement | null> }
+interface HopEvent { model: string; channel: string; endpoint: string | null; ts: number }
 
 const keyFor = (...parts: (string | number)[]) => parts.join('>');
 
@@ -248,7 +249,7 @@ function ModelPanel({
   model, counts, lastEvent,
 }: {
   model: TopoModel; counts: Record<string, number>;
-  lastEvent: { model: string; channel: string; endpoint: string | null; ts: number } | null;
+  lastEvent: HopEvent | null;
 }) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -279,26 +280,45 @@ function ModelPanel({
 
   const { svgRef, paths } = useConnectors(containerRef, connectorPairs);
 
+  // ── Hop-by-hop pulse animation ──────────────────────────────────
+  // Each HopEvent fires exactly ONE pulse leg:
+  //   endpoint == null  →  Hop 1: model → channel
+  //   endpoint != null  →  Hop 2: channel → endpoint
+  // The caller (useRoutingStream) emits the two hops with 500ms stagger.
+  const prevTsRef = useRef(lastEvent?.ts);
   useEffect(() => {
     if (!lastEvent || lastEvent.model !== model.model) return;
+    // Skip duplicate events (the useEffect may be called re-entrantly).
+    if (lastEvent.ts === prevTsRef.current) return;
+    prevTsRef.current = lastEvent.ts;
     const { channel, endpoint, ts } = lastEvent;
-    const chPath = paths.find((p) => p.key === keyFor(model.model, channel));
-    const epPath = endpoint ? paths.find((p) => p.key === keyFor(model.model, channel, endpoint)) : undefined;
 
-    if (chPath) setPulses((prev) => [...prev, { id: `${ts}-ch`, pathD: chPath.d }]);
-    if (epPath) {
-      const timer = setTimeout(() => {
-        setPulses((prev) => [...prev, { id: `${ts}-ep`, pathD: epPath.d }]);
-      }, 200);
-      const keysToPing = [keyFor(model.model), keyFor(model.model, channel)];
-      if (endpoint) keysToPing.push(keyFor(model.model, channel, endpoint));
-      const pingTimers = keysToPing.map((k, i) =>
-        setTimeout(() => {
-          setPinged((prev) => ({ ...prev, [k]: true }));
-          setTimeout(() => setPinged((prev) => ({ ...prev, [k]: false })), 300);
-        }, i * 150),
-      );
-      return () => { clearTimeout(timer); pingTimers.forEach(clearTimeout); };
+    if (endpoint) {
+      // ── Hop 2: channel → endpoint ────────────────────────────
+      const epPath = paths.find((p) => p.key === keyFor(model.model, channel, endpoint));
+      if (epPath) setPulses((prev) => [...prev, { id: `${ts}-ep`, pathD: epPath.d }]);
+      // Ping channel immediately, endpoint when pulse arrives (~400ms)
+      const ck = keyFor(model.model, channel);
+      const ek = keyFor(model.model, channel, endpoint);
+      setPinged((prev) => ({ ...prev, [ck]: true }));
+      setTimeout(() => setPinged((prev) => ({ ...prev, [ck]: false })), 300);
+      setTimeout(() => {
+        setPinged((prev) => ({ ...prev, [ek]: true }));
+        setTimeout(() => setPinged((prev) => ({ ...prev, [ek]: false })), 300);
+      }, 400);
+    } else {
+      // ── Hop 1: model → channel ───────────────────────────────
+      const chPath = paths.find((p) => p.key === keyFor(model.model, channel));
+      if (chPath) setPulses((prev) => [...prev, { id: `${ts}-ch`, pathD: chPath.d }]);
+      // Ping model immediately, channel when pulse arrives (~400ms)
+      const mk = keyFor(model.model);
+      const ck = keyFor(model.model, channel);
+      setPinged((prev) => ({ ...prev, [mk]: true }));
+      setTimeout(() => setPinged((prev) => ({ ...prev, [mk]: false })), 300);
+      setTimeout(() => {
+        setPinged((prev) => ({ ...prev, [ck]: true }));
+        setTimeout(() => setPinged((prev) => ({ ...prev, [ck]: false })), 300);
+      }, 400);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastEvent]);
@@ -390,7 +410,7 @@ function SkeletonPanel() {
 function useRoutingStream(topology: TopoModel[]) {
   const [totalCount, setTotalCount] = useState(0);
   const [counts, setCounts] = useState<Record<string, number>>({});
-  const [lastEvent, setLastEvent] = useState<{ model: string; channel: string; endpoint: string | null; ts: number } | null>(null);
+  const [lastEvent, setLastEvent] = useState<HopEvent | null>(null);
   const [connected, setConnected] = useState(false);
   const [reconnectIn, setReconnectIn] = useState(0);
   const reconnectTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -450,8 +470,9 @@ function useRoutingStream(topology: TopoModel[]) {
         if (!resolved) return;
         const { modelName, channelId, endpointKey } = resolved;
 
-        // RouteDecided (latency_ms == 0): pulse the full path + increment counters.
-        // RequestCompleted (latency_ms > 0): silent — OTLP has the full trace for inspection.
+        // RouteDecided (latency_ms == 0): count immediately, then pulse
+        // hop-by-hop.  RequestCompleted (latency_ms > 0): silent; OTLP
+        // has the full trace for retrospective inspection.
         const isDecided = ev.latency_ms === undefined || ev.latency_ms === 0;
         if (isDecided) {
           setCounts((prev) => {
@@ -462,7 +483,17 @@ function useRoutingStream(topology: TopoModel[]) {
             return next;
           });
           setTotalCount((c) => c + 1);
-          setLastEvent({ model: modelName, channel: channelId, endpoint: endpointKey, ts: performance.now() });
+
+          // ── Staggered hop-by-hop pulses ────────────────────────
+          const ts0 = performance.now();
+          // Hop 1: model → channel (immediate)
+          setLastEvent({ model: modelName, channel: channelId, endpoint: null, ts: ts0 });
+          // Hop 2: channel → endpoint (after ~500ms, letting hop-1 complete)
+          if (endpointKey) {
+            setTimeout(() => {
+              setLastEvent({ model: modelName, channel: channelId, endpoint: endpointKey, ts: ts0 + 1 });
+            }, 500);
+          }
         }
       };
 
