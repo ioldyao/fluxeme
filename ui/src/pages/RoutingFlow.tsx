@@ -397,33 +397,40 @@ function useRoutingStream(topology: TopoModel[]) {
   const topoRef = useRef(topology);
   topoRef.current = topology;
 
+  // Load 24h snapshot once on mount. Store raw data; apply + spread when
+  // topology is available (avoids race: snapshot arriving before models/channels).
+  const [rawSnapshot, setRawSnapshot] = useState<Record<string, number> | null>(null);
   useEffect(() => {
     fetchRoutingFlowSnapshot().then((snap) => {
-      if (Object.keys(snap).length > 0) {
-        const patched = { ...snap };
-        for (const m of topoRef.current) {
-          for (const c of m.channels) {
-            const ck = keyFor(m.model, c.id);
-            const chCount = patched[ck] || 0;
-            const epSum = c.endpoints.reduce((s, e) => s + (patched[keyFor(m.model, c.id, e.key)] || 0), 0);
-            if (chCount > epSum && c.endpoints.length > 0) {
-              const missing = chCount - epSum;
-              const each = Math.floor(missing / c.endpoints.length);
-              let rem = missing - each * c.endpoints.length;
-              for (const e of c.endpoints) {
-                const ek = keyFor(m.model, c.id, e.key);
-                patched[ek] = (patched[ek] || 0) + each + (rem > 0 ? 1 : 0);
-                if (rem > 0) rem--;
-              }
-            }
-          }
-        }
-        setCounts(patched);
-        const total = Object.entries(patched).filter(([k]) => k.split('>').length === 1).reduce((s, [, v]) => s + v, 0);
-        setTotalCount(total);
-      }
+      if (Object.keys(snap).length > 0) setRawSnapshot(snap);
     }).catch(() => {});
   }, []);
+
+  // Merge snapshot into counts whenever topology or snapshot data changes
+  useEffect(() => {
+    if (!rawSnapshot || topology.length === 0) return;
+    const patched = { ...rawSnapshot };
+    for (const m of topology) {
+      for (const c of m.channels) {
+        const ck = keyFor(m.model, c.id);
+        const chCount = patched[ck] || 0;
+        const epSum = c.endpoints.reduce((s, e) => s + (patched[keyFor(m.model, c.id, e.key)] || 0), 0);
+        if (chCount > epSum && c.endpoints.length > 0) {
+          const missing = chCount - epSum;
+          const each = Math.floor(missing / c.endpoints.length);
+          let rem = missing - each * c.endpoints.length;
+          for (const e of c.endpoints) {
+            const ek = keyFor(m.model, c.id, e.key);
+            patched[ek] = (patched[ek] || 0) + each + (rem > 0 ? 1 : 0);
+            if (rem > 0) rem--;
+          }
+        }
+      }
+    }
+    setCounts(patched);
+    const total = Object.entries(patched).filter(([k]) => k.split('>').length === 1).reduce((s, [, v]) => s + v, 0);
+    setTotalCount(total);
+  }, [rawSnapshot, topology]);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
