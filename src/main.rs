@@ -18,7 +18,6 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use tokio::sync::RwLock as AsyncRwLock;
-use tracing_subscriber::EnvFilter;
 
 use crate::cache::GateStatus;
 use crate::server::PerUserSemaphore;
@@ -38,15 +37,9 @@ async fn main() {
     // Load .env early so OTLP_ENDPOINT is available for tracing setup.
     dotenvy::dotenv().ok();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("ai_gateway=info,tower_http=info")),
-        )
-        .init();
-
-    // OTLP trace export (opt-in via OTLP_ENDPOINT env var).
-    let _otlp_provider = crate::observability::trace::init_otlp("ai-gateway");
+    // Initialise tracing subscriber (fmt + optional OTLP layer).
+    let _otlp_provider =
+        crate::observability::trace::init_subscriber("ai_gateway=info,tower_http=info", "ai-gateway");
 
     let config_path =
         std::env::var("GATEWAY_CONFIG").unwrap_or_else(|_| "config/config.yaml".to_string());
