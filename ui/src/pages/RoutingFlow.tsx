@@ -120,49 +120,52 @@ function SkeletonBar() {
   );
 }
 
-// ── 2+4. Comet-trail pulse dot (3 dots, GPU-friendly) ──────────────
+// ── Pulse dot (native DOM drive, no React state per frame) ──────────
 function CometPulse({ pathD, onDone }: { pathD: string; onDone: () => void }) {
-  const pathRef = useRef<SVGPathElement>(null);
-  const [dot, setDot] = useState({ x: 0, y: 0 });
-  const [bright, setBright] = useState(false);
-  const [trails, setTrails] = useState<{ x: number; y: number }[]>([{ x: 0, y: 0 }, { x: 0, y: 0 }]);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const doneRef = useRef(onDone);
+  doneRef.current = onDone;
 
   useEffect(() => {
-    const pathEl = pathRef.current;
+    const svg = svgRef.current;
+    if (!svg) return;
+
+    // find the <path> element in the same <svg> to measure length
+    const pathEl = svg.querySelector('path');
     if (!pathEl) return;
     const len = pathEl.getTotalLength();
+
+    // create circle via DOM (bypasses React render for each frame)
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('r', '3.5');
+    circle.setAttribute('fill', '#4a7fc9');
+    svg.appendChild(circle);
+
     const start = performance.now();
-    const duration = 600;
+    const duration = 550;
     let raf = 0;
 
     function step(now: number) {
       const t = Math.min(1, (now - start) / duration);
-      const ease = 1 - Math.pow(1 - t, 2);
-      const pt = pathEl!.getPointAtLength(ease * len);
-      setDot({ x: pt.x, y: pt.y });
-      const t1 = Math.max(0, ease - 0.07);
-      const t2 = Math.max(0, ease - 0.14);
-      if (t1 > 0) {
-        const p1 = pathEl!.getPointAtLength(t1 * len);
-        const p2 = pathEl!.getPointAtLength(t2 * len);
-        setTrails([{ x: p1.x, y: p1.y }, { x: p2.x, y: p2.y }]);
-      }
-      if (!bright) setBright(true);
-      if (t >= 1) { setBright(false); onDone(); return; }
-      raf = requestAnimationFrame(step);
+      const pt = pathEl!.getPointAtLength(t * len);
+      circle.setAttribute('cx', String(pt.x));
+      circle.setAttribute('cy', String(pt.y));
+      circle.setAttribute('opacity', String(1 - t * 0.3));
+      if (t < 1) raf = requestAnimationFrame(step);
+      else { circle.remove(); doneRef.current(); }
     }
     raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [onDone]);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      circle.remove();
+    };
+  }, [pathD]);
 
   return (
-    <>
-      <path ref={pathRef} d={pathD} fill="none" stroke="none" />
-      {trails.map((p, i) => (
-        <circle key={`t${i}`} cx={p.x} cy={p.y} r={2.2 - i * 0.6} fill={C.low} opacity={bright ? 0.28 - i * 0.1 : 0} style={{ transition: 'opacity 200ms' }} />
-      ))}
-      <circle cx={dot.x} cy={dot.y} r={3.5} fill={C.low} opacity={bright ? 0.85 : 0} style={{ transition: 'opacity 200ms' }} />
-    </>
+    <g ref={svgRef}>
+      <path d={pathD} fill="none" stroke="none" />
+    </g>
   );
 }
 
