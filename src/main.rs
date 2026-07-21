@@ -6,6 +6,7 @@ mod config;
 mod crypto;
 mod db;
 mod domain;
+mod observability;
 mod provider;
 mod ratelimit;
 mod server;
@@ -34,6 +35,9 @@ use crate::service::{AuthService, ContentFilterService, HealthProbeService, Heal
 
 #[tokio::main]
 async fn main() {
+    // Load .env early so OTLP_ENDPOINT is available for tracing setup.
+    dotenvy::dotenv().ok();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
@@ -41,8 +45,8 @@ async fn main() {
         )
         .init();
 
-    // Load .env file if present (for env var references in config like ${GATEWAY_JWT_SECRET})
-    dotenvy::dotenv().ok();
+    // OTLP trace export (opt-in via OTLP_ENDPOINT env var).
+    let _otlp_provider = crate::observability::trace::init_otlp("ai-gateway");
 
     let config_path =
         std::env::var("GATEWAY_CONFIG").unwrap_or_else(|_| "config/config.yaml".to_string());
@@ -159,11 +163,11 @@ async fn main() {
         },
     );
 
-    // Broadcast channel for WebSocket real-time events (buffer 256 events)
-    let (event_tx, _) = tokio::sync::broadcast::channel(256);
+    // Event bus for real-time observability (WebSocket push to admin UI)
+    let event_bus = observability::event_bus::EventBus::new(256);
 
     // Initialize usage service (background writer for usage logs + billing deductions)
-    let (usage, usage_handle) = UsageService::new(db.clone(), cache.clone(), event_tx.clone());
+    let (usage, usage_handle) = UsageService::new(db.clone(), cache.clone(), event_bus.clone());
 
     // In-memory gate cache (populated by inspection, read by handler when Redis is down)
     let gate_cache: Arc<AsyncRwLock<HashMap<String, GateStatus>>> = Arc::new(AsyncRwLock::new(HashMap::new()));
@@ -247,7 +251,7 @@ async fn main() {
         concurrency,
         content_filter,
         health_probe,
-        request_events: event_tx.clone(),
+        event_bus: event_bus.clone(),
     });
 
     let app = build_router(state);

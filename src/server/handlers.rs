@@ -21,6 +21,7 @@ use crate::balancer::LoadBalancer;
 use crate::cache::GateStatus;
 use crate::config::types::EndpointConfig;
 use crate::domain::usage::UsageRecord;
+use crate::observability::event::RouteDecided;
 use crate::provider::{is_retryable_error, ErrorKind};
 use crate::server::AppState;
 use crate::service::moderation::FilterBlocked;
@@ -1287,6 +1288,17 @@ pub async fn chat_completions(
     let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
     let client_ip = extract_client_ip(&headers, addr);
 
+    // Broadcast route-decision event immediately so the admin UI shows
+    // the request as "in-flight" before the upstream call completes.
+    state.event_bus.route_decided(RouteDecided {
+        timestamp: Utc::now().to_rfc3339(),
+        request_id: request_id.clone(),
+        model: model.clone(),
+        channel_id: channel_id.clone(),
+        endpoint_id: route.endpoint.id,
+        user_id: user.user_id.clone(),
+    });
+
     tracing::info!(request_id, channel = %channel_id, endpoint = %route.endpoint.url, "Routing resolved");
 
     // ── Content filter check (request body) ──
@@ -1419,6 +1431,17 @@ pub async fn messages(
     // in the messages array (only "user"/"assistant" are allowed).
     normalize_messages_body(&mut body);
     let mut route = resolve_route(&state, &channel_id)?;
+
+    // Broadcast route-decision event immediately so the admin UI shows
+    // the request as "in-flight" before the upstream call completes.
+    state.event_bus.route_decided(RouteDecided {
+        timestamp: Utc::now().to_rfc3339(),
+        request_id: request_id.clone(),
+        model: model.clone(),
+        channel_id: channel_id.clone(),
+        endpoint_id: route.endpoint.id,
+        user_id: user.user_id.clone(),
+    });
 
     // If the resolved channel has anthropic_compat enabled (OpenAI provider
     // accepting Anthropic-format requests), wrap the adapter so that

@@ -18,9 +18,22 @@ services:
       - GATEWAY_CONFIG=/app/config/config.yaml
       - GATEWAY_JWT_SECRET=${GATEWAY_JWT_SECRET}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - OTLP_ENDPOINT=${OTLP_ENDPOINT:-}
     depends_on:
       redis:
         condition: service_healthy
+
+  # ── Observability ────────────────────────────────────────────
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: ai-gateway-jaeger
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"   # Jaeger UI  → http://localhost:16686
+      - "4317:4317"     # OTLP gRPC
 
   redis:
     image: redis:7-alpine
