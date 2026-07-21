@@ -1870,7 +1870,8 @@ async fn list_models(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:models").await?;
     let models = state.db.list_models().await.map_err(db_err)?;
-    Ok(Json(merge_same_named_models(models)))
+    // Admin page handles visual grouping on frontend; return raw entries
+    Ok(Json(models))
 }
 
 async fn create_model(
