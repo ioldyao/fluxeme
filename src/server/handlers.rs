@@ -1258,6 +1258,14 @@ pub async fn chat_completions(
     let user = state.auth.authenticate(&headers)?;
     let model = trim_model(&mut body)?;
 
+    let request_span = tracing::info_span!(
+        "chat_completions",
+        request_id = %request_id,
+        user_id = %user.user_id,
+        model = %model,
+    );
+    let _guard = request_span.enter();
+
     tracing::info!(request_id, user = %user.user_id, model = %model, body_size = %body_size, content_length = %content_len, "Incoming request");
 
     if let Some(ref allowed) = user.allowed_models {
@@ -1399,6 +1407,14 @@ pub async fn messages(
 
     let user = state.auth.authenticate(&headers)?;
     let model = trim_model(&mut body)?;
+
+    let request_span = tracing::info_span!(
+        "messages",
+        request_id = %request_id,
+        user_id = %user.user_id,
+        model = %model,
+    );
+    let _guard = request_span.enter();
 
     tracing::info!(request_id, user = %user.user_id, model = %model, body_size = %body_size, "Incoming messages request");
 
