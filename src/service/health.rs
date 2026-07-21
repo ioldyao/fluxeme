@@ -43,15 +43,16 @@ struct UpstreamModelsResponse {
 pub struct HealthService {
     db: std::sync::Arc<Database>,
     client: reqwest::Client,
+    enc_key: String,
 }
 
 impl HealthService {
-    pub fn new(db: std::sync::Arc<Database>) -> Result<Self, String> {
+    pub fn new(db: std::sync::Arc<Database>, enc_key: &str) -> Result<Self, String> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-        Ok(Self { db, client })
+        Ok(Self { db, client, enc_key: enc_key.to_string() })
     }
 
     /// Check a single channel by ID. Returns per-endpoint health results.
@@ -64,7 +65,8 @@ impl HealthService {
         for ep in &ch.endpoints {
             let base = ep.url.trim_end_matches('/').trim_end_matches("/v1");
             let url = format!("{}/v1/models", base);
-            match self.update_models_from_endpoint(&url, &ep.api_key).await {
+            let api_key = crate::crypto::decrypt_load(&ep.api_key, &self.enc_key);
+            match self.update_models_from_endpoint(&url, &api_key).await {
                 Ok(count) => ep_results.push(EndpointHealth {
                     url: ep.url.clone(),
                     reachable: true,
@@ -102,7 +104,8 @@ impl HealthService {
             for ep in &ch.endpoints {
                 let base = ep.url.trim_end_matches('/').trim_end_matches("/v1");
                 let url = format!("{}/v1/models", base);
-                match self.update_models_from_endpoint(&url, &ep.api_key).await {
+                let api_key = crate::crypto::decrypt_load(&ep.api_key, &self.enc_key);
+                match self.update_models_from_endpoint(&url, &api_key).await {
                     Ok(updated) => total_updated += updated,
                     Err(e) => {
                         tracing::warn!("Health check failed for {}: {}", url, e);
@@ -131,7 +134,8 @@ impl HealthService {
         for ep in &ch.endpoints {
             let base = ep.url.trim_end_matches('/').trim_end_matches("/v1");
             let url = format!("{}/v1/models", base);
-            match self.fetch_upstream_models(&url, &ep.api_key).await {
+            let api_key = crate::crypto::decrypt_load(&ep.api_key, &self.enc_key);
+            match self.fetch_upstream_models(&url, &api_key).await {
                 Ok(models) => {
                     for m in models {
                         let len = m.max_model_len;
