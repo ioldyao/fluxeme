@@ -12,7 +12,10 @@ import {
   Wallet,
   Receipt,
   Shield,
-  Waypoints,
+  Network,
+  BarChart3,
+  Star,
+  Cpu,
 } from 'lucide-react';
 
 export type RouteGuard = 'public' | 'auth' | 'admin';
@@ -37,7 +40,7 @@ export const publicRoutes: RouteConfig[] = [
 export const authRoutes: RouteConfig[] = [
   { index: true, path: '/', Component: lazy(() => import('@/pages/Dashboard')), guard: 'auth', label: 'nav.dashboard', icon: LayoutDashboard, nav: true, end: true },
   { path: '/models/marketplace', Component: lazy(() => import('@/pages/ModelsMarketplace')), guard: 'auth', label: 'nav.modelMarketplace', icon: Braces, nav: true },
-  { path: '/models/mine', Component: lazy(() => import('@/pages/MyModels')), guard: 'auth', label: 'nav.myModels', icon: Braces, nav: true },
+  { path: '/models/mine', Component: lazy(() => import('@/pages/MyModels')), guard: 'auth', label: 'nav.myModels', icon: Star, nav: true },
   { path: '/api-keys', Component: lazy(() => import('@/pages/ApiKeys')), guard: 'auth', label: 'nav.apiKeys', icon: Key, nav: true },
   { path: '/usage', Component: lazy(() => import('@/pages/Usage')), guard: 'auth', label: 'nav.usage', icon: ScrollText, nav: true },
   { path: '/wallet', Component: lazy(() => import('@/pages/Wallet')), guard: 'auth', label: 'nav.wallet', icon: Wallet, nav: true },
@@ -47,11 +50,11 @@ export const authRoutes: RouteConfig[] = [
 ];
 
 export const adminRoutes: RouteConfig[] = [
-  { path: '/routing-flow', Component: lazy(() => import('@/pages/RoutingFlow')), guard: 'admin', label: 'nav.routingFlow', icon: Waypoints, nav: true },
-  { path: '/routing-history', Component: lazy(() => import('@/pages/RoutingHistory')), guard: 'admin', label: 'nav.routingHistory', icon: Waypoints, nav: true },
+  { path: '/routing-flow', Component: lazy(() => import('@/pages/RoutingFlow')), guard: 'admin', label: 'nav.routingFlow', icon: Network, nav: true },
+  { path: '/routing-history', Component: lazy(() => import('@/pages/RoutingHistory')), guard: 'admin', label: 'nav.routingHistory', icon: BarChart3, nav: true },
   { path: '/users', Component: lazy(() => import('@/pages/Users')), guard: 'admin', label: 'nav.users', icon: Users, nav: true },
   { path: '/channels', Component: lazy(() => import('@/pages/Channels')), guard: 'admin', label: 'nav.channels', icon: Radio, nav: true },
-  { path: '/models', Component: lazy(() => import('@/pages/Models')), guard: 'admin', label: 'nav.models', icon: Braces, nav: true, end: true },
+  { path: '/models', Component: lazy(() => import('@/pages/Models')), guard: 'admin', label: 'nav.models', icon: Cpu, nav: true, end: true },
   { path: '/moderation', Component: lazy(() => import('@/pages/Moderation')), guard: 'admin', label: 'nav.moderation', icon: Shield, nav: true },
   { path: '/rules', Component: lazy(() => import('@/pages/Rules')), guard: 'admin', label: 'nav.rules', icon: Route, nav: true },
   { path: '/pricing', Component: lazy(() => import('@/pages/ModelPricing')), guard: 'admin', label: 'nav.modelPricing', icon: DollarSign, nav: true },
