@@ -450,10 +450,10 @@ function useRoutingStream(topology: TopoModel[]) {
         if (!resolved) return;
         const { modelName, channelId, endpointKey } = resolved;
 
-        // RouteDecided events have no latency_ms — they signal "in-flight" only.
-        // RequestCompleted events carry latency_ms > 0 and increment counters.
+        // RouteDecided (latency_ms == 0): pulse the full path + increment counters.
+        // RequestCompleted (latency_ms > 0): silent — OTLP has the full trace for inspection.
         const isDecided = ev.latency_ms === undefined || ev.latency_ms === 0;
-        if (!isDecided) {
+        if (isDecided) {
           setCounts((prev) => {
             const next = { ...prev };
             next[keyFor(modelName)] = (next[keyFor(modelName)] || 0) + 1;
@@ -462,8 +462,8 @@ function useRoutingStream(topology: TopoModel[]) {
             return next;
           });
           setTotalCount((c) => c + 1);
+          setLastEvent({ model: modelName, channel: channelId, endpoint: endpointKey, ts: performance.now() });
         }
-        setLastEvent({ model: modelName, channel: channelId, endpoint: endpointKey, ts: performance.now() });
       };
 
       ws.onclose = () => {
