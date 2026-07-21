@@ -142,7 +142,7 @@ function CometPulse({ pathD, onDone }: { pathD: string; onDone: () => void }) {
     svg.appendChild(circle);
 
     const start = performance.now();
-    const duration = 550;
+    const duration = 650;
     let raf = 0;
 
     function step(now: number) {
