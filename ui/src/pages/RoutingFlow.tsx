@@ -200,7 +200,7 @@ function useConnectors(containerRef: React.RefObject<HTMLDivElement | null>, pai
   return { svgRef, paths };
 }
 
-// ── FlowNode (3. latency tag on ping) ───────────────────────────────
+// ── FlowNode ────────────────────────────────────────────────────────
 function FlowNode({
   nodeRef, title, subtitle, count, loadCls, skeleton,
   pinged, showBar = true, barPct,
@@ -433,7 +433,7 @@ function useRoutingStream(topology: TopoModel[]) {
 
       ws.onopen = () => { setConnected(true); setReconnectIn(0); if (reconnectTimer.current) { clearInterval(reconnectTimer.current); reconnectTimer.current = null; } };
       ws.onmessage = (e) => {
-        let ev: { model?: string; channel_id?: string; endpoint_id?: number | null; latency_ms?: number };
+        let ev: { model?: string; channel_id?: string; endpoint_id?: number | null };
         try { ev = JSON.parse(e.data); } catch { return; }
         if (!ev || typeof ev.model !== 'string' || typeof ev.channel_id !== 'string') return;
         const resolved = resolveEvent(topoRef.current, { model: ev.model, channel_id: ev.channel_id, endpoint_id: ev.endpoint_id });
