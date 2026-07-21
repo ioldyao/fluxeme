@@ -81,7 +81,7 @@ impl HealthProbeService {
             };
 
             let test_body = serde_json::json!({
-                "model": model.name,
+                "model": model.id,
                 "messages": [{"role": "user", "content": "hi"}],
                 "temperature": 0.01,
                 "max_tokens": 512,
@@ -92,7 +92,7 @@ impl HealthProbeService {
             let start = Instant::now();
             let result = if provider_name == "anthropic" {
                 let body = serde_json::json!({
-                    "model": model.name,
+                    "model": model.id,
                     "messages": [{"role": "user", "content": "hi"}],
                     "max_tokens": 512,
                 });
