@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::balancer::LoadBalancer;
 use crate::config::types::EndpointConfig;
@@ -20,6 +21,8 @@ pub struct RoutingService {
     cache: RouteCache,
     /// JWT secret used for decrypting stored API keys.
     enc_key: String,
+    /// Atomic counter for round-robin channel selection across same-named models.
+    zone_counter: AtomicU64,
 }
 
 impl RoutingService {
@@ -31,6 +34,7 @@ impl RoutingService {
             rules: RwLock::new(Vec::new()),
             cache: RwLock::new(HashMap::new()),
             enc_key: enc_key.to_string(),
+            zone_counter: AtomicU64::new(0),
         };
         svc.reload().await;
         svc
@@ -145,10 +149,13 @@ impl RoutingService {
 
     /// Route a model to a channel ID for the given user.
     /// Return models in a format suitable for the /v1/models endpoint.
+    /// Same-named models are merged into one entry (they share the "id" field).
     pub fn list_display_models(&self) -> Vec<serde_json::Value> {
         let models = self.models.read().unwrap_or_else(|e| e.into_inner());
+        let mut seen: HashSet<String> = HashSet::new();
         models
             .iter()
+            .filter(|m| seen.insert(m.name.clone()))
             .map(|m| {
                 serde_json::json!({
                     "id": m.name,
@@ -174,26 +181,41 @@ impl RoutingService {
             .into_iter()
             .collect();
 
-        // 1. Try model-based routing
+        // 1. Try model-based routing.
+        // Collect ALL channels from ALL same-named (or pattern-matching)
+        // model entries, then round-robin across them.
         {
             let models = self.models.read().unwrap_or_else(|e| e.into_inner());
+            let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
+
+            // Gather candiates: (priority, channel_id, model_id)
+            let mut candidates: Vec<(i32, String, String)> = Vec::new();
             for model_cfg in models.iter() {
                 if !subscribed.contains(&model_cfg.id) {
-                    continue; // skip models the user isn't subscribed to
+                    continue;
                 }
-                if match_pattern(model, &model_cfg.model_pattern) || (!model_cfg.name.is_empty() && model == model_cfg.name) {
-                    let mut bindings: Vec<&crate::domain::model::ModelChannel> =
-                        model_cfg.channels.iter().collect();
-                    bindings.sort_by_key(|b| b.priority);
-
-                    for binding in &bindings {
-                        if let Some(ch) = self.channels.read().unwrap_or_else(|e| e.into_inner()).get(&binding.channel_id) {
+                if match_pattern(model, &model_cfg.model_pattern)
+                    || (!model_cfg.name.is_empty() && model == model_cfg.name)
+                {
+                    for binding in &model_cfg.channels {
+                        if let Some(ch) = chs.get(&binding.channel_id) {
                             if ch.enabled {
-                                return Ok((ch.id.clone(), Some(model_cfg.id.clone())));
+                                candidates.push((binding.priority, binding.channel_id.clone(), model_cfg.id.clone()));
                             }
                         }
                     }
                 }
+            }
+
+            if !candidates.is_empty() {
+                // Stable sort by priority (lower is higher priority)
+                candidates.sort_by_key(|(p, _, _)| *p);
+                // Group by priority level, round-robin within each level
+                let best_priority = candidates[0].0;
+                let same: Vec<&(i32, String, String)> = candidates.iter().filter(|(p, _, _)| *p == best_priority).collect();
+                let idx = (self.zone_counter.fetch_add(1, Ordering::Relaxed) as usize) % same.len();
+                let (_, ch_id, m_id) = &same[idx];
+                return Ok((ch_id.clone(), Some(m_id.clone())));
             }
         }
 
