@@ -147,7 +147,7 @@ function CometPulse({ pathD, onDone }: { pathD: string; onDone: () => void }) {
         const p2 = pathEl!.getPointAtLength(t2 * len);
         setTrails([{ x: p1.x, y: p1.y }, { x: p2.x, y: p2.y }]);
       }
-      if (t === 0 && !bright) setBright(true);
+      if (!bright) setBright(true);
       if (t >= 1) { setBright(false); onDone(); return; }
       raf = requestAnimationFrame(step);
     }
