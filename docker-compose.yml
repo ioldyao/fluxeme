@@ -29,10 +29,6 @@ services:
     container_name: ai-gateway-jaeger
     restart: unless-stopped
     network_mode: host
-    command:
-      - --span-storage.type=memory
-      - --grpc.host-port=0.0.0.0:4317
-      - --http.host-port=0.0.0.0:16686
 
   redis:
     image: redis:7-alpine
