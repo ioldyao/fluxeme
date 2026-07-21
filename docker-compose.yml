@@ -33,9 +33,6 @@ services:
       - --span-storage.type=memory
       - --grpc.host-port=0.0.0.0:4317
       - --http.host-port=0.0.0.0:16686
-    ports:
-      - "16686:16686"   # Jaeger UI  → http://localhost:16686
-      - "4317:4317"     # OTLP gRPC
 
   redis:
     image: redis:7-alpine
