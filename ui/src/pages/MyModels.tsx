@@ -90,14 +90,16 @@ export default function MyModels() {
                 <div className="flex items-center justify-between">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      {(() => {
-                        const r = results[model.id];
-                        if (r) return <span className={`inline-block size-2 rounded-full ${r.success ? 'bg-green-500' : 'bg-red-500'}`} />;
-                        const chId = model.channels?.[0]?.channel_id;
-                        const pr = chId ? probeResults?.find((p) => p.channel_id === chId) : undefined;
-                        if (pr) return <span className={`inline-block size-2 rounded-full ${pr.success ? 'bg-green-500' : 'bg-red-500'}`} />;
-                        return null;
-                      })()}
+                      {/* Health dots for each bound channel */}
+                      {model.channels?.length > 0 && (
+                        <div className="flex items-center gap-1">
+                          {model.channels.map((b) => {
+                            const pr = probeResults?.find((p) => p.channel_id === b.channel_id);
+                            const color = pr ? (pr.success ? 'bg-green-500' : 'bg-red-500') : 'bg-muted-foreground/40';
+                            return <span key={b.channel_id} className={`inline-block size-2 rounded-full ${color}`} title={pr ? `${pr.latency_ms}ms` : 'unknown'} />;
+                          })}
+                        </div>
+                      )}
                       <h3
                         className="font-medium cursor-pointer hover:text-brand transition-colors"
                         onClick={() => {

@@ -2190,11 +2190,18 @@ async fn subscribe_model(
     Path(model_id): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    state
-        .db
-        .subscribe_user(&session.user_id, &model_id)
-        .await.map_err(db_err)?;
-    Ok(Json(serde_json::json!({ "subscribed": model_id })))
+    // Subscribe to ALL same-named model entries so every channel
+    // binding is available for routing.
+    let models = state.db.list_models().await.map_err(db_err)?;
+    let target_name = models.iter().find(|m| m.id == model_id).map(|m| m.name.clone());
+    let mut subbed = Vec::new();
+    for m in &models {
+        if m.id == model_id || (target_name.as_ref() == Some(&m.name)) {
+            state.db.subscribe_user(&session.user_id, &m.id).await.map_err(db_err)?;
+            subbed.push(m.id.clone());
+        }
+    }
+    Ok(Json(serde_json::json!({ "subscribed": subbed })))
 }
 
 async fn unsubscribe_model(
@@ -2203,11 +2210,17 @@ async fn unsubscribe_model(
     Path(model_id): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    state
-        .db
-        .unsubscribe_user(&session.user_id, &model_id)
-        .await.map_err(db_err)?;
-    Ok(Json(serde_json::json!({ "unsubscribed": model_id })))
+    // Unsubscribe from ALL same-named model entries.
+    let models = state.db.list_models().await.map_err(db_err)?;
+    let target_name = models.iter().find(|m| m.id == model_id).map(|m| m.name.clone());
+    let mut unsubbed = Vec::new();
+    for m in &models {
+        if m.id == model_id || (target_name.as_ref() == Some(&m.name)) {
+            let _ = state.db.unsubscribe_user(&session.user_id, &m.id).await;
+            unsubbed.push(m.id.clone());
+        }
+    }
+    Ok(Json(serde_json::json!({ "unsubscribed": unsubbed })))
 }
 
 #[derive(Deserialize)]

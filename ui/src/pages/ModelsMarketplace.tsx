@@ -64,6 +64,9 @@ export default function ModelsMarketplace() {
   const [query, setQuery] = useState('');
 
   const subscribedIds = useMemo(() => new Set(subscriptions?.map((m) => m.id) ?? []), [subscriptions]);
+  // Same-named models share channels via merge_same_named_models.
+  // A card is “subscribed” if any model entry with the same name is subscribed.
+  const subscribedNames = useMemo(() => new Set(subscriptions?.map((m) => m.name) ?? []), [subscriptions]);
 
   const authors = useMemo(() => {
     if (!models) return [];
@@ -182,7 +185,7 @@ export default function ModelsMarketplace() {
           ) : enriched.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {enriched.map((model) => {
-                const isSubscribed = subscribedIds.has(model.id);
+                const isSubscribed = subscribedIds.has(model.id) || subscribedNames.has(model.name);
                 return (
                   <ModelCard
                     key={model.id}
