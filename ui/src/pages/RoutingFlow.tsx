@@ -443,20 +443,26 @@ function useRoutingStream(topology: TopoModel[]) {
 
       ws.onopen = () => { setConnected(true); setReconnectIn(0); if (reconnectTimer.current) { clearInterval(reconnectTimer.current); reconnectTimer.current = null; } };
       ws.onmessage = (e) => {
-        let ev: { model?: string; channel_id?: string; endpoint_id?: number | null };
+        let ev: { model?: string; channel_id?: string; endpoint_id?: number | null; latency_ms?: number };
         try { ev = JSON.parse(e.data); } catch { return; }
         if (!ev || typeof ev.model !== 'string' || typeof ev.channel_id !== 'string') return;
         const resolved = resolveEvent(topoRef.current, { model: ev.model, channel_id: ev.channel_id, endpoint_id: ev.endpoint_id });
         if (!resolved) return;
         const { modelName, channelId, endpointKey } = resolved;
-        setCounts((prev) => {
-          const next = { ...prev };
-          next[keyFor(modelName)] = (next[keyFor(modelName)] || 0) + 1;
-          next[keyFor(modelName, channelId)] = (next[keyFor(modelName, channelId)] || 0) + 1;
-          if (endpointKey) next[keyFor(modelName, channelId, endpointKey)] = (next[keyFor(modelName, channelId, endpointKey)] || 0) + 1;
-          return next;
-        });
-        setTotalCount((c) => c + 1);
+
+        // RouteDecided events have no latency_ms — they signal "in-flight" only.
+        // RequestCompleted events carry latency_ms > 0 and increment counters.
+        const isDecided = ev.latency_ms === undefined || ev.latency_ms === 0;
+        if (!isDecided) {
+          setCounts((prev) => {
+            const next = { ...prev };
+            next[keyFor(modelName)] = (next[keyFor(modelName)] || 0) + 1;
+            next[keyFor(modelName, channelId)] = (next[keyFor(modelName, channelId)] || 0) + 1;
+            if (endpointKey) next[keyFor(modelName, channelId, endpointKey)] = (next[keyFor(modelName, channelId, endpointKey)] || 0) + 1;
+            return next;
+          });
+          setTotalCount((c) => c + 1);
+        }
         setLastEvent({ model: modelName, channel: channelId, endpoint: endpointKey, ts: performance.now() });
       };
 

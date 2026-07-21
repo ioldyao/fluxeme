@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
 
@@ -9,23 +8,23 @@ use crate::cache::{compute_gate_status, RedisCache};
 use crate::db::Database;
 use crate::domain::usage::UsageFilter;
 use crate::domain::usage::UsageRecord;
-use crate::server::ws::RequestEvent;
+use crate::observability::event::RequestCompleted;
+use crate::observability::event_bus::EventBus;
 
 #[derive(Clone)]
 pub struct UsageService {
     sender: Sender<UsageRecord>,
     db: Arc<Database>,
     cache: Arc<RedisCache>,
-    event_tx: broadcast::Sender<RequestEvent>,
+    event_bus: EventBus,
 }
 
 impl UsageService {
-    pub fn new(db: Arc<Database>, cache: Arc<RedisCache>, event_tx: broadcast::Sender<RequestEvent>) -> (Self, JoinHandle<()>) {
+    pub fn new(db: Arc<Database>, cache: Arc<RedisCache>, event_bus: EventBus) -> (Self, JoinHandle<()>) {
         let (tx, rx) = mpsc::channel::<UsageRecord>(4096);
-        let et = event_tx.clone();
         let handle = tokio::spawn(background_writer(db.clone(), cache.clone(), rx));
 
-        (Self { sender: tx, db, cache, event_tx: et }, handle)
+        (Self { sender: tx, db, cache, event_bus }, handle)
     }
 
     pub fn record(&self, record: UsageRecord) {
@@ -34,18 +33,21 @@ impl UsageService {
 
     /// Record usage and broadcast a real-time event with endpoint_id.
     pub fn record_with_endpoint(&self, record: UsageRecord, endpoint_id: Option<i64>) {
-        let event = RequestEvent {
+        let event = RequestCompleted {
             timestamp: record.timestamp.clone(),
+            request_id: record.request_id.clone(),
             model: record.model.clone(),
             channel_id: record.channel_id.clone(),
             endpoint_id,
             latency_ms: record.latency_ms,
             success: record.success,
+            prompt_tokens: Some(record.prompt_tokens),
+            completion_tokens: Some(record.completion_tokens),
         };
         if let Err(e) = self.sender.try_send(record) {
             tracing::warn!("Usage channel full, dropping record: {:?}", e.into_inner());
         }
-        let _ = self.event_tx.send(event);
+        self.event_bus.request_completed(event);
     }
 
     pub async fn query(&self, limit: usize, offset: usize, filter: &UsageFilter) -> Result<Vec<UsageRecord>, String> {
