@@ -1842,6 +1842,27 @@ async fn delete_channel(
 
 // ── Model CRUD ────────────────────────────────────────────────────
 
+/// Merge model entries that share the same name into one, combining their
+/// channel bindings.  Same-named models are logically treated as a single
+/// model with all channels from all entries.
+fn merge_same_named_models(models: Vec<Model>) -> Vec<Model> {
+    let mut groups: std::collections::HashMap<String, Model> = std::collections::HashMap::new();
+    for m in models {
+        groups.entry(m.name.clone())
+            .and_modify(|existing| {
+                for mc in &m.channels {
+                    if !existing.channels.iter().any(|c| c.channel_id == mc.channel_id) {
+                        existing.channels.push(mc.clone());
+                    }
+                }
+            })
+            .or_insert(m);
+    }
+    let mut out: Vec<Model> = groups.into_values().collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
 async fn list_models(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1849,7 +1870,7 @@ async fn list_models(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:models").await?;
     let models = state.db.list_models().await.map_err(db_err)?;
-    Ok(Json(models))
+    Ok(Json(merge_same_named_models(models)))
 }
 
 async fn create_model(
@@ -1926,7 +1947,7 @@ async fn list_public_models(
 ) -> Result<Json<Vec<Model>>, AdminError> {
     require_session(&state.admin, &headers).await?;
     let models = state.db.list_published_models().await.map_err(db_err)?;
-    Ok(Json(models))
+    Ok(Json(merge_same_named_models(models)))
 }
 
 async fn toggle_publish_model(
@@ -2159,7 +2180,7 @@ async fn list_my_subscriptions(
         .db
         .list_subscriptions(&session.user_id)
         .await.map_err(db_err)?;
-    Ok(Json(models))
+    Ok(Json(merge_same_named_models(models)))
 }
 
 async fn subscribe_model(
