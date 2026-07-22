@@ -1581,6 +1581,17 @@ async fn relay_to_upstream(
     }
     let mut route = resolve_route(state, &channel_id)?;
 
+    // Broadcast route-decision event so the admin UI shows
+    // the request as "in-flight" before the upstream call completes.
+    state.event_bus.route_decided(RouteDecided {
+        timestamp: Utc::now().to_rfc3339(),
+        request_id: request_id.clone(),
+        model: model.clone(),
+        channel_id: channel_id.clone(),
+        endpoint_id: route.endpoint.id,
+        user_id: user.user_id.clone(),
+    });
+
     // ── Content filter check (request body) ──
     let content_filter_enabled = state.db.get_setting("content_moderation_enabled").await
         .ok().flatten()
