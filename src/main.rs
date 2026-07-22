@@ -251,9 +251,24 @@ async fn main() {
 
     tracing::info!("AI Gateway starting on {}", addr);
 
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .expect("Failed to bind address");
+    use std::net::{IpAddr, SocketAddr};
+    use tokio::net::TcpSocket;
+
+    let addr: SocketAddr = addr.parse().expect("Invalid bind address");
+    let socket = match addr.ip() {
+        IpAddr::V4(_) => TcpSocket::new_v4(),
+        IpAddr::V6(_) => TcpSocket::new_v6(),
+    }
+    .expect("Failed to create TcpSocket");
+    socket.set_reuseaddr(true).expect("Failed to set SO_REUSEADDR");
+    socket.bind(addr).expect("Failed to bind address");
+    let listener = socket.listen(32768).expect("Failed to listen");
+
+    // Global concurrency limit: beyond this, return 503 (not RST).
+    // LLM requests hold connections for 30-60s, so 4096 × 60s ≈ well over
+    // 100k concurrent could be processed before hitting OS limits.
+    use tower::limit::ConcurrencyLimitLayer;
+    let app = app.layer(ConcurrencyLimitLayer::new(4096));
 
     axum::serve(
         listener,
