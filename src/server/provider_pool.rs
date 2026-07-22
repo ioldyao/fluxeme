@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -25,10 +26,14 @@ impl ProviderPool {
         &self.name
     }
 
-    /// Try to acquire a slot immediately.  If full, return `Err` so the
-    /// caller responds with 503 and the client can retry.
-    pub fn try_acquire(self: Arc<Self>) -> Result<ProviderPermit, ()> {
-        let permit = self.semaphore.clone().try_acquire_owned().map_err(|_| ())?;
+    /// Acquire a slot, waiting up to `max_wait` if the pool is full.
+    /// LLM requests take 30–60s — queuing a few seconds for a slot to
+    /// free up beats getting a 503 and retrying from scratch.
+    pub async fn acquire(self: Arc<Self>, max_wait: Duration) -> Result<ProviderPermit, ()> {
+        let permit = tokio::time::timeout(max_wait, self.semaphore.clone().acquire_owned())
+            .await
+            .map_err(|_| ())?  // timeout
+            .map_err(|_| ())?; // semaphore closed (should not happen)
         Ok(ProviderPermit {
             _permit: permit,
             _pool: self,
