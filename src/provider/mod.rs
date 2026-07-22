@@ -353,8 +353,9 @@ fn shared_client() -> Arc<reqwest::Client> {
                     .connect_timeout(Duration::from_secs(10))
                     .timeout(Duration::from_secs(600))
                     .tcp_keepalive(Duration::from_secs(15))
-                    .pool_max_idle_per_host(200)
+                    .pool_max_idle_per_host(100)
                     .pool_idle_timeout(Duration::from_secs(90))
+                    .http2_adaptive_window(true)
                     .build()
                     .expect("Failed to build reqwest client"),
             )
