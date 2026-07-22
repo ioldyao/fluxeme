@@ -416,6 +416,9 @@ function useRoutingStream(topology: TopoModel[]) {
   const reconnectTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const topoRef = useRef(topology);
   topoRef.current = topology;
+  // Coalesce same-path pulses: max 1 per unique route per COOLDOWN_MS.
+  const pulseCooldown = useRef<Record<string, number>>({});
+  const COOLDOWN_MS = 300;
 
   // Load 24h snapshot once on mount. Store raw data; apply + spread when
   // topology is available (avoids race: snapshot arriving before models/channels).
@@ -484,15 +487,28 @@ function useRoutingStream(topology: TopoModel[]) {
           });
           setTotalCount((c) => c + 1);
 
-          // ── Staggered hop-by-hop pulses ────────────────────────
-          const ts0 = performance.now();
-          // Hop 1: model → channel (immediate)
-          setLastEvent({ model: modelName, channel: channelId, endpoint: null, ts: ts0 });
-          // Hop 2: channel → endpoint (after ~500ms, letting hop-1 complete)
-          if (endpointKey) {
-            setTimeout(() => {
-              setLastEvent({ model: modelName, channel: channelId, endpoint: endpointKey, ts: ts0 + 1 });
-            }, 500);
+          // ── Coalesced hop-by-hop pulses ────────────────────────
+          // Same route within COOLDOWN_MS → share one pulse (1000 reqs → ~2-3 pulses).
+          const now = performance.now();
+          const hop1Key = `${modelName}>${channelId}>hop1`;
+          const hop2Key = endpointKey ? `${modelName}>${channelId}>${endpointKey}>hop2` : '';
+          const lastHop1 = pulseCooldown.current[hop1Key] || 0;
+
+          if (now - lastHop1 >= COOLDOWN_MS) {
+            pulseCooldown.current[hop1Key] = now;
+            setLastEvent({ model: modelName, channel: channelId, endpoint: null, ts: now });
+          }
+          if (hop2Key) {
+            const lastHop2 = pulseCooldown.current[hop2Key] || 0;
+            if (now - lastHop2 >= COOLDOWN_MS) {
+              pulseCooldown.current[hop2Key] = now;
+              // Stagger hop 2 so it flies after hop 1 finishes
+              const stagger = now - lastHop1 >= COOLDOWN_MS ? 500 : Math.max(200, 500 - (now - lastHop1));
+              const hts = now + 1;
+              setTimeout(() => {
+                setLastEvent({ model: modelName, channel: channelId, endpoint: endpointKey, ts: hts });
+              }, stagger);
+            }
           }
         }
       };
