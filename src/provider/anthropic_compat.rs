@@ -40,6 +40,15 @@ impl AnthropicCompatAdapter {
 
 #[async_trait]
 impl ProviderAdapter for AnthropicCompatAdapter {
+    async fn relay(
+        &self,
+        endpoint: &EndpointConfig,
+        path: &str,
+        body: Value,
+    ) -> Result<Value, ProviderError> {
+        self.inner.relay(endpoint, path, body).await
+    }
+
     async fn chat_complete(
         &self,
         endpoint: &EndpointConfig,
