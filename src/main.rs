@@ -157,7 +157,7 @@ async fn main() {
     );
 
     // Event bus for real-time observability (WebSocket push to admin UI)
-    let event_bus = observability::event_bus::EventBus::new(256);
+    let event_bus = observability::event_bus::EventBus::new(8192);
 
     // Initialize usage service (background writer for usage logs + billing deductions)
     let (usage, usage_handle) = UsageService::new(db.clone(), cache.clone(), event_bus.clone());
