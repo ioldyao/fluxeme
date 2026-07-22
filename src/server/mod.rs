@@ -1,4 +1,5 @@
 pub mod handlers;
+pub mod provider_pool;
 pub mod ws;
 
 use std::collections::HashMap;
@@ -6,8 +7,6 @@ use std::sync::{Arc, RwLock};
 
 use axum::Router;
 use axum::http::HeaderValue;
-use tokio::sync::OwnedSemaphorePermit;
-use tokio::sync::Semaphore;
 use tokio::sync::RwLock as AsyncRwLock;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
@@ -22,56 +21,6 @@ use crate::provider::ProviderRegistry;
 use crate::ratelimit::RateLimiter;
 use crate::service::{AuthService, ContentFilterService, HealthProbeService, HealthService, RoutingService, UsageService};
 use crate::sso::SsoModule;
-
-/// Per-user concurrency limiter for bounding TOCTOU exposure between
-/// the Redis gate-status check and the actual wallet deduction.
-///
-/// Uses a semaphore per user so in-flight requests release their slot
-/// automatically when the permit is dropped (no manual release needed).
-pub struct PerUserSemaphore {
-    inner: AsyncRwLock<HashMap<String, Arc<Semaphore>>>,
-}
-
-impl PerUserSemaphore {
-    pub fn new() -> Self {
-        Self {
-            inner: AsyncRwLock::new(HashMap::new()),
-        }
-    }
-
-    /// Try to acquire a permit for the given user.
-    /// Returns `Err` if the user already has `max_permits` in-flight requests.
-    pub async fn try_acquire(&self, user_id: &str, max_permits: u32) -> Result<OwnedSemaphorePermit, ()> {
-        if max_permits == 0 {
-            return Err(());
-        }
-        let semaphore = {
-            let read = self.inner.read().await;
-            read.get(user_id).cloned()
-        };
-
-        let semaphore = match semaphore {
-            Some(s) => s,
-            None => {
-                let mut write = self.inner.write().await;
-                // Double-check after acquiring write lock
-                write.get(user_id).cloned().unwrap_or_else(|| {
-                    let s = Arc::new(Semaphore::new(max_permits as usize));
-                    write.insert(user_id.to_string(), s.clone());
-                    s
-                })
-            }
-        };
-
-        semaphore.try_acquire_owned().map_err(|_| ())
-    }
-
-    /// Remove semaphores with all permits available (no in-flight requests).
-    pub async fn cleanup(&self) {
-        let mut write = self.inner.write().await;
-        write.retain(|_, s| s.available_permits() > 0);
-    }
-}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -94,15 +43,15 @@ pub struct AppState {
     /// In-memory gate-status cache used as second fallback when Redis is
     /// unavailable (avoids SQLite mutex contention during Redis outages).
     pub gate_cache: Arc<AsyncRwLock<HashMap<String, GateStatus>>>,
-    /// Per-user concurrency limiter — caps in-flight requests per user
-    /// to bound the TOCTOU window between gate check and deduction.
-    pub concurrency: Arc<PerUserSemaphore>,
     /// Content filter service for request/response moderation.
     pub content_filter: Arc<ContentFilterService>,
     /// Health probe service for model channel health checks (DB-persisted).
     pub health_probe: Arc<HealthProbeService>,
     /// Event bus for real-time request path events (WebSocket push).
     pub event_bus: crate::observability::event_bus::EventBus,
+    /// Per-provider concurrency pools — a saturated provider never starves
+    /// others.  Keyed by provider name ("openai", "deepseek", …).
+    pub provider_pools: crate::server::provider_pool::ProviderPools,
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
