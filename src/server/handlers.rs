@@ -301,6 +301,7 @@ fn extract_client_ip(headers: &HeaderMap, addr: SocketAddr) -> String {
 
 struct RouteTarget {
     channel_id: String,
+    provider_name: String,
     endpoint: EndpointConfig,
     adapter: Arc<dyn crate::provider::ProviderAdapter>,
     balancer: Arc<LoadBalancer>,
@@ -337,6 +338,7 @@ fn resolve_route(state: &AppState, channel_id: &str) -> Result<RouteTarget, Gate
 
     Ok(RouteTarget {
         channel_id: channel_id.to_string(),
+        provider_name,
         endpoint: endpoint.clone(),
         adapter,
         balancer,
@@ -1279,10 +1281,6 @@ pub async fn chat_completions(
         state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens(&body))?;
     }
 
-    // ── Concurrency cap per user (bounds TOCTOU between gate check and deduction) ──
-    let _permit = state.concurrency.try_acquire(&user.user_id, user.concurrency_limit).await
-        .map_err(|_| GatewayError::RateLimit("Too many concurrent requests".into()))?;
-
     // ── Wallet balance check (Redis gate_status → local cache → SQLite) ──
     if state.gateway_config.read().unwrap().billing_enabled {
         check_wallet_balance(&*state, &user.user_id).await?;
@@ -1293,6 +1291,20 @@ pub async fn chat_completions(
         body["model"] = Value::String(id.clone());
     }
     let mut route = resolve_route(&state, &channel_id)?;
+
+    // ── Per-provider concurrency acquire ──
+    // After route resolution we know which provider handles this request.
+    // Acquire a slot — if the provider is saturated, return 503 immediately
+    // so the client can retry; other providers are unaffected.
+    let _provider_permit = state
+        .provider_pools
+        .get(&route.provider_name)
+        .ok_or_else(|| GatewayError::Internal("No provider pool configured".into()))?
+        .clone()
+        .try_acquire()
+        .map_err(|_| GatewayError::RateLimit(format!(
+            "Provider '{}' overloaded, retry later", route.provider_name
+        )))?;
     let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
     let client_ip = extract_client_ip(&headers, addr);
 
@@ -1429,10 +1441,6 @@ pub async fn messages(
         state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body))?;
     }
 
-    // ── Concurrency cap per user (bounds TOCTOU between gate check and deduction) ──
-    let _permit = state.concurrency.try_acquire(&user.user_id, user.concurrency_limit).await
-        .map_err(|_| GatewayError::RateLimit("Too many concurrent requests".into()))?;
-
     // ── Wallet balance check (Redis gate_status → local cache → SQLite) ──
     if state.gateway_config.read().unwrap().billing_enabled {
         check_wallet_balance(&*state, &user.user_id).await?;
@@ -1447,6 +1455,17 @@ pub async fn messages(
     // in the messages array (only "user"/"assistant" are allowed).
     normalize_messages_body(&mut body);
     let mut route = resolve_route(&state, &channel_id)?;
+
+    // ── Per-provider concurrency acquire ──
+    let _provider_permit = state
+        .provider_pools
+        .get(&route.provider_name)
+        .ok_or_else(|| GatewayError::Internal("No provider pool configured".into()))?
+        .clone()
+        .try_acquire()
+        .map_err(|_| GatewayError::RateLimit(format!(
+            "Provider '{}' overloaded, retry later", route.provider_name
+        )))?;
 
     // Broadcast route-decision event immediately so the admin UI shows
     // the request as "in-flight" before the upstream call completes.
@@ -1566,10 +1585,6 @@ async fn relay_to_upstream(
         state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens(&body))?;
     }
 
-    // ── Concurrency cap per user (bounds TOCTOU between gate check and deduction) ──
-    let _permit = state.concurrency.try_acquire(&user.user_id, user.concurrency_limit).await
-        .map_err(|_| GatewayError::RateLimit("Too many concurrent requests".into()))?;
-
     // ── Wallet balance check (Redis gate_status → local cache → SQLite) ──
     if state.gateway_config.read().unwrap().billing_enabled {
         check_wallet_balance(state, &user.user_id).await?;
@@ -1580,6 +1595,17 @@ async fn relay_to_upstream(
         body["model"] = Value::String(id.clone());
     }
     let mut route = resolve_route(state, &channel_id)?;
+
+    // ── Per-provider concurrency acquire ──
+    let _provider_permit = state
+        .provider_pools
+        .get(&route.provider_name)
+        .ok_or_else(|| GatewayError::Internal("No provider pool configured".into()))?
+        .clone()
+        .try_acquire()
+        .map_err(|_| GatewayError::RateLimit(format!(
+            "Provider '{}' overloaded, retry later", route.provider_name
+        )))?;
 
     // Broadcast route-decision event so the admin UI shows
     // the request as "in-flight" before the upstream call completes.
