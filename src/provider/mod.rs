@@ -284,7 +284,7 @@ pub async fn relay_request(
     );
 
     let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
-    let timeout = request_timeout(&RequestKind::Unary { body_size }, endpoint, &default_config());
+    let timeout = request_timeout(&RequestKind::Streaming, endpoint, &default_config());
     tracing::info!(
         endpoint = %endpoint.url,
         body_size = %body_size,
