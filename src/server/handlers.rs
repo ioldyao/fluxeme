@@ -1547,6 +1547,10 @@ async fn relay_to_upstream(
     let user = state.auth.authenticate(headers)?;
     let model = trim_model(&mut body)?;
 
+    // Relay is always non-streaming — drop "stream" so upstreams
+    // don't return SSE which relay() cannot parse.
+    body.as_object_mut().map(|o| o.remove("stream"));
+
     if let Some(ref allowed) = user.allowed_models {
         if !allowed.contains(&model) {
             return Err(GatewayError::Auth(format!("Model '{}' not allowed for this API key", model)));
