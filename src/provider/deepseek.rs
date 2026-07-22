@@ -17,6 +17,15 @@ pub struct DeepSeekAdapter;
 
 #[async_trait::async_trait]
 impl ProviderAdapter for DeepSeekAdapter {
+    async fn relay(
+        &self,
+        endpoint: &EndpointConfig,
+        path: &str,
+        body: Value,
+    ) -> Result<Value, ProviderError> {
+        super::relay_request(endpoint, path, body, "deepseek").await
+    }
+
     async fn chat_complete(
         &self,
         endpoint: &EndpointConfig,

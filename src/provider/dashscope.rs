@@ -17,6 +17,15 @@ pub struct DashScopeAdapter;
 
 #[async_trait::async_trait]
 impl ProviderAdapter for DashScopeAdapter {
+    async fn relay(
+        &self,
+        endpoint: &EndpointConfig,
+        path: &str,
+        body: Value,
+    ) -> Result<Value, ProviderError> {
+        super::relay_request(endpoint, path, body, "dashscope").await
+    }
+
     async fn chat_complete(
         &self,
         endpoint: &EndpointConfig,

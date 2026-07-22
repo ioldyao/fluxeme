@@ -245,6 +245,105 @@ fn is_private_ip(ip: &IpAddr) -> bool {
     }
 }
 
+// ── Generic relay / proxy request ─────────────────────────────────
+
+/// Send a raw JSON body to an upstream endpoint at `endpoint.url + path`.
+/// Used by adapters' `relay()` methods for endpoints that don't need
+/// format conversion (e.g. `/v1/completions`, `/v1/embeddings`).
+pub async fn relay_request(
+    endpoint: &EndpointConfig,
+    path: &str,
+    body: Value,
+    provider_name: &str,
+) -> Result<Value, ProviderError> {
+    validate_endpoint_url(&endpoint.url).await?;
+    let client = shared_client();
+
+    let base = endpoint.url.trim_end_matches('/');
+    let url = if base.ends_with("/v1") && path.starts_with("/v1") {
+        format!(
+            "{}{}",
+            base.trim_end_matches("/v1").trim_end_matches('/'),
+            path
+        )
+    } else {
+        format!("{}{}", base, path)
+    };
+
+    let mut headers = reqwest::header::HeaderMap::new();
+    if !endpoint.api_key.is_empty() {
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key))
+                .map_err(|e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other))?,
+        );
+    }
+    headers.insert(
+        reqwest::header::CONTENT_TYPE,
+        reqwest::header::HeaderValue::from_static("application/json"),
+    );
+
+    let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
+    let timeout = request_timeout(&RequestKind::Unary { body_size }, endpoint, &default_config());
+    tracing::info!(
+        endpoint = %endpoint.url,
+        body_size = %body_size,
+        timeout_ms = timeout.as_millis(),
+        path = %path,
+        provider = %provider_name,
+        "Sending relay request to upstream"
+    );
+
+    let resp_start = std::time::Instant::now();
+    let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
+    let resp = req.send().await.map_err(|e| {
+        let kind = classify_reqwest_error(&e);
+        tracing::error!(
+            endpoint = %endpoint.url,
+            error = %e,
+            error_kind = ?kind,
+            elapsed_ms = resp_start.elapsed().as_millis(),
+            provider = %provider_name,
+            "Relay upstream request failed"
+        );
+        ProviderError::new(format!("Request failed: {}", e), kind)
+    })?;
+
+    let status = resp.status();
+    tracing::info!(
+        endpoint = %endpoint.url,
+        ttfb_ms = resp_start.elapsed().as_millis(),
+        status = status.as_u16(),
+        provider = %provider_name,
+        "Relay upstream response header received"
+    );
+
+    let body_resp = resp.bytes().await.map_err(|e| {
+        ProviderError::new(format!("Failed to read response body: {}", e), ErrorKind::Parse)
+    })?;
+    tracing::info!(
+        endpoint = %endpoint.url,
+        body_size = body_resp.len(),
+        total_ms = resp_start.elapsed().as_millis(),
+        provider = %provider_name,
+        "Relay upstream full response received"
+    );
+
+    if !status.is_success() {
+        let resp_text = String::from_utf8_lossy(&body_resp);
+        let kind = classify_status(status.as_u16());
+        tracing::error!(%status, body = %resp_text, provider = %provider_name, "Relay upstream request failed");
+        return Err(ProviderError::new(
+            format!("Upstream request failed with status {}", status.as_u16()),
+            kind,
+        ));
+    }
+
+    let resp_body: Value = serde_json::from_slice(&body_resp)
+        .map_err(|e| ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse))?;
+    Ok(resp_body)
+}
+
 fn shared_client() -> Arc<reqwest::Client> {
     static CLIENT: OnceLock<Arc<reqwest::Client>> = OnceLock::new();
     CLIENT
