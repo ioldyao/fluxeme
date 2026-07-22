@@ -351,12 +351,10 @@ fn shared_client() -> Arc<reqwest::Client> {
             Arc::new(
                 reqwest::Client::builder()
                     .connect_timeout(Duration::from_secs(10))
-                    // 600s loose fallback — prevents connection leaks if a
-                    // per-request timeout is accidentally omitted. Individual
-                    // requests override this with tighter timeouts via
-                    // RequestBuilder::timeout().
                     .timeout(Duration::from_secs(600))
                     .tcp_keepalive(Duration::from_secs(15))
+                    .pool_max_idle_per_host(200)
+                    .pool_idle_timeout(Duration::from_secs(90))
                     .build()
                     .expect("Failed to build reqwest client"),
             )
