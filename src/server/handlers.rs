@@ -1547,9 +1547,13 @@ async fn relay_to_upstream(
     let user = state.auth.authenticate(headers)?;
     let model = trim_model(&mut body)?;
 
-    // Relay is always non-streaming — drop "stream" so upstreams
-    // don't return SSE which relay() cannot parse.
-    body.as_object_mut().map(|o| o.remove("stream"));
+    // Relay is always non-streaming — strip streaming fields so
+    // upstreams don't return SSE which relay() cannot parse, and
+    // don't reject stream_options without stream (400 Bad Request).
+    body.as_object_mut().map(|o| {
+        o.remove("stream");
+        o.remove("stream_options");
+    });
 
     if let Some(ref allowed) = user.allowed_models {
         if !allowed.contains(&model) {
