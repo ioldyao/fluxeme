@@ -164,12 +164,6 @@ async fn main() {
     // In-memory gate cache (populated by inspection, read by handler when Redis is down)
     let gate_cache: Arc<AsyncRwLock<HashMap<String, GateStatus>>> = Arc::new(AsyncRwLock::new(HashMap::new()));
 
-    // Per-provider concurrency pools — a saturated provider never starves others.
-    let provider_pools = crate::server::provider_pool::init_provider_pools(
-        &["openai", "anthropic", "vllm", "sglang", "deepseek", "dashscope", "zhipu", "minimax", "azure", "ollama"],
-        500,
-    );
-
     // Periodic inspection task: sync user gate status from SQLite to Redis + local cache.
     // Uses pagination to avoid holding the SQLite mutex for too long.
     {
@@ -247,7 +241,6 @@ async fn main() {
         content_filter,
         health_probe,
         event_bus: event_bus.clone(),
-        provider_pools,
     });
 
     let app = build_router(state);
@@ -266,11 +259,6 @@ async fn main() {
     socket.set_reuseaddr(true).expect("Failed to set SO_REUSEADDR");
     socket.bind(addr).expect("Failed to bind address");
     let listener = socket.listen(32768).expect("Failed to listen");
-
-    // Global concurrency safety net (per-provider pools handle the
-    // fine-grained limiting; this is a final backstop for DDoS).
-    use tower::limit::ConcurrencyLimitLayer;
-    let app = app.layer(ConcurrencyLimitLayer::new(8192));
 
     axum::serve(
         listener,
