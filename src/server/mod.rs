@@ -1,5 +1,4 @@
 pub mod handlers;
-pub mod provider_pool;
 pub mod ws;
 
 use std::collections::HashMap;
@@ -49,9 +48,6 @@ pub struct AppState {
     pub health_probe: Arc<HealthProbeService>,
     /// Event bus for real-time request path events (WebSocket push).
     pub event_bus: crate::observability::event_bus::EventBus,
-    /// Per-provider concurrency pools — a saturated provider never starves
-    /// others.  Keyed by provider name ("openai", "deepseek", …).
-    pub provider_pools: crate::server::provider_pool::ProviderPools,
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {

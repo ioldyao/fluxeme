@@ -301,7 +301,6 @@ fn extract_client_ip(headers: &HeaderMap, addr: SocketAddr) -> String {
 
 struct RouteTarget {
     channel_id: String,
-    provider_name: String,
     endpoint: EndpointConfig,
     adapter: Arc<dyn crate::provider::ProviderAdapter>,
     balancer: Arc<LoadBalancer>,
@@ -338,7 +337,6 @@ fn resolve_route(state: &AppState, channel_id: &str) -> Result<RouteTarget, Gate
 
     Ok(RouteTarget {
         channel_id: channel_id.to_string(),
-        provider_name,
         endpoint: endpoint.clone(),
         adapter,
         balancer,
@@ -1292,19 +1290,6 @@ pub async fn chat_completions(
     }
     let mut route = resolve_route(&state, &channel_id)?;
 
-    // ── Per-provider concurrency acquire ──
-    // Wait up to 10s for a provider slot.  LLM requests are long-lived
-    // (30–60s) — queuing a few seconds beats getting a 503 and retrying.
-    let _provider_permit = state
-        .provider_pools
-        .get(&route.provider_name)
-        .ok_or_else(|| GatewayError::Internal("No provider pool configured".into()))?
-        .clone()
-        .acquire(Duration::from_secs(10))
-        .await
-        .map_err(|_| GatewayError::RateLimit(format!(
-            "Provider '{}' overloaded, retry later", route.provider_name
-        )))?;
     let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
     let client_ip = extract_client_ip(&headers, addr);
 
@@ -1456,18 +1441,6 @@ pub async fn messages(
     normalize_messages_body(&mut body);
     let mut route = resolve_route(&state, &channel_id)?;
 
-    // ── Per-provider concurrency acquire ──
-    let _provider_permit = state
-        .provider_pools
-        .get(&route.provider_name)
-        .ok_or_else(|| GatewayError::Internal("No provider pool configured".into()))?
-        .clone()
-        .acquire(Duration::from_secs(10))
-        .await
-        .map_err(|_| GatewayError::RateLimit(format!(
-            "Provider '{}' overloaded, retry later", route.provider_name
-        )))?;
-
     // Broadcast route-decision event immediately so the admin UI shows
     // the request as "in-flight" before the upstream call completes.
     state.event_bus.route_decided(RouteDecided {
@@ -1596,18 +1569,6 @@ async fn relay_to_upstream(
         body["model"] = Value::String(id.clone());
     }
     let mut route = resolve_route(state, &channel_id)?;
-
-    // ── Per-provider concurrency acquire ──
-    let _provider_permit = state
-        .provider_pools
-        .get(&route.provider_name)
-        .ok_or_else(|| GatewayError::Internal("No provider pool configured".into()))?
-        .clone()
-        .acquire(Duration::from_secs(10))
-        .await
-        .map_err(|_| GatewayError::RateLimit(format!(
-            "Provider '{}' overloaded, retry later", route.provider_name
-        )))?;
 
     // Broadcast route-decision event so the admin UI shows
     // the request as "in-flight" before the upstream call completes.
