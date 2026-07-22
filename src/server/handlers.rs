@@ -1293,15 +1293,15 @@ pub async fn chat_completions(
     let mut route = resolve_route(&state, &channel_id)?;
 
     // ── Per-provider concurrency acquire ──
-    // After route resolution we know which provider handles this request.
-    // Acquire a slot — if the provider is saturated, return 503 immediately
-    // so the client can retry; other providers are unaffected.
+    // Wait up to 10s for a provider slot.  LLM requests are long-lived
+    // (30–60s) — queuing a few seconds beats getting a 503 and retrying.
     let _provider_permit = state
         .provider_pools
         .get(&route.provider_name)
         .ok_or_else(|| GatewayError::Internal("No provider pool configured".into()))?
         .clone()
-        .try_acquire()
+        .acquire(Duration::from_secs(10))
+        .await
         .map_err(|_| GatewayError::RateLimit(format!(
             "Provider '{}' overloaded, retry later", route.provider_name
         )))?;
@@ -1462,7 +1462,8 @@ pub async fn messages(
         .get(&route.provider_name)
         .ok_or_else(|| GatewayError::Internal("No provider pool configured".into()))?
         .clone()
-        .try_acquire()
+        .acquire(Duration::from_secs(10))
+        .await
         .map_err(|_| GatewayError::RateLimit(format!(
             "Provider '{}' overloaded, retry later", route.provider_name
         )))?;
@@ -1602,7 +1603,8 @@ async fn relay_to_upstream(
         .get(&route.provider_name)
         .ok_or_else(|| GatewayError::Internal("No provider pool configured".into()))?
         .clone()
-        .try_acquire()
+        .acquire(Duration::from_secs(10))
+        .await
         .map_err(|_| GatewayError::RateLimit(format!(
             "Provider '{}' overloaded, retry later", route.provider_name
         )))?;
