@@ -3061,226 +3061,226 @@ async fn delete_filter_rule(
 
 pub fn admin_routes() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/admin/api/login", axum::routing::post(admin_login))
+        .route("/api/login", axum::routing::post(admin_login))
         .route(
-            "/admin/api/setup/status",
+            "/api/setup/status",
             axum::routing::get(setup_status),
         )
         .route(
-            "/admin/api/setup/register",
+            "/api/setup/register",
             axum::routing::post(setup_register),
         )
         .route(
-            "/admin/api/sso/status",
+            "/api/sso/status",
             axum::routing::get(crate::sso::sso_status_handler),
         )
         .route(
-            "/admin/api/sso/login",
+            "/api/sso/login",
             axum::routing::get(crate::sso::sso_login_handler),
         )
         .route(
-            "/admin/api/sso/callback",
+            "/api/sso/callback",
             axum::routing::get(crate::sso::sso_callback_handler),
         )
-        .route("/admin/api/dashboard", axum::routing::get(admin_dashboard))
+        .route("/api/dashboard", axum::routing::get(admin_dashboard))
         .route(
-            "/admin/api/dashboard/aggregations",
+            "/api/dashboard/aggregations",
             axum::routing::get(dashboard_aggregations),
         )
         // Current user
         .route(
-            "/admin/api/me/password",
+            "/api/me/password",
             axum::routing::post(change_my_password),
         )
         .route(
-            "/admin/api/me/timezone",
+            "/api/me/timezone",
             axum::routing::get(get_my_timezone).put(update_my_timezone),
         )
         .route(
-            "/admin/api/me/currency",
+            "/api/me/currency",
             axum::routing::get(get_my_currency).put(update_my_currency),
         )
         .route(
-            "/admin/api/me/keys",
+            "/api/me/keys",
             axum::routing::get(my_keys).post(create_my_key),
         )
         .route(
-            "/admin/api/me/keys/{key_val}",
+            "/api/me/keys/{key_val}",
             axum::routing::delete(delete_my_key)
                 .patch(toggle_my_key)
                 .put(update_my_key),
         )
         .route(
-            "/admin/api/me/permissions",
+            "/api/me/permissions",
             axum::routing::get(my_permissions),
         )
         // Users
         .route(
-            "/admin/api/users",
+            "/api/users",
             axum::routing::get(list_users).post(create_user),
         )
         .route(
-            "/admin/api/users/{id}",
+            "/api/users/{id}",
             axum::routing::get(get_user_detail)
                 .put(update_user)
                 .delete(delete_user),
         )
         // User API keys (admin)
         .route(
-            "/admin/api/users/{user_id}/keys",
+            "/api/users/{user_id}/keys",
             axum::routing::get(list_user_keys).post(create_user_key),
         )
         .route(
-            "/admin/api/users/{user_id}/keys/{key_val}",
+            "/api/users/{user_id}/keys/{key_val}",
             axum::routing::delete(delete_user_key)
                 .patch(toggle_user_key)
                 .put(update_user_key),
         )
         // Channels
         .route(
-            "/admin/api/channels",
+            "/api/channels",
             axum::routing::get(list_channels).post(create_channel),
         )
         .route(
-            "/admin/api/channels/{id}",
+            "/api/channels/{id}",
             axum::routing::put(update_channel).delete(delete_channel),
         )
         .route(
-            "/admin/api/channels/{id}/health",
+            "/api/channels/{id}/health",
             axum::routing::get(get_channel_health),
         )
         .route(
-            "/admin/api/endpoints/{id}",
+            "/api/endpoints/{id}",
             axum::routing::patch(toggle_endpoint),
         )
         // Models
         .route(
-            "/admin/api/models",
+            "/api/models",
             axum::routing::get(list_models).post(create_model),
         )
         .route(
-            "/admin/api/models/public",
+            "/api/models/public",
             axum::routing::get(list_public_models),
         )
         .route(
-            "/admin/api/models/{id}/publish",
+            "/api/models/{id}/publish",
             axum::routing::post(toggle_publish_model),
         )
         .route(
-            "/admin/api/models/{id}/pricing",
+            "/api/models/{id}/pricing",
             axum::routing::patch(update_model_pricing),
         )
         .route(
-            "/admin/api/models/{id}/health-check",
+            "/api/models/{id}/health-check",
             axum::routing::post(model_health_check),
         )
         .route(
-            "/admin/api/probe-results",
+            "/api/probe-results",
             axum::routing::get(list_probe_results),
         )
         .route(
-            "/admin/api/health/routing",
+            "/api/health/routing",
             axum::routing::get(routing_health),
         )
         .route(
-            "/admin/api/health/recent-paths",
+            "/api/health/recent-paths",
             axum::routing::get(recent_request_paths),
         )
         .route(
-            "/admin/api/models/{id}",
+            "/api/models/{id}",
             axum::routing::put(update_model).delete(delete_model),
         )
         // Subscriptions
         .route(
-            "/admin/api/me/subscriptions",
+            "/api/me/subscriptions",
             axum::routing::get(list_my_subscriptions),
         )
         .route(
-            "/admin/api/me/subscriptions/{model_id}",
+            "/api/me/subscriptions/{model_id}",
             axum::routing::post(subscribe_model).delete(unsubscribe_model),
         )
         .route(
-            "/admin/api/me/test-connection",
+            "/api/me/test-connection",
             axum::routing::post(test_subscription_connection),
         )
         // Routing rules
         .route(
-            "/admin/api/rules",
+            "/api/rules",
             axum::routing::get(list_rules).post(create_rule),
         )
         .route(
-            "/admin/api/rules/{name}",
+            "/api/rules/{name}",
             axum::routing::put(update_rule).delete(delete_rule),
         )
         // Usage
-        .route("/admin/api/usage", axum::routing::get(get_usage))
-        .route("/admin/api/usage/daily", axum::routing::get(daily_usage))
-        .route("/admin/api/usage/aggregate", axum::routing::get(usage_aggregate))
-        .route("/admin/api/usage/model-activity", axum::routing::get(model_activity))
-        .route("/admin/api/routing/snapshot", axum::routing::get(routing_flow_snapshot_handler))
-        .route("/admin/api/routing/history", axum::routing::get(routing_history))
+        .route("/api/usage", axum::routing::get(get_usage))
+        .route("/api/usage/daily", axum::routing::get(daily_usage))
+        .route("/api/usage/aggregate", axum::routing::get(usage_aggregate))
+        .route("/api/usage/model-activity", axum::routing::get(model_activity))
+        .route("/api/routing/snapshot", axum::routing::get(routing_flow_snapshot_handler))
+        .route("/api/routing/history", axum::routing::get(routing_history))
         .route(
-            "/admin/api/usage/{request_id}",
+            "/api/usage/{request_id}",
             axum::routing::get(get_usage_detail),
         )
         // Billing
-        .route("/admin/api/billing/summary", axum::routing::get(billing_summary))
-        .route("/admin/api/billing/period-summary", axum::routing::get(billing_period_summary))
-        .route("/admin/api/billing/deductions", axum::routing::get(billing_deductions))
-        .route("/admin/api/billing/topups", axum::routing::get(billing_topups))
-        .route("/admin/api/billing/invoices", axum::routing::get(billing_invoices))
-        .route("/admin/api/billing/months", axum::routing::get(billing_months))
-        .route("/admin/api/billing/period-summary-all", axum::routing::get(billing_period_summary_all))
+        .route("/api/billing/summary", axum::routing::get(billing_summary))
+        .route("/api/billing/period-summary", axum::routing::get(billing_period_summary))
+        .route("/api/billing/deductions", axum::routing::get(billing_deductions))
+        .route("/api/billing/topups", axum::routing::get(billing_topups))
+        .route("/api/billing/invoices", axum::routing::get(billing_invoices))
+        .route("/api/billing/months", axum::routing::get(billing_months))
+        .route("/api/billing/period-summary-all", axum::routing::get(billing_period_summary_all))
         // Wallet
-        .route("/admin/api/wallet/overview", axum::routing::get(wallet_overview))
-        .route("/admin/api/wallet/recharge", axum::routing::post(wallet_recharge))
-        .route("/admin/api/wallet/create-key", axum::routing::post(wallet_create_key))
-        .route("/admin/api/wallet/redeem-key", axum::routing::post(wallet_redeem_key))
-        .route("/admin/api/wallet/keys", axum::routing::get(wallet_list_keys))
-        .route("/admin/api/wallet/revoke-key", axum::routing::post(wallet_revoke_key))
-        .route("/admin/api/wallet/transactions", axum::routing::get(wallet_transactions))
-        .route("/admin/api/wallet/estimated-days", axum::routing::get(wallet_estimated_days))
+        .route("/api/wallet/overview", axum::routing::get(wallet_overview))
+        .route("/api/wallet/recharge", axum::routing::post(wallet_recharge))
+        .route("/api/wallet/create-key", axum::routing::post(wallet_create_key))
+        .route("/api/wallet/redeem-key", axum::routing::post(wallet_redeem_key))
+        .route("/api/wallet/keys", axum::routing::get(wallet_list_keys))
+        .route("/api/wallet/revoke-key", axum::routing::post(wallet_revoke_key))
+        .route("/api/wallet/transactions", axum::routing::get(wallet_transactions))
+        .route("/api/wallet/estimated-days", axum::routing::get(wallet_estimated_days))
         // Health check
         .route(
-            "/admin/api/health-check/models",
+            "/api/health-check/models",
             axum::routing::post(health_check_models),
         )
         .route(
-            "/admin/api/health-check/channels/{id}",
+            "/api/health-check/channels/{id}",
             axum::routing::post(health_check_channel),
         )
         // Upstream model sync
         .route(
-            "/admin/api/channels/{id}/upstream-models",
+            "/api/channels/{id}/upstream-models",
             axum::routing::get(list_upstream_models),
         )
         // Settings
         .route(
-            "/admin/api/settings/allow-private-ips",
+            "/api/settings/allow-private-ips",
             axum::routing::get(get_allow_private_ips).put(set_allow_private_ips),
         )
         .route(
-            "/admin/api/gateway/config",
+            "/api/gateway/config",
             axum::routing::get(get_gateway_config_handler)
                 .put(set_gateway_config_handler),
         )
         // Content Moderation
         .route(
-            "/admin/api/moderation/rules",
+            "/api/moderation/rules",
             axum::routing::get(list_filter_rules).post(create_filter_rule),
         )
         .route(
-            "/admin/api/moderation/rules/{id}",
+            "/api/moderation/rules/{id}",
             axum::routing::put(update_filter_rule).delete(delete_filter_rule),
         )
         .route(
-            "/admin/api/moderation/enabled",
+            "/api/moderation/enabled",
             axum::routing::get(get_content_moderation_enabled)
                 .put(set_content_moderation_enabled),
         )
         // WebSocket real-time events
         .route(
-            "/admin/api/health/ws",
+            "/api/health/ws",
             axum::routing::get(crate::server::ws::ws_handler),
         )
 }

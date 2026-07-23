@@ -462,7 +462,7 @@ function useRoutingStream(topology: TopoModel[]) {
 
     function connect() {
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      ws = new WebSocket(`${proto}://${window.location.host}/admin/api/health/ws`);
+      ws = new WebSocket(`${proto}://${window.location.host}/api/health/ws`);
 
       ws.onopen = () => { setConnected(true); setReconnectIn(0); if (reconnectTimer.current) { clearInterval(reconnectTimer.current); reconnectTimer.current = null; } };
       ws.onmessage = (e) => {

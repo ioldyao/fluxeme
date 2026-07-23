@@ -18,7 +18,7 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
     fetchBody = JSON.stringify(body);
   }
 
-  const r = await fetch(`/admin/api${path}`, { ...fetchOpts, headers, body: fetchBody });
+  const r = await fetch(`/api${path}`, { ...fetchOpts, headers, body: fetchBody });
 
   if (r.status === 401) {
     toast.error(i18n.t('login.sessionExpired'));
