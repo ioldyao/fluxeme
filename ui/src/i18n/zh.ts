@@ -46,6 +46,7 @@ const zh: Record<string, string> = {
   'nav.usage': '用量日志',
   'nav.logout': '退出登录',
   'nav.group.overview': '实时概览',
+  'nav.group.observability': '可观测',
   'nav.group.models': '模型',
   'nav.group.channels': '渠道',
   'nav.group.security': '路由与安全',
