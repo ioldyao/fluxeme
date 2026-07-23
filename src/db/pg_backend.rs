@@ -469,79 +469,97 @@ impl DbBackend for PgBackend {
             .await;
 
         // ── Deduplicate models by name ──────────────────────────────────
-        // Models with the same name and different IDs (created via seed or
-        // sync) can accumulate duplicate rows with diverging pricing.
-        // Merge channel bindings and subscriptions into the "best" row
-        // (highest pricing), then drop the others.
+        // Step 1: merge duplicate rows (idempotent — safe to run repeatedly).
         let duplicates: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT name, count(*) as cnt FROM models GROUP BY name HAVING count(*) > 1",
+            "SELECT LOWER(name), count(*) FROM models GROUP BY LOWER(name) HAVING count(*) > 1",
         )
         .fetch_all(&self.pool)
         .await
         .unwrap_or_default();
 
-        for (name, _) in duplicates {
-            // Pick winner: highest prompt_price + completion_price, tiebreak by id
-            let winner: Option<(String,)> = sqlx::query_as(
-                "SELECT id FROM models WHERE name = $1 ORDER BY (prompt_price + completion_price) DESC, id ASC LIMIT 1",
+        for (name_lower, _) in &duplicates {
+            let winner: Option<(String, String)> = sqlx::query_as(
+                "SELECT id, name FROM models WHERE LOWER(name) = $1 \
+                 ORDER BY (prompt_price + completion_price) DESC, id ASC LIMIT 1",
             )
-            .bind(&name)
+            .bind(name_lower)
             .fetch_optional(&self.pool)
             .await
             .ok()
             .flatten();
 
-            if let Some((winner_id,)) = winner {
-                // Move channel bindings from losers to winner
+            if let Some((ref winner_id, ref canonical_name)) = winner {
                 let _ = sqlx::query(
                     "INSERT INTO model_channels (model_id, channel_id, priority)
                      SELECT $1, mc.channel_id, mc.priority
                      FROM model_channels mc JOIN models m ON mc.model_id = m.id
-                     WHERE m.name = $2 AND m.id != $1
+                     WHERE LOWER(m.name) = $2 AND m.id != $1
                      ON CONFLICT (model_id, channel_id) DO NOTHING",
                 )
-                .bind(&winner_id)
-                .bind(&name)
-                .execute(&self.pool)
-                .await;
+                .bind(winner_id).bind(name_lower)
+                .execute(&self.pool).await;
 
-                // Move subscriptions from losers to winner
                 let _ = sqlx::query(
                     "INSERT INTO user_subscriptions (user_id, model_id, created_at)
                      SELECT us.user_id, $1, us.created_at
                      FROM user_subscriptions us JOIN models m ON us.model_id = m.id
-                     WHERE m.name = $2 AND m.id != $1
+                     WHERE LOWER(m.name) = $2 AND m.id != $1
                      ON CONFLICT (user_id, model_id) DO NOTHING",
                 )
-                .bind(&winner_id)
-                .bind(&name)
-                .execute(&self.pool)
-                .await;
+                .bind(winner_id).bind(name_lower)
+                .execute(&self.pool).await;
 
-                // Delete losers (cascade removes their model_channels rows)
-                let _ = sqlx::query("DELETE FROM models WHERE name = $1 AND id != $2")
-                    .bind(&name)
-                    .bind(&winner_id)
-                    .execute(&self.pool)
-                    .await;
+                let _ = sqlx::query(
+                    "DELETE FROM models WHERE LOWER(name) = $1 AND id != $2",
+                )
+                .bind(name_lower).bind(winner_id)
+                .execute(&self.pool).await;
 
-                tracing::info!(
-                    "Migration: deduplicated model '{}' → kept id={}",
-                    name,
-                    winner_id
-                );
+                let _ = sqlx::query("UPDATE models SET name = $1 WHERE id = $2")
+                    .bind(canonical_name).bind(winner_id)
+                    .execute(&self.pool).await;
+
+                tracing::info!("Migration: deduplicated model '{}' → kept id={}", name_lower, winner_id);
             }
         }
 
-        // Prevent future duplicates
-        match sqlx::raw_sql(
+        // Step 2: verify. If duplicates remain after dedup, abort startup.
+        let remaining: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM (SELECT 1 FROM models GROUP BY LOWER(name) HAVING count(*) > 1) t",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0);
+
+        if remaining > 0 {
+            tracing::error!(
+                "Migration dedup failed: {} model names still have duplicate rows. \
+                 Startup aborted — fix data manually.",
+                remaining
+            );
+            return Err(DbError(
+                "Duplicate model names remain after dedup — cannot add UNIQUE constraint".into(),
+            ));
+        }
+
+        // Step 3: add the constraint (also idempotent: IF NOT EXISTS).
+        // ALTER TABLE ADD CONSTRAINT is atomic on its own; if it fails,
+        // we abort rather than continue in a broken state.
+        sqlx::query(
             "ALTER TABLE models ADD CONSTRAINT IF NOT EXISTS models_name_unique UNIQUE (name)",
         )
         .execute(&self.pool)
-        .await {
-            Ok(_) => tracing::info!("models.name UNIQUE constraint ready"),
-            Err(e) => tracing::error!("Failed to add models.name UNIQUE constraint: {}", e),
-        }
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                "Failed to create models.name UNIQUE constraint: {}. \
+                 This usually means duplicate rows exist.",
+                e
+            );
+            DbError(format!("Model name UNIQUE constraint creation failed: {}", e))
+        })?;
+
+        tracing::info!("models.name UNIQUE constraint ready");
 
         Ok(())
     }
