@@ -214,6 +214,7 @@ const zh: Record<string, string> = {
   'form.ruleName': '规则名称',
   'form.userIdLabel': '所属用户（* = 全部）',
   'form.modelName': '上游模型名',
+  'form.upstreamModel': '上游模型名',
   'form.modelPattern': '模型匹配模式',
   'form.namePlaceholder': '用户 API 请求时使用的模型名',
   'form.pricing': '定价配置',
