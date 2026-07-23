@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSubscriptions, useUnsubscribeModel, useTestModelConnection, type ModelTestResult } from '@/api/models';
 import { useProbeResults } from '@/api/probe';
+import { usePermission } from '@/permissions';
 import { PageHeader } from '@/components/PageHeader';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
@@ -24,7 +25,8 @@ export default function MyModels() {
   const testConnection = useTestModelConnection();
   const [testingIds, setTestingIds] = useState<Record<string, boolean>>({});
   const [results, setResults] = useState<Record<string, ModelTestResult>>({});
-  const { data: probeResults } = useProbeResults();
+  const isAdmin = usePermission('admin:dashboard');
+  const { data: probeResults } = useProbeResults({ enabled: isAdmin });
   const { currency } = useCurrency();
   const { effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
 
