@@ -62,6 +62,7 @@ export interface ModelChannel {
   channel_id: string;
   priority: number;
   provider?: string;
+  upstream_model?: string | null;
 }
 
 export interface Model {

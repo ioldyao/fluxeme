@@ -27,7 +27,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
   const [name, setName] = useState('');
   const [modelPattern, setModelPattern] = useState('');
   const [contextLength, setContextLength] = useState('');
-  const [bindings, setBindings] = useState<{ channel_id: string; priority: number }[]>([]);
+  const [bindings, setBindings] = useState<{ channel_id: string; priority: number; upstream_model: string }[]>([]);
   const [category, setCategory] = useState<string[]>([]);
 
   useEffect(() => {
@@ -36,7 +36,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
       setName(model.name);
       setModelPattern(model.model_pattern);
       setContextLength(model.context_length ? String(model.context_length) : '');
-      setBindings(model.channels);
+      setBindings(model.channels?.map((c) => ({ ...c, upstream_model: c.upstream_model || '' })) || []);
       setCategory(model.category ? model.category.split(',').filter(Boolean) : []);
     } else {
       setId(''); setName(''); setModelPattern('');
@@ -49,7 +49,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
 
   const addBinding = (channelId: string) => {
     if (!channelId) return;
-    setBindings([...bindings, { channel_id: channelId, priority: 0 }]);
+    setBindings([...bindings, { channel_id: channelId, priority: 0, upstream_model: '' }]);
     setSelectedAddChannel('');
   };
   const updateBinding = (i: number, field: string, value: string | number) =>
@@ -64,7 +64,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
       context_length: contextLength ? Number(contextLength) : null,
       published: model?.published ?? false,
       category: category.join(','),
-      channels: bindings.map((b) => ({ channel_id: b.channel_id, priority: Number(b.priority) })),
+      channels: bindings.map((b) => ({ channel_id: b.channel_id, priority: Number(b.priority), upstream_model: b.upstream_model || null })),
     };
     onSubmit(data);
   };
@@ -198,7 +198,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                     {bindings.map((b, i) => (
                       <div
                         key={i}
-                        className="grid grid-cols-[1fr_88px_32px] gap-3 items-center rounded-lg border bg-muted/30 px-3 py-2.5"
+                        className="rounded-lg border bg-muted/30 px-3 py-2.5 space-y-2"
                       >
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="text-sm font-medium truncate">
@@ -213,25 +213,34 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                               </>
                             ) : null;
                           })()}
+                          <div className="flex-1" />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-destructive shrink-0"
+                            onClick={() => removeBinding(i)}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
                         </div>
-
-                        <Input
-                          className="h-9 bg-background"
-                          type="number"
-                          placeholder={t('form.channelPriority')}
-                          value={b.priority}
-                          onChange={(e) => updateBinding(i, 'priority', Number(e.target.value))}
-                        />
-
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                          onClick={() => removeBinding(i)}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground shrink-0">{t('form.upstreamModel') || '上游模型名'}:</span>
+                          <Input
+                            className="h-8 bg-background text-xs flex-1"
+                            placeholder={name || t('form.namePlaceholder')}
+                            value={b.upstream_model}
+                            onChange={(e) => updateBinding(i, 'upstream_model', e.target.value)}
+                          />
+                          <span className="text-xs text-muted-foreground shrink-0">{t('form.channelPriority')}:</span>
+                          <Input
+                            className="h-8 bg-background w-20"
+                            type="number"
+                            placeholder="0"
+                            value={b.priority}
+                            onChange={(e) => updateBinding(i, 'priority', Number(e.target.value))}
+                          />
+                        </div>
                       </div>
                     ))}
                   </div>
