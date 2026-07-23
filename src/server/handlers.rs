@@ -1726,47 +1726,57 @@ async fn relay_to_upstream(
 
 pub async fn completions(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
+    let client_ip = extract_client_ip(&headers, addr);
     relay_to_upstream(&state, &headers, body.0, "/v1/completions",
-        Uuid::new_v4().to_string(), Instant::now(), String::new()).await
+        Uuid::new_v4().to_string(), Instant::now(), client_ip).await
 }
 
 pub async fn embeddings(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
+    let client_ip = extract_client_ip(&headers, addr);
     relay_to_upstream(&state, &headers, body.0, "/v1/embeddings",
-        Uuid::new_v4().to_string(), Instant::now(), String::new()).await
+        Uuid::new_v4().to_string(), Instant::now(), client_ip).await
 }
 
 pub async fn batches(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
+    let client_ip = extract_client_ip(&headers, addr);
     relay_to_upstream(&state, &headers, body.0, "/v1/messages/batches",
-        Uuid::new_v4().to_string(), Instant::now(), String::new()).await
+        Uuid::new_v4().to_string(), Instant::now(), client_ip).await
 }
 
 pub async fn tokenize(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
+    let client_ip = extract_client_ip(&headers, addr);
     relay_to_upstream(&state, &headers, body.0, "/tokenize",
-        Uuid::new_v4().to_string(), Instant::now(), String::new()).await
+        Uuid::new_v4().to_string(), Instant::now(), client_ip).await
 }
 
 pub async fn detokenize(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
+    let client_ip = extract_client_ip(&headers, addr);
     relay_to_upstream(&state, &headers, body.0, "/detokenize",
-        Uuid::new_v4().to_string(), Instant::now(), String::new()).await
+        Uuid::new_v4().to_string(), Instant::now(), client_ip).await
 }
 
 // ── Other ─────────────────────────────────────────────────────────
