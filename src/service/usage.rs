@@ -107,10 +107,17 @@ async fn background_writer(db: Arc<Database>, cache: Arc<RedisCache>, mut rx: Re
             }
         }
 
-        // Read billing_enabled from gateway config
-        let billing_enabled = db.get_gateway_config().await
+        // Read billing_enabled from gateway config.
+        // Log an error if the read fails — silently treating it as false
+        // would silently disable billing for the entire batch.
+        let billing_enabled = db
+            .get_gateway_config()
+            .await
             .map(|c| c.billing_enabled)
-            .unwrap_or(false);
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e.0, "Failed to read gateway config for billing — falling back to disabled");
+                false
+            });
 
         // Write batch to DB and collect deduction results (atomic transaction)
         let result = db.batch_insert_usage_with_billing(&batch, billing_enabled).await;
