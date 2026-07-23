@@ -92,15 +92,15 @@ async fn main() {
     let health = Arc::new(HealthService::new(db.clone(), &jwt_secret).expect("Failed to create HealthService"));
     let admin = Arc::new(AdminModule::new(&jwt_secret, db.clone()));
 
+    let sso_config = config.read().unwrap().sso.clone();
     let sso = Arc::new(
-        match sso::SsoModule::new(&config.read().unwrap().sso, &jwt_secret).await {
+        match sso::SsoModule::new(&sso_config, &jwt_secret).await {
             Ok(m) => {
-                let cfg = config.read().unwrap();
-                if cfg.sso.enabled {
+                if sso_config.enabled {
                     tracing::info!(
                         "SSO enabled: provider={}, issuer={}",
-                        cfg.sso.provider_name,
-                        cfg.sso.issuer_url
+                        sso_config.provider_name,
+                        sso_config.issuer_url
                     );
                 }
                 m
@@ -137,10 +137,11 @@ async fn main() {
     ));
 
     // Initialize Redis cache (noop when disabled)
+    let cache_config = config.read().unwrap().cache.clone();
+    let cache_ttl = gateway_config.read().unwrap().cache_ttl_secs;
     let cache = Arc::new(
-        if config.read().unwrap().cache.enabled {
-            let ttl = gateway_config.read().unwrap().cache_ttl_secs;
-            match RedisCache::new(&config.read().unwrap().cache.redis_url, ttl).await {
+        if cache_config.enabled {
+            match RedisCache::new(&cache_config.redis_url, cache_ttl).await {
                 Ok(c) => {
                     tracing::info!("Redis cache enabled");
                     c
