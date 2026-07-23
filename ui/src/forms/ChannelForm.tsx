@@ -11,7 +11,7 @@ import { Plus, X } from 'lucide-react';
 import { useChannelHealth } from '@/api/balancer';
 import type { Channel, Endpoint } from '@/types';
 
-const PROVIDERS = ['openai', 'anthropic', 'vllm', 'sglang', 'azure', 'ollama', 'deepseek', 'dashscope', 'zhipu', 'minimax'] as const;
+import { PROVIDERS, PROVIDER_DISPLAY } from "@/constants/providers";
 
 const FIXED_BASE_URLS: Record<string, string> = {
   deepseek: 'https://api.deepseek.com',
@@ -127,7 +127,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                   <SelectTrigger className="h-9 bg-background"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {PROVIDERS.map((p) => (
-                      <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>
+                      <SelectItem key={p} value={p}>{PROVIDER_DISPLAY[p] || p}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
