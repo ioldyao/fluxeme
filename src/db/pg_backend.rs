@@ -542,22 +542,30 @@ impl DbBackend for PgBackend {
             ));
         }
 
-        // Step 3: add the constraint (also idempotent: IF NOT EXISTS).
-        // ALTER TABLE ADD CONSTRAINT is atomic on its own; if it fails,
-        // we abort rather than continue in a broken state.
-        sqlx::raw_sql(
-            "ALTER TABLE models ADD CONSTRAINT IF NOT EXISTS models_name_unique UNIQUE (name)",
+        // Step 3: add the constraint. ADD CONSTRAINT does not support
+        // IF NOT EXISTS in PostgreSQL — try and catch "already exists".
+        let result = sqlx::raw_sql(
+            "ALTER TABLE models ADD CONSTRAINT models_name_unique UNIQUE (name)",
         )
         .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!(
-                "Failed to create models.name UNIQUE constraint: {}. \
-                 This usually means duplicate rows exist.",
-                e
-            );
-            DbError(format!("Model name UNIQUE constraint creation failed: {}", e))
-        })?;
+        .await;
+
+        match result {
+            Ok(_) => tracing::info!("models.name UNIQUE constraint created"),
+            Err(e) if e.to_string().contains("already exists") => {
+                tracing::info!("models.name UNIQUE constraint already exists, skipping");
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to create models.name UNIQUE constraint: {}. \
+                     This usually means duplicate rows exist.",
+                    e
+                );
+                return Err(DbError(format!(
+                    "Model name UNIQUE constraint creation failed: {}", e
+                )));
+            }
+        }
 
         tracing::info!("models.name UNIQUE constraint ready");
 
