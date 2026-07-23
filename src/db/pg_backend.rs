@@ -1200,7 +1200,7 @@ impl DbBackend for PgBackend {
                 category: r.get::<Option<String>, _>(12).unwrap_or_default(),
             };
             let bindings = sqlx::query(
-                "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, '') \
+                "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model \
                  FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id \
                  WHERE mc.model_id = $1 ORDER BY mc.priority",
             )
