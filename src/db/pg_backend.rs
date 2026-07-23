@@ -534,11 +534,14 @@ impl DbBackend for PgBackend {
         }
 
         // Prevent future duplicates
-        let _ = sqlx::raw_sql(
+        match sqlx::raw_sql(
             "ALTER TABLE models ADD CONSTRAINT IF NOT EXISTS models_name_unique UNIQUE (name)",
         )
         .execute(&self.pool)
-        .await;
+        .await {
+            Ok(_) => tracing::info!("models.name UNIQUE constraint ready"),
+            Err(e) => tracing::error!("Failed to add models.name UNIQUE constraint: {}", e),
+        }
 
         Ok(())
     }
@@ -1195,27 +1198,11 @@ impl DbBackend for PgBackend {
     }
 
     async fn create_model(&self, m: &Model) -> Result<(), DbError> {
-        // Upsert by name: model identity is the name, not the ID.
-        // ON CONFLICT updates pricing + metadata; channel bindings are
-        // added separately to model_channels which is genuinely N:N.
-        // DO NOT change the ID on conflict — model_channels FK depends on it.
         sqlx::query(
             "INSERT INTO models (id, name, model_pattern, prompt_price, completion_price, \
              cache_read_price, cache_write_price, image_input_price, audio_input_price, \
              audio_output_price, published, context_length, category) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
-             ON CONFLICT (name) DO UPDATE SET \
-               model_pattern = EXCLUDED.model_pattern, \
-               prompt_price = CASE WHEN models.prompt_price = 0.0 THEN EXCLUDED.prompt_price ELSE models.prompt_price END, \
-               completion_price = CASE WHEN models.completion_price = 0.0 THEN EXCLUDED.completion_price ELSE models.completion_price END, \
-               cache_read_price = CASE WHEN models.cache_read_price = 0.0 THEN EXCLUDED.cache_read_price ELSE models.cache_read_price END, \
-               cache_write_price = CASE WHEN models.cache_write_price = 0.0 THEN EXCLUDED.cache_write_price ELSE models.cache_write_price END, \
-               image_input_price = CASE WHEN models.image_input_price = 0.0 THEN EXCLUDED.image_input_price ELSE models.image_input_price END, \
-               audio_input_price = CASE WHEN models.audio_input_price = 0.0 THEN EXCLUDED.audio_input_price ELSE models.audio_input_price END, \
-               audio_output_price = CASE WHEN models.audio_output_price = 0.0 THEN EXCLUDED.audio_output_price ELSE models.audio_output_price END, \
-               published = EXCLUDED.published, \
-               context_length = COALESCE(EXCLUDED.context_length, models.context_length), \
-               category = EXCLUDED.category",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         )
         .bind(&m.id)
         .bind(&m.name)
