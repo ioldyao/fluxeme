@@ -51,6 +51,9 @@ impl HealthProbeService {
                 .map(|c| if c.name.is_empty() { c.id.clone() } else { c.name.clone() })
                 .unwrap_or_else(|| binding.channel_id.clone());
 
+            // Per-channel upstream model name — same fallback as routing::route()
+            let upstream_name = binding.upstream_model.clone().unwrap_or(model.name.clone());
+
             let route = match self.routing.get_route(&binding.channel_id) {
                 Some(r) => r,
                 None => {
@@ -81,7 +84,7 @@ impl HealthProbeService {
             };
 
             let test_body = serde_json::json!({
-                "model": model.id,
+                "model": upstream_name,
                 "messages": [{"role": "user", "content": "hi"}],
                 "temperature": 0.01,
                 "max_tokens": 512,
@@ -92,7 +95,7 @@ impl HealthProbeService {
             let start = Instant::now();
             let result = if provider_name == "anthropic" {
                 let body = serde_json::json!({
-                    "model": model.id,
+                    "model": upstream_name,
                     "messages": [{"role": "user", "content": "hi"}],
                     "max_tokens": 512,
                 });
