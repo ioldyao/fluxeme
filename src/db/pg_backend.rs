@@ -467,6 +467,78 @@ impl DbBackend for PgBackend {
             .execute(&self.pool)
             .await;
 
+        // ── Deduplicate models by name ──────────────────────────────────
+        // Models with the same name and different IDs (created via seed or
+        // sync) can accumulate duplicate rows with diverging pricing.
+        // Merge channel bindings and subscriptions into the "best" row
+        // (highest pricing), then drop the others.
+        let duplicates: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT name, count(*) as cnt FROM models GROUP BY name HAVING count(*) > 1",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+
+        for (name, _) in duplicates {
+            // Pick winner: highest prompt_price + completion_price, tiebreak by id
+            let winner: Option<(String,)> = sqlx::query_as(
+                "SELECT id FROM models WHERE name = $1 ORDER BY (prompt_price + completion_price) DESC, id ASC LIMIT 1",
+            )
+            .bind(&name)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten();
+
+            if let Some((winner_id,)) = winner {
+                // Move channel bindings from losers to winner
+                let _ = sqlx::query(
+                    "INSERT INTO model_channels (model_id, channel_id, priority)
+                     SELECT $1, mc.channel_id, mc.priority
+                     FROM model_channels mc JOIN models m ON mc.model_id = m.id
+                     WHERE m.name = $2 AND m.id != $1
+                     ON CONFLICT (model_id, channel_id) DO NOTHING",
+                )
+                .bind(&winner_id)
+                .bind(&name)
+                .execute(&self.pool)
+                .await;
+
+                // Move subscriptions from losers to winner
+                let _ = sqlx::query(
+                    "INSERT INTO user_subscriptions (user_id, model_id, created_at)
+                     SELECT us.user_id, $1, us.created_at
+                     FROM user_subscriptions us JOIN models m ON us.model_id = m.id
+                     WHERE m.name = $2 AND m.id != $1
+                     ON CONFLICT (user_id, model_id) DO NOTHING",
+                )
+                .bind(&winner_id)
+                .bind(&name)
+                .execute(&self.pool)
+                .await;
+
+                // Delete losers (cascade removes their model_channels rows)
+                let _ = sqlx::query("DELETE FROM models WHERE name = $1 AND id != $2")
+                    .bind(&name)
+                    .bind(&winner_id)
+                    .execute(&self.pool)
+                    .await;
+
+                tracing::info!(
+                    "Migration: deduplicated model '{}' → kept id={}",
+                    name,
+                    winner_id
+                );
+            }
+        }
+
+        // Prevent future duplicates
+        let _ = sqlx::raw_sql(
+            "ALTER TABLE models ADD CONSTRAINT IF NOT EXISTS models_name_unique UNIQUE (name)",
+        )
+        .execute(&self.pool)
+        .await;
+
         Ok(())
     }
 
@@ -1120,11 +1192,27 @@ impl DbBackend for PgBackend {
     }
 
     async fn create_model(&self, m: &Model) -> Result<(), DbError> {
+        // Upsert by name: model identity is the name, not the ID.
+        // ON CONFLICT updates pricing + metadata; channel bindings are
+        // added separately to model_channels which is genuinely N:N.
+        // DO NOT change the ID on conflict — model_channels FK depends on it.
         sqlx::query(
             "INSERT INTO models (id, name, model_pattern, prompt_price, completion_price, \
              cache_read_price, cache_write_price, image_input_price, audio_input_price, \
              audio_output_price, published, context_length, category) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
+             ON CONFLICT (name) DO UPDATE SET \
+               model_pattern = EXCLUDED.model_pattern, \
+               prompt_price = CASE WHEN models.prompt_price = 0.0 THEN EXCLUDED.prompt_price ELSE models.prompt_price END, \
+               completion_price = CASE WHEN models.completion_price = 0.0 THEN EXCLUDED.completion_price ELSE models.completion_price END, \
+               cache_read_price = CASE WHEN models.cache_read_price = 0.0 THEN EXCLUDED.cache_read_price ELSE models.cache_read_price END, \
+               cache_write_price = CASE WHEN models.cache_write_price = 0.0 THEN EXCLUDED.cache_write_price ELSE models.cache_write_price END, \
+               image_input_price = CASE WHEN models.image_input_price = 0.0 THEN EXCLUDED.image_input_price ELSE models.image_input_price END, \
+               audio_input_price = CASE WHEN models.audio_input_price = 0.0 THEN EXCLUDED.audio_input_price ELSE models.audio_input_price END, \
+               audio_output_price = CASE WHEN models.audio_output_price = 0.0 THEN EXCLUDED.audio_output_price ELSE models.audio_output_price END, \
+               published = EXCLUDED.published, \
+               context_length = COALESCE(EXCLUDED.context_length, models.context_length), \
+               category = EXCLUDED.category",
         )
         .bind(&m.id)
         .bind(&m.name)
@@ -1141,11 +1229,19 @@ impl DbBackend for PgBackend {
         .bind(&m.category)
         .execute(&self.pool)
         .await?;
+
+        // Use the actual ID in the DB (may differ from m.id after upsert)
+        let model_id: (String,) = sqlx::query_as("SELECT id FROM models WHERE name = $1")
+            .bind(&m.name)
+            .fetch_one(&self.pool)
+            .await?;
+
         for binding in &m.channels {
             sqlx::query(
-                "INSERT INTO model_channels (model_id, channel_id, priority) VALUES ($1, $2, $3)",
+                "INSERT INTO model_channels (model_id, channel_id, priority) \
+                 VALUES ($1, $2, $3) ON CONFLICT (model_id, channel_id) DO UPDATE SET priority = EXCLUDED.priority",
             )
-            .bind(&m.id)
+            .bind(&model_id.0)
             .bind(&binding.channel_id)
             .bind(binding.priority)
             .execute(&self.pool)
@@ -3019,7 +3115,7 @@ impl DbBackend for PgBackend {
             let (prompt_price, completion_price, cache_read_price) = {
                 // Lookup pricing within transaction
                 let result = sqlx::query_as::<_, (f64, f64, f64)>(
-                    "SELECT prompt_price, completion_price, cache_read_price FROM models WHERE name = $1 ORDER BY prompt_price DESC, completion_price DESC LIMIT 1",
+                    "SELECT prompt_price, completion_price, cache_read_price FROM models WHERE name = $1",
                 )
                 .bind(&record.model)
                 .fetch_optional(&mut *tx)

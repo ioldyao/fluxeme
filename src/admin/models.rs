@@ -142,17 +142,7 @@ pub(crate) async fn update_model_pricing(
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:model-pricing").await?;
-
-    // Pricing is per model *name*, not per (model, channel) row.
-    // Update all rows that share the same name so billing always finds the price.
-    if let Some(model) = state.db.get_model(&id).await.map_err(db_err)? {
-        let target_name = model.name.clone();
-        for m in &state.db.list_models().await.map_err(db_err)? {
-            if m.name == target_name {
-                state.db.set_model_pricing(&m.id, &pricing).await.map_err(db_err)?;
-            }
-        }
-    }
+    state.db.set_model_pricing(&id, &pricing).await.map_err(db_err)?;
 
     tracing::info!(
         "admin={} action=update_model_pricing target={}",
