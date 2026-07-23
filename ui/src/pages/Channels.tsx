@@ -4,6 +4,7 @@ import { useQueryClient, useMutation } from '@tanstack/react-query';
 import { useChannels, useCreateChannel, useUpdateChannel, useDeleteChannel } from '@/api/channels';
 import { api } from '@/api/client';
 import { ChannelForm } from '@/forms/ChannelForm';
+import { PROVIDER_DISPLAY } from '@/constants/providers';
 import { PageHeader } from '@/components/PageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EmptyState } from '@/components/EmptyState';
@@ -89,7 +90,7 @@ export default function Channels() {
                     <tr key={ch.id} className="border-b last:border-0 hover:bg-muted/50">
                       <td className="py-3 px-4 font-mono text-xs">{ch.id}</td>
                       <td className="py-3 px-4">{ch.name || ch.id}</td>
-                      <td className="py-3 px-4 capitalize">{ch.provider}{ch.anthropic_compat && (
+                      <td className="py-3 px-4">{PROVIDER_DISPLAY[ch.provider] || ch.provider}{ch.anthropic_compat && (
                         <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
                           Anthropic
                         </span>
