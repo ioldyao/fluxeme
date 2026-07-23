@@ -5,6 +5,13 @@ use regex::Regex;
 use crate::db::Database;
 use crate::domain::moderation::ContentFilterRule;
 
+/// Pre-compiled rule: the original config row plus an already-parsed Regex
+/// (when `pattern_type == "regex"`).
+struct CompiledRule {
+    rule: ContentFilterRule,
+    regex: Option<Regex>,
+}
+
 /// Outcome of a content filter check on a request body.
 #[derive(Debug)]
 pub enum FilterOutcome {
@@ -31,10 +38,15 @@ impl std::error::Error for FilterBlocked {}
 /// In-memory content filter service.
 ///
 /// Loads rules from the database on startup and after admin changes.
-/// Provides methods to check and mask request/response bodies.
+/// Pre-compiles regex patterns so the hot path never calls `Regex::new()`.
+/// Caches the `content_moderation_enabled` setting so handlers don't
+/// query the DB on every request.
 pub struct ContentFilterService {
     db: Arc<Database>,
-    rules: RwLock<Vec<ContentFilterRule>>,
+    rules: RwLock<Vec<CompiledRule>>,
+    /// Cached copy of the `content_moderation_enabled` DB setting.
+    /// Refreshed on `reload()`. Defaults to `false`.
+    enabled: RwLock<bool>,
 }
 
 impl ContentFilterService {
@@ -42,22 +54,62 @@ impl ContentFilterService {
         let svc = Self {
             db,
             rules: RwLock::new(Vec::new()),
+            enabled: RwLock::new(false),
         };
         svc.reload().await;
         svc
     }
 
-    /// Reload all enabled rules from the database.
+    /// Whether content filtering is enabled (cached from DB).
+    /// Handlers should call this instead of querying the database.
+    pub fn is_enabled(&self) -> bool {
+        *self.enabled.read().unwrap()
+    }
+
+    /// Reload all enabled rules and the enabled flag from the database.
     pub async fn reload(&self) {
+        // Refresh the enabled flag
+        let filter_enabled = self
+            .db
+            .get_setting("content_moderation_enabled")
+            .await
+            .ok()
+            .flatten()
+            .map(|v| v != "false")
+            .unwrap_or(false);
+        *self.enabled.write().unwrap() = filter_enabled;
+
+        // Reload rules with pre-compiled regexes
         match self.db.list_filter_rules().await {
             Ok(rules) => {
-                let mut enabled: Vec<ContentFilterRule> =
-                    rules.into_iter().filter(|r| r.enabled).collect();
-                enabled.sort_by_key(|r| r.priority);
-                *self.rules.write().unwrap() = enabled;
+                let mut compiled: Vec<CompiledRule> = rules
+                    .into_iter()
+                    .filter(|r| r.enabled)
+                    .map(|r| {
+                        let regex = if r.pattern_type == "regex" {
+                            match Regex::new(&r.pattern) {
+                                Ok(re) => Some(re),
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Invalid regex pattern for rule '{}': {}",
+                                        r.name,
+                                        e
+                                    );
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        };
+                        CompiledRule { rule: r, regex }
+                    })
+                    .collect();
+                compiled.sort_by_key(|c| c.rule.priority);
+                *self.rules.write().unwrap() = compiled;
                 tracing::info!(
-                    "Content filter loaded {} enabled rules",
-                    self.rules.read().unwrap().len()
+                    "Content filter loaded {} enabled rules (enabled={})",
+                    self.rules.read().unwrap().len(),
+                    filter_enabled,
                 );
             }
             Err(e) => tracing::error!("Failed to load content filter rules: {}", e),
@@ -75,7 +127,9 @@ impl ContentFilterService {
         let mut masked_body = body_str.to_string();
         let mut was_masked = false;
 
-        for rule in rules.iter() {
+        for compiled in rules.iter() {
+            let rule = &compiled.rule;
+
             // Filter by scope
             if rule.scope != "request" && rule.scope != "both" {
                 continue;
@@ -89,7 +143,7 @@ impl ContentFilterService {
                 }
             }
 
-            if !match_pattern(&masked_body, rule) {
+            if !match_compiled(&masked_body, compiled) {
                 continue;
             }
 
@@ -98,7 +152,7 @@ impl ContentFilterService {
                     return FilterOutcome::Blocked(rule.name.clone());
                 }
                 "mask" => {
-                    masked_body = apply_mask(&masked_body, rule);
+                    masked_body = apply_mask_compiled(&masked_body, compiled);
                     was_masked = true;
                 }
                 _ => {}
@@ -119,7 +173,9 @@ impl ContentFilterService {
         let rules = self.rules.read().unwrap();
         let mut result = body_str.to_string();
 
-        for rule in rules.iter() {
+        for compiled in rules.iter() {
+            let rule = &compiled.rule;
+
             if rule.scope != "response" && rule.scope != "both" {
                 continue;
             }
@@ -135,8 +191,8 @@ impl ContentFilterService {
                 continue;
             }
 
-            if match_pattern(&result, rule) {
-                result = apply_mask(&result, rule);
+            if match_compiled(&result, compiled) {
+                result = apply_mask_compiled(&result, compiled);
             }
         }
 
@@ -146,23 +202,19 @@ impl ContentFilterService {
 
 // ── Matching logic ──────────────────────────────────────────────────────
 
-/// Check whether `text` matches the given rule's pattern.
-fn match_pattern(text: &str, rule: &ContentFilterRule) -> bool {
-    match rule.pattern_type.as_str() {
-        "regex" => match Regex::new(&rule.pattern) {
-            Ok(re) => re.is_match(text),
-            Err(e) => {
-                tracing::warn!(
-                    "Invalid regex pattern for rule '{}': {}",
-                    rule.name,
-                    e
-                );
-                false
+/// Check whether `text` matches the given compiled rule.
+fn match_compiled(text: &str, compiled: &CompiledRule) -> bool {
+    match compiled.rule.pattern_type.as_str() {
+        "regex" => {
+            if let Some(ref re) = compiled.regex {
+                re.is_match(text)
+            } else {
+                false // regex failed to compile at reload time
             }
-        },
+        }
         _ => {
             // keyword mode: split by comma, check each keyword
-            let keywords: Vec<&str> = rule.pattern.split(',').map(|s| s.trim()).collect();
+            let keywords: Vec<&str> = compiled.rule.pattern.split(',').map(|s| s.trim()).collect();
             keywords.iter().any(|kw| {
                 if kw.is_empty() {
                     return false;
@@ -174,20 +226,29 @@ fn match_pattern(text: &str, rule: &ContentFilterRule) -> bool {
 }
 
 /// Replace all matches of the rule's pattern in `text` with the replacement.
-fn apply_mask(text: &str, rule: &ContentFilterRule) -> String {
-    let replacement = rule
+fn apply_mask_compiled(text: &str, compiled: &CompiledRule) -> String {
+    let replacement = compiled
+        .rule
         .replacement
         .as_deref()
         .unwrap_or("[REDACTED]");
 
-    match rule.pattern_type.as_str() {
-        "regex" => match Regex::new(&rule.pattern) {
-            Ok(re) => re.replace_all(text, replacement).to_string(),
-            Err(_) => text.to_string(),
-        },
+    match compiled.rule.pattern_type.as_str() {
+        "regex" => {
+            if let Some(ref re) = compiled.regex {
+                re.replace_all(text, replacement).to_string()
+            } else {
+                text.to_string()
+            }
+        }
         _ => {
             let mut result = text.to_string();
-            let keywords: Vec<&str> = rule.pattern.split(',').map(|s| s.trim()).collect();
+            let keywords: Vec<&str> = compiled
+                .rule
+                .pattern
+                .split(',')
+                .map(|s| s.trim())
+                .collect();
             for kw in keywords {
                 if !kw.is_empty() {
                     result = result.replace(kw, replacement);

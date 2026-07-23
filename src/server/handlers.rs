@@ -1252,8 +1252,10 @@ pub async fn chat_completions(
     let request_id = Uuid::new_v4().to_string();
     let start = Instant::now();
 
-    let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
     let content_len = headers.get("content-length").and_then(|v| v.to_str().ok()).unwrap_or("unknown");
+
+    // Read gateway config once — avoids 3-5 lock acquisitions per request
+    let gw_cfg = state.gateway_config.read().unwrap().clone();
 
     let user = state.auth.authenticate(&headers)?;
     let model = trim_model(&mut body)?;
@@ -1266,7 +1268,7 @@ pub async fn chat_completions(
     );
     let _guard = request_span.enter();
 
-    tracing::info!(request_id, user = %user.user_id, model = %model, body_size = %body_size, content_length = %content_len, "Incoming request");
+    tracing::info!(request_id, user = %user.user_id, model = %model, content_length = %content_len, "Incoming request");
 
     if let Some(ref allowed) = user.allowed_models {
         if !allowed.contains(&model) {
@@ -1280,7 +1282,7 @@ pub async fn chat_completions(
     }
 
     // ── Wallet balance check (Redis gate_status → local cache → SQLite) ──
-    if state.gateway_config.read().unwrap().billing_enabled {
+    if gw_cfg.billing_enabled {
         check_wallet_balance(&*state, &user.user_id).await?;
     }
 
@@ -1306,13 +1308,11 @@ pub async fn chat_completions(
 
     tracing::info!(request_id, channel = %channel_id, endpoint = %route.endpoint.url, "Routing resolved");
 
+    // ── Serialize body once after all mutations (trim_model, upstream model override) ──
+    let mut body_str = serde_json::to_string(&body).unwrap_or_default();
+
     // ── Content filter check (request body) ──
-    let content_filter_enabled = state.db.get_setting("content_moderation_enabled").await
-        .ok().flatten()
-        .map(|v| v != "false")
-        .unwrap_or(false);
-    if content_filter_enabled {
-        let body_str = serde_json::to_string(&body).unwrap_or_default();
+    if state.content_filter.is_enabled() {
         match state.content_filter.check_request(&body_str, Some(&channel_id)) {
         crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
             tracing::warn!(request_id, rule = %rule_name, "Request blocked by content filter");
@@ -1324,6 +1324,7 @@ pub async fn chat_completions(
         crate::service::moderation::FilterOutcome::Masked(masked) => {
             if let Ok(v) = serde_json::from_str(&masked) {
                 body = v;
+                body_str = masked;
                 tracing::info!(request_id, "Request body masked by content filter");
             }
         }
@@ -1333,11 +1334,7 @@ pub async fn chat_completions(
 
     // ── Cache check (non-streaming only) ──
     let cache_key = if !is_streaming {
-        let raw_key = format!(
-            "{}:{}",
-            model,
-            serde_json::to_string(&body).unwrap_or_default()
-        );
+        let raw_key = format!("{}:{}", model, body_str);
         let hash = hex::encode(Sha256::digest(raw_key.as_bytes()));
         match state.cache.get(&user.user_id, &hash).await {
             Ok(Some(cached)) => {
@@ -1357,9 +1354,7 @@ pub async fn chat_completions(
         None
     };
 
-    let handler_timeout = Duration::from_secs(
-        state.gateway_config.read().unwrap().handler_timeout_secs,
-    );
+    let handler_timeout = Duration::from_secs(gw_cfg.handler_timeout_secs);
     let state_clone = state.clone();
     let rid = request_id.clone();
 
@@ -1400,7 +1395,8 @@ pub async fn messages(
     let request_id = Uuid::new_v4().to_string();
     let start = Instant::now();
 
-    let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
+    // Read gateway config once
+    let gw_cfg = state.gateway_config.read().unwrap().clone();
 
     let user = state.auth.authenticate(&headers)?;
     let model = trim_model(&mut body)?;
@@ -1413,7 +1409,7 @@ pub async fn messages(
     );
     let _guard = request_span.enter();
 
-    tracing::info!(request_id, user = %user.user_id, model = %model, body_size = %body_size, "Incoming messages request");
+    tracing::info!(request_id, user = %user.user_id, model = %model, "Incoming messages request");
 
     if let Some(ref allowed) = user.allowed_models {
         if !allowed.contains(&model) {
@@ -1427,7 +1423,7 @@ pub async fn messages(
     }
 
     // ── Wallet balance check (Redis gate_status → local cache → SQLite) ──
-    if state.gateway_config.read().unwrap().billing_enabled {
+    if gw_cfg.billing_enabled {
         check_wallet_balance(&*state, &user.user_id).await?;
     }
 
@@ -1468,13 +1464,11 @@ pub async fn messages(
 
     tracing::info!(request_id, channel = %channel_id, endpoint = %route.endpoint.url, "Messages routing resolved");
 
+    // ── Serialize body once after all mutations ──
+    let mut body_str = serde_json::to_string(&body).unwrap_or_default();
+
     // ── Content filter check (request body) ──
-    let content_filter_enabled = state.db.get_setting("content_moderation_enabled").await
-        .ok().flatten()
-        .map(|v| v != "false")
-        .unwrap_or(false);
-    if content_filter_enabled {
-        let body_str = serde_json::to_string(&body).unwrap_or_default();
+    if state.content_filter.is_enabled() {
         match state.content_filter.check_request(&body_str, Some(&channel_id)) {
         crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
             tracing::warn!(request_id, rule = %rule_name, "Messages request blocked by content filter");
@@ -1486,6 +1480,7 @@ pub async fn messages(
         crate::service::moderation::FilterOutcome::Masked(masked) => {
             if let Ok(v) = serde_json::from_str(&masked) {
                 body = v;
+                body_str = masked;
                 tracing::info!(request_id, "Messages request body masked by content filter");
             }
         }
@@ -1493,9 +1488,7 @@ pub async fn messages(
         }
     }
 
-    let handler_timeout = Duration::from_secs(
-        state.gateway_config.read().unwrap().handler_timeout_secs,
-    );
+    let handler_timeout = Duration::from_secs(gw_cfg.handler_timeout_secs);
     let state_clone = state.clone();
     let rid = request_id.clone();
     let client_ip_clone = client_ip.clone();
@@ -1560,7 +1553,8 @@ async fn relay_to_upstream(
     }
 
     // ── Wallet balance check (Redis gate_status → local cache → SQLite) ──
-    if state.gateway_config.read().unwrap().billing_enabled {
+    let gw_cfg = state.gateway_config.read().unwrap().clone();
+    if gw_cfg.billing_enabled {
         check_wallet_balance(state, &user.user_id).await?;
     }
 
@@ -1581,13 +1575,11 @@ async fn relay_to_upstream(
         user_id: user.user_id.clone(),
     });
 
+    // ── Serialize body once (after all mutations), used for content filter + req_body ──
+    let mut body_str = serde_json::to_string(&body).unwrap_or_default();
+
     // ── Content filter check (request body) ──
-    let content_filter_enabled = state.db.get_setting("content_moderation_enabled").await
-        .ok().flatten()
-        .map(|v| v != "false")
-        .unwrap_or(false);
-    if content_filter_enabled {
-        let body_str = serde_json::to_string(&body).unwrap_or_default();
+    if state.content_filter.is_enabled() {
         match state.content_filter.check_request(&body_str, Some(&channel_id)) {
         crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
             tracing::warn!(request_id, rule = %rule_name, "Relay request blocked by content filter");
@@ -1599,17 +1591,14 @@ async fn relay_to_upstream(
         crate::service::moderation::FilterOutcome::Masked(masked) => {
             if let Ok(v) = serde_json::from_str(&masked) {
                 body = v;
+                body_str = masked;
             }
         }
         crate::service::moderation::FilterOutcome::Pass => {}
         }
     }
 
-    let req_body = serde_json::to_string(&body).ok();
-        let max_retries = {
-        let gw = state.gateway_config.read().unwrap();
-        gw.max_retries
-    };
+    let req_body = Some(body_str);
     let mut retry_count = 0u32;
 
     let err_msg: String = loop {
@@ -1666,7 +1655,7 @@ async fn relay_to_upstream(
                 continue;
             }
             Err(e) if is_retryable_error(&e) => {
-                if retry_count >= max_retries {
+                if retry_count >= gw_cfg.max_retries {
                     break e.0;
                 }
                 retry_count += 1;
