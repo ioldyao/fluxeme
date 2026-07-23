@@ -1025,14 +1025,20 @@ impl DbBackend for SqliteBackend {
     async fn create_model(&self, m: &Model) -> Result<(), DbError> {
         let m = m.clone();
         self.exec(move |conn| {
+            // Upsert by name (SQLite: INSERT OR IGNORE + UPDATE).
             conn.execute(
-                "INSERT INTO models (id, name, model_pattern, prompt_price, completion_price, cache_read_price, cache_write_price, image_input_price, audio_input_price, audio_output_price, published, context_length, category) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                "INSERT OR IGNORE INTO models (id, name, model_pattern, prompt_price, completion_price, cache_read_price, cache_write_price, image_input_price, audio_input_price, audio_output_price, published, context_length, category) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![m.id, m.name, m.model_pattern, m.pricing.prompt_price, m.pricing.completion_price, m.pricing.cache_read_price, m.pricing.cache_write_price, m.pricing.image_input_price, m.pricing.audio_input_price, m.pricing.audio_output_price, m.published as i32, m.context_length, m.category],
+            )?;
+            let model_id: String = conn.query_row(
+                "SELECT id FROM models WHERE name = ?1",
+                params![m.name],
+                |row| row.get(0),
             )?;
             for binding in &m.channels {
                 conn.execute(
-                    "INSERT INTO model_channels (model_id, channel_id, priority) VALUES (?1, ?2, ?3)",
-                    params![m.id, binding.channel_id, binding.priority],
+                    "INSERT OR IGNORE INTO model_channels (model_id, channel_id, priority) VALUES (?1, ?2, ?3)",
+                    params![model_id, binding.channel_id, binding.priority],
                 )?;
             }
             Ok(())
