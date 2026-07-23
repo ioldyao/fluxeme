@@ -46,6 +46,7 @@ const en: Record<string, string> = {
   'nav.usage': 'Usage Logs',
   'nav.logout': 'Logout',
   'nav.group.overview': 'Overview',
+  'nav.group.observability': 'Observability',
   'nav.group.models': 'Models',
   'nav.group.channels': 'Channels',
   'nav.group.security': 'Routing & Security',
