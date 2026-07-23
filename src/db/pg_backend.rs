@@ -545,7 +545,7 @@ impl DbBackend for PgBackend {
         // Step 3: add the constraint (also idempotent: IF NOT EXISTS).
         // ALTER TABLE ADD CONSTRAINT is atomic on its own; if it fails,
         // we abort rather than continue in a broken state.
-        sqlx::query(
+        sqlx::raw_sql(
             "ALTER TABLE models ADD CONSTRAINT IF NOT EXISTS models_name_unique UNIQUE (name)",
         )
         .execute(&self.pool)
