@@ -13,17 +13,52 @@ use super::{
 use crate::config::types::EndpointConfig;
 use crate::provider::shared_client;
 
-pub struct DeepSeekAdapter;
+pub struct GenericAdapter {
+    pub name: &'static str,
+    pub display_name: &'static str,
+    pub anthropic_path: &'static str,
+}
+
+impl GenericAdapter {
+    pub fn deepseek() -> Self {
+        Self {
+            name: "deepseek",
+            display_name: "DeepSeek",
+            anthropic_path: "/anthropic/v1/messages",
+        }
+    }
+    pub fn dashscope() -> Self {
+        Self {
+            name: "dashscope",
+            display_name: "DashScope",
+            anthropic_path: "/v1/messages",
+        }
+    }
+    pub fn zhipu() -> Self {
+        Self {
+            name: "zhipu",
+            display_name: "Zhipu",
+            anthropic_path: "/v1/messages",
+        }
+    }
+    pub fn minimax() -> Self {
+        Self {
+            name: "minimax",
+            display_name: "MiniMax",
+            anthropic_path: "/v1/messages",
+        }
+    }
+}
 
 #[async_trait::async_trait]
-impl ProviderAdapter for DeepSeekAdapter {
+impl ProviderAdapter for GenericAdapter {
     async fn relay(
         &self,
         endpoint: &EndpointConfig,
         path: &str,
         body: Value,
     ) -> Result<Value, ProviderError> {
-        super::relay_request(endpoint, path, body, "deepseek").await
+        super::relay_request(endpoint, path, body, self.name).await
     }
 
     async fn chat_complete(
@@ -54,7 +89,7 @@ impl ProviderAdapter for DeepSeekAdapter {
             endpoint = %endpoint.url,
             body_size = %body_size,
             timeout_ms = timeout.as_millis(),
-            "Sending request to upstream (deepseek)"
+            "Sending request to upstream ({})", self.name
         );
 
         let resp_start = Instant::now();
@@ -66,7 +101,7 @@ impl ProviderAdapter for DeepSeekAdapter {
                 error = %e,
                 error_kind = ?kind,
                 elapsed_ms = resp_start.elapsed().as_millis(),
-                "DeepSeek upstream HTTP request failed"
+                "{} upstream HTTP request failed", self.display_name
             );
             ProviderError::new(format!("Request failed: {}", e), kind)
         })?;
@@ -76,7 +111,7 @@ impl ProviderAdapter for DeepSeekAdapter {
             endpoint = %endpoint.url,
             ttfb_ms = resp_start.elapsed().as_millis(),
             status = status.as_u16(),
-            "Upstream response header received (deepseek)"
+            "Upstream response header received ({})", self.name
         );
 
         let body_resp = resp.bytes().await.map_err(|e| {
@@ -86,13 +121,13 @@ impl ProviderAdapter for DeepSeekAdapter {
             endpoint = %endpoint.url,
             body_size = body_resp.len(),
             total_ms = resp_start.elapsed().as_millis(),
-            "Upstream full response received (deepseek)"
+            "Upstream full response received ({})", self.name
         );
 
         if !status.is_success() {
             let resp_text = String::from_utf8_lossy(&body_resp);
             let kind = classify_status(status.as_u16());
-            tracing::error!(%status, body = %resp_text, "deepseek upstream request failed");
+            tracing::error!(%status, body = %resp_text, "{} upstream request failed", self.name);
             return Err(ProviderError::new(
                 format!("Upstream request failed with status {}", status.as_u16()),
                 kind,
@@ -129,7 +164,7 @@ impl ProviderAdapter for DeepSeekAdapter {
             endpoint = %endpoint.url,
             body_size = %body_size,
             total_timeout_ms = timeout.as_millis(),
-            "Sending stream request to upstream (deepseek)"
+            "Sending stream request to upstream ({})", self.name
         );
 
         let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
@@ -146,7 +181,7 @@ impl ProviderAdapter for DeepSeekAdapter {
                 .await
                 .unwrap_or_default();
             let kind = classify_status(status.as_u16());
-            tracing::error!(%status, body = %body, "deepseek upstream stream request failed");
+            tracing::error!(%status, body = %body, "{} upstream stream request failed", self.name);
             return Err(ProviderError::new(
                 format!("Upstream request failed with status {}", status.as_u16()),
                 kind,
@@ -173,7 +208,7 @@ impl ProviderAdapter for DeepSeekAdapter {
         let client = shared_client();
 
         let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
-        let url = format!("{}/anthropic/v1/messages", base);
+        let url = format!("{}{}", base, self.anthropic_path);
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -197,7 +232,7 @@ impl ProviderAdapter for DeepSeekAdapter {
             endpoint = %endpoint.url,
             body_size = %body_size,
             timeout_ms = timeout.as_millis(),
-            "Sending request to upstream (deepseek, anthropic format)"
+            "Sending request to upstream ({}, anthropic format)", self.name
         );
 
         let resp_start = Instant::now();
@@ -209,7 +244,7 @@ impl ProviderAdapter for DeepSeekAdapter {
                 error = %e,
                 error_kind = ?kind,
                 elapsed_ms = resp_start.elapsed().as_millis(),
-                "DeepSeek anthropic-format upstream HTTP request failed"
+                "{} anthropic-format upstream HTTP request failed", self.display_name
             );
             ProviderError::new(format!("Request failed: {}", e), kind)
         })?;
@@ -219,7 +254,7 @@ impl ProviderAdapter for DeepSeekAdapter {
             endpoint = %endpoint.url,
             ttfb_ms = resp_start.elapsed().as_millis(),
             status = status.as_u16(),
-            "Upstream response header received (deepseek, anthropic format)"
+            "Upstream response header received ({}, anthropic format)", self.name
         );
 
         let body_resp = resp.bytes().await.map_err(|e| {
@@ -229,13 +264,13 @@ impl ProviderAdapter for DeepSeekAdapter {
             endpoint = %endpoint.url,
             body_size = body_resp.len(),
             total_ms = resp_start.elapsed().as_millis(),
-            "Upstream full response received (deepseek, anthropic format)"
+            "Upstream full response received ({}, anthropic format)", self.name
         );
 
         if !status.is_success() {
             let resp_text = String::from_utf8_lossy(&body_resp);
             let kind = classify_status(status.as_u16());
-            tracing::error!(%status, body = %resp_text, "deepseek anthropic-format request failed");
+            tracing::error!(%status, body = %resp_text, "{} anthropic-format request failed", self.name);
             return Err(ProviderError::new(
                 format!("Upstream request failed with status {}", status.as_u16()),
                 kind,
@@ -256,7 +291,7 @@ impl ProviderAdapter for DeepSeekAdapter {
         let client = shared_client();
 
         let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
-        let url = format!("{}/anthropic/v1/messages", base);
+        let url = format!("{}{}", base, self.anthropic_path);
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -274,7 +309,7 @@ impl ProviderAdapter for DeepSeekAdapter {
         tracing::info!(
             endpoint = %endpoint.url,
             total_timeout_ms = timeout.as_millis(),
-            "Sending stream request to upstream (deepseek, anthropic format)"
+            "Sending stream request to upstream ({}, anthropic format)", self.name
         );
 
         let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
@@ -287,7 +322,7 @@ impl ProviderAdapter for DeepSeekAdapter {
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
             let kind = classify_status(status.as_u16());
-            tracing::error!(%status, body = %text, "deepseek anthropic-format stream request failed");
+            tracing::error!(%status, body = %text, "{} anthropic-format stream request failed", self.name);
             return Err(ProviderError::new(
                 format!("Upstream request failed with status {}", status.as_u16()),
                 kind,

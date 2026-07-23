@@ -3,10 +3,7 @@ pub mod anthropic;
 pub mod anthropic_compat;
 pub mod vllm;
 pub mod sglang;
-pub mod deepseek;
-pub mod dashscope;
-pub mod zhipu;
-pub mod minimax;
+pub mod generic;
 
 use std::net::IpAddr;
 use std::pin::Pin;
@@ -368,10 +365,10 @@ pub struct ProviderRegistry {
     anthropic: Arc<anthropic::AnthropicAdapter>,
     vllm: Arc<vllm::VllmAdapter>,
     sglang: Arc<sglang::SglangAdapter>,
-    deepseek: Arc<deepseek::DeepSeekAdapter>,
-    dashscope: Arc<dashscope::DashScopeAdapter>,
-    zhipu: Arc<zhipu::ZhipuAdapter>,
-    minimax: Arc<minimax::MiniMaxAdapter>,
+    deepseek: Arc<generic::GenericAdapter>,
+    dashscope: Arc<generic::GenericAdapter>,
+    zhipu: Arc<generic::GenericAdapter>,
+    minimax: Arc<generic::GenericAdapter>,
 }
 
 impl ProviderRegistry {
@@ -381,10 +378,10 @@ impl ProviderRegistry {
             anthropic: Arc::new(anthropic::AnthropicAdapter),
             vllm: Arc::new(vllm::VllmAdapter),
             sglang: Arc::new(sglang::SglangAdapter),
-            deepseek: Arc::new(deepseek::DeepSeekAdapter),
-            dashscope: Arc::new(dashscope::DashScopeAdapter),
-            zhipu: Arc::new(zhipu::ZhipuAdapter),
-            minimax: Arc::new(minimax::MiniMaxAdapter),
+            deepseek: Arc::new(generic::GenericAdapter::deepseek()),
+            dashscope: Arc::new(generic::GenericAdapter::dashscope()),
+            zhipu: Arc::new(generic::GenericAdapter::zhipu()),
+            minimax: Arc::new(generic::GenericAdapter::minimax()),
         }
     }
 
