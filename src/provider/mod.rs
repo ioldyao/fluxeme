@@ -2,7 +2,6 @@ pub mod openai;
 pub mod anthropic;
 pub mod anthropic_compat;
 pub mod vllm;
-pub mod sglang;
 pub mod generic;
 
 use std::net::IpAddr;
@@ -364,7 +363,7 @@ pub struct ProviderRegistry {
     openai: Arc<openai::OpenAIAdapter>,
     anthropic: Arc<anthropic::AnthropicAdapter>,
     vllm: Arc<vllm::VllmAdapter>,
-    sglang: Arc<sglang::SglangAdapter>,
+    sglang: Arc<generic::GenericAdapter>,
     deepseek: Arc<generic::GenericAdapter>,
     dashscope: Arc<generic::GenericAdapter>,
     zhipu: Arc<generic::GenericAdapter>,
@@ -377,7 +376,7 @@ impl ProviderRegistry {
             openai: Arc::new(openai::OpenAIAdapter),
             anthropic: Arc::new(anthropic::AnthropicAdapter),
             vllm: Arc::new(vllm::VllmAdapter),
-            sglang: Arc::new(sglang::SglangAdapter),
+            sglang: Arc::new(generic::GenericAdapter::sglang()),
             deepseek: Arc::new(generic::GenericAdapter::deepseek()),
             dashscope: Arc::new(generic::GenericAdapter::dashscope()),
             zhipu: Arc::new(generic::GenericAdapter::zhipu()),

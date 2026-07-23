@@ -48,6 +48,13 @@ impl GenericAdapter {
             anthropic_path: "/v1/messages",
         }
     }
+    pub fn sglang() -> Self {
+        Self {
+            name: "sglang",
+            display_name: "SGLang",
+            anthropic_path: "/v1/messages",
+        }
+    }
 }
 
 #[async_trait::async_trait]
