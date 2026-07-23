@@ -11,10 +11,11 @@ export interface ProbeResult {
   probed_at: string;
 }
 
-export function useProbeResults() {
+export function useProbeResults(opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['probe-results'],
     queryFn: () => api<ProbeResult[]>('/probe-results'),
     refetchInterval: 30_000,
+    enabled: opts?.enabled !== false,
   });
 }
