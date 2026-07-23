@@ -200,7 +200,8 @@ impl RoutingService {
                     for binding in &model_cfg.channels {
                         if let Some(ch) = chs.get(&binding.channel_id) {
                             if ch.enabled {
-                                candidates.push((binding.priority, binding.channel_id.clone(), model_cfg.id.clone()));
+                                let upstream = binding.upstream_model.clone().unwrap_or(model_cfg.name.clone());
+                                candidates.push((binding.priority, binding.channel_id.clone(), upstream));
                             }
                         }
                     }

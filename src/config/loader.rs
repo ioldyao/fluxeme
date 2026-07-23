@@ -323,6 +323,7 @@ pub async fn seed_from_config(
                         channel_id: mc.channel_id.clone(),
                         priority: mc.priority,
                         provider: String::new(),
+                        upstream_model: None,
                     })
                     .collect(),
                 published: false,

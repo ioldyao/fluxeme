@@ -61,6 +61,12 @@ pub struct ModelChannel {
     /// Populated on read by joining with channels.provider.
     #[serde(default)]
     pub provider: String,
+    /// Per-channel upstream model name override.
+    /// When set, the upstream receives this name instead of the user-facing
+    /// model name. Different channels may expose the same logical model
+    /// under different internal names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_model: Option<String>,
 }
 
 fn default_priority() -> i32 {

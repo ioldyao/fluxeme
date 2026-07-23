@@ -403,6 +403,7 @@ impl DbBackend for PgBackend {
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS expires_at TEXT");
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS revoked BOOLEAN NOT NULL DEFAULT false");
         add_col!("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS client_ip TEXT");
+        add_col!("ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS upstream_model TEXT");
         add_col!("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS cache_read_price DOUBLE PRECISION NOT NULL DEFAULT 0.0");
         add_col!("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS endpoint_id BIGINT");
 
@@ -1091,7 +1092,7 @@ impl DbBackend for PgBackend {
         .await?;
 
         let b_rows = sqlx::query(
-            "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, '') \
+            "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model \
              FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id \
              ORDER BY mc.model_id, mc.priority",
         )
@@ -1129,6 +1130,7 @@ impl DbBackend for PgBackend {
                 channel_id: r.get(1),
                 priority: r.get(2),
                 provider: r.get::<Option<String>, _>(3).unwrap_or_default(),
+                upstream_model: r.get::<Option<String>, _>(4),
             });
         }
         for m in &mut models {
@@ -1183,6 +1185,7 @@ impl DbBackend for PgBackend {
                     channel_id: r.get(1),
                     priority: r.get(2),
                     provider: r.get::<Option<String>, _>(3).unwrap_or_default(),
+                    upstream_model: r.get::<Option<String>, _>(4),
                 })
                 .collect();
             Ok(Some(m))
@@ -1238,12 +1241,13 @@ impl DbBackend for PgBackend {
 
         for binding in &m.channels {
             sqlx::query(
-                "INSERT INTO model_channels (model_id, channel_id, priority) \
-                 VALUES ($1, $2, $3) ON CONFLICT (model_id, channel_id) DO UPDATE SET priority = EXCLUDED.priority",
+                "INSERT INTO model_channels (model_id, channel_id, priority, upstream_model) \
+                 VALUES ($1, $2, $3, $4) ON CONFLICT (model_id, channel_id) DO UPDATE SET priority = EXCLUDED.priority, upstream_model = EXCLUDED.upstream_model",
             )
             .bind(&model_id.0)
             .bind(&binding.channel_id)
             .bind(binding.priority)
+            .bind(&binding.upstream_model)
             .execute(&self.pool)
             .await?;
         }
@@ -1279,11 +1283,12 @@ impl DbBackend for PgBackend {
             .await?;
         for binding in &m.channels {
             sqlx::query(
-                "INSERT INTO model_channels (model_id, channel_id, priority) VALUES ($1, $2, $3)",
+                "INSERT INTO model_channels (model_id, channel_id, priority, upstream_model) VALUES ($1, $2, $3, $4)",
             )
             .bind(&m.id)
             .bind(&binding.channel_id)
             .bind(binding.priority)
+            .bind(&binding.upstream_model)
             .execute(&self.pool)
             .await?;
         }
@@ -1309,7 +1314,7 @@ impl DbBackend for PgBackend {
         .await?;
 
         let b_rows = sqlx::query(
-            "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, '') \
+            "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model \
              FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id \
              ORDER BY mc.model_id, mc.priority",
         )
@@ -1347,6 +1352,7 @@ impl DbBackend for PgBackend {
                 channel_id: r.get(1),
                 priority: r.get(2),
                 provider: r.get::<Option<String>, _>(3).unwrap_or_default(),
+                upstream_model: r.get::<Option<String>, _>(4),
             });
         }
         for m in &mut models {
@@ -1470,7 +1476,7 @@ impl DbBackend for PgBackend {
             .collect();
 
         let b_rows = sqlx::query(
-            "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, '') \
+            "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model \
              FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id \
              ORDER BY mc.model_id, mc.priority",
         )
@@ -1486,6 +1492,7 @@ impl DbBackend for PgBackend {
                 channel_id: r.get(1),
                 priority: r.get(2),
                 provider: r.get::<Option<String>, _>(3).unwrap_or_default(),
+                upstream_model: r.get::<Option<String>, _>(4),
             });
         }
         for m in &mut models {

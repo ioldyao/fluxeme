@@ -235,6 +235,8 @@ impl SqliteBackend {
         );
         let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_probe_channel ON probe_results(channel_id)");
         let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_probe_model ON probe_results(model_id)");
+        let _ = conn.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS idx_models_name ON models(name)");
+        let _ = conn.execute_batch("ALTER TABLE model_channels ADD COLUMN upstream_model TEXT");
         Ok(())
     }
 }
@@ -941,7 +943,7 @@ impl DbBackend for SqliteBackend {
                 .collect::<Result<Vec<_>, _>>()?;
 
             let mut bstmt = conn.prepare(
-                "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, '') FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id ORDER BY mc.model_id, mc.priority",
+                "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id ORDER BY mc.model_id, mc.priority",
             )?;
             let binding_rows = bstmt
                 .query_map([], |row| {
@@ -952,6 +954,7 @@ impl DbBackend for SqliteBackend {
                             channel_id: row.get(1)?,
                             priority: row.get(2)?,
                             provider: row.get::<_, String>(3).unwrap_or_default(),
+                            upstream_model: row.get::<_, Option<String>>(4).unwrap_or(None),
                         },
                     ))
                 })?
@@ -1001,7 +1004,7 @@ impl DbBackend for SqliteBackend {
             match rows.next() {
                 Some(Ok(mut m)) => {
                     let mut bstmt = conn.prepare(
-                        "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, '') FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id WHERE mc.model_id = ?1 ORDER BY mc.priority",
+                        "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id WHERE mc.model_id = ?1 ORDER BY mc.priority",
                     )?;
                     let bindings = bstmt
                         .query_map(params![m.id], |row| {
@@ -1010,6 +1013,7 @@ impl DbBackend for SqliteBackend {
                                 channel_id: row.get(1)?,
                                 priority: row.get(2)?,
                                 provider: row.get::<_, String>(3).unwrap_or_default(),
+                            upstream_model: row.get::<_, Option<String>>(4).unwrap_or(None),
                             })
                         })?
                         .collect::<Result<Vec<_>, _>>()?;
@@ -1037,8 +1041,8 @@ impl DbBackend for SqliteBackend {
             )?;
             for binding in &m.channels {
                 conn.execute(
-                    "INSERT OR IGNORE INTO model_channels (model_id, channel_id, priority) VALUES (?1, ?2, ?3)",
-                    params![model_id, binding.channel_id, binding.priority],
+                    "INSERT OR IGNORE INTO model_channels (model_id, channel_id, priority, upstream_model) VALUES (?1, ?2, ?3, ?4)",
+                    params![model_id, binding.channel_id, binding.priority, binding.upstream_model],
                 )?;
             }
             Ok(())
@@ -1057,8 +1061,8 @@ impl DbBackend for SqliteBackend {
             conn.execute("DELETE FROM model_channels WHERE model_id = ?1", params![old_id])?;
             for binding in &m.channels {
                 conn.execute(
-                    "INSERT INTO model_channels (model_id, channel_id, priority) VALUES (?1, ?2, ?3)",
-                    params![m.id, binding.channel_id, binding.priority],
+                    "INSERT OR IGNORE INTO model_channels (model_id, channel_id, priority, upstream_model) VALUES (?1, ?2, ?3, ?4)",
+                    params![m.id, binding.channel_id, binding.priority, binding.upstream_model],
                 )?;
             }
             Ok(())
@@ -1104,7 +1108,7 @@ impl DbBackend for SqliteBackend {
                 .collect::<Result<Vec<_>, _>>()?;
 
             let mut bstmt = conn.prepare(
-                "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, '') FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id ORDER BY mc.model_id, mc.priority",
+                "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id ORDER BY mc.model_id, mc.priority",
             )?;
             let binding_rows = bstmt
                 .query_map([], |row| {
@@ -1115,6 +1119,7 @@ impl DbBackend for SqliteBackend {
                             channel_id: row.get(1)?,
                             priority: row.get(2)?,
                             provider: row.get::<_, String>(3).unwrap_or_default(),
+                            upstream_model: row.get::<_, Option<String>>(4).unwrap_or(None),
                         },
                     ))
                 })?
@@ -1258,7 +1263,7 @@ impl DbBackend for SqliteBackend {
 
             // Load bindings for all models (single query, no N+1)
             let mut bstmt = conn.prepare(
-                "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, '') FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id ORDER BY mc.model_id, mc.priority",
+                "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id ORDER BY mc.model_id, mc.priority",
             )?;
             let rows = bstmt
                 .query_map([], |row| {
@@ -1269,6 +1274,7 @@ impl DbBackend for SqliteBackend {
                             channel_id: row.get(1)?,
                             priority: row.get(2)?,
                             provider: row.get::<_, String>(3).unwrap_or_default(),
+                            upstream_model: row.get::<_, Option<String>>(4).unwrap_or(None),
                         },
                     ))
                 })?
