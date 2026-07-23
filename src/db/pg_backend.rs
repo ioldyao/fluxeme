@@ -3019,7 +3019,7 @@ impl DbBackend for PgBackend {
             let (prompt_price, completion_price, cache_read_price) = {
                 // Lookup pricing within transaction
                 let result = sqlx::query_as::<_, (f64, f64, f64)>(
-                    "SELECT prompt_price, completion_price, cache_read_price FROM models WHERE name = $1",
+                    "SELECT prompt_price, completion_price, cache_read_price FROM models WHERE name = $1 ORDER BY prompt_price DESC, completion_price DESC LIMIT 1",
                 )
                 .bind(&record.model)
                 .fetch_optional(&mut *tx)
