@@ -111,7 +111,7 @@ export default function Login() {
                 variant="outline"
                 className="w-full"
                 onClick={() => {
-                  window.location.href = '/admin/api/sso/login';
+                  window.location.href = '/api/sso/login';
                 }}
               >
                 <LogIn className="h-4 w-4 mr-2" />
