@@ -27,7 +27,7 @@ export function Sidebar() {
         <Cog className="h-5 w-5 text-brand" />
         <span className="font-semibold text-sm">{t('nav.subtitle')}</span>
       </div>
-      <nav className="flex-1 overflow-y-auto p-3 space-y-4">
+      <nav className="flex-1 overflow-y-auto p-3 space-y-0">
         {NAV_GROUPS.map((group) => {
           const items = group.items.map((lbl) => byLabel[lbl]).filter(Boolean);
           if (items.length === 0) return null;
