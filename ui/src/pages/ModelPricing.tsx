@@ -69,12 +69,23 @@ export default function ModelPricingPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const { mode: currencyMode, modelCurrency, setMode: setCurrencyMode, setModelCurrency, effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
 
+  // Deduplicate by model name — pricing is per model, not per (model, channel) row.
+  const uniqueModels = useMemo(() => {
+    if (!models) return [];
+    const seen = new Set<string>();
+    return models.filter((m) => {
+      if (seen.has(m.name)) return false;
+      seen.add(m.name);
+      return true;
+    });
+  }, [models]);
+
   const filteredModels = useMemo(
-    () => models?.filter((m) =>
-      m.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (m.name && m.name.toLowerCase().includes(searchQuery.toLowerCase()))
-    ) ?? [],
-    [models, searchQuery],
+    () => uniqueModels.filter((m) =>
+      m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      m.model_pattern.toLowerCase().includes(searchQuery.toLowerCase())
+    ),
+    [uniqueModels, searchQuery],
   );
 
   const selected = useMemo(
