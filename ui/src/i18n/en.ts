@@ -214,6 +214,7 @@ const en: Record<string, string> = {
   'form.ruleName': 'Rule Name',
   'form.userIdLabel': 'User ID (* = all)',
   'form.modelName': 'Upstream Model ID',
+  'form.upstreamModel': 'Upstream Model',
   'form.modelPattern': 'Model Pattern',
   'form.namePlaceholder': 'Name users send in API requests',
   'form.pricing': 'Pricing',
