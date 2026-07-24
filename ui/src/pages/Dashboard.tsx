@@ -365,8 +365,10 @@ export default function Dashboard() {
           </Card>
         </div>
 
-        {/* ── Request Logs (full width at bottom) ── */}
-        <Card className="card-hover xl:col-span-2">
+      </section>
+
+      {/* ── Request Logs (full width below grid) ── */}
+      <Card className="card-hover">
           <CardHeader className="flex flex-row items-start justify-between gap-3">
             <div>
               <h2 className="text-base font-semibold leading-none">{t('dash.requestLogs')}</h2>
@@ -419,7 +421,6 @@ export default function Dashboard() {
             )}
           </CardContent>
         </Card>
-      </section>
     </div>
   );
 }
