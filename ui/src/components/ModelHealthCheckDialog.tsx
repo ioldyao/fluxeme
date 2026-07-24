@@ -6,16 +6,17 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
-import type { Model, ModelHealthCheckResult } from '@/types';
+import type { Model, ModelHealthCheckResult, Endpoint } from '@/types';
 
 interface Props {
   model: Model | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   channelName: (id: string) => string;
+  channelEndpoints: (id: string) => Endpoint[];
 }
 
-export function ModelHealthCheckDialog({ model, open, onOpenChange, channelName }: Props) {
+export function ModelHealthCheckDialog({ model, open, onOpenChange, channelName, channelEndpoints }: Props) {
   const healthCheck = useModelHealthCheck();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [stream, setStream] = useState(false);
@@ -112,8 +113,10 @@ export function ModelHealthCheckDialog({ model, open, onOpenChange, channelName 
               <div className="py-10 text-center text-sm text-muted-foreground">没有可检测的绑定渠道</div>
             ) : bindings.map((binding) => {
               const item = resultFor(binding.channel_id);
+              const endpoints = channelEndpoints(binding.channel_id);
               return (
-                <div key={binding.channel_id} className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(160px,1fr)_120px_90px] items-center px-3 py-3 text-sm">
+                <div key={binding.channel_id} className="border-b last:border-b-0">
+                <div className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(160px,1fr)_120px_90px] items-center px-3 py-3 text-sm">
                   <Checkbox checked={selected.has(binding.channel_id)} onCheckedChange={() => toggle(binding.channel_id)} disabled={healthCheck.isPending} />
                   <div className="min-w-0"><div className="font-medium truncate">{channelName(binding.channel_id)}</div><div className="text-xs text-muted-foreground truncate">{item?.endpoint_url || binding.channel_id}</div></div>
                   <span className="truncate text-muted-foreground">{binding.upstream_model || model?.name}</span>
@@ -121,6 +124,8 @@ export function ModelHealthCheckDialog({ model, open, onOpenChange, channelName 
                     ? <span className="inline-flex items-center gap-1 text-green-600"><CheckCircle2 className="size-4" />{item.latency_ms}ms</span>
                     : <span className="inline-flex items-center gap-1 text-destructive" title={item.error ?? undefined}><XCircle className="size-4" />失败</span>}</div>
                   <div className="text-right"><Button variant="ghost" size="sm" title="仅检测此渠道" disabled={healthCheck.isPending} onClick={() => run([binding.channel_id])}><Activity className="size-4" /></Button></div>
+                </div>
+                {endpoints.map((endpoint, index) => <div key={endpoint.id ?? `${endpoint.url}-${index}`} className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(160px,1fr)_120px_90px] items-center bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span /><span className="pl-4">↳ 端点{index + 1}<span className="block truncate">{endpoint.url}</span></span><span /><span>未单独测试</span><span /></div>)}
                 </div>
               );
             })}
