@@ -337,8 +337,17 @@ pub async fn relay_request(
         let resp_text = String::from_utf8_lossy(&body_resp);
         let kind = classify_status(status.as_u16());
         tracing::error!(%status, body = %resp_text, provider = %provider_name, "Relay upstream request failed");
+        // Extract upstream error message for the client
+        let upstream_msg = serde_json::from_str::<serde_json::Value>(&resp_text)
+            .ok()
+            .and_then(|v| v["error"]["message"].as_str().map(String::from))
+            .unwrap_or(resp_text.trim().to_string());
         return Err(ProviderError::new(
-            format!("Upstream request failed with status {}", status.as_u16()),
+            format!(
+                "Upstream request failed with status {}: {}",
+                status.as_u16(),
+                upstream_msg
+            ),
             kind,
         ));
     }
