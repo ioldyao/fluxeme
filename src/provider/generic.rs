@@ -141,10 +141,18 @@ impl ProviderAdapter for GenericAdapter {
 
         if !status.is_success() {
             let resp_text = String::from_utf8_lossy(&body_resp);
+            let upstream_msg = serde_json::from_str::<serde_json::Value>(&resp_text)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().map(String::from))
+                .unwrap_or(resp_text.trim().to_string());
             let kind = classify_status(status.as_u16());
             tracing::error!(%status, body = %resp_text, "{} upstream request failed", self.name);
             return Err(ProviderError::new(
-                format!("Upstream request failed with status {}", status.as_u16()),
+                format!(
+                    "Upstream request failed with status {}: {}",
+                    status.as_u16(),
+                    upstream_msg
+                ),
                 kind,
             ));
         }
@@ -197,10 +205,18 @@ impl ProviderAdapter for GenericAdapter {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
+            let upstream_msg = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().map(String::from))
+                .unwrap_or(body.trim().to_string());
             let kind = classify_status(status.as_u16());
             tracing::error!(%status, body = %body, "{} upstream stream request failed", self.name);
             return Err(ProviderError::new(
-                format!("Upstream request failed with status {}", status.as_u16()),
+                format!(
+                    "Upstream request failed with status {}: {}",
+                    status.as_u16(),
+                    upstream_msg
+                ),
                 kind,
             ));
         }
@@ -290,10 +306,18 @@ impl ProviderAdapter for GenericAdapter {
 
         if !status.is_success() {
             let resp_text = String::from_utf8_lossy(&body_resp);
+            let upstream_msg = serde_json::from_str::<serde_json::Value>(&resp_text)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().map(String::from))
+                .unwrap_or(resp_text.trim().to_string());
             let kind = classify_status(status.as_u16());
             tracing::error!(%status, body = %resp_text, "{} anthropic-format request failed", self.name);
             return Err(ProviderError::new(
-                format!("Upstream request failed with status {}", status.as_u16()),
+                format!(
+                    "Upstream request failed with status {}: {}",
+                    status.as_u16(),
+                    upstream_msg
+                ),
                 kind,
             ));
         }
@@ -347,8 +371,16 @@ impl ProviderAdapter for GenericAdapter {
             let text = response.text().await.unwrap_or_default();
             let kind = classify_status(status.as_u16());
             tracing::error!(%status, body = %text, "{} anthropic-format stream request failed", self.name);
+            let upstream_msg = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().map(String::from))
+                .unwrap_or(text.trim().to_string());
             return Err(ProviderError::new(
-                format!("Upstream request failed with status {}", status.as_u16()),
+                format!(
+                    "Upstream request failed with status {}: {}",
+                    status.as_u16(),
+                    upstream_msg
+                ),
                 kind,
             ));
         }
