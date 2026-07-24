@@ -183,9 +183,8 @@ fn normalize_messages_body(body: &mut Value) {
 ///
 /// Three-tier check:
 ///   1. Redis gate_status (fast path)
-///   2. In-memory gate cache (populated by inspection task, avoids SQLite
-///      mutex contention during Redis outages)
-///   3. SQLite `get_wallet_balance` (source of truth, final fallback)
+///   2. In-memory gate cache (populated by the inspection task)
+///   3. PostgreSQL `get_wallet_balance` (source of truth, final fallback)
 async fn check_wallet_balance(
     state: &AppState,
     user_id: &str,
@@ -200,7 +199,7 @@ async fn check_wallet_balance(
             tracing::warn!(user_id, "Gate status read error, trying local cache: {}", e);
         }
     }
-    // Second fallback — in-memory gate cache (no Redis, no SQLite mutex)
+    // Second fallback — in-memory gate cache (no Redis or database query)
     {
         let guard = state.gate_cache.read().await;
         if let Some(status) = guard.get(user_id) {
@@ -210,7 +209,7 @@ async fn check_wallet_balance(
             };
         }
     }
-    // Final fallback — read from SQLite directly
+    // Final fallback — read from PostgreSQL directly
     let (balance, frozen) = state.db.get_wallet_balance(user_id)
         .await
         .map_err(|e| GatewayError::Internal(e.0))?;
@@ -1281,7 +1280,7 @@ pub async fn chat_completions(
         state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens(&body))?;
     }
 
-    // ── Wallet balance check (Redis gate_status → local cache → SQLite) ──
+    // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
     if gw_cfg.billing_enabled {
         check_wallet_balance(&*state, &user.user_id).await?;
     }
@@ -1422,7 +1421,7 @@ pub async fn messages(
         state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body))?;
     }
 
-    // ── Wallet balance check (Redis gate_status → local cache → SQLite) ──
+    // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
     if gw_cfg.billing_enabled {
         check_wallet_balance(&*state, &user.user_id).await?;
     }
@@ -1552,7 +1551,7 @@ async fn relay_to_upstream(
         state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens(&body))?;
     }
 
-    // ── Wallet balance check (Redis gate_status → local cache → SQLite) ──
+    // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
     let gw_cfg = state.gateway_config.read().unwrap().clone();
     if gw_cfg.billing_enabled {
         check_wallet_balance(state, &user.user_id).await?;

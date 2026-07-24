@@ -30,6 +30,5 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositorie
 WORKDIR /app
 COPY --from=backend /app/target/release/ai-gateway .
 COPY --from=frontend /web ./web
-RUN mkdir -p /app/data
 EXPOSE 8080
 CMD ["./ai-gateway"]

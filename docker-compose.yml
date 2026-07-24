@@ -12,13 +12,17 @@ services:
         hard: 1048576
     volumes:
       - ./config:/app/config:ro
-      - gateway-data:/app/data
     environment:
       - TZ=Asia/Shanghai
       - GATEWAY_CONFIG=/app/config/config.yaml
       - GATEWAY_JWT_SECRET=${GATEWAY_JWT_SECRET}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - OTLP_ENDPOINT=${OTLP_ENDPOINT:-}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-aigateway}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
     depends_on:
       redis:
         condition: service_healthy
@@ -45,5 +49,4 @@ services:
       retries: 5
 
 volumes:
-  gateway-data:
   redis-data:

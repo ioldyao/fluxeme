@@ -1,9 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-fn default_db_path() -> String {
-    "gateway.db".to_string()
-}
-
 fn default_retention_days() -> u64 {
     90
 }
@@ -51,10 +47,6 @@ pub struct ServerConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DatabaseConfig {
-    #[serde(default = "default_db_type")]
-    pub db_type: String,
-    #[serde(default = "default_db_path")]
-    pub path: String,
     #[serde(default = "default_pg_url")]
     pub pg_url: String,
     #[serde(default = "default_retention_days")]
@@ -64,16 +56,10 @@ pub struct DatabaseConfig {
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
-            db_type: default_db_type(),
-            path: default_db_path(),
             pg_url: default_pg_url(),
             retention_days: default_retention_days(),
         }
     }
-}
-
-fn default_db_type() -> String {
-    "postgres".to_string()
 }
 
 fn default_pg_url() -> String {

@@ -54,8 +54,6 @@ async fn main() {
 
     let addr = format!("{}:{}", raw_config.server.host, raw_config.server.port);
 
-    let db_type = raw_config.database.db_type.clone();
-    let db_path = raw_config.database.path.clone();
     let pg_url = if raw_config.database.pg_url.is_empty() {
         let user = std::env::var("DB_USER").unwrap_or_else(|_| "postgres".to_string());
         let password = std::env::var("DB_PASSWORD").unwrap_or_else(|_| "postgres123".to_string());
@@ -69,7 +67,7 @@ async fn main() {
     let jwt_secret = loader::resolve_jwt_secret(&raw_config);
     let config = Arc::new(RwLock::new(raw_config));
 
-    let db = Arc::new(Database::new(&db_type, &db_path, &pg_url).await);
+    let db = Arc::new(Database::new(&pg_url).await);
 
     // Initialize database
     if let Err(e) = db.migrate().await {
@@ -165,8 +163,8 @@ async fn main() {
     // In-memory gate cache (populated by inspection, read by handler when Redis is down)
     let gate_cache: Arc<AsyncRwLock<HashMap<String, GateStatus>>> = Arc::new(AsyncRwLock::new(HashMap::new()));
 
-    // Periodic inspection task: sync user gate status from SQLite to Redis + local cache.
-    // Uses pagination to avoid holding the SQLite mutex for too long.
+    // Periodic inspection task: sync user gate status from PostgreSQL to Redis
+    // and the local fallback cache. Pagination keeps each query bounded.
     {
         let db = db.clone();
         let cache = cache.clone();
@@ -204,7 +202,7 @@ async fn main() {
                         }
                     }
                     offset += PAGE_SIZE;
-                    // Brief yield between pages to reduce SQLite lock contention
+                    // Brief yield between pages to avoid monopolizing the executor.
                     tokio::time::sleep(Duration::from_millis(5)).await;
                 }
             }

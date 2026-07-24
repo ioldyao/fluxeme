@@ -1,6 +1,9 @@
 use async_trait::async_trait;
-use sqlx::postgres::PgRow;
-use sqlx::{PgPool, QueryBuilder, Row};
+use sqlx_core::{
+    query::query, query_as::query_as, query_builder::QueryBuilder,
+    query_scalar::query_scalar, raw_sql::raw_sql, row::Row,
+};
+use sqlx_postgres::{PgPool, PgRow, Postgres};
 
 use crate::config::types::GatewayRuntimeConfig;
 use crate::db::backend::DbBackend;
@@ -28,7 +31,7 @@ impl PgBackend {
 
     #[allow(dead_code)]
     async fn pricing_lookup(&self, model_name: &str) -> (f64, f64) {
-        let result = sqlx::query_as::<_, (f64, f64)>(
+        let result = query_as::<_, (f64, f64)>(
             "SELECT prompt_price, completion_price FROM models WHERE name = $1",
         )
         .bind(model_name)
@@ -39,7 +42,7 @@ impl PgBackend {
             Ok(Some(p)) => p,
             _ => {
                 // Fall back to pattern matching
-                let rows = sqlx::query_as::<_, (f64, f64, String)>(
+                let rows = query_as::<_, (f64, f64, String)>(
                     "SELECT prompt_price, completion_price, model_pattern FROM models",
                 )
                 .fetch_all(&self.pool)
@@ -246,7 +249,7 @@ impl DbBackend for PgBackend {
     // ── Migration ────────────────────────────────────────────────────────
 
     async fn migrate(&self) -> Result<(), DbError> {
-        sqlx::raw_sql(
+        raw_sql(
             "
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -374,7 +377,7 @@ impl DbBackend for PgBackend {
         // Backward-compat columns — inline helper to avoid async closure issues
         macro_rules! add_col {
             ($sql:expr) => {
-                let _ = sqlx::raw_sql($sql)
+                let _ = raw_sql($sql)
                     .execute(&self.pool)
                     .await
                     .map_err(|e| DbError(format!("Migration alter error: {}", e)));
@@ -410,7 +413,7 @@ impl DbBackend for PgBackend {
         // Indexes
         macro_rules! add_idx {
             ($sql:expr) => {
-                let _ = sqlx::raw_sql($sql)
+                let _ = raw_sql($sql)
                     .execute(&self.pool)
                     .await
                     .map_err(|e| DbError(format!("Migration index error: {}", e)));
@@ -423,7 +426,7 @@ impl DbBackend for PgBackend {
         add_idx!("CREATE INDEX IF NOT EXISTS idx_wallet_tx_created ON wallet_transactions(created_at)");
 
         // Create content_filter_rules table
-        let _ = sqlx::raw_sql(
+        let _ = raw_sql(
             "CREATE TABLE IF NOT EXISTS content_filter_rules (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL DEFAULT '',
@@ -444,7 +447,7 @@ impl DbBackend for PgBackend {
         .map_err(|e| DbError(format!("Migration error: {}", e)))?;
 
         // Create probe_results table
-        let _ = sqlx::raw_sql(
+        let _ = raw_sql(
             "CREATE TABLE IF NOT EXISTS probe_results (
                 id TEXT PRIMARY KEY,
                 channel_id TEXT NOT NULL,
@@ -458,19 +461,19 @@ impl DbBackend for PgBackend {
         .execute(&self.pool)
         .await
         .map_err(|e| DbError(format!("Migration error: {}", e)))?;
-        let _ = sqlx::raw_sql("CREATE INDEX IF NOT EXISTS idx_probe_channel ON probe_results(channel_id)")
+        let _ = raw_sql("CREATE INDEX IF NOT EXISTS idx_probe_channel ON probe_results(channel_id)")
             .execute(&self.pool).await;
-        let _ = sqlx::raw_sql("CREATE INDEX IF NOT EXISTS idx_probe_model ON probe_results(model_id)")
+        let _ = raw_sql("CREATE INDEX IF NOT EXISTS idx_probe_model ON probe_results(model_id)")
             .execute(&self.pool).await;
 
         // Set admin role for any user who was historically created as 'admin'
-        let _ = sqlx::raw_sql("UPDATE users SET role='admin' WHERE id='admin' AND role='user'")
+        let _ = raw_sql("UPDATE users SET role='admin' WHERE id='admin' AND role='user'")
             .execute(&self.pool)
             .await;
 
         // ── Deduplicate models by name ──────────────────────────────────
         // Step 1: merge duplicate rows (idempotent — safe to run repeatedly).
-        let duplicates: Vec<(String, i64)> = sqlx::query_as(
+        let duplicates: Vec<(String, i64)> = query_as(
             "SELECT LOWER(name), count(*) FROM models GROUP BY LOWER(name) HAVING count(*) > 1",
         )
         .fetch_all(&self.pool)
@@ -478,7 +481,7 @@ impl DbBackend for PgBackend {
         .unwrap_or_default();
 
         for (name_lower, _) in &duplicates {
-            let winner: Option<(String, String)> = sqlx::query_as(
+            let winner: Option<(String, String)> = query_as(
                 "SELECT id, name FROM models WHERE LOWER(name) = $1 \
                  ORDER BY (prompt_price + completion_price) DESC, id ASC LIMIT 1",
             )
@@ -489,7 +492,7 @@ impl DbBackend for PgBackend {
             .flatten();
 
             if let Some((ref winner_id, ref canonical_name)) = winner {
-                let _ = sqlx::query(
+                let _ = query(
                     "INSERT INTO model_channels (model_id, channel_id, priority)
                      SELECT $1, mc.channel_id, mc.priority
                      FROM model_channels mc JOIN models m ON mc.model_id = m.id
@@ -499,7 +502,7 @@ impl DbBackend for PgBackend {
                 .bind(winner_id).bind(name_lower)
                 .execute(&self.pool).await;
 
-                let _ = sqlx::query(
+                let _ = query(
                     "INSERT INTO user_subscriptions (user_id, model_id, created_at)
                      SELECT us.user_id, $1, us.created_at
                      FROM user_subscriptions us JOIN models m ON us.model_id = m.id
@@ -509,13 +512,13 @@ impl DbBackend for PgBackend {
                 .bind(winner_id).bind(name_lower)
                 .execute(&self.pool).await;
 
-                let _ = sqlx::query(
+                let _ = query(
                     "DELETE FROM models WHERE LOWER(name) = $1 AND id != $2",
                 )
                 .bind(name_lower).bind(winner_id)
                 .execute(&self.pool).await;
 
-                let _ = sqlx::query("UPDATE models SET name = $1 WHERE id = $2")
+                let _ = query("UPDATE models SET name = $1 WHERE id = $2")
                     .bind(canonical_name).bind(winner_id)
                     .execute(&self.pool).await;
 
@@ -524,7 +527,7 @@ impl DbBackend for PgBackend {
         }
 
         // Step 2: verify. If duplicates remain after dedup, abort startup.
-        let remaining: i64 = sqlx::query_scalar(
+        let remaining: i64 = query_scalar(
             "SELECT count(*) FROM (SELECT 1 FROM models GROUP BY LOWER(name) HAVING count(*) > 1) t",
         )
         .fetch_one(&self.pool)
@@ -544,7 +547,7 @@ impl DbBackend for PgBackend {
 
         // Step 3: add the constraint. ADD CONSTRAINT does not support
         // IF NOT EXISTS in PostgreSQL — try and catch "already exists".
-        let result = sqlx::raw_sql(
+        let result = raw_sql(
             "ALTER TABLE models ADD CONSTRAINT models_name_unique UNIQUE (name)",
         )
         .execute(&self.pool)
@@ -575,7 +578,7 @@ impl DbBackend for PgBackend {
     // ── Users ────────────────────────────────────────────────────────────
 
     async fn list_users(&self) -> Result<Vec<User>, DbError> {
-        let rows = sqlx::query(
+        let rows = query(
             "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency FROM users ORDER BY id",
         )
         .fetch_all(&self.pool)
@@ -590,7 +593,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn get_user(&self, id: &str) -> Result<Option<User>, DbError> {
-        let rows = sqlx::query(
+        let rows = query(
             "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency FROM users WHERE id = $1",
         )
         .bind(id)
@@ -603,7 +606,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn get_user_with_password(&self, id: &str) -> Result<Option<User>, DbError> {
-        let rows = sqlx::query(
+        let rows = query(
             "SELECT id, name, password_hash, rpm, tpm, timezone, token_version, role, concurrency_limit, currency FROM users WHERE id = $1",
         )
         .bind(id)
@@ -624,7 +627,7 @@ impl DbBackend for PgBackend {
         let pw_hash = user.password_hash.as_deref().unwrap_or("");
         let tz = if user.timezone.is_empty() { "UTC" } else { &user.timezone };
         let role = if user.role.is_empty() { "user" } else { &user.role };
-        sqlx::query(
+        query(
             "INSERT INTO users (id, name, password_hash, rpm, tpm, timezone, token_version, role, concurrency_limit, currency) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         )
         .bind(&user.id)
@@ -650,7 +653,7 @@ impl DbBackend for PgBackend {
             .unwrap_or((None, None));
         let tz = if user.timezone.is_empty() { "UTC" } else { &user.timezone };
         if let Some(ref pw) = user.password_hash {
-            sqlx::query(
+            query(
                 "UPDATE users SET name = $1, password_hash = $2, rpm = $3, tpm = $4, timezone = $5, token_version = $6, role = $7, concurrency_limit = $8, currency = $9 WHERE id = $10",
             )
             .bind(&user.name)
@@ -666,7 +669,7 @@ impl DbBackend for PgBackend {
             .execute(&self.pool)
             .await?;
         } else {
-            sqlx::query(
+            query(
                 "UPDATE users SET name = $1, rpm = $2, tpm = $3, timezone = $4, token_version = $5, role = $6, concurrency_limit = $7, currency = $8 WHERE id = $9",
             )
             .bind(&user.name)
@@ -685,7 +688,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn delete_user(&self, id: &str) -> Result<(), DbError> {
-        sqlx::query("DELETE FROM users WHERE id = $1")
+        query("DELETE FROM users WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -693,14 +696,14 @@ impl DbBackend for PgBackend {
     }
 
     async fn count_admins(&self) -> Result<i64, DbError> {
-        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+        let (count,): (i64,) = query_as("SELECT COUNT(*) FROM users WHERE role = 'admin'")
             .fetch_one(&self.pool)
             .await?;
         Ok(count)
     }
 
     async fn get_user_timezone(&self, id: &str) -> Result<String, DbError> {
-        let result: Option<(String,)> = sqlx::query_as("SELECT timezone FROM users WHERE id = $1")
+        let result: Option<(String,)> = query_as("SELECT timezone FROM users WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pool)
             .await?;
@@ -709,7 +712,7 @@ impl DbBackend for PgBackend {
 
     async fn update_user_timezone(&self, id: &str, timezone: &str) -> Result<(), DbError> {
         let tz = if timezone.is_empty() { "UTC" } else { timezone };
-        sqlx::query("UPDATE users SET timezone = $1 WHERE id = $2")
+        query("UPDATE users SET timezone = $1 WHERE id = $2")
             .bind(tz)
             .bind(id)
             .execute(&self.pool)
@@ -718,7 +721,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn get_user_currency(&self, id: &str) -> Result<String, DbError> {
-        let rows = sqlx::query_as::<_, (String,)>("SELECT currency FROM users WHERE id = $1")
+        let rows = query_as::<_, (String,)>("SELECT currency FROM users WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pool)
             .await?;
@@ -727,7 +730,7 @@ impl DbBackend for PgBackend {
 
     async fn update_user_currency(&self, id: &str, currency: &str) -> Result<(), DbError> {
         let cur = if currency.is_empty() { "usd" } else { currency };
-        sqlx::query("UPDATE users SET currency = $1 WHERE id = $2")
+        query("UPDATE users SET currency = $1 WHERE id = $2")
             .bind(cur)
             .bind(id)
             .execute(&self.pool)
@@ -738,7 +741,7 @@ impl DbBackend for PgBackend {
     // ── API Keys ─────────────────────────────────────────────────────────
 
     async fn list_api_keys(&self, user_id: &str) -> Result<Vec<ApiKey>, DbError> {
-        let rows = sqlx::query(
+        let rows = query(
             "SELECT key, user_id, name, enabled, expires_at, spend_limit, allowed_models FROM api_keys WHERE user_id = $1 ORDER BY key",
         )
         .bind(user_id)
@@ -765,7 +768,7 @@ impl DbBackend for PgBackend {
 
     async fn create_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
         let allowed = key.allowed_models.as_ref().map(|m| m.join(","));
-        sqlx::query(
+        query(
             "INSERT INTO api_keys (key, user_id, name, enabled, expires_at, spend_limit, allowed_models) VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(&key.key)
@@ -781,7 +784,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn delete_api_key(&self, key: &str) -> Result<(), DbError> {
-        sqlx::query("DELETE FROM api_keys WHERE key = $1")
+        query("DELETE FROM api_keys WHERE key = $1")
             .bind(key)
             .execute(&self.pool)
             .await?;
@@ -790,7 +793,7 @@ impl DbBackend for PgBackend {
 
     async fn update_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
         let allowed = key.allowed_models.as_ref().map(|m| m.join(","));
-        sqlx::query(
+        query(
             "UPDATE api_keys SET name = $1, enabled = $2, expires_at = $3, spend_limit = $4, allowed_models = $5 WHERE key = $6",
         )
         .bind(&key.name)
@@ -805,7 +808,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn lookup_key(&self, key: &str) -> Result<Option<(User, ApiKey)>, DbError> {
-        let rows = sqlx::query(
+        let rows = query(
             "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, u.concurrency_limit, u.currency, \
              a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models \
              FROM api_keys a JOIN users u ON u.id = a.user_id WHERE a.key = $1",
@@ -854,7 +857,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError> {
-        let rows = sqlx::query(
+        let rows = query(
             "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, u.concurrency_limit, u.currency, \
              a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models \
              FROM api_keys a JOIN users u ON u.id = a.user_id ORDER BY a.key",
@@ -907,13 +910,13 @@ impl DbBackend for PgBackend {
     // ── Channels & Endpoints ─────────────────────────────────────────────
 
     async fn list_channels(&self) -> Result<Vec<Channel>, DbError> {
-        let ch_rows = sqlx::query(
+        let ch_rows = query(
             "SELECT id, name, provider, priority, enabled, anthropic_compat FROM channels ORDER BY priority, id",
         )
         .fetch_all(&self.pool)
         .await?;
 
-        let ep_rows = sqlx::query(
+        let ep_rows = query(
             "SELECT id, channel_id, url, api_key, weight, timeout_secs, enabled FROM endpoints ORDER BY channel_id",
         )
         .fetch_all(&self.pool)
@@ -961,7 +964,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn get_channel(&self, id: &str) -> Result<Option<Channel>, DbError> {
-        let rows = sqlx::query(
+        let rows = query(
             "SELECT id, name, provider, priority, enabled, anthropic_compat FROM channels WHERE id = $1",
         )
         .bind(id)
@@ -978,7 +981,7 @@ impl DbBackend for PgBackend {
                 anthropic_compat: r.get(5),
                 endpoints: Vec::new(),
             };
-            let eps = sqlx::query(
+            let eps = query(
                 "SELECT id, channel_id, url, api_key, weight, timeout_secs, enabled FROM endpoints WHERE channel_id = $1",
             )
             .bind(&ch.id)
@@ -1009,7 +1012,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn create_channel(&self, ch: &Channel) -> Result<(), DbError> {
-        sqlx::query(
+        query(
             "INSERT INTO channels (id, name, provider, priority, enabled, anthropic_compat) VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(&ch.id)
@@ -1021,7 +1024,7 @@ impl DbBackend for PgBackend {
         .execute(&self.pool)
         .await?;
         for ep in &ch.endpoints {
-            sqlx::query(
+            query(
                 "INSERT INTO endpoints (channel_id, url, api_key, weight, timeout_secs, enabled) VALUES ($1, $2, $3, $4, $5, $6)",
             )
             .bind(&ch.id)
@@ -1037,7 +1040,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn update_channel(&self, ch: &Channel) -> Result<(), DbError> {
-        sqlx::query(
+        query(
             "UPDATE channels SET name = $1, provider = $2, priority = $3, enabled = $4, anthropic_compat = $5 WHERE id = $6",
         )
         .bind(&ch.name)
@@ -1048,12 +1051,12 @@ impl DbBackend for PgBackend {
         .bind(&ch.id)
         .execute(&self.pool)
         .await?;
-        sqlx::query("DELETE FROM endpoints WHERE channel_id = $1")
+        query("DELETE FROM endpoints WHERE channel_id = $1")
             .bind(&ch.id)
             .execute(&self.pool)
             .await?;
         for ep in &ch.endpoints {
-            sqlx::query(
+            query(
                 "INSERT INTO endpoints (channel_id, url, api_key, weight, timeout_secs, enabled) VALUES ($1, $2, $3, $4, $5, $6)",
             )
             .bind(&ch.id)
@@ -1069,7 +1072,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn delete_channel(&self, id: &str) -> Result<(), DbError> {
-        sqlx::query("DELETE FROM channels WHERE id = $1")
+        query("DELETE FROM channels WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -1077,7 +1080,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn get_endpoint(&self, id: i64) -> Result<Option<Endpoint>, DbError> {
-        let rows = sqlx::query(
+        let rows = query(
             "SELECT id, channel_id, url, api_key, weight, timeout_secs, enabled FROM endpoints WHERE id = $1",
         )
         .bind(id)
@@ -1101,7 +1104,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn update_endpoint_enabled(&self, id: i64, enabled: bool) -> Result<(), DbError> {
-        sqlx::query("UPDATE endpoints SET enabled = $1 WHERE id = $2")
+        query("UPDATE endpoints SET enabled = $1 WHERE id = $2")
             .bind(enabled)
             .bind(id)
             .execute(&self.pool)
@@ -1112,7 +1115,7 @@ impl DbBackend for PgBackend {
     // ── Models ───────────────────────────────────────────────────────────
 
     async fn list_models(&self) -> Result<Vec<Model>, DbError> {
-        let m_rows = sqlx::query(
+        let m_rows = query(
             "SELECT id, name, model_pattern, prompt_price, completion_price, \
              cache_read_price, cache_write_price, image_input_price, audio_input_price, \
              audio_output_price, published, context_length, category FROM models ORDER BY id",
@@ -1120,7 +1123,7 @@ impl DbBackend for PgBackend {
         .fetch_all(&self.pool)
         .await?;
 
-        let b_rows = sqlx::query(
+        let b_rows = query(
             "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model \
              FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id \
              ORDER BY mc.model_id, mc.priority",
@@ -1171,7 +1174,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn get_model(&self, id: &str) -> Result<Option<Model>, DbError> {
-        let rows = sqlx::query(
+        let rows = query(
             "SELECT id, name, model_pattern, prompt_price, completion_price, \
              cache_read_price, cache_write_price, image_input_price, audio_input_price, \
              audio_output_price, published, context_length, category FROM models WHERE id = $1",
@@ -1199,7 +1202,7 @@ impl DbBackend for PgBackend {
                 context_length: r.get(11),
                 category: r.get::<Option<String>, _>(12).unwrap_or_default(),
             };
-            let bindings = sqlx::query(
+            let bindings = query(
                 "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model \
                  FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id \
                  WHERE mc.model_id = $1 ORDER BY mc.priority",
@@ -1224,7 +1227,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn create_model(&self, m: &Model) -> Result<(), DbError> {
-        sqlx::query(
+        query(
             "INSERT INTO models (id, name, model_pattern, prompt_price, completion_price, \
              cache_read_price, cache_write_price, image_input_price, audio_input_price, \
              audio_output_price, published, context_length, category) \
@@ -1247,13 +1250,13 @@ impl DbBackend for PgBackend {
         .await?;
 
         // Use the actual ID in the DB (may differ from m.id after upsert)
-        let model_id: (String,) = sqlx::query_as("SELECT id FROM models WHERE name = $1")
+        let model_id: (String,) = query_as("SELECT id FROM models WHERE name = $1")
             .bind(&m.name)
             .fetch_one(&self.pool)
             .await?;
 
         for binding in &m.channels {
-            sqlx::query(
+            query(
                 "INSERT INTO model_channels (model_id, channel_id, priority, upstream_model) \
                  VALUES ($1, $2, $3, $4) ON CONFLICT (model_id, channel_id) DO UPDATE SET priority = EXCLUDED.priority, upstream_model = EXCLUDED.upstream_model",
             )
@@ -1268,7 +1271,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn update_model(&self, old_id: &str, m: &Model) -> Result<(), DbError> {
-        sqlx::query(
+        query(
             "UPDATE models SET id=$1, name=$2, model_pattern=$3, prompt_price=$4, completion_price=$5, \
              cache_read_price=$6, cache_write_price=$7, image_input_price=$8, audio_input_price=$9, \
              audio_output_price=$10, published=$11, context_length=$12, category=$13 WHERE id=$14",
@@ -1290,12 +1293,12 @@ impl DbBackend for PgBackend {
         .execute(&self.pool)
         .await?;
         // Delete old bindings by old_id (model_channels FK references old model id)
-        sqlx::query("DELETE FROM model_channels WHERE model_id = $1")
+        query("DELETE FROM model_channels WHERE model_id = $1")
             .bind(old_id)
             .execute(&self.pool)
             .await?;
         for binding in &m.channels {
-            sqlx::query(
+            query(
                 "INSERT INTO model_channels (model_id, channel_id, priority, upstream_model) VALUES ($1, $2, $3, $4)",
             )
             .bind(&m.id)
@@ -1309,7 +1312,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn delete_model(&self, id: &str) -> Result<(), DbError> {
-        sqlx::query("DELETE FROM models WHERE id = $1")
+        query("DELETE FROM models WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -1317,7 +1320,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn list_published_models(&self) -> Result<Vec<Model>, DbError> {
-        let m_rows = sqlx::query(
+        let m_rows = query(
             "SELECT id, name, model_pattern, prompt_price, completion_price, \
              cache_read_price, cache_write_price, image_input_price, audio_input_price, \
              audio_output_price, published, context_length, category FROM models \
@@ -1326,7 +1329,7 @@ impl DbBackend for PgBackend {
         .fetch_all(&self.pool)
         .await?;
 
-        let b_rows = sqlx::query(
+        let b_rows = query(
             "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model \
              FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id \
              ORDER BY mc.model_id, mc.priority",
@@ -1377,7 +1380,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn set_model_published(&self, id: &str, published: bool) -> Result<(), DbError> {
-        sqlx::query("UPDATE models SET published = $1 WHERE id = $2")
+        query("UPDATE models SET published = $1 WHERE id = $2")
             .bind(published)
             .bind(id)
             .execute(&self.pool)
@@ -1386,7 +1389,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn set_model_pricing(&self, id: &str, pricing: &Pricing) -> Result<(), DbError> {
-        sqlx::query(
+        query(
             "UPDATE models SET prompt_price=$1, completion_price=$2, cache_read_price=$3, \
              cache_write_price=$4, image_input_price=$5, audio_input_price=$6, \
              audio_output_price=$7 WHERE id=$8",
@@ -1405,7 +1408,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn set_model_context_length(&self, id: &str, context_length: i64) -> Result<(), DbError> {
-        sqlx::query("UPDATE models SET context_length = $1 WHERE id = $2")
+        query("UPDATE models SET context_length = $1 WHERE id = $2")
             .bind(context_length)
             .bind(id)
             .execute(&self.pool)
@@ -1416,7 +1419,7 @@ impl DbBackend for PgBackend {
     // ── Subscriptions ────────────────────────────────────────────────────
 
     async fn subscribe_user(&self, user_id: &str, model_id: &str) -> Result<(), DbError> {
-        sqlx::query(
+        query(
             "INSERT INTO user_subscriptions (user_id, model_id, created_at) VALUES ($1, $2, $3) \
              ON CONFLICT DO NOTHING",
         )
@@ -1429,7 +1432,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn unsubscribe_user(&self, user_id: &str, model_id: &str) -> Result<(), DbError> {
-        sqlx::query("DELETE FROM user_subscriptions WHERE user_id = $1 AND model_id = $2")
+        query("DELETE FROM user_subscriptions WHERE user_id = $1 AND model_id = $2")
             .bind(user_id)
             .bind(model_id)
             .execute(&self.pool)
@@ -1438,7 +1441,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn delete_subscriptions_by_model(&self, model_id: &str) -> Result<(), DbError> {
-        sqlx::query("DELETE FROM user_subscriptions WHERE model_id = $1")
+        query("DELETE FROM user_subscriptions WHERE model_id = $1")
             .bind(model_id)
             .execute(&self.pool)
             .await?;
@@ -1447,7 +1450,7 @@ impl DbBackend for PgBackend {
 
     async fn list_subscribed_model_ids(&self, user_id: &str) -> Result<Vec<String>, DbError> {
         let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT model_id FROM user_subscriptions WHERE user_id = $1")
+            query_as("SELECT model_id FROM user_subscriptions WHERE user_id = $1")
                 .bind(user_id)
                 .fetch_all(&self.pool)
                 .await?;
@@ -1455,7 +1458,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn list_subscriptions(&self, user_id: &str) -> Result<Vec<Model>, DbError> {
-        let m_rows = sqlx::query(
+        let m_rows = query(
             "SELECT m.id, m.name, m.model_pattern, m.prompt_price, m.completion_price, \
              m.cache_read_price, m.cache_write_price, m.image_input_price, m.audio_input_price, \
              m.audio_output_price, m.published, m.context_length, m.category \
@@ -1488,7 +1491,7 @@ impl DbBackend for PgBackend {
             })
             .collect();
 
-        let b_rows = sqlx::query(
+        let b_rows = query(
             "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model \
              FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id \
              ORDER BY mc.model_id, mc.priority",
@@ -1519,7 +1522,7 @@ impl DbBackend for PgBackend {
     // ── Routing Rules ────────────────────────────────────────────────────
 
     async fn list_rules(&self) -> Result<Vec<RoutingRule>, DbError> {
-        let rows = sqlx::query(
+        let rows = query(
             "SELECT name, user_id, model_pattern, channel_id FROM routing_rules ORDER BY name",
         )
         .fetch_all(&self.pool)
@@ -1536,7 +1539,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn create_rule(&self, r: &RoutingRule) -> Result<(), DbError> {
-        sqlx::query(
+        query(
             "INSERT INTO routing_rules (name, user_id, model_pattern, channel_id) VALUES ($1, $2, $3, $4)",
         )
         .bind(&r.name)
@@ -1549,7 +1552,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn update_rule(&self, r: &RoutingRule) -> Result<(), DbError> {
-        sqlx::query(
+        query(
             "UPDATE routing_rules SET user_id = $1, model_pattern = $2, channel_id = $3 WHERE name = $4",
         )
         .bind(&r.user_id)
@@ -1562,7 +1565,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn delete_rule(&self, name: &str) -> Result<(), DbError> {
-        sqlx::query("DELETE FROM routing_rules WHERE name = $1")
+        query("DELETE FROM routing_rules WHERE name = $1")
             .bind(name)
             .execute(&self.pool)
             .await?;
@@ -1572,7 +1575,7 @@ impl DbBackend for PgBackend {
     // ── Usage Logs ───────────────────────────────────────────────────────
 
     async fn insert_usage(&self, record: &UsageRecord) -> Result<(), DbError> {
-        sqlx::query(
+        query(
             "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              request_body, response_body, reasoning_body, api_key_name, api_format, stream, \
@@ -1608,7 +1611,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn count_usage(&self) -> Result<usize, DbError> {
-        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM usage_logs")
+        let (count,): (i64,) = query_as("SELECT COUNT(*) FROM usage_logs")
             .fetch_one(&self.pool)
             .await?;
         Ok(count as usize)
@@ -1616,7 +1619,7 @@ impl DbBackend for PgBackend {
 
     async fn count_usage_by_user(&self, user_id: &str) -> Result<usize, DbError> {
         let (count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM usage_logs WHERE user_id = $1")
+            query_as("SELECT COUNT(*) FROM usage_logs WHERE user_id = $1")
                 .bind(user_id)
                 .fetch_one(&self.pool)
                 .await?;
@@ -1624,7 +1627,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn count_usage_filtered(&self, filter: &UsageFilter) -> Result<usize, DbError> {
-        let mut builder: QueryBuilder<'_, sqlx::Postgres> =
+        let mut builder: QueryBuilder<'_, Postgres> =
             QueryBuilder::new("SELECT COUNT(*) FROM usage_logs WHERE 1=1");
 
         if let Some(ref uid) = filter.user_id {
@@ -1665,7 +1668,7 @@ impl DbBackend for PgBackend {
         offset: usize,
         filter: &UsageFilter,
     ) -> Result<Vec<UsageRecord>, DbError> {
-        let mut builder: QueryBuilder<'_, sqlx::Postgres> = QueryBuilder::new(
+        let mut builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
             "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
@@ -1714,7 +1717,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn get_usage_detail(&self, request_id: &str) -> Result<Option<UsageRecord>, DbError> {
-        let rows = sqlx::query(
+        let rows = query(
             "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              request_body, response_body, reasoning_body, api_key_name, api_format, stream, \
@@ -1731,7 +1734,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn purge_usage_logs(&self, cutoff: &str) -> Result<usize, DbError> {
-        let result = sqlx::query("DELETE FROM usage_logs WHERE timestamp < $1")
+        let result = query("DELETE FROM usage_logs WHERE timestamp < $1")
             .bind(cutoff)
             .execute(&self.pool)
             .await?;
@@ -1744,7 +1747,7 @@ impl DbBackend for PgBackend {
         user_id: Option<&str>,
     ) -> Result<(u64, u64, u64, u64), DbError> {
         if let Some(uid) = user_id {
-            let row: (i64, i64, i64, i64) = sqlx::query_as(
+            let row: (i64, i64, i64, i64) = query_as(
                 "SELECT COUNT(*), \
                  COALESCE(SUM(CASE WHEN success = true THEN 1 ELSE 0 END),0), \
                  COALESCE(SUM(latency_ms)::bigint,0), \
@@ -1757,7 +1760,7 @@ impl DbBackend for PgBackend {
             .await?;
             Ok((row.0 as u64, row.1 as u64, row.2 as u64, row.3 as u64))
         } else {
-            let row: (i64, i64, i64, i64) = sqlx::query_as(
+            let row: (i64, i64, i64, i64) = query_as(
                 "SELECT COUNT(*), \
                  COALESCE(SUM(CASE WHEN success = true THEN 1 ELSE 0 END),0), \
                  COALESCE(SUM(latency_ms)::bigint,0), \
@@ -1777,7 +1780,7 @@ impl DbBackend for PgBackend {
         user_id: Option<&str>,
     ) -> Result<Vec<UsageRecord>, DbError> {
         let rows = if let Some(uid) = user_id {
-            sqlx::query(
+            query(
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
@@ -1789,7 +1792,7 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query(
+            query(
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
@@ -1815,7 +1818,7 @@ impl DbBackend for PgBackend {
         user_id: Option<&str>,
     ) -> Result<Vec<UsageRecord>, DbError> {
         let rows = if let Some(uid) = user_id {
-            sqlx::query(
+            query(
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
@@ -1827,7 +1830,7 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query(
+            query(
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
@@ -1903,7 +1906,7 @@ impl DbBackend for PgBackend {
                  GROUP BY day ORDER BY day ASC",
                 day_expr
             );
-            let rows = sqlx::query_as::<_, (String, i64)>(&sql)
+            let rows = query_as::<_, (String, i64)>(&sql)
                 .bind(uid)
                 .bind(since)
                 .fetch_all(&self.pool)
@@ -1914,7 +1917,7 @@ impl DbBackend for PgBackend {
                 "SELECT {}, COUNT(*) FROM usage_logs WHERE timestamp >= $1 GROUP BY day ORDER BY day ASC",
                 day_expr
             );
-            let rows = sqlx::query_as::<_, (String, i64)>(&sql)
+            let rows = query_as::<_, (String, i64)>(&sql)
                 .bind(since)
                 .fetch_all(&self.pool)
                 .await?;
@@ -1940,7 +1943,7 @@ impl DbBackend for PgBackend {
                  GROUP BY day ORDER BY day ASC",
                 day_expr
             );
-            let rows = sqlx::query_as::<_, (String, i64, i64, i64, i64, i64, i64, i64)>(&sql)
+            let rows = query_as::<_, (String, i64, i64, i64, i64, i64, i64, i64)>(&sql)
                 .bind(uid)
                 .bind(since)
                 .fetch_all(&self.pool)
@@ -1960,7 +1963,7 @@ impl DbBackend for PgBackend {
                  GROUP BY day ORDER BY day ASC",
                 day_expr
             );
-            let rows = sqlx::query_as::<_, (String, i64, i64, i64, i64, i64, i64, i64)>(&sql)
+            let rows = query_as::<_, (String, i64, i64, i64, i64, i64, i64, i64)>(&sql)
                 .bind(since)
                 .fetch_all(&self.pool)
                 .await?;
@@ -1977,7 +1980,7 @@ impl DbBackend for PgBackend {
         user_id: Option<&str>,
     ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError> {
         let rows = if let Some(uid) = user_id {
-            sqlx::query_as::<_, (String, i64, i64, i64, i64, i64, i64)>(
+            query_as::<_, (String, i64, i64, i64, i64, i64, i64)>(
                 "SELECT model, COUNT(*)::bigint, COALESCE(SUM(prompt_tokens),0)::bigint, \
                  COALESCE(SUM(completion_tokens),0)::bigint, \
                  COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
@@ -1991,7 +1994,7 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, (String, i64, i64, i64, i64, i64, i64)>(
+            query_as::<_, (String, i64, i64, i64, i64, i64, i64)>(
                 "SELECT model, COUNT(*)::bigint, COALESCE(SUM(prompt_tokens),0)::bigint, \
                  COALESCE(SUM(completion_tokens),0)::bigint, \
                  COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
@@ -2025,7 +2028,7 @@ impl DbBackend for PgBackend {
             format!("{}-{:02}-01T00:00:00", year, month + 1)
         };
         let (cost, count, tokens): (f64, i64, i64) = if let Some(uid) = user_id {
-            sqlx::query_as(
+            query_as(
                 "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
@@ -2038,7 +2041,7 @@ impl DbBackend for PgBackend {
             .fetch_one(&self.pool)
             .await?
         } else {
-            sqlx::query_as(
+            query_as(
                 "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
@@ -2066,7 +2069,7 @@ impl DbBackend for PgBackend {
             format!("{}-{:02}-01T00:00:00", year, month + 1)
         };
         let rows = if let Some(uid) = user_id {
-            sqlx::query_as::<_, (String, f64)>(
+            query_as::<_, (String, f64)>(
                 "SELECT model, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
@@ -2079,7 +2082,7 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, (String, f64)>(
+            query_as::<_, (String, f64)>(
                 "SELECT model, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
@@ -2107,7 +2110,7 @@ impl DbBackend for PgBackend {
             format!("{}-{:02}-01T00:00:00", year, month + 1)
         };
         let rows = if let Some(uid) = user_id {
-            sqlx::query_as::<_, (String, String, f64)>(
+            query_as::<_, (String, String, f64)>(
                 "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(ul.prompt_tokens / 1000000.0 * ul.prompt_price + \
                  ul.completion_tokens / 1000000.0 * ul.completion_price + \
                  ul.cache_hit_input_tokens / 1000000.0 * ul.cache_read_price), 0) \
@@ -2121,7 +2124,7 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, (String, String, f64)>(
+            query_as::<_, (String, String, f64)>(
                 "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(ul.prompt_tokens / 1000000.0 * ul.prompt_price + \
                  ul.completion_tokens / 1000000.0 * ul.completion_price + \
                  ul.cache_hit_input_tokens / 1000000.0 * ul.cache_read_price), 0) \
@@ -2150,7 +2153,7 @@ impl DbBackend for PgBackend {
             format!("{}-{:02}-01T00:00:00", year, month + 1)
         };
         let rows = if let Some(uid) = user_id {
-            sqlx::query_as::<_, (String, f64, i64)>(
+            query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
                  COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
                  completion_tokens / 1000000.0 * completion_price + \
@@ -2165,7 +2168,7 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, (String, f64, i64)>(
+            query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
                  COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
                  completion_tokens / 1000000.0 * completion_price + \
@@ -2195,7 +2198,7 @@ impl DbBackend for PgBackend {
             format!("{}-{:02}-01T00:00:00", year, month + 1)
         };
         let (count,): (i64,) = if let Some(uid) = user_id {
-            sqlx::query_as(
+            query_as(
                 "SELECT COUNT(DISTINCT LEFT(timestamp::text, 10)) \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3",
             )
@@ -2205,7 +2208,7 @@ impl DbBackend for PgBackend {
             .fetch_one(&self.pool)
             .await?
         } else {
-            sqlx::query_as(
+            query_as(
                 "SELECT COUNT(DISTINCT LEFT(timestamp::text, 10)) \
                  FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2",
             )
@@ -2232,7 +2235,7 @@ impl DbBackend for PgBackend {
             format!("{}-{:02}-01T00:00:00", year, month + 1)
         };
         let rows = if let Some(uid) = user_id {
-            sqlx::query_as::<_, (String, f64, i64)>(
+            query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
                  COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
                  completion_tokens / 1000000.0 * completion_price + \
@@ -2249,7 +2252,7 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         } else {
-            sqlx::query_as::<_, (String, f64, i64)>(
+            query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
                  COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
                  completion_tokens / 1000000.0 * completion_price + \
@@ -2269,7 +2272,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn billing_months(&self) -> Result<Vec<String>, DbError> {
-        let rows: Vec<(String,)> = sqlx::query_as(
+        let rows: Vec<(String,)> = query_as(
             "SELECT DISTINCT LEFT(timestamp::text, 7) AS month FROM usage_logs ORDER BY month DESC",
         )
         .fetch_all(&self.pool)
@@ -2278,7 +2281,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn billing_months_for_user(&self, user_id: &str) -> Result<Vec<String>, DbError> {
-        let rows: Vec<(String,)> = sqlx::query_as(
+        let rows: Vec<(String,)> = query_as(
             "SELECT DISTINCT LEFT(timestamp::text, 7) AS month FROM usage_logs WHERE user_id = $1 ORDER BY month DESC",
         )
         .bind(user_id)
@@ -2288,7 +2291,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn period_summary_all(&self) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
-        let rows = sqlx::query_as::<_, (String, f64, i64, i64)>(
+        let rows = query_as::<_, (String, f64, i64, i64)>(
             "SELECT LEFT(timestamp::text, 7) AS month, \
              COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
              completion_tokens / 1000000.0 * completion_price + \
@@ -2305,7 +2308,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn period_summary_for_user(&self, user_id: &str) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
-        let rows = sqlx::query_as::<_, (String, f64, i64, i64)>(
+        let rows = query_as::<_, (String, f64, i64, i64)>(
             "SELECT LEFT(timestamp::text, 7) AS month, \
              COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
              completion_tokens / 1000000.0 * completion_price + \
@@ -2329,7 +2332,7 @@ impl DbBackend for PgBackend {
     // ── Wallet ───────────────────────────────────────────────────────────
 
     async fn get_wallet_balance(&self, user_id: &str) -> Result<(f64, f64), DbError> {
-        let row: (f64, f64) = sqlx::query_as("SELECT balance, frozen FROM users WHERE id = $1")
+        let row: (f64, f64) = query_as("SELECT balance, frozen FROM users WHERE id = $1")
             .bind(user_id)
             .fetch_one(&self.pool)
             .await?;
@@ -2337,7 +2340,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn update_wallet_balance(&self, user_id: &str, balance: f64) -> Result<(), DbError> {
-        sqlx::query("UPDATE users SET balance = $1 WHERE id = $2")
+        query("UPDATE users SET balance = $1 WHERE id = $2")
             .bind(balance)
             .bind(user_id)
             .execute(&self.pool)
@@ -2358,7 +2361,7 @@ impl DbBackend for PgBackend {
         note: &str,
     ) -> Result<(), DbError> {
         let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query(
+        query(
             "INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         )
@@ -2384,7 +2387,7 @@ impl DbBackend for PgBackend {
         size: usize,
     ) -> Result<Vec<WalletTransactionRow>, DbError> {
         let offset = (page.saturating_sub(1)) * size;
-        let rows = sqlx::query(
+        let rows = query(
             "SELECT id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at \
              FROM wallet_transactions WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
         )
@@ -2412,7 +2415,7 @@ impl DbBackend for PgBackend {
 
     async fn count_wallet_transactions(&self, user_id: &str) -> Result<usize, DbError> {
         let (count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM wallet_transactions WHERE user_id = $1")
+            query_as("SELECT COUNT(*) FROM wallet_transactions WHERE user_id = $1")
                 .bind(user_id)
                 .fetch_one(&self.pool)
                 .await?;
@@ -2451,16 +2454,16 @@ impl DbBackend for PgBackend {
             };
         }
 
-        let mut count_builder: QueryBuilder<'_, sqlx::Postgres> =
+        let mut count_builder: QueryBuilder<'_, Postgres> =
             QueryBuilder::new("SELECT COUNT(DISTINCT LEFT(created_at::text, 10)) FROM wallet_transactions WHERE 1=1");
 
-        let mut data_builder: QueryBuilder<'_, sqlx::Postgres> =
+        let mut data_builder: QueryBuilder<'_, Postgres> =
             QueryBuilder::new(
                 "SELECT id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at \
                  FROM wallet_transactions WHERE 1=1",
             );
 
-        let mut date_builder: QueryBuilder<'_, sqlx::Postgres> =
+        let mut date_builder: QueryBuilder<'_, Postgres> =
             QueryBuilder::new(
                 "SELECT DISTINCT LEFT(created_at::text, 10) as tx_date FROM wallet_transactions WHERE 1=1",
             );
@@ -2526,7 +2529,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn get_total_consumed(&self, user_id: &str) -> Result<f64, DbError> {
-        let result: Result<(f64,), _> = sqlx::query_as(
+        let result: Result<(f64,), _> = query_as(
             "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
              completion_tokens / 1000000.0 * completion_price + \
              cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
@@ -2539,7 +2542,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn get_total_recharged(&self, user_id: &str) -> Result<f64, DbError> {
-        let (amount,): (f64,) = sqlx::query_as(
+        let (amount,): (f64,) = query_as(
             "SELECT COALESCE(SUM(amount), 0) FROM wallet_transactions \
              WHERE user_id = $1 AND type = 'recharge' AND status = 'completed'",
         )
@@ -2552,7 +2555,7 @@ impl DbBackend for PgBackend {
     async fn get_wallet_estimated_days(&self, user_id: &str) -> Result<Option<f64>, DbError> {
         let thirty_days_ago =
             (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
-        let total_cost: f64 = sqlx::query_as::<_, (f64,)>(
+        let total_cost: f64 = query_as::<_, (f64,)>(
             "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
              completion_tokens / 1000000.0 * completion_price + \
              cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
@@ -2565,7 +2568,7 @@ impl DbBackend for PgBackend {
         .map(|r| r.0)
         .unwrap_or(0.0);
 
-        let balance: f64 = sqlx::query_as::<_, (f64,)>(
+        let balance: f64 = query_as::<_, (f64,)>(
             "SELECT balance FROM users WHERE id = $1",
         )
         .bind(user_id)
@@ -2591,7 +2594,7 @@ impl DbBackend for PgBackend {
         expires_at: Option<&str>,
     ) -> Result<(), DbError> {
         let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query(
+        query(
             "INSERT INTO recharge_keys (key, amount, created_by, created_at, expires_at) \
              VALUES ($1, $2, $3, $4, $5)",
         )
@@ -2610,7 +2613,7 @@ impl DbBackend for PgBackend {
         let mut tx = self.pool.begin().await?;
 
         // Atomically mark as used — only if not already used/revoked
-        let updated = sqlx::query(
+        let updated = query(
             "UPDATE recharge_keys SET used_by = $1, used_at = $2 \
              WHERE key = $3 AND used_by IS NULL AND (revoked IS NULL OR revoked = false)",
         )
@@ -2622,7 +2625,7 @@ impl DbBackend for PgBackend {
 
         if updated.rows_affected() == 0 {
             // Key doesn't exist or was already used/revoked — fetch details for error message
-            let existing = sqlx::query(
+            let existing = query(
                 "SELECT used_by, revoked, expires_at FROM recharge_keys WHERE key = $1",
             )
             .bind(key)
@@ -2657,7 +2660,7 @@ impl DbBackend for PgBackend {
         }
 
         // Get amount from the key
-        let (amount,): (f64,) = sqlx::query_as(
+        let (amount,): (f64,) = query_as(
             "SELECT amount FROM recharge_keys WHERE key = $1",
         )
         .bind(key)
@@ -2665,21 +2668,21 @@ impl DbBackend for PgBackend {
         .await?;
 
         // Get current balance
-        let (balance,): (f64,) = sqlx::query_as("SELECT balance FROM users WHERE id = $1")
+        let (balance,): (f64,) = query_as("SELECT balance FROM users WHERE id = $1")
             .bind(user_id)
             .fetch_one(&mut *tx)
             .await
             .map_err(|_| DbError("User not found".to_string()))?;
 
         let new_balance = balance + amount;
-        sqlx::query("UPDATE users SET balance = $1 WHERE id = $2")
+        query("UPDATE users SET balance = $1 WHERE id = $2")
             .bind(new_balance)
             .bind(user_id)
             .execute(&mut *tx)
             .await?;
 
         // Record transaction
-        sqlx::query(
+        query(
             "INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, \
              balance_after, method, status, note, created_at) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
@@ -2702,7 +2705,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn revoke_recharge_key(&self, key: &str) -> Result<(), DbError> {
-        let result = sqlx::query(
+        let result = query(
             "UPDATE recharge_keys SET revoked = true WHERE key = $1 \
              AND used_by IS NULL AND (revoked IS NULL OR revoked = false)",
         )
@@ -2716,7 +2719,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn list_recharge_keys(&self) -> Result<Vec<RechargeKeyRow>, DbError> {
-        let rows = sqlx::query(
+        let rows = query(
             "SELECT key, amount, used_by, used_at, created_by, created_at, expires_at, revoked \
              FROM recharge_keys ORDER BY created_at DESC",
         )
@@ -2742,7 +2745,7 @@ impl DbBackend for PgBackend {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<RechargeKeyRow>, DbError> {
-        let rows = sqlx::query(
+        let rows = query(
             "SELECT key, amount, used_by, used_at, created_by, created_at, expires_at, revoked \
              FROM recharge_keys ORDER BY created_at DESC LIMIT $1 OFFSET $2",
         )
@@ -2772,7 +2775,7 @@ impl DbBackend for PgBackend {
         user_search: Option<&str>,
     ) -> Result<usize, DbError> {
         let now = chrono::Utc::now().to_rfc3339();
-        let mut builder: QueryBuilder<'_, sqlx::Postgres> =
+        let mut builder: QueryBuilder<'_, Postgres> =
             QueryBuilder::new("SELECT COUNT(*) FROM recharge_keys WHERE 1=1");
 
         Self::apply_recharge_key_filters(&mut builder, search, status, user_search, &now);
@@ -2790,7 +2793,7 @@ impl DbBackend for PgBackend {
         user_search: Option<&str>,
     ) -> Result<Vec<RechargeKeyRow>, DbError> {
         let now = chrono::Utc::now().to_rfc3339();
-        let mut builder: QueryBuilder<'_, sqlx::Postgres> = QueryBuilder::new(
+        let mut builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
             "SELECT key, amount, used_by, used_at, created_by, created_at, expires_at, revoked \
              FROM recharge_keys WHERE 1=1",
         );
@@ -2822,7 +2825,7 @@ impl DbBackend for PgBackend {
 
     async fn get_setting(&self, key: &str) -> Result<Option<String>, DbError> {
         let result: Option<(String,)> =
-            sqlx::query_as("SELECT value FROM balancer_settings WHERE key = $1")
+            query_as("SELECT value FROM balancer_settings WHERE key = $1")
                 .bind(key)
                 .fetch_optional(&self.pool)
                 .await?;
@@ -2830,7 +2833,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn set_setting(&self, key: &str, value: &str) -> Result<(), DbError> {
-        sqlx::query(
+        query(
             "INSERT INTO balancer_settings (key, value) VALUES ($1, $2) \
              ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
         )
@@ -2861,7 +2864,7 @@ impl DbBackend for PgBackend {
     // ── Content Filter Rules ─────────────────────────────────────────
 
     async fn list_filter_rules(&self) -> Result<Vec<ContentFilterRule>, DbError> {
-        let rows = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, Option<String>, bool, i32, String, String)>(
+        let rows = query_as::<_, (String, String, String, String, String, String, Option<String>, Option<String>, bool, i32, String, String)>(
             "SELECT id, name, pattern_type, pattern, action, scope, channel_id, replacement, enabled, priority, created_at, updated_at FROM content_filter_rules ORDER BY priority ASC"
         )
         .fetch_all(&self.pool)
@@ -2881,7 +2884,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn create_filter_rule(&self, rule: &ContentFilterRule) -> Result<(), DbError> {
-        sqlx::query(
+        query(
             "INSERT INTO content_filter_rules (id, name, pattern_type, pattern, action, scope, channel_id, replacement, enabled, priority, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
         )
@@ -2904,7 +2907,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn update_filter_rule(&self, rule: &ContentFilterRule) -> Result<(), DbError> {
-        sqlx::query(
+        query(
             "UPDATE content_filter_rules SET name=$1, pattern_type=$2, pattern=$3, action=$4, scope=$5, channel_id=$6, replacement=$7, enabled=$8, priority=$9, updated_at=$10 WHERE id=$11"
         )
         .bind(&rule.name)
@@ -2925,7 +2928,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn delete_filter_rule(&self, id: &str) -> Result<(), DbError> {
-        sqlx::query("DELETE FROM content_filter_rules WHERE id = $1")
+        query("DELETE FROM content_filter_rules WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
             .await
@@ -2936,7 +2939,7 @@ impl DbBackend for PgBackend {
     // ── Health Probe Results ─────────────────────────────────────────
 
     async fn insert_probe_result(&self, row: &ProbeResultRow) -> Result<(), DbError> {
-        sqlx::query(
+        query(
             "INSERT INTO probe_results (id, channel_id, model_id, success, latency_ms, error, probed_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(&row.id)
@@ -2953,7 +2956,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn all_latest_probe_results(&self) -> Result<Vec<ProbeResultRow>, DbError> {
-        let rows = sqlx::query_as::<_, (String, String, String, bool, i64, Option<String>, String)>(
+        let rows = query_as::<_, (String, String, String, bool, i64, Option<String>, String)>(
             "SELECT p.id, p.channel_id, p.model_id, p.success, p.latency_ms, p.error, p.probed_at
              FROM probe_results p
              INNER JOIN (
@@ -2973,7 +2976,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn channel_usage_24h(&self) -> Result<Vec<(String, String, u64, u64, f64, f64)>, DbError> {
-        let rows = sqlx::query_as::<_, (String, String, i64, i64, f64, f64)>(
+        let rows = query_as::<_, (String, String, i64, i64, f64, f64)>(
             "SELECT channel_id, model, COUNT(*)::bigint, SUM(CASE WHEN success THEN 1 ELSE 0 END)::bigint, COALESCE(AVG(latency_ms)::float8, 0), COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)::float8, 0)
              FROM usage_logs
              WHERE timestamp::timestamptz >= NOW() - INTERVAL '1 day'
@@ -2989,7 +2992,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn recent_request_paths(&self, limit: usize) -> Result<Vec<(String, String, String, Option<i64>, u64, bool)>, DbError> {
-        let rows = sqlx::query_as::<_, (String, String, String, Option<i64>, i64, bool)>(
+        let rows = query_as::<_, (String, String, String, Option<i64>, i64, bool)>(
             "SELECT timestamp, model, channel_id, endpoint_id, latency_ms, success FROM usage_logs ORDER BY id DESC LIMIT $1"
         )
         .bind(limit as i64)
@@ -3003,9 +3006,9 @@ impl DbBackend for PgBackend {
     }
 
     async fn routing_flow_snapshot(&self, hours: u32) -> Result<Vec<(String, String, Option<i64>, u64)>, DbError> {
-        use sqlx::Row;
+        use Row;
         let since = (chrono::Utc::now() - chrono::Duration::hours(hours as i64)).format("%Y-%m-%dT%H:%M:%S").to_string();
-        let rows = sqlx::query("SELECT model, channel_id, endpoint_id, COUNT(*)::bigint FROM usage_logs WHERE \"timestamp\"::timestamp >= $1::timestamp GROUP BY model, channel_id, endpoint_id")
+        let rows = query("SELECT model, channel_id, endpoint_id, COUNT(*)::bigint FROM usage_logs WHERE \"timestamp\"::timestamp >= $1::timestamp GROUP BY model, channel_id, endpoint_id")
             .bind(&since).fetch_all(&self.pool).await.map_err(|e| DbError(format!("routing_flow_snapshot: {}", e)))?;
         Ok(rows.iter().map(|r| (r.try_get::<String,_>(0).unwrap_or_default(), r.try_get::<String,_>(1).unwrap_or_default(), r.try_get::<Option<i64>,_>(2).unwrap_or(None), r.try_get::<i64,_>(3).unwrap_or(0) as u64)).collect())
     }
@@ -3016,8 +3019,8 @@ impl DbBackend for PgBackend {
         end: &str,
         model: Option<&str>,
     ) -> Result<Vec<super::RoutingHistoryBucket>, DbError> {
-        use sqlx::Row;
-        let rows = sqlx::query(
+        use Row;
+        let rows = query(
             "SELECT
                 CASE WHEN (EXTRACT(EPOCH FROM $2::timestamp - $1::timestamp)) < 172800
                   THEN date_trunc('hour', \"timestamp\"::timestamp)::text
@@ -3053,8 +3056,8 @@ impl DbBackend for PgBackend {
         end: &str,
         model: Option<&str>,
     ) -> Result<Vec<super::RoutingEndpointStat>, DbError> {
-        use sqlx::Row;
-        let rows = sqlx::query(
+        use Row;
+        let rows = query(
             "SELECT channel_id,
                     COUNT(*)::bigint AS requests,
                     SUM(CASE WHEN success THEN 1 ELSE 0 END)::bigint AS successes,
@@ -3083,8 +3086,8 @@ impl DbBackend for PgBackend {
     async fn routing_history_endpoint_details(
         &self, start: &str, end: &str, model: Option<&str>,
     ) -> Result<Vec<(String, Option<i64>, Option<String>, u64, u64, f64, f64)>, DbError> {
-        use sqlx::Row;
-        let rows = sqlx::query(
+        use Row;
+        let rows = query(
             "SELECT ul.channel_id, ul.endpoint_id, e.url,
                     COUNT(*)::bigint, SUM(CASE WHEN ul.success THEN 1 ELSE 0 END)::bigint,
                     AVG(ul.latency_ms)::float8,
@@ -3111,7 +3114,7 @@ impl DbBackend for PgBackend {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<(String, f64, f64)>, DbError> {
-        let rows = sqlx::query_as::<_, (String, f64, f64)>(
+        let rows = query_as::<_, (String, f64, f64)>(
             "SELECT id, balance, frozen FROM users LIMIT $1 OFFSET $2",
         )
         .bind(limit as i64)
@@ -3134,7 +3137,7 @@ impl DbBackend for PgBackend {
         for record in batch {
             let (prompt_price, completion_price, cache_read_price) = {
                 // Lookup pricing within transaction
-                let result = sqlx::query_as::<_, (f64, f64, f64)>(
+                let result = query_as::<_, (f64, f64, f64)>(
                     "SELECT prompt_price, completion_price, cache_read_price FROM models WHERE name = $1",
                 )
                 .bind(&record.model)
@@ -3145,7 +3148,7 @@ impl DbBackend for PgBackend {
                     Ok(Some(p)) => p,
                     _ => {
                         // Fallback to pattern matching
-                        let rows = sqlx::query_as::<_, (f64, f64, f64, String)>(
+                        let rows = query_as::<_, (f64, f64, f64, String)>(
                             "SELECT prompt_price, completion_price, cache_read_price, model_pattern FROM models",
                         )
                         .fetch_all(&mut *tx)
@@ -3172,7 +3175,7 @@ impl DbBackend for PgBackend {
             };
 
             // Insert usage record with pricing snapshot
-            sqlx::query(
+            query(
                 "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, \
                  model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, \
                  success, request_body, response_body, reasoning_body, api_key_name, api_format, \
@@ -3212,7 +3215,7 @@ impl DbBackend for PgBackend {
                     + record.cache_hit_input_tokens as f64 / 1000000.0 * cache_read_price;
 
                 if cost > 0.0 {
-                    let (balance, frozen): (f64, f64) = sqlx::query_as(
+                    let (balance, frozen): (f64, f64) = query_as(
                         "SELECT balance, frozen FROM users WHERE id = $1",
                     )
                     .bind(&record.user_id)
@@ -3221,14 +3224,14 @@ impl DbBackend for PgBackend {
                     .unwrap_or((0.0, 0.0));
 
                     let new_balance = balance - cost;
-                    sqlx::query("UPDATE users SET balance = $1 WHERE id = $2")
+                    query("UPDATE users SET balance = $1 WHERE id = $2")
                         .bind(new_balance)
                         .bind(&record.user_id)
                         .execute(&mut *tx)
                         .await?;
 
                     let now = chrono::Utc::now().to_rfc3339();
-                    sqlx::query(
+                    query(
                         "INSERT INTO wallet_transactions (id, user_id, type, amount, \
                          balance_before, balance_after, method, status, note, created_at) \
                          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
@@ -3258,7 +3261,7 @@ impl DbBackend for PgBackend {
 
 impl PgBackend {
     fn apply_recharge_key_filters<'a>(
-        builder: &mut QueryBuilder<'a, sqlx::Postgres>,
+        builder: &mut QueryBuilder<'a, Postgres>,
         search: Option<&str>,
         status: Option<&str>,
         user_search: Option<&str>,

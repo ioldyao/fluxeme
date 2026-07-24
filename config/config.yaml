@@ -9,8 +9,8 @@ admin:
   username: admin
   password: admin123
 database:
-  db_type: ${DB_TYPE}
-  path: data/gateway.db
+  pg_url: ""
+  retention_days: 90
 jwt_secret: ${GATEWAY_JWT_SECRET}
 
 # Cache / Redis

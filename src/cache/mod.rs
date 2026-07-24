@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 ///
 /// The status is stored in Redis at `gate_status:{user_id}` and is written
 /// by the background deduction writer and a periodic inspection task.
-/// SQLite is the source of truth; Redis is a read-optimized cache.
+/// PostgreSQL is the source of truth; Redis is a read-optimized cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GateStatus {
     /// Balance is healthy — requests should pass through.
@@ -131,7 +131,7 @@ impl RedisCache {
     /// Read the gate status for a user from Redis.
     ///
     /// Returns `None` when no status has been set (e.g., first request,
-    /// or cache disabled) — the caller should fall back to SQLite.
+    /// or cache disabled) — the caller should fall back to PostgreSQL.
     pub async fn get_gate_status(&self, user_id: &str) -> Result<Option<GateStatus>, String> {
         let mut con = match self.con.clone() {
             Some(c) => c,
