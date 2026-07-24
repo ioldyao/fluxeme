@@ -22,7 +22,7 @@ pub(crate) async fn list_my_subscriptions(
         .db
         .list_subscriptions(&session.user_id)
         .await.map_err(db_err)?;
-    Ok(Json(merge_same_named_models(models)))
+    Ok(Json(models))
 }
 
 pub(crate) async fn subscribe_model(
@@ -31,18 +31,8 @@ pub(crate) async fn subscribe_model(
     Path(model_id): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    // Subscribe to ALL same-named model entries so every channel
-    // binding is available for routing.
-    let models = state.db.list_models().await.map_err(db_err)?;
-    let target_name = models.iter().find(|m| m.id == model_id).map(|m| m.name.clone());
-    let mut subbed = Vec::new();
-    for m in &models {
-        if m.id == model_id || (target_name.as_ref() == Some(&m.name)) {
-            state.db.subscribe_user(&session.user_id, &m.id).await.map_err(db_err)?;
-            subbed.push(m.id.clone());
-        }
-    }
-    Ok(Json(serde_json::json!({ "subscribed": subbed })))
+    state.db.subscribe_user(&session.user_id, &model_id).await.map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "subscribed": model_id })))
 }
 
 pub(crate) async fn unsubscribe_model(
@@ -51,17 +41,8 @@ pub(crate) async fn unsubscribe_model(
     Path(model_id): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    // Unsubscribe from ALL same-named model entries.
-    let models = state.db.list_models().await.map_err(db_err)?;
-    let target_name = models.iter().find(|m| m.id == model_id).map(|m| m.name.clone());
-    let mut unsubbed = Vec::new();
-    for m in &models {
-        if m.id == model_id || (target_name.as_ref() == Some(&m.name)) {
-            let _ = state.db.unsubscribe_user(&session.user_id, &m.id).await;
-            unsubbed.push(m.id.clone());
-        }
-    }
-    Ok(Json(serde_json::json!({ "unsubscribed": unsubbed })))
+    let _ = state.db.unsubscribe_user(&session.user_id, &model_id).await;
+    Ok(Json(serde_json::json!({ "unsubscribed": model_id })))
 }
 
 #[derive(Deserialize)]
@@ -123,7 +104,7 @@ pub(crate) async fn test_subscription_connection(
         let test_body = serde_json::json!({
             "model": model.model_pattern,
             "messages": [{"role": "user", "content": "hi"}],
-            "max_tokens": 512,
+            "max_tokens": 1,
         });
         adapter.messages(endpoint, test_body).await
     } else {
@@ -131,7 +112,7 @@ pub(crate) async fn test_subscription_connection(
             "model": model.model_pattern,
             "messages": [{"role": "user", "content": "hi"}],
             "temperature": 0.01,
-            "max_tokens": 512,
+            "max_tokens": 1,
             "top_p": 0.01,
         });
         adapter.chat_complete(endpoint, test_body).await

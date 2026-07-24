@@ -9,7 +9,6 @@ use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation}
 use serde::{Deserialize, Serialize};
 
 use crate::authz::AuthzModule;
-use crate::domain::model::Model;
 use crate::domain::user::SessionInfo;
 use crate::ratelimit::RateLimiter;
 use crate::db::Database;
@@ -293,27 +292,6 @@ fn since_local_days_ago(days: i64, offset_seconds: i64) -> String {
     let since_local = now_local - Duration::days(days);
     let since_utc = since_local - local_offset;
     since_utc.format("%Y-%m-%dT%H:%M:%S").to_string()
-}
-
-/// Merge model entries that share the same name into one, combining their
-/// channel bindings.  Same-named models are logically treated as a single
-/// model with all channels from all entries.
-fn merge_same_named_models(models: Vec<Model>) -> Vec<Model> {
-    let mut groups: std::collections::HashMap<String, Model> = std::collections::HashMap::new();
-    for m in models {
-        groups.entry(m.name.clone())
-            .and_modify(|existing| {
-                for mc in &m.channels {
-                    if !existing.channels.iter().any(|c| c.channel_id == mc.channel_id) {
-                        existing.channels.push(mc.clone());
-                    }
-                }
-            })
-            .or_insert(m);
-    }
-    let mut out: Vec<Model> = groups.into_values().collect();
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    out
 }
 
 // ── Router ────────────────────────────────────────────────────────
