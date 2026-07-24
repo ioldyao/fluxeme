@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  Activity, AlertTriangle, Info, Layers3, ShieldCheck, Wallet,
+  Activity, AlertTriangle, Bell, HelpCircle, Info, Layers3, ShieldCheck, Wallet,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
@@ -335,10 +335,38 @@ export default function Dashboard() {
               )}
             </CardContent>
           </Card>
+
+          {/* Announcements */}
+          <Card className="card-hover">
+            <CardHeader>
+              <h2 className="flex items-center gap-2 text-base font-semibold leading-none">
+                <Bell className="size-4" />
+                {t('dash.announcements')}
+              </h2>
+            </CardHeader>
+            <CardContent>
+              <p className="text-xs text-muted-foreground">{t('dash.announcementsSub')}</p>
+              <p className="mt-3 text-sm text-muted-foreground">{t('dash.noAnnouncements')}</p>
+            </CardContent>
+          </Card>
+
+          {/* FAQ */}
+          <Card className="card-hover">
+            <CardHeader>
+              <h2 className="flex items-center gap-2 text-base font-semibold leading-none">
+                <HelpCircle className="size-4" />
+                {t('dash.faq')}
+              </h2>
+            </CardHeader>
+            <CardContent>
+              <p className="text-xs text-muted-foreground">{t('dash.faqSub')}</p>
+              <p className="mt-3 text-sm text-muted-foreground">{t('dash.noFaq')}</p>
+            </CardContent>
+          </Card>
         </div>
 
-        {/* ── Full-width Request Logs ── */}
-        <Card className="card-hover xl:col-span-2">
+        {/* ── Request Logs (same width as routing card, in left column) ── */}
+        <Card className="card-hover">
           <CardHeader className="flex flex-row items-start justify-between gap-3">
             <div>
               <h2 className="text-base font-semibold leading-none">{t('dash.requestLogs')}</h2>
