@@ -19,7 +19,8 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs && \
     cargo build --release -j $(nproc) && \
     rm -rf src
 COPY src/ src/
-RUN cargo build --release -j $(nproc) && \
+RUN touch src/main.rs && \
+    cargo build --release -j $(nproc) && \
     strip target/release/ai-gateway
 
 # ── Runtime ──
