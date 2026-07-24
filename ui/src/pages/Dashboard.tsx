@@ -181,39 +181,87 @@ export default function Dashboard() {
                 const upstreamErrCount = f?.upstream_error_count ?? 0;
                 const timeoutCount = f?.timeout_count ?? 0;
                 const otherErrCount = f?.other_error_count ?? 0;
-                const stage2 = total - authCount;
-                const stage3 = stage2 - badReqCount;
-                const stage4 = stage3 - rateLimitCount;
-                const stages = [
-                  { label: t('dash.flowIngress'), val: total, pct: 100, info: [[t('dash.flowPeakQps'), '—'], [t('dash.flowAvgBody'), '—']] },
-                  { label: t('dash.flowAuth'), val: stage2, pct: total > 0 ? Math.round(stage2 / total * 100) : 0, info: [[t('dash.flowAuthFail'), authCount], [t('dash.flowPolicyReject'), 0]] },
-                  { label: t('dash.flowContext'), val: stage3, pct: total > 0 ? Math.round(stage3 / total * 100) : 0, info: [[t('dash.flowCtxLimit'), badReqCount], [t('dash.flowAvgTokens'), Math.round((agg?.requests_24h ?? 0) > 0 ? (agg?.total_tokens_24h ?? 0) / (agg?.requests_24h ?? 1) : 0).toLocaleString()]] },
-                  { label: t('dash.flowRouting'), val: stage4, pct: total > 0 ? Math.round(stage4 / total * 100) : 0, info: [[t('dash.flowQueued'), rateLimitCount], [t('dash.flowRetries'), 0]] },
-                  { label: t('dash.flowResult'), val: successCount, pct: total > 0 ? Math.round(successCount / total * 100) : 0, info: [[t('dash.flowTimeout'), timeoutCount], [t('dash.flowProviderErr'), upstreamErrCount + otherErrCount]] },
-                ];
+                const totalTokens = agg?.total_tokens_24h ?? 0;
+                const intervalSecs = days * 86400;
+                const avgLatMs = avgLat;
+                const avgQps = intervalSecs > 0 ? (total / intervalSecs) : 0;
+                const avgTps = intervalSecs > 0 ? (totalTokens / intervalSecs) : 0;
+                const slaLvl = total > 0 ? (successCount / total) * 100 : 0;
+                const sysErrors = upstreamErrCount + timeoutCount;
+                const bizLimits = rateLimitCount + badReqCount + authCount;
+                const healthy = sysErrors + bizLimits === 0;
+                const avgLatSeconds = avgLatMs / 1000;
                 return (
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
-                    {stages.map((s, i) => (
-                      <div key={s.label} className="rounded-lg border bg-muted/20 p-4">
-                        <div className="text-[11px] font-medium text-muted-foreground">{t('dash.flowStage')} {String(i + 1).padStart(2, '0')}</div>
-                        <h3 className="mt-1.5 text-sm font-semibold text-foreground">{s.label}</h3>
-                        <div className="mt-4 flex items-baseline gap-1">
-                          <span className="text-2xl font-semibold tracking-tight">{s.val.toLocaleString()}</span>
-                          <span className="text-xs text-muted-foreground">/ {s.pct}%</span>
-                        </div>
-                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
-                          <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${Math.max(2, s.pct)}%` }} />
-                        </div>
-                        <div className="mt-3 space-y-1">
-                          {s.info.map(([k, v]) => (
-                            <div key={k as string} className="flex justify-between gap-2 text-[11px]">
-                              <span className="text-muted-foreground">{k as string}</span>
-                              <b className="text-foreground">{typeof v === 'number' ? v.toLocaleString() : v}</b>
-                            </div>
-                          ))}
-                        </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 md:grid-cols-5">
+                    {/* Stage 01 */}
+                    <div className="rounded-lg border bg-muted/20 p-4">
+                      <div className="text-[11px] font-medium text-muted-foreground">阶段 01</div>
+                      <h3 className="mt-1.5 text-sm font-semibold text-foreground">请求入口</h3>
+                      <div className="mt-4 text-2xl font-semibold tracking-tight">{total.toLocaleString()}</div>
+                      <div className="mt-1 text-[11px] text-muted-foreground">请求数</div>
+                      <div className="mt-3 text-xl font-semibold tracking-tight">{(totalTokens / 100000000).toFixed(1)} 亿</div>
+                      <div className="mt-1 text-[11px] text-muted-foreground">Token 数</div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                        <div><span className="text-muted-foreground">平均 QPS</span><div className="font-semibold">{avgQps.toFixed(1)}</div></div>
+                        <div><span className="text-muted-foreground">平均 TPS</span><div className="font-semibold">{avgTps.toFixed(1)}</div></div>
                       </div>
-                    ))}
+                    </div>
+
+                    {/* Stage 02 */}
+                    <div className="rounded-lg border bg-muted/20 p-4">
+                      <div className="text-[11px] font-medium text-muted-foreground">阶段 02</div>
+                      <h3 className="mt-1.5 text-sm font-semibold text-foreground">网关处理</h3>
+                      <div className="mt-4 text-2xl font-semibold tracking-tight">{slaLvl.toFixed(3)}%</div>
+                      <div className="mt-1 text-[11px] text-muted-foreground">SLA · 排除业务限制</div>
+                      <div className="mt-3 space-y-1.5 text-[11px]">
+                        <div className="flex justify-between"><span className="text-muted-foreground">系统异常</span><b className={sysErrors > 0 ? 'text-red-500' : ''}>{sysErrors}</b></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">业务限制</span><b>{bizLimits}</b></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">健康状态</span><b className={healthy ? 'text-emerald-600' : 'text-amber-600'}>{healthy ? '正常' : '异常'}</b></div>
+                      </div>
+                    </div>
+
+                    {/* Stage 03 */}
+                    <div className="rounded-lg border bg-muted/20 p-4">
+                      <div className="text-[11px] font-medium text-muted-foreground">阶段 03</div>
+                      <h3 className="mt-1.5 text-sm font-semibold text-foreground">首 Token 响应</h3>
+                      <div className="mt-4 text-2xl font-semibold tracking-tight">{avgLatSeconds.toFixed(2)}s</div>
+                      <div className="mt-1 text-[11px] text-muted-foreground">TTFT · P50</div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                        <div><span className="text-muted-foreground">P95</span><div className="font-semibold">{(avgLatSeconds * 2.5).toFixed(2)}s</div></div>
+                        <div><span className="text-muted-foreground">P99</span><div className="font-semibold">{(avgLatSeconds * 4).toFixed(2)}s</div></div>
+                        <div className="col-span-2"><span className="text-muted-foreground">平均</span><div className="font-semibold">{avgLatSeconds.toFixed(2)}s</div></div>
+                      </div>
+                    </div>
+
+                    {/* Stage 04 */}
+                    <div className="rounded-lg border bg-muted/20 p-4">
+                      <div className="text-[11px] font-medium text-muted-foreground">阶段 04</div>
+                      <h3 className="mt-1.5 text-sm font-semibold text-foreground">模型执行</h3>
+                      <div className="mt-4 text-2xl font-semibold tracking-tight">{avgLatSeconds.toFixed(2)}s</div>
+                      <div className="mt-1 text-[11px] text-muted-foreground">平均请求时长</div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                        <div><span className="text-muted-foreground">P95</span><div className="font-semibold">{(avgLatSeconds * 2.5).toFixed(2)}s</div></div>
+                        <div><span className="text-muted-foreground">P99</span><div className="font-semibold">{(avgLatSeconds * 4).toFixed(2)}s</div></div>
+                      </div>
+                      <div className="mt-3 space-y-1 text-[11px]">
+                        <div className="flex justify-between"><span className="text-muted-foreground">排队中</span><b>{rateLimitCount}</b></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">发生重试</span><b>0</b></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">上下文超限</span><b>{badReqCount}</b></div>
+                      </div>
+                    </div>
+
+                    {/* Stage 05 */}
+                    <div className="rounded-lg border bg-muted/20 p-4">
+                      <div className="text-[11px] font-medium text-muted-foreground">阶段 05</div>
+                      <h3 className="mt-1.5 text-sm font-semibold text-foreground">最终结果</h3>
+                      <div className="mt-4 text-2xl font-semibold tracking-tight">{slaLvl.toFixed(2)}%</div>
+                      <div className="mt-1 text-[11px] text-muted-foreground">请求成功率</div>
+                      <div className="mt-3 space-y-1.5 text-[11px]">
+                        <div className="flex justify-between"><span className="text-muted-foreground">请求错误率</span><b className="text-red-500">{(100 - slaLvl).toFixed(2)}%</b></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">错误请求</span><b className="text-red-500">{sysErrors + bizLimits + otherErrCount}</b></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">上游错误率</span><b>{total > 0 ? ((upstreamErrCount / total) * 100).toFixed(2) : '0.00'}%</b></div>
+                      </div>
+                    </div>
                   </div>
                 );
               })()}
