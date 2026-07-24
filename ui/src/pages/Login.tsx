@@ -40,7 +40,7 @@ export default function Login() {
         // SSO endpoint not available
       })
       .finally(() => setSsoLoading(false));
-  }, []);
+  }, [navigate]);
 
   if (token) return <Navigate to="/" replace />;
 
