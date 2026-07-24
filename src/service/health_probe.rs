@@ -133,6 +133,7 @@ impl HealthProbeService {
                 .iter()
                 .cloned()
                 .enumerate()
+                .filter(|(_, endpoint)| endpoint.enabled)
                 .collect();
             if endpoint_jobs.is_empty() {
                 ordered_results.push(OrderedProbeRow {

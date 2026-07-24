@@ -75,12 +75,13 @@ export default function Models() {
 
 
   const channelProbeRows = useCallback(
-    (channelId: string): ProbeResult[] => probeResults?.filter((row) => row.channel_id === channelId) ?? [],
+    (modelId: string, channelId: string): ProbeResult[] =>
+      probeResults?.filter((row) => row.model_id === modelId && row.channel_id === channelId) ?? [],
     [probeResults],
   );
   const aggregateChannelProbe = useCallback(
-    (channelId: string) => {
-      const rows = channelProbeRows(channelId);
+    (modelId: string, channelId: string) => {
+      const rows = channelProbeRows(modelId, channelId);
       const endpointRows = rows.filter((row) => row.endpoint_url);
       const effectiveRows = endpointRows.length > 0 ? endpointRows : rows;
       if (effectiveRows.length === 0) {
@@ -108,8 +109,8 @@ export default function Models() {
         case 'match': av = a.model_pattern; bv = b.model_pattern; break;
         case 'channel': {
           const aCh = a.channels[0]?.channel_id; const bCh = b.channels[0]?.channel_id;
-          const aProbe = aCh ? aggregateChannelProbe(aCh) : null;
-          const bProbe = bCh ? aggregateChannelProbe(bCh) : null;
+          const aProbe = aCh ? aggregateChannelProbe(a.id, aCh) : null;
+          const bProbe = bCh ? aggregateChannelProbe(b.id, bCh) : null;
           av = aProbe ? (aProbe.success ? aProbe.latency_ms : 1_000_000 + aProbe.latency_ms) : 9_999_999;
           bv = bProbe ? (bProbe.success ? bProbe.latency_ms : 1_000_000 + bProbe.latency_ms) : 9_999_999;
           break;
@@ -131,7 +132,7 @@ export default function Models() {
 
   const totalPublished = models?.filter((m) => m.published).length ?? 0;
   const totalAlerts = models?.filter((m) => m.channels.some((b) => {
-    const aggregate = aggregateChannelProbe(b.channel_id);
+    const aggregate = aggregateChannelProbe(m.id, b.channel_id);
     return aggregate ? !aggregate.success : false;
   })).length ?? 0;
 
@@ -205,7 +206,7 @@ export default function Models() {
       <td className="px-4 py-3">
         {m.channels.length > 0 ? (
           <div className="flex items-center gap-1.5">{m.channels.map((b) => {
-            const hc = aggregateChannelProbe(b.channel_id);
+            const hc = aggregateChannelProbe(m.id, b.channel_id);
             const ok = hc?.success;
             const lat = hc?.latency_ms;
             return (

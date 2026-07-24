@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
 use serde::Deserialize;
@@ -228,9 +228,15 @@ fn normalize_and_validate_model(model: &mut Model) -> Result<(), AdminError> {
 
 // ── Probe Results ─────────────────────────────────────────────────
 
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct ProbeResultsQuery {
+    model_id: Option<String>,
+}
+
 pub(crate) async fn list_probe_results(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(query): Query<ProbeResultsQuery>,
 ) -> Result<Json<Vec<crate::db::ProbeResultRow>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:health").await?;
@@ -239,5 +245,13 @@ pub(crate) async fn list_probe_results(
         .all_latest_probes()
         .await
         .map_err(AdminError::internal)?;
-    Ok(Json(results))
+    let filtered = if let Some(model_id) = query.model_id.filter(|value| !value.trim().is_empty()) {
+        results
+            .into_iter()
+            .filter(|row| row.model_id == model_id)
+            .collect()
+    } else {
+        results
+    };
+    Ok(Json(filtered))
 }

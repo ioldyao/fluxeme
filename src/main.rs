@@ -118,7 +118,10 @@ async fn main() {
 
     let pg_url = if raw_config.database.pg_url.is_empty() {
         let user = std::env::var("DB_USER").unwrap_or_else(|_| "postgres".to_string());
-        let password = std::env::var("DB_PASSWORD").unwrap_or_else(|_| "postgres123".to_string());
+        let password = std::env::var("DB_PASSWORD").unwrap_or_else(|_| {
+            tracing::error!("DB_PASSWORD must be set when database.pg_url is empty");
+            std::process::exit(1);
+        });
         let db_name = std::env::var("DB_NAME").unwrap_or_else(|_| "aigateway".to_string());
         let host = std::env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string());
         let port = std::env::var("DB_PORT").unwrap_or_else(|_| "5432".to_string());
