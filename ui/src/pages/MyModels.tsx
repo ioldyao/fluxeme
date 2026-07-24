@@ -22,7 +22,6 @@ export default function MyModels() {
   const unsubscribe = useUnsubscribeModel();
   const testConnection = useTestModelConnection();
   const [testingIds, setTestingIds] = useState<Record<string, boolean>>({});
-  const [results, setResults] = useState<Record<string, ModelTestResult>>({});
   const { currency } = useCurrency();
   const { effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
 
@@ -45,7 +44,6 @@ export default function MyModels() {
     testConnection.mutate(modelId, {
       onSuccess: (res) => {
         setTestingIds((prev) => ({ ...prev, [modelId]: false }));
-        setResults((prev) => ({ ...prev, [modelId]: res }));
         if (res.success) {
           toast.success(`连接成功 (${res.latency_ms}ms)`);
         } else {
