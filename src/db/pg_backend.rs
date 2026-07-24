@@ -3111,14 +3111,15 @@ impl DbBackend for PgBackend {
             "SELECT p.id, p.channel_id, p.model_id, p.success, p.latency_ms, p.error, p.probed_at, p.endpoint_url
              FROM probe_results p
              INNER JOIN (
-                 SELECT channel_id, COALESCE(endpoint_url, '') AS endpoint_key, MAX(probed_at) AS max_ts
+                 SELECT model_id, channel_id, COALESCE(endpoint_url, '') AS endpoint_key, MAX(probed_at) AS max_ts
                  FROM probe_results
-                 GROUP BY channel_id, COALESCE(endpoint_url, '')
+                 GROUP BY model_id, channel_id, COALESCE(endpoint_url, '')
              ) latest
-               ON p.channel_id = latest.channel_id
+               ON p.model_id = latest.model_id
+              AND p.channel_id = latest.channel_id
               AND COALESCE(p.endpoint_url, '') = latest.endpoint_key
               AND p.probed_at = latest.max_ts
-             ORDER BY p.channel_id, p.endpoint_url NULLS FIRST"
+             ORDER BY p.model_id, p.channel_id, p.endpoint_url NULLS FIRST"
         )
         .fetch_all(&self.pool)
         .await

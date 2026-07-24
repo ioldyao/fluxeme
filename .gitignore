@@ -13,7 +13,10 @@ ai_ex/
 .env.*
 !.env.example
 data/
-web/
+# Built admin UI assets are versioned with web/index.html.
+!web/
+!web/assets/
+!web/assets/**
 # Added by code-review-graph
 .code-review-graph/
 outputs/

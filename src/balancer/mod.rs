@@ -177,9 +177,7 @@ impl HealthAwareBalancer {
 
     fn pick_index(&self, candidates: &[usize]) -> usize {
         match &self.strategy {
-            Strategy::RoundRobin => {
-                self.counter.fetch_add(1, Ordering::Relaxed) % candidates.len()
-            }
+            Strategy::RoundRobin => self.counter.fetch_add(1, Ordering::Relaxed) % candidates.len(),
             Strategy::WeightedRoundRobin { total } => {
                 let counter_val = self.counter.fetch_add(1, Ordering::Relaxed);
                 let pos = counter_val % *total as usize;

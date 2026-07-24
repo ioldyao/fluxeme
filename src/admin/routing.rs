@@ -198,7 +198,8 @@ pub(crate) async fn routing_flow_snapshot_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<(String, String, Option<i64>, u64)>>, AdminError> {
-    let _session = require_session(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:dashboard").await?;
     state
         .db
         .routing_flow_snapshot(24)
@@ -212,7 +213,8 @@ pub(crate) async fn routing_history(
     headers: HeaderMap,
     Query(q): Query<RoutingHistoryQuery>,
 ) -> Result<Json<RoutingHistoryResponse>, AdminError> {
-    let _session = require_session(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:dashboard").await?;
 
     let model_filter: Option<&str> = q.model.as_deref().filter(|m| !m.is_empty() && *m != "all");
 
