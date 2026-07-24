@@ -80,6 +80,7 @@ const en: Record<string, string> = {
   'gateway.degraded': 'Gateway mildly degraded',
   'gateway.unstable': 'Gateway unstable',
   'dash.gatewayHealthMeta': '{{modelCount}} models · {{channelCount}} channels · {{apiKeyCount}} active keys',
+  'dash.gatewayHealthMetaUser': '{{modelCount}} models · {{apiKeyCount}} active keys',
   'dash.availability': 'Availability',
   'dash.requestFlow': 'Request Flow',
   'dash.requestFlowSub': 'How requests move from clients through the gateway to model responses',

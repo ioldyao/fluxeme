@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
+import { usePermission } from '@/permissions';
 import { useCurrency, CURRENCY_SYMBOL } from '@/store/currency';
 import { useDashboard, useDashboardAggregations } from '@/api/dashboard';
 import { useUsage, useUsageAggregate, useModelActivity } from '@/api/usage';
@@ -31,8 +32,9 @@ function fmtLat(ms: number) {
 
 export default function Dashboard() {
   const { t } = useTranslation();
-  const [days, setDays] = useState(7);
+  const [days, setDays] = useState(1);
   const [chartOpt, setChartOpt] = useState<string>(CHART_OPTS[0]);
+  const isAdmin = usePermission('admin:dashboard');
 
   const { data: stats, refetch } = useDashboard();
   const { data: agg, refetch: ra } = useDashboardAggregations();
@@ -41,7 +43,7 @@ export default function Dashboard() {
   const { data: recent, refetch: rrl } = useUsage({ limit: 8 });
   const { data: wo, refetch: rwo } = useWalletOverview();
   const { data: ed, refetch: red } = useEstimatedDays();
-  const { data: rh, refetch: rrh } = useRoutingHistory(days);
+  const { data: rh, refetch: rrh } = useRoutingHistory(days, { enabled: isAdmin });
   const { currency, rate } = useCurrency();
   const sym = CURRENCY_SYMBOL[currency];
 
@@ -51,6 +53,11 @@ export default function Dashboard() {
   const apiKeyCount = stats?.api_keys ?? 0;
   const requests24h = agg?.requests_24h ?? 0;
   const totalTokens24h = agg?.total_tokens_24h ?? 0;
+  const channelCount = stats?.channels ?? 0;
+  const selectedPeriodRequests = useMemo(() => {
+    if (!ua?.length) return requests24h;
+    return ua.reduce((s, d) => s + d.count, 0);
+  }, [ua, requests24h]);
   const toneCls = availability >= 99 ? 'bg-emerald-500 shadow-[0_0_0_6px_rgba(20,150,106,0.12)]' : availability >= 95 ? 'bg-amber-500 shadow-[0_0_0_6px_rgba(217,145,19,0.14)]' : 'bg-red-500 shadow-[0_0_0_6px_rgba(216,75,75,0.14)]';
   const toneLabel = availability >= 99 ? t('gateway.healthy') : availability >= 95 ? t('gateway.degraded') : t('gateway.unstable');
 
@@ -89,7 +96,7 @@ export default function Dashboard() {
     return a;
   }, [avgLat, availability, modelShare, ed?.days, t]);
 
-  const handleRefresh = () => { void refetch(); void ra(); void rua(); void rma(); void rrl(); void rwo(); void red(); void rrh(); };
+  const handleRefresh = () => { void refetch(); void ra(); void rua(); void rma(); void rrl(); void rwo(); void red(); if (isAdmin) void rrh(); };
 
   const chartData = useMemo(() => {
     if (!ua?.length) return [];
@@ -126,7 +133,7 @@ export default function Dashboard() {
               <span className={`size-3 rounded-full ${toneCls}`} aria-hidden="true" />
               <div>
                 <div className="font-semibold text-foreground">{toneLabel}</div>
-                <div className="mt-1 text-sm text-muted-foreground">{t('dash.gatewayHealthMeta', { modelCount, channelCount: stats?.channels ?? 0, apiKeyCount })}</div>
+                <div className="mt-1 text-sm text-muted-foreground">{isAdmin ? t('dash.gatewayHealthMeta', { modelCount, channelCount, apiKeyCount }) : t('dash.gatewayHealthMetaUser', { modelCount, apiKeyCount })}</div>
               </div>
             </div>
             <div className="text-right">
@@ -198,9 +205,9 @@ export default function Dashboard() {
             <CardContent>
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_auto_1fr_auto_1fr] xl:items-center">
                 {[
-                  { title: t('dash.requestIngress'), sub: t('dash.requestIngressSub'), val: requests24h },
+                  { title: t('dash.requestIngress'), sub: t('dash.requestIngressSub'), val: selectedPeriodRequests },
                   null,
-                  { title: t('dash.gatewayProcessing'), sub: t('dash.gatewayProcessingSub'), val: requests24h },
+                  { title: t('dash.gatewayProcessing'), sub: t('dash.gatewayProcessingSub'), val: selectedPeriodRequests },
                   null,
                   { title: t('dash.modelResponses'), sub: t('dash.modelResponsesSub'), val: Math.round(requests24h * (availability / 100)) },
                 ].map((n, i) => n === null ? (
@@ -216,37 +223,39 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          {/* Model Routing Performance */}
-          <Card className="card-hover">
-            <CardHeader className="flex flex-row items-start justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold leading-none">{t('dash.routingPerformance')}</h2>
-                <CardDescription>{t('dash.routingPerformanceSub')}</CardDescription>
-              </div>
-              <Button variant="ghost" size="sm" onClick={() => window.location.href = '/routing-history'}>{t('dash.viewRouting')}</Button>
-            </CardHeader>
-            <CardContent>
-              {routingRows.length === 0 ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">{t('dash.noData')}</p>
-              ) : (
-                <div className="space-y-1">
-                  {routingRows.map((r, i) => (
-                    <div key={r.name} className="grid grid-cols-[minmax(0,1fr)_80px_80px] items-center gap-3 border-t border-border/60 px-0 py-3 text-sm first:border-0">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <span className={`size-2 shrink-0 rounded-full ${i === 0 ? 'bg-brand' : i === 1 ? 'bg-blue-500' : 'bg-muted-foreground/40'}`} />
-                        <span className="truncate font-medium text-foreground">{r.name}</span>
-                      </div>
-                      <div className="text-right">
-                        <div className="truncate font-semibold">{r.share.toFixed(1)}%</div>
-                        <div className="text-[11px] text-muted-foreground">{r.requests.toLocaleString()}</div>
-                      </div>
-                      <div className="text-right text-muted-foreground">{fmtLat(r.latency)}</div>
-                    </div>
-                  ))}
+          {/* Model Routing Performance (admin only) */}
+          {isAdmin && (
+            <Card className="card-hover">
+              <CardHeader className="flex flex-row items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold leading-none">{t('dash.routingPerformance')}</h2>
+                  <CardDescription>{t('dash.routingPerformanceSub')}</CardDescription>
                 </div>
-              )}
-            </CardContent>
-          </Card>
+                <Button variant="ghost" size="sm" onClick={() => window.location.href = '/routing-history'}>{t('dash.viewRouting')}</Button>
+              </CardHeader>
+              <CardContent>
+                {routingRows.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-muted-foreground">{t('dash.noData')}</p>
+                ) : (
+                  <div className="space-y-1">
+                    {routingRows.map((r, i) => (
+                      <div key={r.name} className="grid grid-cols-[minmax(0,1fr)_80px_80px] items-center gap-3 border-t border-border/60 px-0 py-3 text-sm first:border-0">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className={`size-2 shrink-0 rounded-full ${i === 0 ? 'bg-brand' : i === 1 ? 'bg-blue-500' : 'bg-muted-foreground/40'}`} />
+                          <span className="truncate font-medium text-foreground">{r.name}</span>
+                        </div>
+                        <div className="text-right">
+                          <div className="truncate font-semibold">{r.share.toFixed(1)}%</div>
+                          <div className="text-[11px] text-muted-foreground">{r.requests.toLocaleString()}</div>
+                        </div>
+                        <div className="text-right text-muted-foreground">{fmtLat(r.latency)}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Request Logs */}
           <Card className="card-hover">

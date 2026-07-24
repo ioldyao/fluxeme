@@ -80,6 +80,7 @@ const zh: Record<string, string> = {
   'gateway.degraded': '网关轻微降级',
   'gateway.unstable': '网关运行异常',
   'dash.gatewayHealthMeta': '{{modelCount}} 个模型 · {{channelCount}} 个渠道 · {{apiKeyCount}} 个活跃密钥',
+  'dash.gatewayHealthMetaUser': '{{modelCount}} 个模型 · {{apiKeyCount}} 个活跃密钥',
   'dash.availability': '可用性',
   'dash.requestFlow': '请求处理链路',
   'dash.requestFlowSub': '从客户端进入到模型响应的处理过程',
