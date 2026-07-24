@@ -41,6 +41,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
   const [enabled, setEnabled] = useState(true);
   const [anthropicCompat, setAnthropicCompat] = useState(false);
   const [endpoints, setEndpoints] = useState<Endpoint[]>([emptyEp()]);
+  const fixedBaseUrl = FIXED_BASE_URLS[provider];
 
   useEffect(() => {
     if (channel) {
@@ -56,16 +57,15 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
   }, [channel, open]);
 
   const updateEp = (i: number, field: keyof Endpoint, value: string | number | boolean | null) =>
-    setEndpoints(endpoints.map((ep, idx) => idx === i ? { ...ep, [field]: value } : ep));
-  const addEp = () => setEndpoints([...endpoints, fixedBaseUrl ? { ...emptyEp(), url: fixedBaseUrl } : emptyEp()]);
-  const removeEp = (i: number) => endpoints.length > 1 && setEndpoints(endpoints.filter((_, idx) => idx !== i));
-  const fixedBaseUrl = FIXED_BASE_URLS[provider];
+    setEndpoints((prev) => prev.map((ep, idx) => idx === i ? { ...ep, [field]: value } : ep));
+  const addEp = () => setEndpoints((prev) => [...prev, fixedBaseUrl ? { ...emptyEp(), url: fixedBaseUrl } : emptyEp()]);
+  const removeEp = (i: number) => setEndpoints((prev) => prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev);
 
   useEffect(() => {
     if (fixedBaseUrl) {
-      setEndpoints(endpoints.map((ep) => ({ ...ep, url: fixedBaseUrl })));
+      setEndpoints((prev) => prev.map((ep) => ({ ...ep, url: fixedBaseUrl })));
     }
-  }, [provider]);
+  }, [fixedBaseUrl]);
 
   function healthStatus(ep: Endpoint): { color: string; title: string } {
     if (!health) return { color: 'bg-gray-300', title: t('common.unknown') };

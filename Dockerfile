@@ -10,16 +10,15 @@ RUN pnpm run build
 
 # ── Backend build ──
 FROM rust:1.88-alpine AS backend
+COPY docker/cargo-config.toml /usr/local/cargo/config.toml
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories && \
-    apk add --no-cache musl-dev
+    apk add --no-cache musl-dev openssl-dev pkgconfig openssl-libs-static
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs && \
-    cargo build --release -j $(nproc); \
+    cargo build --release -j $(nproc) && \
     rm -rf src
 COPY src/ src/
-RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories && \
-    apk add --no-cache openssl-dev pkgconfig openssl-libs-static
 RUN cargo build --release -j $(nproc) && \
     strip target/release/ai-gateway
 
