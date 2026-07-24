@@ -129,6 +129,7 @@ pub(crate) async fn test_subscription_connection(
             latency_ms,
             error: result.as_ref().err().map(|e| e.0.clone()),
             probed_at: chrono::Utc::now().to_rfc3339(),
+            endpoint_url: Some(endpoint.url.clone()),
         };
         let _ = state.db.insert_probe_result(&row).await;
     }

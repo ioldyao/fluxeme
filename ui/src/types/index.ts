@@ -235,6 +235,7 @@ export interface ModelHealthCheckResult {
     latency_ms: number;
     error?: string | null;
     probed_at: string;
+    endpoint_url?: string | null;
   }>;
 }
 
