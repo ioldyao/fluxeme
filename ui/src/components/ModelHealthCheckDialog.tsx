@@ -62,6 +62,8 @@ export function ModelHealthCheckDialog({ model, open, onOpenChange, channelName,
 
   const resultFor = (channelId: string) =>
     result?.channel_results.find((item) => item.channel_id === channelId);
+  const resultForEndpoint = (channelId: string, url: string) =>
+    result?.channel_results.find((item) => item.channel_id === channelId && item.endpoint_url === url);
 
   return (
     <Dialog open={open} onOpenChange={(next) => !healthCheck.isPending && onOpenChange(next)}>
@@ -112,20 +114,18 @@ export function ModelHealthCheckDialog({ model, open, onOpenChange, channelName,
             {bindings.length === 0 ? (
               <div className="py-10 text-center text-sm text-muted-foreground">没有可检测的绑定渠道</div>
             ) : bindings.map((binding) => {
-              const item = resultFor(binding.channel_id);
               const endpoints = channelEndpoints(binding.channel_id);
+              const channelResult = resultFor(binding.channel_id);
               return (
                 <div key={binding.channel_id} className="border-b last:border-b-0">
                 <div className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(160px,1fr)_120px_90px] items-center px-3 py-3 text-sm">
                   <Checkbox checked={selected.has(binding.channel_id)} onCheckedChange={() => toggle(binding.channel_id)} disabled={healthCheck.isPending} />
-                  <div className="min-w-0"><div className="font-medium truncate">{channelName(binding.channel_id)}</div><div className="text-xs text-muted-foreground truncate">{item?.endpoint_url || binding.channel_id}</div></div>
+                  <div className="min-w-0"><div className="font-medium truncate">{channelName(binding.channel_id)}</div><div className="text-xs text-muted-foreground truncate">{channelResult?.endpoint_url || binding.channel_id}</div></div>
                   <span className="truncate text-muted-foreground">{binding.upstream_model || model?.name}</span>
-                  <div>{!item ? <span className="text-muted-foreground">未测试</span> : item.success
-                    ? <span className="inline-flex items-center gap-1 text-green-600"><CheckCircle2 className="size-4" />{item.latency_ms}ms</span>
-                    : <span className="inline-flex items-center gap-1 text-destructive" title={item.error ?? undefined}><XCircle className="size-4" />失败</span>}</div>
+                  <div className="text-muted-foreground">{endpoints.length ? '—' : (channelResult ? `${channelResult.latency_ms}ms` : '未测试')}</div>
                   <div className="text-right"><Button variant="ghost" size="sm" title="仅检测此渠道" disabled={healthCheck.isPending} onClick={() => run([binding.channel_id])}><Activity className="size-4" /></Button></div>
                 </div>
-                {endpoints.map((endpoint, index) => <div key={endpoint.id ?? `${endpoint.url}-${index}`} className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(160px,1fr)_120px_90px] items-center bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span /><span className="pl-4">↳ 端点{index + 1}<span className="block truncate">{endpoint.url}</span></span><span /><span>未单独测试</span><span /></div>)}
+                {endpoints.map((endpoint, index) => { const item = resultForEndpoint(binding.channel_id, endpoint.url); return <div key={endpoint.id ?? `${endpoint.url}-${index}`} className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(160px,1fr)_120px_90px] items-center bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span /><span className="pl-4">↳ 端点{index + 1}<span className="block truncate">{endpoint.url}</span></span><span /><span>{!item ? '未测试' : item.success ? <span className="inline-flex items-center gap-1 text-green-600"><CheckCircle2 className="size-4" />{item.latency_ms}ms</span> : <span className="inline-flex items-center gap-1 text-destructive" title={item.error ?? undefined}><XCircle className="size-4" />失败</span>}</span><span /></div>; })}
                 </div>
               );
             })}
