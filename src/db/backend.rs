@@ -8,7 +8,7 @@ use crate::domain::usage::UsageFilter;
 use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
 
-use super::{DbError, ProbeResultRow, RechargeKeyRow, WalletTransactionRow};
+use super::{DbError, FunnelStats, ProbeResultRow, RechargeKeyRow, WalletTransactionRow};
 
 /// PostgreSQL persistence contract used by application services.
 ///
@@ -120,6 +120,11 @@ pub trait DbBackend: Send + Sync {
         since: &str,
         user_id: Option<&str>,
     ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError>;
+    async fn funnel_stats(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<FunnelStats, DbError>;
 
     // ── Billing / Period ─────────────────────────────────────────────────
     async fn period_summary(

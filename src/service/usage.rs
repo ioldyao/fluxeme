@@ -139,6 +139,14 @@ impl UsageService {
             .await
             .map_err(|e| e.0)
     }
+
+    pub async fn funnel_stats(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<crate::db::FunnelStats, String> {
+        self.db.funnel_stats(since, user_id).await.map_err(|e| e.0)
+    }
 }
 
 async fn background_writer(

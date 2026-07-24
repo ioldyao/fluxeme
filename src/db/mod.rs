@@ -25,6 +25,18 @@ impl From<sqlx_core::Error> for DbError {
     }
 }
 
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct FunnelStats {
+    pub total: u64,
+    pub success_count: u64,
+    pub auth_fail_count: u64,
+    pub rate_limit_count: u64,
+    pub bad_request_count: u64,
+    pub upstream_error_count: u64,
+    pub timeout_count: u64,
+    pub other_error_count: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct WalletTransactionRow {
     pub id: String,
@@ -328,6 +340,13 @@ impl Database {
         user_id: Option<&str>,
     ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError> {
         self.backend.model_activity(since, user_id).await
+    }
+    pub async fn funnel_stats(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<FunnelStats, DbError> {
+        self.backend.funnel_stats(since, user_id).await
     }
 
     // ── Billing / Period ─────────────────────────────────────────────────

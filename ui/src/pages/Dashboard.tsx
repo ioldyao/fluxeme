@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/
 import { usePermission } from '@/permissions';
 import { useCurrency, CURRENCY_SYMBOL } from '@/store/currency';
 import { useDashboard, useDashboardAggregations } from '@/api/dashboard';
-import { useUsage, useUsageAggregate, useModelActivity } from '@/api/usage';
+import { useUsage, useUsageAggregate, useModelActivity, useUsageFunnel } from '@/api/usage';
 import { useEstimatedDays, useWalletOverview } from '@/api/wallet';
 import { useRoutingHistory } from '@/api/routing';
 import { DashboardChartTooltip } from '@/components/dashboard/DashboardChartTooltip';
@@ -44,6 +44,7 @@ export default function Dashboard() {
   const { data: wo, refetch: rwo } = useWalletOverview();
   const { data: ed, refetch: red } = useEstimatedDays();
   const { data: rh, refetch: rrh } = useRoutingHistory(days, { enabled: isAdmin });
+  const { data: funnel } = useUsageFunnel(days);
   const { currency, rate } = useCurrency();
   const sym = CURRENCY_SYMBOL[currency];
 
@@ -205,21 +206,24 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent>
               {(() => {
-                const total = selectedPeriodRequests;
-                const successCount = Math.round(total * (availability / 100));
-                const errorCount = total - successCount;
-                const authEst = Math.max(1, Math.round(errorCount * 0.08));
-                const ctxEst = Math.max(1, Math.round(errorCount * 0.15));
-                const routeEst = Math.max(1, Math.round(errorCount * 0.25));
-                const stage2 = total - authEst;
-                const stage3 = stage2 - ctxEst;
-                const stage4 = stage3 - routeEst;
+                const f = funnel;
+                const total = f?.total ?? selectedPeriodRequests;
+                const successCount = f?.success_count ?? Math.round(total * (availability / 100));
+                const authCount = f?.auth_fail_count ?? 0;
+                const rateLimitCount = f?.rate_limit_count ?? 0;
+                const badReqCount = f?.bad_request_count ?? 0;
+                const upstreamErrCount = f?.upstream_error_count ?? 0;
+                const timeoutCount = f?.timeout_count ?? 0;
+                const otherErrCount = f?.other_error_count ?? 0;
+                const stage2 = total - authCount;
+                const stage3 = stage2 - badReqCount;
+                const stage4 = stage3 - rateLimitCount;
                 const stages = [
                   { label: t('dash.flowIngress'), val: total, pct: 100, info: [[t('dash.flowPeakQps'), '—'], [t('dash.flowAvgBody'), '—']] },
-                  { label: t('dash.flowAuth'), val: stage2, pct: Math.round(stage2 / total * 100), info: [[t('dash.flowAuthFail'), authEst], [t('dash.flowPolicyReject'), 0]] },
-                  { label: t('dash.flowContext'), val: stage3, pct: Math.round(stage3 / total * 100), info: [[t('dash.flowCtxLimit'), ctxEst], [t('dash.flowAvgTokens'), Math.round((agg?.requests_24h ?? 0) > 0 ? (agg?.total_tokens_24h ?? 0) / (agg?.requests_24h ?? 1) : 0).toLocaleString()]] },
-                  { label: t('dash.flowRouting'), val: stage4, pct: Math.round(stage4 / total * 100), info: [[t('dash.flowQueued'), Math.round(errorCount * 0.5)], [t('dash.flowRetries'), Math.round(errorCount * 0.3)]] },
-                  { label: t('dash.flowResult'), val: successCount, pct: Math.round(successCount / total * 100), info: [[t('dash.flowTimeout'), Math.round(errorCount * 0.35)], [t('dash.flowProviderErr'), Math.round(errorCount * 0.25)]] },
+                  { label: t('dash.flowAuth'), val: stage2, pct: total > 0 ? Math.round(stage2 / total * 100) : 0, info: [[t('dash.flowAuthFail'), authCount], [t('dash.flowPolicyReject'), 0]] },
+                  { label: t('dash.flowContext'), val: stage3, pct: total > 0 ? Math.round(stage3 / total * 100) : 0, info: [[t('dash.flowCtxLimit'), badReqCount], [t('dash.flowAvgTokens'), Math.round((agg?.requests_24h ?? 0) > 0 ? (agg?.total_tokens_24h ?? 0) / (agg?.requests_24h ?? 1) : 0).toLocaleString()]] },
+                  { label: t('dash.flowRouting'), val: stage4, pct: total > 0 ? Math.round(stage4 / total * 100) : 0, info: [[t('dash.flowQueued'), rateLimitCount], [t('dash.flowRetries'), 0]] },
+                  { label: t('dash.flowResult'), val: successCount, pct: total > 0 ? Math.round(successCount / total * 100) : 0, info: [[t('dash.flowTimeout'), timeoutCount], [t('dash.flowProviderErr'), upstreamErrCount + otherErrCount]] },
                 ];
                 return (
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">

@@ -261,3 +261,52 @@ pub(crate) async fn model_activity(
             .collect(),
     ))
 }
+
+#[derive(Serialize)]
+pub(crate) struct FunnelResponse {
+    pub total: u64,
+    pub success_count: u64,
+    pub auth_fail_count: u64,
+    pub rate_limit_count: u64,
+    pub bad_request_count: u64,
+    pub upstream_error_count: u64,
+    pub timeout_count: u64,
+    pub other_error_count: u64,
+}
+
+pub(crate) async fn usage_funnel(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<UsageAggregateQuery>,
+) -> Result<Json<FunnelResponse>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    let days = q.days.unwrap_or(7);
+    let tz = state
+        .db
+        .get_user_timezone(&session.user_id)
+        .await
+        .map_err(db_err)?;
+    let offset = tz_offset_seconds(Some(&tz));
+    let since = since_local_days_ago(days, offset);
+    let can_view_all = state.authz.enforce(&session.role, "admin:usage").await;
+    let user_filter: Option<&str> = if can_view_all {
+        q.user_id.as_deref()
+    } else {
+        Some(&session.user_id)
+    };
+    let stats = state
+        .usage
+        .funnel_stats(&since, user_filter)
+        .await
+        .map_err(AdminError::internal)?;
+    Ok(Json(FunnelResponse {
+        total: stats.total,
+        success_count: stats.success_count,
+        auth_fail_count: stats.auth_fail_count,
+        rate_limit_count: stats.rate_limit_count,
+        bad_request_count: stats.bad_request_count,
+        upstream_error_count: stats.upstream_error_count,
+        timeout_count: stats.timeout_count,
+        other_error_count: stats.other_error_count,
+    }))
+}

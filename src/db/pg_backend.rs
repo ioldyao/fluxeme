@@ -2149,7 +2149,43 @@ impl DbBackend for PgBackend {
             .collect())
     }
 
-    // ── Billing / Period ─────────────────────────────────────────────────
+    async fn funnel_stats(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<crate::db::FunnelStats, crate::db::DbError> {
+        let sql = "\
+            SELECT \
+              COUNT(*)::bigint, \
+              COUNT(*) FILTER (WHERE success = true)::bigint, \
+              COUNT(*) FILTER (WHERE success = false AND status_code IN (401,403))::bigint, \
+              COUNT(*) FILTER (WHERE success = false AND status_code = 429)::bigint, \
+              COUNT(*) FILTER (WHERE success = false AND status_code = 400)::bigint, \
+              COUNT(*) FILTER (WHERE success = false AND status_code IN (502,503))::bigint, \
+              COUNT(*) FILTER (WHERE success = false AND status_code = 504)::bigint, \
+              COUNT(*) FILTER (WHERE success = false AND status_code NOT IN (400,401,403,429,502,503,504))::bigint \
+            FROM usage_logs WHERE timestamp >= $1";
+        let row: (i64, i64, i64, i64, i64, i64, i64, i64) = if let Some(uid) = user_id {
+            let q = format!("{} AND user_id = $2", sql);
+            query_as(&q)
+                .bind(since)
+                .bind(uid)
+                .fetch_one(&self.pool)
+                .await?
+        } else {
+            query_as(sql).bind(since).fetch_one(&self.pool).await?
+        };
+        Ok(crate::db::FunnelStats {
+            total: row.0 as u64,
+            success_count: row.1 as u64,
+            auth_fail_count: row.2 as u64,
+            rate_limit_count: row.3 as u64,
+            bad_request_count: row.4 as u64,
+            upstream_error_count: row.5 as u64,
+            timeout_count: row.6 as u64,
+            other_error_count: row.7 as u64,
+        })
+    }
 
     async fn period_summary(
         &self,

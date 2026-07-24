@@ -56,6 +56,25 @@ export function useUsageAggregate(days: number = 14) {
   });
 }
 
+export interface FunnelStats {
+  total: number;
+  success_count: number;
+  auth_fail_count: number;
+  rate_limit_count: number;
+  bad_request_count: number;
+  upstream_error_count: number;
+  timeout_count: number;
+  other_error_count: number;
+}
+
+export function useUsageFunnel(days: number) {
+  return useQuery({
+    queryKey: ['usage', 'funnel', days],
+    queryFn: () => api<FunnelStats>(`/usage/funnel?days=${days}`),
+    refetchInterval: 60_000,
+  });
+}
+
 export function useModelActivity(days: number = 7) {
   return useQuery({
     queryKey: ['usage', 'model-activity', days],
