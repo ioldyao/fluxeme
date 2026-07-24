@@ -12,6 +12,8 @@ database:
   pg_url: ""
   retention_days: 90
 jwt_secret: ${GATEWAY_JWT_SECRET}
+encryption_key: ${GATEWAY_ENCRYPTION_KEY}
+previous_encryption_key: ${GATEWAY_PREVIOUS_ENCRYPTION_KEY}
 
 # Cache / Redis
 cache:

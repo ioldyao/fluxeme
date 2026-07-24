@@ -37,7 +37,7 @@ pub(crate) async fn create_model(
     }
 
     state.db.create_model(&model).await.map_err(db_err)?;
-    state.routing.reload().await;
+    state.routing.reload().await.map_err(AdminError::internal)?;
 
     tracing::info!(
         "admin={} action=create_model target={}",
@@ -58,7 +58,7 @@ pub(crate) async fn update_model(
     check_perm(&state.authz, &session, "admin:models").await?;
 
     state.db.update_model(&old_id, &model).await.map_err(db_err)?;
-    state.routing.reload().await;
+    state.routing.reload().await.map_err(AdminError::internal)?;
 
     tracing::info!(
         "admin={} action=update_model target={}",
@@ -78,7 +78,7 @@ pub(crate) async fn delete_model(
     check_perm(&state.authz, &session, "admin:models").await?;
 
     state.db.delete_model(&id).await.map_err(db_err)?;
-    state.routing.reload().await;
+    state.routing.reload().await.map_err(AdminError::internal)?;
 
     tracing::info!(
         "admin={} action=delete_model target={}",
@@ -120,7 +120,7 @@ pub(crate) async fn toggle_publish_model(
     if !new_status {
         let _ = state.db.delete_subscriptions_by_model(&id).await;
     }
-    state.routing.reload().await;
+    state.routing.reload().await.map_err(AdminError::internal)?;
 
     tracing::info!(
         "admin={} action=toggle_publish_model target={} published={}",

@@ -19,14 +19,14 @@ pub struct RoutingService {
     models: RwLock<Vec<Model>>,
     rules: RwLock<Vec<RoutingRule>>,
     cache: RouteCache,
-    /// JWT secret used for decrypting stored API keys.
+    /// Independent persistent encryption key used for endpoint credentials.
     enc_key: String,
     /// Atomic counter for round-robin channel selection across same-named models.
     zone_counter: AtomicU64,
 }
 
 impl RoutingService {
-    pub async fn new(db: Arc<Database>, enc_key: &str) -> Self {
+    pub async fn new(db: Arc<Database>, enc_key: &str) -> Result<Self, String> {
         let svc = Self {
             db,
             channels: RwLock::new(HashMap::new()),
@@ -36,11 +36,11 @@ impl RoutingService {
             enc_key: enc_key.to_string(),
             zone_counter: AtomicU64::new(0),
         };
-        svc.reload().await;
-        svc
+        svc.reload().await?;
+        Ok(svc)
     }
 
-    pub async fn reload(&self) {
+    pub async fn reload(&self) -> Result<(), String> {
         match self.db.list_channels().await {
             Ok(chs) => {
                 let map: HashMap<_, _> = chs.into_iter().map(|c| (c.id.clone(), Arc::new(c))).collect();
@@ -53,15 +53,21 @@ impl RoutingService {
             let mut cache_map = HashMap::new();
             for (id, ch) in chs.iter() {
                 let endpoints: Vec<EndpointConfig> = ch.endpoints.iter()
-                    .map(|ep| EndpointConfig {
+                    .map(|ep| Ok(EndpointConfig {
                         id: ep.id,
                         url: ep.url.clone(),
-                        api_key: crate::crypto::decrypt_load(&ep.api_key, &self.enc_key),
+                        api_key: crate::crypto::decrypt_load(&ep.api_key, &self.enc_key)
+                            .map_err(|e| {
+                                format!(
+                                    "failed to decrypt API key for channel '{}' endpoint {:?}: {}",
+                                    id, ep.id, e
+                                )
+                            })?,
                         weight: ep.weight,
                         timeout_secs: ep.timeout_secs,
                         enabled: ep.enabled,
-                    })
-                    .collect();
+                    }))
+                    .collect::<Result<Vec<_>, String>>()?;
                 cache_map.insert(id.clone(), (ch.provider.clone(), Arc::new(LoadBalancer::new(&endpoints))));
             }
             *self.cache.write().unwrap_or_else(|e| e.into_inner()) = cache_map;
@@ -74,6 +80,7 @@ impl RoutingService {
             Ok(rs) => *self.rules.write().unwrap_or_else(|e| e.into_inner()) = rs,
             Err(e) => tracing::error!("Failed to load routing rules: {}", e),
         }
+        Ok(())
     }
 
     pub fn get_channel(&self, id: &str) -> Option<Channel> {
@@ -88,24 +95,40 @@ impl RoutingService {
     }
 
     /// Resolve a channel_id to its provider adapter name and endpoint configs.
-    pub fn resolve_channel(&self, channel_id: &str) -> Option<(String, Vec<EndpointConfig>)> {
-        let ch = self.channels.read().unwrap_or_else(|e| e.into_inner()).get(channel_id)?.clone(); // Arc clone, cheap
+    pub fn resolve_channel(
+        &self,
+        channel_id: &str,
+    ) -> Result<Option<(String, Vec<EndpointConfig>)>, String> {
+        let Some(ch) = self
+            .channels
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(channel_id)
+            .cloned()
+        else {
+            return Ok(None);
+        };
         if !ch.enabled {
-            return None;
+            return Ok(None);
         }
         let endpoints: Vec<EndpointConfig> = ch
             .endpoints
             .iter()
-            .map(|ep| EndpointConfig {
+            .map(|ep| Ok(EndpointConfig {
                 id: ep.id,
                 url: ep.url.clone(),
-                api_key: crate::crypto::decrypt_load(&ep.api_key, &self.enc_key),
+                api_key: crate::crypto::decrypt_load(&ep.api_key, &self.enc_key).map_err(|e| {
+                    format!(
+                        "failed to decrypt API key for channel '{}' endpoint {:?}: {}",
+                        channel_id, ep.id, e
+                    )
+                })?,
                 weight: ep.weight,
                 timeout_secs: ep.timeout_secs,
                 enabled: ep.enabled,
-            })
-            .collect();
-        Some((ch.provider.clone(), endpoints))
+            }))
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(Some((ch.provider.clone(), endpoints)))
     }
 
     pub fn get_route(&self, channel_id: &str) -> Option<RouteCacheEntry> {

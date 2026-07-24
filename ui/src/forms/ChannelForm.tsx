@@ -90,10 +90,10 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       enabled,
       anthropic_compat: anthropicCompat,
       ...(channel ? {} : { id: randomId() }),
-      endpoints: endpoints.map(({ id: _id, ...rest }) => ({
-        ...rest,
-        weight: Number(rest.weight),
-        timeout_secs: rest.timeout_secs ? Number(rest.timeout_secs) : null,
+      endpoints: endpoints.map((endpoint) => ({
+        ...endpoint,
+        weight: Number(endpoint.weight),
+        timeout_secs: endpoint.timeout_secs ? Number(endpoint.timeout_secs) : null,
       })),
     };
     onSubmit(data);
@@ -229,7 +229,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                             type="password"
                             value={ep.api_key}
                             onChange={(e) => updateEp(i, 'api_key', e.target.value)}
-                            required
+                            required={!channel || !ep.id}
                           />
                         </div>
                         <div className="space-y-1">

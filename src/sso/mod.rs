@@ -169,12 +169,15 @@ impl SsoModule {
             .ok_or_else(|| AdminError::internal("SSO not configured"))?;
 
         // Exchange authorization code for tokens
+        let client_secret =
+            crate::crypto::decrypt_load(&self.client_secret, &self.enc_key)
+                .map_err(|e| AdminError::internal(format!("SSO secret decryption failed: {e}")))?;
         let params = [
             ("grant_type", "authorization_code"),
             ("code", code),
             ("redirect_uri", &self.redirect_url),
             ("client_id", &self.client_id),
-            ("client_secret", &crate::crypto::decrypt_load(&self.client_secret, &self.enc_key)),
+            ("client_secret", &client_secret),
         ];
 
         let token_resp: TokenResponse = self

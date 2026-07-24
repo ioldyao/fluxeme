@@ -35,7 +35,7 @@ pub(crate) async fn create_rule(
     }
 
     state.db.create_rule(&rule).await.map_err(db_err)?;
-    state.routing.reload().await;
+    state.routing.reload().await.map_err(AdminError::internal)?;
 
     tracing::info!(
         "admin={} action=create_rule target={}",
@@ -57,7 +57,7 @@ pub(crate) async fn update_rule(
 
     rule.name = name;
     state.db.update_rule(&rule).await.map_err(db_err)?;
-    state.routing.reload().await;
+    state.routing.reload().await.map_err(AdminError::internal)?;
 
     Ok(Json(rule))
 }
@@ -71,7 +71,7 @@ pub(crate) async fn delete_rule(
     check_perm(&state.authz, &session, "admin:rules").await?;
 
     state.db.delete_rule(&name).await.map_err(db_err)?;
-    state.routing.reload().await;
+    state.routing.reload().await.map_err(AdminError::internal)?;
 
     tracing::info!(
         "admin={} action=delete_rule target={}",

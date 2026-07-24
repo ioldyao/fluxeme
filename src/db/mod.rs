@@ -177,6 +177,13 @@ impl Database {
     pub async fn get_endpoint(&self, id: i64) -> Result<Option<Endpoint>, DbError> {
         self.backend.get_endpoint(id).await
     }
+    pub async fn update_endpoint_api_key(
+        &self,
+        id: i64,
+        api_key: &str,
+    ) -> Result<(), DbError> {
+        self.backend.update_endpoint_api_key(id, api_key).await
+    }
     pub async fn update_endpoint_enabled(&self, id: i64, enabled: bool) -> Result<(), DbError> {
         self.backend.update_endpoint_enabled(id, enabled).await
     }
