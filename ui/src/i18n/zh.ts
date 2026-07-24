@@ -201,6 +201,7 @@ const zh: Record<string, string> = {
   'usage.chartNotAvailable': '聚合 API 待实现，切换到列表视图',
   'usage.allUsers': '所有用户',
   'usage.detailTitle': '请求详情',
+  'usage.requestLifecycle': '请求生命周期',
   'usage.request': '请求',
   'usage.thinking': '思考',
   'usage.output': '输出',
