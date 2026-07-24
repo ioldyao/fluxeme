@@ -32,6 +32,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub jwt_secret: Option<String>,
     #[serde(default)]
+    pub encryption_key: Option<String>,
+    #[serde(default)]
+    pub previous_encryption_key: Option<String>,
+    #[serde(default)]
     pub sso: SsoConfig,
     #[serde(default)]
     pub cors: CorsConfig,

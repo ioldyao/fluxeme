@@ -47,6 +47,7 @@ pub trait DbBackend: Send + Sync {
     async fn update_channel(&self, ch: &Channel) -> Result<(), DbError>;
     async fn delete_channel(&self, id: &str) -> Result<(), DbError>;
     async fn get_endpoint(&self, id: i64) -> Result<Option<Endpoint>, DbError>;
+    async fn update_endpoint_api_key(&self, id: i64, api_key: &str) -> Result<(), DbError>;
     async fn update_endpoint_enabled(&self, id: i64, enabled: bool) -> Result<(), DbError>;
 
     // ── Models ───────────────────────────────────────────────────────────

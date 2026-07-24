@@ -89,6 +89,48 @@ pub fn resolve_jwt_secret(cfg: &AppConfig) -> String {
     secret
 }
 
+/// Resolve the independent key used to encrypt persistent credentials.
+pub fn resolve_encryption_key(cfg: &AppConfig) -> String {
+    let key = std::env::var("GATEWAY_ENCRYPTION_KEY")
+        .ok()
+        .or_else(|| cfg.encryption_key.clone())
+        .unwrap_or_else(|| {
+            panic!(
+                "GATEWAY_ENCRYPTION_KEY must be set via config or environment variable"
+            );
+        });
+
+    if key.starts_with("${") {
+        panic!(
+            "CRITICAL: encryption key references an environment variable which is not set"
+        );
+    }
+    if key.len() < 32 {
+        panic!("CRITICAL: GATEWAY_ENCRYPTION_KEY must contain at least 32 characters");
+    }
+    key
+}
+
+pub fn resolve_previous_encryption_key(cfg: &AppConfig) -> Option<String> {
+    let key = std::env::var("GATEWAY_PREVIOUS_ENCRYPTION_KEY")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| cfg.previous_encryption_key.clone())
+        .filter(|value| !value.is_empty());
+
+    if let Some(ref value) = key {
+        if value.starts_with("${") {
+            return None;
+        }
+        if value.len() < 32 {
+            panic!(
+                "CRITICAL: GATEWAY_PREVIOUS_ENCRYPTION_KEY must contain at least 32 characters"
+            );
+        }
+    }
+    key
+}
+
 /// Seed database from config YAML if database is empty.
 pub async fn seed_from_config(
     config_path: &str,

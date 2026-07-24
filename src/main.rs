@@ -31,6 +31,63 @@ use crate::ratelimit::RateLimiter;
 use crate::server::{build_router, AppState};
 use crate::service::{AuthService, ContentFilterService, HealthProbeService, HealthService, RoutingService, UsageService};
 
+async fn migrate_endpoint_credentials(
+    db: &Database,
+    encryption_key: &str,
+    previous_encryption_key: Option<&str>,
+    legacy_jwt_secret: &str,
+) -> Result<usize, String> {
+    let channels = db
+        .list_channels()
+        .await
+        .map_err(|e| format!("failed to list channels: {e}"))?;
+    let mut migrated = 0usize;
+
+    for channel in channels {
+        for endpoint in channel.endpoints {
+            if endpoint.api_key.is_empty() {
+                continue;
+            }
+            let endpoint_id = endpoint.id.ok_or_else(|| {
+                format!(
+                    "channel '{}' contains an endpoint without a database id",
+                    channel.id
+                )
+            })?;
+            let mut fallback_keys = Vec::with_capacity(2);
+            if let Some(previous) = previous_encryption_key {
+                fallback_keys.push(previous);
+            }
+            fallback_keys.push(legacy_jwt_secret);
+            let (plaintext, needs_migration) = crate::crypto::decrypt_for_migration(
+                &endpoint.api_key,
+                encryption_key,
+                &fallback_keys,
+            )
+            .map_err(|e| {
+                format!(
+                    "cannot decrypt API key for channel '{}' endpoint {}: {}",
+                    channel.id, endpoint_id, e
+                )
+            })?;
+
+            if needs_migration {
+                let encrypted = crate::crypto::encrypt_store(&plaintext, encryption_key);
+                db.update_endpoint_api_key(endpoint_id, &encrypted)
+                    .await
+                    .map_err(|e| {
+                        format!(
+                            "failed to migrate API key for channel '{}' endpoint {}: {}",
+                            channel.id, endpoint_id, e
+                        )
+                    })?;
+                migrated += 1;
+            }
+        }
+    }
+    Ok(migrated)
+}
+
 #[tokio::main]
 async fn main() {
     // Load .env early so OTLP_ENDPOINT is available for tracing setup.
@@ -65,6 +122,13 @@ async fn main() {
         raw_config.database.pg_url.clone()
     };
     let jwt_secret = loader::resolve_jwt_secret(&raw_config);
+    let encryption_key = loader::resolve_encryption_key(&raw_config);
+    let previous_encryption_key = loader::resolve_previous_encryption_key(&raw_config);
+    if encryption_key == jwt_secret {
+        panic!(
+            "CRITICAL: GATEWAY_ENCRYPTION_KEY must be different from GATEWAY_JWT_SECRET"
+        );
+    }
     let config = Arc::new(RwLock::new(raw_config));
 
     let db = Arc::new(Database::new(&pg_url).await);
@@ -81,18 +145,41 @@ async fn main() {
         std::process::exit(1);
     }
 
+    match migrate_endpoint_credentials(
+        &db,
+        &encryption_key,
+        previous_encryption_key.as_deref(),
+        &jwt_secret,
+    )
+    .await
+    {
+        Ok(0) => {}
+        Ok(count) => tracing::info!(
+            "Migrated {} endpoint credential(s) to the independent encryption key",
+            count
+        ),
+        Err(e) => {
+            tracing::error!("Endpoint credential migration failed: {}", e);
+            std::process::exit(1);
+        }
+    }
+
     // Initialize services
     let auth = Arc::new(AuthService::new(db.clone()).await);
-    let routing = Arc::new(RoutingService::new(db.clone(), &jwt_secret).await);
+    let routing = Arc::new(
+        RoutingService::new(db.clone(), &encryption_key)
+            .await
+            .expect("Failed to initialize routing credentials"),
+    );
     let providers = Arc::new(ProviderRegistry::new());
     let rate_limiter = Arc::new(RateLimiter::new());
     rate_limiter.start_cleanup_task();
-    let health = Arc::new(HealthService::new(db.clone(), &jwt_secret).expect("Failed to create HealthService"));
-    let admin = Arc::new(AdminModule::new(&jwt_secret, db.clone()));
+    let health = Arc::new(HealthService::new(db.clone(), &encryption_key).expect("Failed to create HealthService"));
+    let admin = Arc::new(AdminModule::new(&jwt_secret, &encryption_key, db.clone()));
 
     let sso_config = config.read().unwrap().sso.clone();
     let sso = Arc::new(
-        match sso::SsoModule::new(&sso_config, &jwt_secret).await {
+        match sso::SsoModule::new(&sso_config, &encryption_key).await {
             Ok(m) => {
                 if sso_config.enabled {
                     tracing::info!(

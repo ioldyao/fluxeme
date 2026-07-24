@@ -65,7 +65,12 @@ impl HealthService {
         for ep in &ch.endpoints {
             let base = ep.url.trim_end_matches('/').trim_end_matches("/v1");
             let url = format!("{}/v1/models", base);
-            let api_key = crate::crypto::decrypt_load(&ep.api_key, &self.enc_key);
+            let api_key = crate::crypto::decrypt_load(&ep.api_key, &self.enc_key).map_err(|e| {
+                format!(
+                    "Failed to decrypt API key for channel '{}' endpoint {:?}: {}",
+                    channel_id, ep.id, e
+                )
+            })?;
             match self.update_models_from_endpoint(&url, &api_key).await {
                 Ok(count) => ep_results.push(EndpointHealth {
                     url: ep.url.clone(),
@@ -104,7 +109,13 @@ impl HealthService {
             for ep in &ch.endpoints {
                 let base = ep.url.trim_end_matches('/').trim_end_matches("/v1");
                 let url = format!("{}/v1/models", base);
-                let api_key = crate::crypto::decrypt_load(&ep.api_key, &self.enc_key);
+                let api_key =
+                    crate::crypto::decrypt_load(&ep.api_key, &self.enc_key).map_err(|e| {
+                        format!(
+                            "Failed to decrypt API key for channel '{}' endpoint {:?}: {}",
+                            ch.id, ep.id, e
+                        )
+                    })?;
                 match self.update_models_from_endpoint(&url, &api_key).await {
                     Ok(updated) => total_updated += updated,
                     Err(e) => {
@@ -134,7 +145,12 @@ impl HealthService {
         for ep in &ch.endpoints {
             let base = ep.url.trim_end_matches('/').trim_end_matches("/v1");
             let url = format!("{}/v1/models", base);
-            let api_key = crate::crypto::decrypt_load(&ep.api_key, &self.enc_key);
+            let api_key = crate::crypto::decrypt_load(&ep.api_key, &self.enc_key).map_err(|e| {
+                format!(
+                    "Failed to decrypt API key for channel '{}' endpoint {:?}: {}",
+                    channel_id, ep.id, e
+                )
+            })?;
             match self.fetch_upstream_models(&url, &api_key).await {
                 Ok(models) => {
                     for m in models {
@@ -203,4 +219,3 @@ impl HealthService {
         Ok(updated)
     }
 }
-

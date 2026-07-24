@@ -11,6 +11,14 @@ use crate::server::AppState;
 
 use super::*;
 
+fn redact_channel_keys(channels: &mut [Channel]) {
+    for channel in channels {
+        for endpoint in &mut channel.endpoints {
+            endpoint.api_key.clear();
+        }
+    }
+}
+
 // ── Channel CRUD ──────────────────────────────────────────────────
 
 pub(crate) async fn list_channels(
@@ -19,7 +27,8 @@ pub(crate) async fn list_channels(
 ) -> Result<Json<Vec<Channel>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:channels").await?;
-    let channels = state.db.list_channels().await.map_err(db_err)?;
+    let mut channels = state.db.list_channels().await.map_err(db_err)?;
+    redact_channel_keys(&mut channels);
     Ok(Json(channels))
 }
 
@@ -38,19 +47,22 @@ pub(crate) async fn create_channel(
         return Err(AdminError::bad_request("Provider is required"));
     }
 
-    // Encrypt endpoint API keys before storing
-    let secret = state.admin.secret.clone();
+    // Encrypt endpoint API keys before storing.
+    let secret = state.admin.encryption_key.clone();
     for ep in &mut ch.endpoints {
-        if !ep.api_key.is_empty() {
-            ep.api_key = crate::crypto::encrypt_store(&ep.api_key, &secret);
+        if ep.api_key.is_empty() {
+            return Err(AdminError::bad_request(
+                "API Key is required for every endpoint",
+            ));
         }
+        ep.api_key = crate::crypto::encrypt_store(&ep.api_key, &secret);
     }
 
     state.db.create_channel(&ch).await.map_err(|e| {
         tracing::error!("create_channel error: {:?}", e);
         AdminError::internal("Internal server error")
     })?;
-    state.routing.reload().await;
+    state.routing.reload().await.map_err(AdminError::internal)?;
 
     tracing::info!(
         "admin={} action=create_channel target={}",
@@ -58,6 +70,7 @@ pub(crate) async fn create_channel(
         ch.id
     );
 
+    redact_channel_keys(std::slice::from_mut(&mut ch));
     Ok(Json(ch))
 }
 
@@ -70,17 +83,36 @@ pub(crate) async fn update_channel(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:channels").await?;
 
-    // Encrypt endpoint API keys before storing
-    let secret = state.admin.secret.clone();
+    // An empty API key means "keep the existing credential". The API never
+    // returns stored ciphertext to the browser.
+    let existing = state
+        .db
+        .get_channel(&id)
+        .await
+        .map_err(db_err)?
+        .ok_or_else(|| AdminError::not_found("Channel not found"))?;
+    let secret = state.admin.encryption_key.clone();
     for ep in &mut ch.endpoints {
-        if !ep.api_key.is_empty() && !ep.api_key.starts_with("enc:") {
+        if ep.api_key.is_empty() {
+            let endpoint_id = ep.id.ok_or_else(|| {
+                AdminError::bad_request(
+                    "Existing endpoint id is required when API Key is unchanged",
+                )
+            })?;
+            ep.api_key = existing
+                .endpoints
+                .iter()
+                .find(|old| old.id == Some(endpoint_id))
+                .map(|old| old.api_key.clone())
+                .ok_or_else(|| AdminError::bad_request("Existing endpoint not found"))?;
+        } else {
             ep.api_key = crate::crypto::encrypt_store(&ep.api_key, &secret);
         }
     }
 
     ch.id = id.clone();
     state.db.update_channel(&ch).await.map_err(db_err)?;
-    state.routing.reload().await;
+    state.routing.reload().await.map_err(AdminError::internal)?;
 
     tracing::info!(
         "admin={} action=update_channel target={}",
@@ -88,6 +120,7 @@ pub(crate) async fn update_channel(
         id
     );
 
+    redact_channel_keys(std::slice::from_mut(&mut ch));
     Ok(Json(ch))
 }
 
@@ -100,7 +133,7 @@ pub(crate) async fn delete_channel(
     check_perm(&state.authz, &session, "admin:channels").await?;
 
     state.db.delete_channel(&id).await.map_err(db_err)?;
-    state.routing.reload().await;
+    state.routing.reload().await.map_err(AdminError::internal)?;
 
     tracing::info!(
         "admin={} action=delete_channel target={}",

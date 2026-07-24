@@ -57,16 +57,18 @@ struct JwtClaims {
 
 pub struct AdminModule {
     secret: String,
+    encryption_key: String,
     rate_limiter: Arc<RateLimiter>,
     db: Arc<Database>,
 }
 
 impl AdminModule {
-    pub fn new(secret: &str, db: Arc<Database>) -> Self {
+    pub fn new(secret: &str, encryption_key: &str, db: Arc<Database>) -> Self {
         let rl = Arc::new(RateLimiter::new());
         rl.start_cleanup_task();
         Self {
             secret: secret.to_string(),
+            encryption_key: encryption_key.to_string(),
             rate_limiter: rl,
             db,
         }
@@ -114,6 +116,7 @@ impl Clone for AdminModule {
     fn clone(&self) -> Self {
         Self {
             secret: self.secret.clone(),
+            encryption_key: self.encryption_key.clone(),
             rate_limiter: Arc::clone(&self.rate_limiter),
             db: self.db.clone(),
         }

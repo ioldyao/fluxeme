@@ -1112,6 +1112,15 @@ impl DbBackend for PgBackend {
         Ok(())
     }
 
+    async fn update_endpoint_api_key(&self, id: i64, api_key: &str) -> Result<(), DbError> {
+        query("UPDATE endpoints SET api_key = $1 WHERE id = $2")
+            .bind(api_key)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     // ── Models ───────────────────────────────────────────────────────────
 
     async fn list_models(&self) -> Result<Vec<Model>, DbError> {
