@@ -36,8 +36,8 @@ export default function Dashboard() {
   const [chartOpt, setChartOpt] = useState<string>(CHART_OPTS[0]);
   const isAdmin = usePermission('admin:dashboard');
 
-  const { data: stats, refetch } = useDashboard();
-  const { data: agg, refetch: ra } = useDashboardAggregations();
+  const { data: stats, isError: statsErr, refetch } = useDashboard();
+  const { data: agg, isError: aggErr, refetch: ra } = useDashboardAggregations();
   const { data: ua, refetch: rua } = useUsageAggregate(days);
   const { data: ma, refetch: rma } = useModelActivity(days);
   const { data: recent, refetch: rrl } = useUsage({ limit: 8 });
@@ -58,9 +58,9 @@ export default function Dashboard() {
     if (!ua?.length) return requests24h;
     return ua.reduce((s, d) => s + d.count, 0);
   }, [ua, requests24h]);
-  const hasData = (agg?.requests_24h ?? 0) > 0;
-  const toneCls = !hasData ? 'bg-muted-foreground/40 shadow-none' : availability >= 99 ? 'bg-emerald-500 shadow-[0_0_0_6px_rgba(20,150,106,0.12)]' : availability >= 95 ? 'bg-amber-500 shadow-[0_0_0_6px_rgba(217,145,19,0.14)]' : 'bg-red-500 shadow-[0_0_0_6px_rgba(216,75,75,0.14)]';
-  const toneLabel = !hasData ? t('common.unknown') : availability >= 99 ? t('gateway.healthy') : availability >= 95 ? t('gateway.degraded') : t('gateway.unstable');
+  const gatewayError = statsErr || aggErr;
+  const toneCls = gatewayError ? 'bg-red-500 shadow-[0_0_0_6px_rgba(216,75,75,0.14)]' : availability >= 99 ? 'bg-emerald-500 shadow-[0_0_0_6px_rgba(20,150,106,0.12)]' : availability >= 95 ? 'bg-amber-500 shadow-[0_0_0_6px_rgba(217,145,19,0.14)]' : 'bg-emerald-500 shadow-[0_0_0_6px_rgba(20,150,106,0.12)]';
+  const toneLabel = gatewayError ? t('gateway.unstable') : t('gateway.healthy');
 
   // model share
   const modelShare = useMemo(() => {
@@ -138,7 +138,7 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="text-right">
-              <div className="text-2xl font-semibold tracking-tight">{hasData ? `${availability.toFixed(2)}%` : '—'}</div>
+              <div className="text-2xl font-semibold tracking-tight">{gatewayError ? '—' : requests24h > 0 ? `${availability.toFixed(2)}%` : '—'}</div>
               <div className="text-xs text-muted-foreground">{t('dash.availability')}</div>
             </div>
           </div>
