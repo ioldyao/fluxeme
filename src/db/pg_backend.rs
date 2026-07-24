@@ -1236,6 +1236,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn create_model(&self, m: &Model) -> Result<(), DbError> {
+        let mut tx = self.pool.begin().await?;
         query(
             "INSERT INTO models (id, name, model_pattern, prompt_price, completion_price, \
              cache_read_price, cache_write_price, image_input_price, audio_input_price, \
@@ -1255,37 +1256,35 @@ impl DbBackend for PgBackend {
         .bind(m.published)
         .bind(m.context_length)
         .bind(&m.category)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
-
-        // Use the actual ID in the DB (may differ from m.id after upsert)
-        let model_id: (String,) = query_as("SELECT id FROM models WHERE name = $1")
-            .bind(&m.name)
-            .fetch_one(&self.pool)
-            .await?;
 
         for binding in &m.channels {
             query(
                 "INSERT INTO model_channels (model_id, channel_id, priority, upstream_model) \
                  VALUES ($1, $2, $3, $4) ON CONFLICT (model_id, channel_id) DO UPDATE SET priority = EXCLUDED.priority, upstream_model = EXCLUDED.upstream_model",
             )
-            .bind(&model_id.0)
+            .bind(&m.id)
             .bind(&binding.channel_id)
             .bind(binding.priority)
             .bind(&binding.upstream_model)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
         }
+        tx.commit().await?;
         Ok(())
     }
 
     async fn update_model(&self, old_id: &str, m: &Model) -> Result<(), DbError> {
+        if old_id != m.id {
+            return Err(DbError("Model ID cannot be changed".to_string()));
+        }
+        let mut tx = self.pool.begin().await?;
         query(
-            "UPDATE models SET id=$1, name=$2, model_pattern=$3, prompt_price=$4, completion_price=$5, \
-             cache_read_price=$6, cache_write_price=$7, image_input_price=$8, audio_input_price=$9, \
-             audio_output_price=$10, published=$11, context_length=$12, category=$13 WHERE id=$14",
+            "UPDATE models SET name=$1, model_pattern=$2, prompt_price=$3, completion_price=$4, \
+             cache_read_price=$5, cache_write_price=$6, image_input_price=$7, audio_input_price=$8, \
+             audio_output_price=$9, published=$10, context_length=$11, category=$12 WHERE id=$13",
         )
-        .bind(&m.id)
         .bind(&m.name)
         .bind(&m.model_pattern)
         .bind(m.pricing.prompt_price)
@@ -1299,12 +1298,12 @@ impl DbBackend for PgBackend {
         .bind(m.context_length)
         .bind(&m.category)
         .bind(old_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
         // Delete old bindings by old_id (model_channels FK references old model id)
         query("DELETE FROM model_channels WHERE model_id = $1")
             .bind(old_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
         for binding in &m.channels {
             query(
@@ -1314,9 +1313,10 @@ impl DbBackend for PgBackend {
             .bind(&binding.channel_id)
             .bind(binding.priority)
             .bind(&binding.upstream_model)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
         }
+        tx.commit().await?;
         Ok(())
     }
 
