@@ -43,6 +43,15 @@ export async function fetchRoutingFlowSnapshot(): Promise<Record<string, number>
   return counts;
 }
 
+function routingWindow(days: number) {
+  const now = new Date();
+  const start = new Date(now.getTime() - days * 86400000);
+  return {
+    start: start.toISOString().replace('T', ' ').slice(0, 19),
+    end: now.toISOString().replace('T', ' ').slice(0, 19),
+  };
+}
+
 export async function fetchRoutingHistory(
   start: string,
   end: string,
@@ -54,13 +63,15 @@ export async function fetchRoutingHistory(
 }
 
 export function useRoutingHistory(
-  start: string,
-  end: string,
+  days: number,
   opts?: { model?: string; enabled?: boolean },
 ) {
   return useQuery({
-    queryKey: ['routing', 'history', start, end, opts?.model ?? 'all'],
-    queryFn: () => fetchRoutingHistory(start, end, opts?.model),
+    queryKey: ['routing', 'history', days, opts?.model ?? 'all'],
+    queryFn: () => {
+      const { start, end } = routingWindow(days);
+      return fetchRoutingHistory(start, end, opts?.model);
+    },
     enabled: opts?.enabled !== false,
     refetchInterval: 60_000,
   });
