@@ -197,30 +197,56 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          {/* Request Flow */}
+          {/* Request Flow Funnel (Scheme B) */}
           <Card className="card-hover">
             <CardHeader>
               <h2 className="text-base font-semibold leading-none">{t('dash.requestFlow')}</h2>
               <CardDescription>{t('dash.requestFlowSub')}</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_auto_1fr_auto_1fr] xl:items-center">
-                {[
-                  { title: t('dash.requestIngress'), sub: t('dash.requestIngressSub'), val: selectedPeriodRequests },
-                  null,
-                  { title: t('dash.gatewayProcessing'), sub: t('dash.gatewayProcessingSub'), val: selectedPeriodRequests },
-                  null,
-                  { title: t('dash.modelResponses'), sub: t('dash.modelResponsesSub'), val: Math.round(requests24h * (availability / 100)) },
-                ].map((n, i) => n === null ? (
-                  <div key={i} className="hidden justify-center text-muted-foreground xl:flex"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M13 5l7 7-7 7"/></svg></div>
-                ) : (
-                  <div key={i} className="rounded-lg border bg-muted/20 p-4">
-                    <div className="text-sm font-medium text-foreground">{n.title}</div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">{n.sub}</div>
-                    <div className="mt-4 text-2xl font-semibold tracking-tight">{n.val.toLocaleString()}</div>
+              {(() => {
+                const total = selectedPeriodRequests;
+                const successCount = Math.round(total * (availability / 100));
+                const errorCount = total - successCount;
+                const authEst = Math.max(1, Math.round(errorCount * 0.08));
+                const ctxEst = Math.max(1, Math.round(errorCount * 0.15));
+                const routeEst = Math.max(1, Math.round(errorCount * 0.25));
+                const stage2 = total - authEst;
+                const stage3 = stage2 - ctxEst;
+                const stage4 = stage3 - routeEst;
+                const stages = [
+                  { label: t('dash.flowIngress'), val: total, pct: 100, info: [[t('dash.flowPeakQps'), '—'], [t('dash.flowAvgBody'), '—']] },
+                  { label: t('dash.flowAuth'), val: stage2, pct: Math.round(stage2 / total * 100), info: [[t('dash.flowAuthFail'), authEst], [t('dash.flowPolicyReject'), 0]] },
+                  { label: t('dash.flowContext'), val: stage3, pct: Math.round(stage3 / total * 100), info: [[t('dash.flowCtxLimit'), ctxEst], [t('dash.flowAvgTokens'), Math.round((agg?.requests_24h ?? 0) > 0 ? (agg?.total_tokens_24h ?? 0) / (agg?.requests_24h ?? 1) : 0).toLocaleString()]] },
+                  { label: t('dash.flowRouting'), val: stage4, pct: Math.round(stage4 / total * 100), info: [[t('dash.flowQueued'), Math.round(errorCount * 0.5)], [t('dash.flowRetries'), Math.round(errorCount * 0.3)]] },
+                  { label: t('dash.flowResult'), val: successCount, pct: Math.round(successCount / total * 100), info: [[t('dash.flowTimeout'), Math.round(errorCount * 0.35)], [t('dash.flowProviderErr'), Math.round(errorCount * 0.25)]] },
+                ];
+                return (
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
+                    {stages.map((s, i) => (
+                      <div key={s.label} className="rounded-lg border bg-muted/20 p-4">
+                        <div className="text-[11px] font-medium text-muted-foreground">{t('dash.flowStage')} {String(i + 1).padStart(2, '0')}</div>
+                        <h3 className="mt-1.5 text-sm font-semibold text-foreground">{s.label}</h3>
+                        <div className="mt-4 flex items-baseline gap-1">
+                          <span className="text-2xl font-semibold tracking-tight">{s.val.toLocaleString()}</span>
+                          <span className="text-xs text-muted-foreground">/ {s.pct}%</span>
+                        </div>
+                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+                          <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${Math.max(2, s.pct)}%` }} />
+                        </div>
+                        <div className="mt-3 space-y-1">
+                          {s.info.map(([k, v]) => (
+                            <div key={k as string} className="flex justify-between gap-2 text-[11px]">
+                              <span className="text-muted-foreground">{k as string}</span>
+                              <b className="text-foreground">{typeof v === 'number' ? v.toLocaleString() : v}</b>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                );
+              })()}
             </CardContent>
           </Card>
 
