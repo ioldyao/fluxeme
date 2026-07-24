@@ -9,13 +9,25 @@ import { useDashboard, useDashboardAggregations } from '@/api/dashboard';
 import { useSubscriptions } from '@/api/models';
 import { useUsage, useUsageAggregate, useModelActivity } from '@/api/usage';
 import { useEstimatedDays, useWalletOverview } from '@/api/wallet';
+import { useChannels } from '@/api/channels';
+import { useRoutingHistory } from '@/api/routing';
 import { DashboardToolbar } from '@/components/dashboard/DashboardToolbar';
 import { DashboardStatsGrid } from '@/components/dashboard/DashboardStatsGrid';
 import { DashboardChartsSection } from '@/components/dashboard/DashboardChartsSection';
 import { DashboardRecentUsageCard } from '@/components/dashboard/DashboardRecentUsageCard';
 import { DashboardQuickActionsCard } from '@/components/dashboard/DashboardQuickActionsCard';
 import { DashboardInfoSection } from '@/components/dashboard/DashboardInfoSection';
+import { DashboardAdminSection } from '@/components/dashboard/admin/DashboardAdminSection';
 import { buildDashboardStats, getDashboardModelShare, getUsageChartData } from '@/components/dashboard/dashboardViewModel';
+
+function toRangeWindow(days: number) {
+  const now = new Date();
+  const start = new Date(now.getTime() - days * 86400000);
+  return {
+    start: start.toISOString().replace('T', ' ').slice(0, 19),
+    end: now.toISOString().replace('T', ' ').slice(0, 19),
+  };
+}
 
 export default function Dashboard() {
   const { t } = useTranslation();
@@ -26,12 +38,20 @@ export default function Dashboard() {
   const { data: subscriptions, isLoading: isSubscriptionsLoading, isError: isSubscriptionsError, refetch: refetchSubscriptions } = useSubscriptions();
   const { data: usageAggregate, isLoading: isUsageAggregateLoading, isError: isUsageAggregateError, refetch: refetchUsageAggregate } = useUsageAggregate(days);
   const { data: modelActivity, isLoading: isModelActivityLoading, isError: isModelActivityError, refetch: refetchModelActivity } = useModelActivity(days);
-  const { data: recentUsage, isLoading: isRecentUsageLoading, isError: isRecentUsageError, refetch: refetchRecentUsage } = useUsage({ limit: 5 });
+  const { data: recentUsage, isLoading: isRecentUsageLoading, isError: isRecentUsageError, refetch: refetchRecentUsage } = useUsage({ limit: 8 });
   const { data: walletOverview, isLoading: isWalletLoading, isError: isWalletError, refetch: refetchWalletOverview } = useWalletOverview();
   const { data: estimatedDays, isLoading: isEstimatedDaysLoading, isError: isEstimatedDaysError, refetch: refetchEstimatedDays } = useEstimatedDays();
+  const { data: channels } = useChannels();
   const { currency, rate } = useCurrency();
   const currencySymbol = CURRENCY_SYMBOL[currency];
   const isAdmin = usePermission('admin:dashboard');
+  const routingWindow = useMemo(() => toRangeWindow(days), [days]);
+  const {
+    data: routingHistory,
+    isLoading: isRoutingLoading,
+    isError: isRoutingError,
+    refetch: refetchRoutingHistory,
+  } = useRoutingHistory(routingWindow.start, routingWindow.end, { enabled: isAdmin });
 
   const statItems = buildDashboardStats({
     isAdmin,
@@ -85,6 +105,64 @@ export default function Dashboard() {
 
   const modelShare = useMemo(() => getDashboardModelShare(modelActivity, t('dash.otherModels')), [modelActivity, t]);
   const usageChartData = useMemo(() => getUsageChartData(days, usageAggregate), [days, usageAggregate]);
+  const routingRows = useMemo(() => {
+    if (!routingHistory) {
+      return [];
+    }
+
+    const total = routingHistory.summary.reduce((sum, row) => sum + row.requests, 0);
+
+    return routingHistory.summary
+      .slice()
+      .sort((a, b) => b.requests - a.requests)
+      .slice(0, 3)
+      .map((row, index) => ({
+        channelId: row.channel_id,
+        channelName: routingHistory.series[row.channel_id]?.channel_name ?? row.channel_id,
+        routeRole: index === 0 ? t('dash.routePrimary') : index === 1 ? t('dash.routeFailover') : t('dash.routeBackup'),
+        share: total > 0 ? (row.requests / total) * 100 : 0,
+        requests: row.requests,
+        avgLatency: row.avg_latency,
+      }));
+  }, [routingHistory, t]);
+  const riskAlerts = useMemo(() => {
+    const alerts: { id: string; title: string; description: string; severity: 'warn' | 'info' }[] = [];
+
+    if ((agg?.avg_latency_ms_24h ?? 0) > 2000) {
+      alerts.push({
+        id: 'latency',
+        title: t('dash.alertLatencyTitle'),
+        description: t('dash.alertLatencyDesc', { latency: (agg?.avg_latency_ms_24h ?? 0).toFixed(0) }),
+        severity: 'warn',
+      });
+    }
+    if ((agg?.success_rate_24h ?? 100) < 95) {
+      alerts.push({
+        id: 'success',
+        title: t('dash.alertSuccessTitle'),
+        description: t('dash.alertSuccessDesc', { rate: (agg?.success_rate_24h ?? 0).toFixed(1) }),
+        severity: 'warn',
+      });
+    }
+    if ((modelShare[0]?.percentage ?? 0) > 80) {
+      alerts.push({
+        id: 'concentration',
+        title: t('dash.alertConcentrationTitle'),
+        description: t('dash.alertConcentrationDesc', { model: modelShare[0]?.model ?? '—', share: (modelShare[0]?.percentage ?? 0).toFixed(1) }),
+        severity: 'info',
+      });
+    }
+    if ((estimatedDays?.days ?? Infinity) < 10) {
+      alerts.push({
+        id: 'balance',
+        title: t('dash.alertBalanceTitle'),
+        description: t('dash.alertBalanceDesc', { days: (estimatedDays?.days ?? 0).toFixed(1) }),
+        severity: 'warn',
+      });
+    }
+
+    return alerts;
+  }, [agg, estimatedDays?.days, modelShare, t]);
   const isStatsLoading = isLoading
     || isAggregationsLoading
     || isSubscriptionsLoading
@@ -104,6 +182,9 @@ export default function Dashboard() {
     void refetchWalletOverview();
     void refetchEstimatedDays();
     void refetchSubscriptions();
+    if (isAdmin) {
+      void refetchRoutingHistory();
+    }
   };
 
   return (
@@ -138,7 +219,7 @@ export default function Dashboard() {
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <DashboardRecentUsageCard
-            records={recentUsage?.records ?? []}
+            records={(recentUsage?.records ?? []).slice(0, 5)}
             isLoading={isRecentUsageLoading}
             isError={isRecentUsageError}
           />
@@ -146,6 +227,26 @@ export default function Dashboard() {
         </div>
 
         <DashboardInfoSection />
+
+        {isAdmin && (
+          <DashboardAdminSection
+            availability={agg?.success_rate_24h ?? 0}
+            modelCount={stats?.models ?? 0}
+            apiKeyCount={stats?.api_keys ?? 0}
+            channelCount={channels?.length ?? 0}
+            requests24h={agg?.requests_24h ?? 0}
+            totalTokens24h={agg?.total_tokens_24h ?? 0}
+            avgLatencyMs24h={agg?.avg_latency_ms_24h ?? 0}
+            cost24hLabel={`${currencySymbol}${((agg?.cost_24h ?? 0) * (currency === 'cny' ? rate : 1)).toFixed(2)}`}
+            routingRows={routingRows}
+            isRoutingLoading={isRoutingLoading}
+            isRoutingError={isRoutingError}
+            alerts={riskAlerts}
+            requestLogs={recentUsage?.records ?? []}
+            isLogsLoading={isRecentUsageLoading}
+            isLogsError={isRecentUsageError}
+          />
+        )}
       </>
     </div>
   );
