@@ -14,8 +14,8 @@ export function StatCard({ title, value, icon, loading }: StatCardProps) {
       <CardContent className="p-5 flex items-center gap-3 press-feedback">
         <div className="p-2 rounded-lg bg-brand/10 text-brand shrink-0">{icon}</div>
         <div className="min-w-0">
-          <span className="text-xs text-muted-foreground truncate">{title}</span>
-          <span className="text-xl font-semibold mt-0.5 block">
+          <span className="block truncate text-xs text-muted-foreground">{title}</span>
+          <span className="mt-0.5 block text-xl font-semibold">
             {loading ? '...' : value}
           </span>
         </div>
