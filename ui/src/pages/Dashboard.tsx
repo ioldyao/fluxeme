@@ -365,8 +365,8 @@ export default function Dashboard() {
           </Card>
         </div>
 
-        {/* ── Request Logs (same width as routing card, in left column) ── */}
-        <Card className="card-hover">
+        {/* ── Request Logs (full width at bottom) ── */}
+        <Card className="card-hover xl:col-span-2">
           <CardHeader className="flex flex-row items-start justify-between gap-3">
             <div>
               <h2 className="text-base font-semibold leading-none">{t('dash.requestLogs')}</h2>
