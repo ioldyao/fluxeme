@@ -115,9 +115,13 @@ impl ProviderAdapter for AnthropicAdapter {
 
         if !status.is_success() {
             let resp_text = String::from_utf8_lossy(&body_resp);
+            let upstream_msg = serde_json::from_str::<serde_json::Value>(&resp_text)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().map(String::from))
+                .unwrap_or(resp_text.trim().to_string());
             let kind = classify_status(status.as_u16());
             return Err(ProviderError::new(
-                format!("Upstream returned {}: {}", status.as_u16(), resp_text),
+                format!("Upstream returned {}: {}", status.as_u16(), upstream_msg),
                 kind,
             ));
         }
@@ -169,8 +173,16 @@ impl ProviderAdapter for AnthropicAdapter {
             let text = response.text().await.unwrap_or_default();
             let kind = classify_status(status.as_u16());
             tracing::error!(%status, body = %text, "anthropic upstream stream request failed");
+            let upstream_msg = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().map(String::from))
+                .unwrap_or(text.trim().to_string());
             return Err(ProviderError::new(
-                format!("Upstream request failed with status {}", status.as_u16()),
+                format!(
+                    "Upstream request failed with status {}: {}",
+                    status.as_u16(),
+                    upstream_msg
+                ),
                 kind,
             ));
         }
@@ -280,10 +292,18 @@ impl ProviderAdapter for AnthropicAdapter {
 
         if !status.is_success() {
             let resp_text = String::from_utf8_lossy(&body_resp);
+            let upstream_msg = serde_json::from_str::<serde_json::Value>(&resp_text)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().map(String::from))
+                .unwrap_or(resp_text.trim().to_string());
             let kind = classify_status(status.as_u16());
             tracing::error!(%status, body = %resp_text, "anthropic relay request failed");
             return Err(ProviderError::new(
-                format!("Upstream request failed with status {}", status.as_u16()),
+                format!(
+                    "Upstream request failed with status {}: {}",
+                    status.as_u16(),
+                    upstream_msg
+                ),
                 kind,
             ));
         }

@@ -103,8 +103,16 @@ impl VllmAdapter {
             let resp_text = String::from_utf8_lossy(&body_resp);
             let kind = classify_status(status.as_u16());
             tracing::error!(%status, body = %resp_text, "vllm upstream request failed");
+            let upstream_msg = serde_json::from_str::<serde_json::Value>(&resp_text)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().map(String::from))
+                .unwrap_or(resp_text.trim().to_string());
             return Err(ProviderError::new(
-                format!("Upstream request failed with status {}", status.as_u16()),
+                format!(
+                    "Upstream request failed with status {}: {}",
+                    status.as_u16(),
+                    upstream_msg
+                ),
                 kind,
             ));
         }
@@ -173,8 +181,16 @@ impl ProviderAdapter for VllmAdapter {
             let body = response.text().await.unwrap_or_default();
             let kind = classify_status(status.as_u16());
             tracing::error!(%status, body = %body, "vllm upstream stream request failed");
+            let upstream_msg = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().map(String::from))
+                .unwrap_or(body.trim().to_string());
             return Err(ProviderError::new(
-                format!("Upstream request failed with status {}", status.as_u16()),
+                format!(
+                    "Upstream request failed with status {}: {}",
+                    status.as_u16(),
+                    upstream_msg
+                ),
                 kind,
             ));
         }
