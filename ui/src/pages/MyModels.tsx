@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSubscriptions, useUnsubscribeModel, useTestModelConnection, type ModelTestResult } from '@/api/models';
-import { useProbeResults } from '@/api/probe';
 import { usePermission } from '@/permissions';
 import { PageHeader } from '@/components/PageHeader';
 import { EmptyState } from '@/components/EmptyState';
@@ -25,8 +24,6 @@ export default function MyModels() {
   const testConnection = useTestModelConnection();
   const [testingIds, setTestingIds] = useState<Record<string, boolean>>({});
   const [results, setResults] = useState<Record<string, ModelTestResult>>({});
-  const isAdmin = usePermission('admin:dashboard');
-  const { data: probeResults } = useProbeResults({ enabled: isAdmin });
   const { currency } = useCurrency();
   const { effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
 
@@ -92,16 +89,6 @@ export default function MyModels() {
                 <div className="flex items-center justify-between">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      {/* Health dots for each bound channel */}
-                      {model.channels?.length > 0 && (
-                        <div className="flex items-center gap-1">
-                          {model.channels.map((b) => {
-                            const pr = probeResults?.find((p) => p.channel_id === b.channel_id);
-                            const color = pr ? (pr.success ? 'bg-green-500' : 'bg-red-500') : 'bg-muted-foreground/40';
-                            return <span key={b.channel_id} className={`inline-block size-2 rounded-full ${color}`} title={pr ? `${pr.latency_ms}ms` : 'unknown'} />;
-                          })}
-                        </div>
-                      )}
                       <h3
                         className="font-medium cursor-pointer hover:text-brand transition-colors"
                         onClick={() => {
@@ -120,14 +107,6 @@ export default function MyModels() {
                         }}
                       >{model.name}</h3>
                       <span className="text-xs text-muted-foreground font-mono">{model.model_pattern}</span>
-                      {(() => {
-                        const r = results[model.id];
-                        if (r?.latency_ms !== undefined) return <span className={`text-xs ${r.success ? 'text-green-600' : 'text-red-500'}`}>{r.latency_ms}ms</span>;
-                        const chId = model.channels?.[0]?.channel_id;
-                        const pr = chId ? probeResults?.find((p) => p.channel_id === chId) : undefined;
-                        if (pr?.latency_ms !== undefined) return <span className={`text-xs ${pr.success ? 'text-green-600' : 'text-red-500'}`}>{pr.latency_ms}ms</span>;
-                        return null;
-                      })()}
                     </div>
                     {(model.category || model.context_length) && (
                       <div className="flex items-center gap-2 pt-0.5">
