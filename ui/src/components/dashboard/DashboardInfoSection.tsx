@@ -1,18 +1,18 @@
 import { useTranslation } from 'react-i18next';
 import { Bell, HelpCircle } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 
 export function DashboardInfoSection() {
   const { t } = useTranslation();
 
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
       <Card className="card-hover">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+          <h2 className="flex items-center gap-2 text-base font-semibold leading-none">
             <Bell className="size-4" />
             {t('dash.announcements')}
-          </CardTitle>
+          </h2>
         </CardHeader>
         <CardContent>
           <p className="text-xs text-muted-foreground">{t('dash.announcementsSub')}</p>
@@ -21,10 +21,10 @@ export function DashboardInfoSection() {
       </Card>
       <Card className="card-hover">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+          <h2 className="flex items-center gap-2 text-base font-semibold leading-none">
             <HelpCircle className="size-4" />
-            FAQ
-          </CardTitle>
+            {t('dash.faq')}
+          </h2>
         </CardHeader>
         <CardContent>
           <p className="text-xs text-muted-foreground">{t('dash.faqSub')}</p>
