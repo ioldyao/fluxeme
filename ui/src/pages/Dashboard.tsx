@@ -165,39 +165,6 @@ export default function Dashboard() {
 
         {/* ── Left Column ── */}
         <div className="space-y-4">
-          {/* Traffic / Token Trend */}
-          <Card className="card-hover">
-            <CardHeader className="flex flex-row items-start justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold leading-none">{t('dash.trafficTokenTrend')}</h2>
-                <CardDescription>{t('dash.trafficTokenTrendSub')}</CardDescription>
-              </div>
-              <div className="flex rounded-lg bg-muted/60 p-0.5">
-                {CHART_OPTS.map(o => (
-                  <button key={o} type="button" onClick={() => setChartOpt(o)}
-                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${o === chartOpt ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                  >{o === 'token' ? 'Token' : o === '请求' ? t('usage.requests') : t('dash.errorRate')}</button>
-                ))}
-              </div>
-            </CardHeader>
-            <CardContent>
-              {chartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={285}>
-                  <AreaChart data={chartData} margin={{ left: -12, right: 8, top: 4 }}>
-                    <defs><linearGradient id="tf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.3} /><stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} /></linearGradient></defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                    <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} dy={6} />
-                    <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} />
-                    <Tooltip content={<DashboardChartTooltip />} />
-                    <Area type="monotone" dataKey={chartOpt === 'token' ? 'total_tokens' : chartOpt === '请求' ? 'requests' : 'errors'} stroke="var(--chart-1)" strokeWidth={2.5} fill="url(#tf)" dot={{ r: 3 }} activeDot={{ r: 5 }} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              ) : (
-                <p className="py-16 text-center text-sm text-muted-foreground">{t('dash.noData')}</p>
-              )}
-            </CardContent>
-          </Card>
-
           {/* Request Flow Funnel (Scheme B) */}
           <Card className="card-hover">
             <CardHeader>
@@ -251,6 +218,39 @@ export default function Dashboard() {
                   </div>
                 );
               })()}
+            </CardContent>
+          </Card>
+
+          {/* Traffic / Token Trend */}
+          <Card className="card-hover">
+            <CardHeader className="flex flex-row items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold leading-none">{t('dash.trafficTokenTrend')}</h2>
+                <CardDescription>{t('dash.trafficTokenTrendSub')}</CardDescription>
+              </div>
+              <div className="flex rounded-lg bg-muted/60 p-0.5">
+                {CHART_OPTS.map(o => (
+                  <button key={o} type="button" onClick={() => setChartOpt(o)}
+                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${o === chartOpt ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >{o === 'token' ? 'Token' : o === '请求' ? t('usage.requests') : t('dash.errorRate')}</button>
+                ))}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {chartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={285}>
+                  <AreaChart data={chartData} margin={{ left: -12, right: 8, top: 4 }}>
+                    <defs><linearGradient id="tf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.3} /><stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} /></linearGradient></defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                    <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} dy={6} />
+                    <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} />
+                    <Tooltip content={<DashboardChartTooltip />} />
+                    <Area type="monotone" dataKey={chartOpt === 'token' ? 'total_tokens' : chartOpt === '请求' ? 'requests' : 'errors'} stroke="var(--chart-1)" strokeWidth={2.5} fill="url(#tf)" dot={{ r: 3 }} activeDot={{ r: 5 }} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="py-16 text-center text-sm text-muted-foreground">{t('dash.noData')}</p>
+              )}
             </CardContent>
           </Card>
 
