@@ -2,10 +2,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 import type { Channel } from '@/types';
 
-export function useChannels() {
+export function useChannels(_opts?: undefined, queryOpts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['channels'],
     queryFn: () => api<Channel[]>('/channels'),
+    enabled: queryOpts?.enabled !== false,
   });
 }
 

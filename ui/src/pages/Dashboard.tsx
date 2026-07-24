@@ -20,19 +20,11 @@ import { DashboardInfoSection } from '@/components/dashboard/DashboardInfoSectio
 import { DashboardAdminSection } from '@/components/dashboard/admin/DashboardAdminSection';
 import { buildDashboardStats, getDashboardModelShare, getUsageChartData } from '@/components/dashboard/dashboardViewModel';
 
-function toRangeWindow(days: number) {
-  const now = new Date();
-  const start = new Date(now.getTime() - days * 86400000);
-  return {
-    start: start.toISOString().replace('T', ' ').slice(0, 19),
-    end: now.toISOString().replace('T', ' ').slice(0, 19),
-  };
-}
-
 export default function Dashboard() {
   const { t } = useTranslation();
   const [days, setDays] = useState(14);
 
+  const isAdmin = usePermission('admin:dashboard');
   const { data: stats, isLoading, isError, refetch } = useDashboard();
   const { data: agg, isLoading: isAggregationsLoading, isError: isAggregationsError, refetch: refetchAggregations } = useDashboardAggregations();
   const { data: subscriptions, isLoading: isSubscriptionsLoading, isError: isSubscriptionsError, refetch: refetchSubscriptions } = useSubscriptions();
@@ -41,17 +33,15 @@ export default function Dashboard() {
   const { data: recentUsage, isLoading: isRecentUsageLoading, isError: isRecentUsageError, refetch: refetchRecentUsage } = useUsage({ limit: 8 });
   const { data: walletOverview, isLoading: isWalletLoading, isError: isWalletError, refetch: refetchWalletOverview } = useWalletOverview();
   const { data: estimatedDays, isLoading: isEstimatedDaysLoading, isError: isEstimatedDaysError, refetch: refetchEstimatedDays } = useEstimatedDays();
-  const { data: channels } = useChannels();
+  const { data: channels } = useChannels(undefined, { enabled: isAdmin });
   const { currency, rate } = useCurrency();
   const currencySymbol = CURRENCY_SYMBOL[currency];
-  const isAdmin = usePermission('admin:dashboard');
-  const routingWindow = useMemo(() => toRangeWindow(days), [days]);
   const {
     data: routingHistory,
     isLoading: isRoutingLoading,
     isError: isRoutingError,
     refetch: refetchRoutingHistory,
-  } = useRoutingHistory(routingWindow.start, routingWindow.end, { enabled: isAdmin });
+  } = useRoutingHistory(days, { enabled: isAdmin });
 
   const statItems = buildDashboardStats({
     isAdmin,
@@ -119,7 +109,7 @@ export default function Dashboard() {
       .map((row, index) => ({
         channelId: row.channel_id,
         channelName: routingHistory.series[row.channel_id]?.channel_name ?? row.channel_id,
-        routeRole: index === 0 ? t('dash.routePrimary') : index === 1 ? t('dash.routeFailover') : t('dash.routeBackup'),
+        routeRole: index === 0 ? t('dash.routeTrafficTop') : index === 1 ? t('dash.routeTrafficSecond') : t('dash.routeTrafficThird'),
         share: total > 0 ? (row.requests / total) * 100 : 0,
         requests: row.requests,
         avgLatency: row.avg_latency,
