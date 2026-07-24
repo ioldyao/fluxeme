@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::Json;
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::domain::model::{Model, Pricing};
@@ -31,10 +32,7 @@ pub(crate) async fn create_model(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:models").await?;
 
-    model.id = model.id.trim().to_string();
-    if model.id.is_empty() {
-        return Err(AdminError::bad_request("Model ID is required"));
-    }
+    normalize_and_validate_model(&mut model)?;
 
     state.db.create_model(&model).await.map_err(db_err)?;
     state.routing.reload().await.map_err(AdminError::internal)?;
@@ -57,6 +55,10 @@ pub(crate) async fn update_model(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:models").await?;
 
+    normalize_and_validate_model(&mut model)?;
+    if model.id != old_id {
+        return Err(AdminError::bad_request("Model ID cannot be changed"));
+    }
     state.db.update_model(&old_id, &model).await.map_err(db_err)?;
     state.routing.reload().await.map_err(AdminError::internal)?;
 
@@ -97,7 +99,7 @@ pub(crate) async fn list_public_models(
 ) -> Result<Json<Vec<Model>>, AdminError> {
     require_session(&state.admin, &headers).await?;
     let models = state.db.list_published_models().await.map_err(db_err)?;
-    Ok(Json(merge_same_named_models(models)))
+    Ok(Json(models))
 }
 
 pub(crate) async fn toggle_publish_model(
@@ -155,17 +157,26 @@ pub(crate) async fn update_model_pricing(
 
 // ── Model Health Check ─────────────────────────────────────────────
 
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct ModelHealthCheckRequest {
+    #[serde(default)]
+    channel_ids: Vec<String>,
+    #[serde(default)]
+    stream: bool,
+}
+
 pub(crate) async fn model_health_check(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(model_id): Path<String>,
+    Json(request): Json<ModelHealthCheckRequest>,
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:health").await?;
 
     let results = state
         .health_probe
-        .probe_model(&model_id)
+        .probe_model(&model_id, &request.channel_ids, request.stream)
         .await
         .map_err(|e| AdminError::internal(e))?;
 
@@ -173,6 +184,23 @@ pub(crate) async fn model_health_check(
         "model_id": model_id,
         "channel_results": results,
     })))
+}
+
+fn normalize_and_validate_model(model: &mut Model) -> Result<(), AdminError> {
+    model.id = model.id.trim().to_string();
+    model.name = model.name.trim().to_string();
+    model.model_pattern = model.model_pattern.trim().to_string();
+    if model.id.is_empty() { return Err(AdminError::bad_request("Model ID is required")); }
+    if model.name.is_empty() { return Err(AdminError::bad_request("Model name is required")); }
+    if model.model_pattern.is_empty() { return Err(AdminError::bad_request("Model pattern is required")); }
+    if model.channels.iter().any(|binding| binding.channel_id.trim().is_empty()) {
+        return Err(AdminError::bad_request("Channel ID cannot be empty"));
+    }
+    let mut channel_ids = std::collections::HashSet::new();
+    if model.channels.iter().any(|binding| !channel_ids.insert(&binding.channel_id)) {
+        return Err(AdminError::bad_request("Duplicate channel binding"));
+    }
+    Ok(())
 }
 
 // ── Probe Results ─────────────────────────────────────────────────

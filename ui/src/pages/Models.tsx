@@ -1,17 +1,18 @@
-import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { useModels, useCreateModel, useUpdateModel, useDeleteModel, usePublishModel, useModelHealthCheck } from '@/api/models';
+import { useModels, useCreateModel, useUpdateModel, useDeleteModel, usePublishModel } from '@/api/models';
 import { useChannels } from '@/api/channels';
 import { useProbeResults } from '@/api/probe';
 import { ModelForm } from '@/forms/ModelForm';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { ModelHealthCheckDialog } from '@/components/ModelHealthCheckDialog';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
-import { Pencil, Trash2, Plus, RefreshCw, Activity, Import, Loader2, Search, GanttChartSquare, ChevronDown, ChevronRight, Layers } from 'lucide-react';
+import { Pencil, Trash2, Plus, RefreshCw, Import, Loader2, Search, GanttChartSquare } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/api/client';
@@ -23,7 +24,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   chat: '对话', reasoning: '推理', tools: '工具', web: '网页', vision: '视觉', rerank: '重排序', embedding: '嵌入',
 };
 
-type SortKey = 'id' | 'name' | 'match' | 'channel' | 'ctx' | 'price' | 'status';
+type SortKey = 'name' | 'match' | 'channel' | 'ctx' | 'price' | 'status';
 
 export default function Models() {
   const { t } = useTranslation();
@@ -36,7 +37,6 @@ export default function Models() {
   const createModel = useCreateModel();
   const deleteModel = useDeleteModel();
   const publishModel = usePublishModel();
-  const modelHealthCheck = useModelHealthCheck();
   const { currency } = useCurrency();
   const { effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
 
@@ -45,22 +45,14 @@ export default function Models() {
   const [showAdd, setShowAdd] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Model | null>(null);
+  const [healthTarget, setHealthTarget] = useState<Model | null>(null);
   const { data: probeResults } = useProbeResults();
 
-  const [hcLoading, setHcLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [modalFilter, setModalFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [sortKey, setSortKey] = useState<SortKey>('id');
+  const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState(1);
-
-  // ── Grouped view ──────────────────────────────────────────────────
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const toggleGroup = (name: string) => setExpandedGroups((p) => { const n = new Set(p); if (n.has(name)) n.delete(name); else n.add(name); return n; });
-
-  const runHealthCheck = async (modelId: string) => {
-    try { await modelHealthCheck.mutateAsync(modelId); } catch (e: any) { toast.error(e.message); }
-  };
 
   const handleDelete = () => {
     if (!deleteTarget) return;
@@ -77,16 +69,6 @@ export default function Models() {
     return v.toLocaleString();
   };
 
-  const handleHealthCheck = async () => {
-    setHcLoading(true);
-    try {
-      const res = await api<{ models_updated: number; channels_checked: number; channels_failed: number }>('/health-check/models', { method: 'POST' });
-      refetch();
-      for (const m of (models ?? [])) { try { await modelHealthCheck.mutateAsync(m.id); } catch { /* skip */ } }
-      toast.success(`Health check: ${res.channels_checked} channels, ${models?.length ?? 0} models probed`);
-    } catch (e: any) { toast.error(e.message); }
-    finally { setHcLoading(false); }
-  };
 
   const channelHc = (chId: string) => probeResults?.find((r) => r.channel_id === chId);
 
@@ -99,7 +81,6 @@ export default function Models() {
     rows.sort((a, b) => {
       let av: any, bv: any;
       switch (sortKey) {
-        case 'id': av = a.id; bv = b.id; break;
         case 'name': av = a.name; bv = b.name; break;
         case 'match': av = a.model_pattern; bv = b.model_pattern; break;
         case 'channel': {
@@ -110,19 +91,12 @@ export default function Models() {
         case 'ctx': av = a.context_length ?? 0; bv = b.context_length ?? 0; break;
         case 'price': av = a.pricing.prompt_price; bv = b.pricing.prompt_price; break;
         case 'status': av = a.published ? 1 : 0; bv = b.published ? 1 : 0; break;
-        default: av = a.id; bv = b.id;
+        default: av = a.name; bv = b.name;
       }
       return typeof av === 'string' ? av.localeCompare(bv) * sortDir : (av - bv) * sortDir;
     });
     return rows;
   }, [models, channelName, search, modalFilter, statusFilter, sortKey, sortDir, probeResults]);
-
-  // Group by display name
-  const nameGroups = useMemo(() => {
-    const map = new Map<string, Model[]>();
-    for (const m of filteredModels) { const g = map.get(m.name) || []; g.push(m); map.set(m.name, g); }
-    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [filteredModels]);
 
   const handleSort = (key: SortKey) => { if (sortKey === key) setSortDir((d) => d * -1); else { setSortKey(key); setSortDir(1); } };
   const SortArrow = ({ k }: { k: SortKey }) => (
@@ -131,7 +105,6 @@ export default function Models() {
 
   const totalPublished = models?.filter((m) => m.published).length ?? 0;
   const totalAlerts = models?.filter((m) => m.channels.some((b) => { const pr = channelHc(b.channel_id); return pr && !pr.success; })).length ?? 0;
-  const uniqueNameCount = new Set(models?.map((m) => m.name)).size;
 
   // ── Sync dialog ──
   const qc = useQueryClient();
@@ -156,7 +129,38 @@ export default function Models() {
     if (selectedIds.size === 0) return; setAdding(true);
     const results = await Promise.allSettled(Array.from(selectedIds).map(async (mid) => {
       const up = upstreamModels.find((m) => m.id === mid);
-      await api('/models', { method: 'POST', body: { id: mid, name: mid, model_pattern: mid, pricing: { prompt_price: 0, completion_price: 0 }, channels: [{ channel_id: syncChannelId, priority: 0 }], context_length: up?.max_model_len ?? null, published: false } });
+      const existing = models?.find((model) => model.id === mid || model.name === mid);
+      if (existing) {
+        const bindingExists = existing.channels.some((binding) => binding.channel_id === syncChannelId);
+        const bindings = bindingExists
+          ? existing.channels
+          : [...existing.channels, {
+              channel_id: syncChannelId,
+              priority: existing.channels.length,
+              upstream_model: mid,
+            }];
+        await api(`/models/${encodeURIComponent(existing.id)}`, {
+          method: 'PUT',
+          body: {
+            ...existing,
+            channels: bindings,
+            context_length: existing.context_length ?? up?.max_model_len ?? null,
+          },
+        });
+      } else {
+        await api('/models', {
+          method: 'POST',
+          body: {
+            id: mid,
+            name: mid,
+            model_pattern: mid,
+            pricing: { prompt_price: 0, completion_price: 0 },
+            channels: [{ channel_id: syncChannelId, priority: 0, upstream_model: mid }],
+            context_length: up?.max_model_len ?? null,
+            published: false,
+          },
+        });
+      }
     }));
     const failures = results.filter((r) => r.status === 'rejected');
     qc.invalidateQueries({ queryKey: ['models'] }); setAdding(false);
@@ -165,10 +169,9 @@ export default function Models() {
   };
 
   // ── Row renderer ──────────────────────────────────────────────────
-  const renderRow = (m: Model, isSub = false) => (
-    <tr key={m.id} className={cn('border-b last:border-0 hover:bg-muted/50 transition-colors', isSub && 'bg-muted/20')}>
-      <td className={cn('px-4 py-3', isSub && 'pl-12')}><span className="font-mono text-xs font-medium text-primary">{m.id}</span></td>
-      <td className="px-4 py-3"><span className={cn(isSub ? 'text-muted-foreground text-xs' : 'font-semibold text-foreground')}>{isSub ? '↳ ' : ''}{m.name}</span></td>
+  const renderRow = (m: Model) => (
+    <tr key={m.id} className="border-b last:border-0 hover:bg-muted/50 transition-colors">
+      <td className="px-4 py-3"><span className="font-semibold text-foreground">{m.name}</span></td>
       <td className="px-4 py-3"><span className="font-mono text-xs text-muted-foreground">{m.model_pattern}</span></td>
       <td className="px-4 py-3">
         {m.channels.length > 0 ? (
@@ -209,7 +212,7 @@ export default function Models() {
       </td>
       <td className="px-4 py-4 text-right">
         <div className="flex items-center justify-end gap-1">
-          <Button variant="ghost" size="sm" onClick={() => runHealthCheck(m.id)} disabled={modelHealthCheck.isPending} title="健康检测"><GanttChartSquare className={cn('size-3.5', modelHealthCheck.isPending && 'animate-pulse')} /></Button>
+          <Button variant="ghost" size="sm" onClick={() => setHealthTarget(m)} title="健康检测"><GanttChartSquare className="size-3.5" /></Button>
           <Button variant="ghost" size="sm" onClick={() => setEditModel(m)} title="编辑"><Pencil className="size-3.5" /></Button>
           <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(m)} className="hover:text-destructive" title="删除"><Trash2 className="size-3.5" /></Button>
         </div>
@@ -224,11 +227,10 @@ export default function Models() {
         <div>
           <div className="text-xs font-mono tracking-wider text-primary mb-1.5 flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />实时监控中</div>
           <h1 className="text-2xl font-bold tracking-tight">模型控制台</h1>
-          <p className="text-sm text-muted-foreground mt-1">管理已接入的模型、渠道绑定与发布状态 — 同名模型自动分组，点击展开查看详情</p>
+          <p className="text-sm text-muted-foreground mt-1">管理已接入的模型、渠道绑定、连接状态与发布状态</p>
         </div>
         <div className="flex gap-6">
           <div className="text-right"><div className="font-mono text-xl font-semibold">{models?.length ?? '—'}</div><div className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">模型条目</div></div>
-          <div className="text-right"><div className="font-mono text-xl font-semibold">{uniqueNameCount}</div><div className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">唯一名称</div></div>
           <div className="text-right"><div className="font-mono text-xl font-semibold text-green-600 dark:text-green-400">{totalPublished}</div><div className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">已发布</div></div>
           <div className="text-right"><div className={cn('font-mono text-xl font-semibold', totalAlerts > 0 ? 'text-yellow-500' : 'text-muted-foreground')}>{totalAlerts}</div><div className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">渠道告警</div></div>
         </div>
@@ -246,44 +248,21 @@ export default function Models() {
       <div className="border rounded-lg overflow-hidden">
         {isLoading ? (<div className="p-12 text-center text-sm text-muted-foreground">加载中...</div>)
         : isError ? (<div className="p-12 text-center"><p className="text-sm text-destructive mb-3">加载失败</p><Button variant="outline" onClick={() => refetch()}>重试</Button></div>)
-        : nameGroups.length === 0 ? (<div className="p-16 text-center text-muted-foreground"><Search className="w-10 h-10 mx-auto mb-3 opacity-50" /><div className="text-sm">没有找到匹配的模型，换个关键词或筛选条件试试</div></div>)
+        : filteredModels.length === 0 ? (<div className="p-16 text-center text-muted-foreground"><Search className="w-10 h-10 mx-auto mb-3 opacity-50" /><div className="text-sm">没有找到匹配的模型，换个关键词或筛选条件试试</div></div>)
         : (<>
           <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30">
             <Button variant="outline" size="sm" onClick={() => setSyncOpen(true)}><Import className="size-3.5 mr-1" />{t('model.syncUpstream')}</Button>
-            <Button variant="outline" size="sm" onClick={handleHealthCheck} disabled={hcLoading}><Activity className={cn('size-3.5 mr-1', hcLoading && 'animate-pulse')} />{t('model.healthCheck')}</Button>
             <Button variant="outline" size="sm" onClick={() => refetch()}><RefreshCw className="size-3.5 mr-1" />{t('common.refresh')}</Button>
-            <Button variant="ghost" size="sm" onClick={() => setExpandedGroups(new Set(nameGroups.map(([n]) => n)))}>展开全部</Button>
-            <Button variant="ghost" size="sm" onClick={() => setExpandedGroups(new Set())}>折叠全部</Button>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="bg-muted/50 border-b">
-                {([{ k: 'id', l: 'ID' }, { k: 'name', l: '名称' }, { k: 'match', l: '模型匹配' }, { k: 'channel', l: '绑定渠道' }] as const).map(({ k, l }) => (<th key={k} onClick={() => handleSort(k)} className="text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground px-4 py-3 border-b border-border whitespace-nowrap cursor-pointer select-none hover:text-foreground">{l}<SortArrow k={k} /></th>))}
+                {([{ k: 'name', l: '名称' }, { k: 'match', l: '模型匹配' }, { k: 'channel', l: '绑定渠道' }] as const).map(({ k, l }) => (<th key={k} onClick={() => handleSort(k)} className="text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground px-4 py-3 border-b border-border whitespace-nowrap cursor-pointer select-none hover:text-foreground">{l}<SortArrow k={k} /></th>))}
                 <th className="text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground px-4 py-3 border-b border-border cursor-default">模态类型</th>
                 {([{ k: 'ctx', l: '上下文' }, { k: 'price', l: '定价' }, { k: 'status', l: '发布' }] as const).map(({ k, l }) => (<th key={k} onClick={() => handleSort(k)} className="text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground px-4 py-3 border-b border-border whitespace-nowrap cursor-pointer select-none hover:text-foreground">{l}<SortArrow k={k} /></th>))}
                 <th className="text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground px-4 py-3 border-b border-border">操作</th>
               </tr></thead>
-              <tbody>{nameGroups.map(([groupName, entries]) => {
-                const isMulti = entries.length > 1;
-                const isExpanded = expandedGroups.has(groupName);
-                if (!isMulti) return renderRow(entries[0]);
-                return (
-                  <Fragment key={groupName}>
-                    <tr className="border-b bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => toggleGroup(groupName)}>
-                      <td colSpan={9} className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          {isExpanded ? <ChevronDown className="size-4 text-muted-foreground" /> : <ChevronRight className="size-4 text-muted-foreground" />}
-                          <Layers className="size-4 text-primary" />
-                          <span className="font-semibold text-foreground">{groupName}</span>
-                          <span className="text-xs text-muted-foreground">({entries.length} 条 · {entries.map((e) => e.id).join(', ')})</span>
-                          <span className="ml-auto text-xs text-muted-foreground">{entries.map((e) => e.channels.map((b) => channelName(b.channel_id)).join('+')).join(' | ')}</span>
-                        </div>
-                      </td>
-                    </tr>
-                    {isExpanded && entries.map((m) => renderRow(m, true))}
-                  </Fragment>
-                );
-              })}</tbody>
+              <tbody>{filteredModels.map(renderRow)}</tbody>
             </table>
           </div>
         </>)}
@@ -313,6 +292,12 @@ export default function Models() {
       </Dialog>
 
       <ConfirmDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)} title={t('common.delete')} description={`${t('confirm.deleteModel')}${deleteTarget?.id}${t('confirm.suffix')}`} onConfirm={handleDelete} />
+      <ModelHealthCheckDialog
+        model={healthTarget}
+        open={!!healthTarget}
+        onOpenChange={(open) => { if (!open) setHealthTarget(null); }}
+        channelName={channelName}
+      />
     </div>
   );
 }
