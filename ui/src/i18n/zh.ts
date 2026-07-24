@@ -115,7 +115,7 @@ const zh: Record<string, string> = {
   'dash.alertBalanceTitle': '余额可用天数偏低',
   'dash.alertBalanceDesc': '按当前消耗速度，预计仅可继续支撑 {{days}} 天。',
   'dash.requestLogs': '实时请求日志',
-  'dash.requestLogsSub': '最近通过网关的调用记录（管理员视角）',
+  'dash.requestLogsSub': '最近通过网关的调用记录',
   'dash.apiKeysStatus': '活跃密钥数量',
   'dash.modelsStatus': '当前可用模型/订阅数',
   'dash.balanceStatus': '钱包与可用额度概览',

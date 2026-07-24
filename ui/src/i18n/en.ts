@@ -115,7 +115,7 @@ const en: Record<string, string> = {
   'dash.alertBalanceTitle': 'Balance runway is getting low',
   'dash.alertBalanceDesc': 'At the current burn rate, the wallet is expected to last only {{days}} days.',
   'dash.requestLogs': 'Request Logs',
-  'dash.requestLogsSub': 'Recent calls passing through the gateway (admin view)',
+  'dash.requestLogsSub': 'Recent calls passing through the gateway',
   'dash.apiKeysStatus': 'Active key count',
   'dash.modelsStatus': 'Available models or subscriptions',
   'dash.balanceStatus': 'Wallet balance and available runway',
