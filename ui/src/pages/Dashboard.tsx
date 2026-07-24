@@ -58,8 +58,9 @@ export default function Dashboard() {
     if (!ua?.length) return requests24h;
     return ua.reduce((s, d) => s + d.count, 0);
   }, [ua, requests24h]);
-  const toneCls = availability >= 99 ? 'bg-emerald-500 shadow-[0_0_0_6px_rgba(20,150,106,0.12)]' : availability >= 95 ? 'bg-amber-500 shadow-[0_0_0_6px_rgba(217,145,19,0.14)]' : 'bg-red-500 shadow-[0_0_0_6px_rgba(216,75,75,0.14)]';
-  const toneLabel = availability >= 99 ? t('gateway.healthy') : availability >= 95 ? t('gateway.degraded') : t('gateway.unstable');
+  const hasData = (agg?.requests_24h ?? 0) > 0;
+  const toneCls = !hasData ? 'bg-muted-foreground/40 shadow-none' : availability >= 99 ? 'bg-emerald-500 shadow-[0_0_0_6px_rgba(20,150,106,0.12)]' : availability >= 95 ? 'bg-amber-500 shadow-[0_0_0_6px_rgba(217,145,19,0.14)]' : 'bg-red-500 shadow-[0_0_0_6px_rgba(216,75,75,0.14)]';
+  const toneLabel = !hasData ? t('common.unknown') : availability >= 99 ? t('gateway.healthy') : availability >= 95 ? t('gateway.degraded') : t('gateway.unstable');
 
   // model share
   const modelShare = useMemo(() => {
@@ -137,7 +138,7 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="text-right">
-              <div className="text-2xl font-semibold tracking-tight">{availability.toFixed(2)}%</div>
+              <div className="text-2xl font-semibold tracking-tight">{hasData ? `${availability.toFixed(2)}%` : '—'}</div>
               <div className="text-xs text-muted-foreground">{t('dash.availability')}</div>
             </div>
           </div>
