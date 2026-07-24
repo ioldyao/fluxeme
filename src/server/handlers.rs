@@ -859,6 +859,7 @@ async fn handle_streaming(
                 .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
         }
         Err(e) => {
+            let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
             let latency_ms = start.elapsed().as_millis() as u64;
             let (p_tokens, c_tokens, cache_hit) = parse_sse_usage("");
             state.usage.record(UsageRecord {
@@ -876,7 +877,7 @@ async fn handle_streaming(
                 status_code: 502,
                 success: false,
                 request_body: req_body,
-                response_body: None,
+                response_body: Some(err_body),
                 reasoning_body: None,
                 api_key_name: Some(api_key_name),
                 api_format: "openai".to_string(),
@@ -957,6 +958,7 @@ async fn handle_messages_streaming(
                 .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
         }
         Err(e) => {
+            let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
             let latency_ms = start.elapsed().as_millis() as u64;
             let (p_tokens, c_tokens, cache_hit) = parse_sse_usage("");
             state.usage.record(UsageRecord {
@@ -974,7 +976,7 @@ async fn handle_messages_streaming(
                 status_code: 502,
                 success: false,
                 request_body: req_body,
-                response_body: None,
+                response_body: Some(err_body),
                 reasoning_body: None,
                 api_key_name: Some(api_key_name),
                 api_format: "anthropic".to_string(),
@@ -1839,6 +1841,7 @@ async fn relay_to_upstream(
                 }
             }
             Err(e) => {
+                let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
                 let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
@@ -1855,7 +1858,7 @@ async fn relay_to_upstream(
                     status_code: 502,
                     success: false,
                     request_body: req_body,
-                    response_body: None,
+                    response_body: Some(err_body),
                     reasoning_body: None,
                     api_key_name: Some(user.api_key_name.clone()),
                     api_format: "relay".to_string(),
@@ -1871,6 +1874,7 @@ async fn relay_to_upstream(
     };
 
     let latency_ms = start.elapsed().as_millis() as u64;
+    let err_body = serde_json::json!({"error": {"message": &err_msg}}).to_string();
     state.usage.record(UsageRecord {
         timestamp: Utc::now().to_rfc3339(),
         request_id,
@@ -1886,7 +1890,7 @@ async fn relay_to_upstream(
         status_code: 502,
         success: false,
         request_body: req_body,
-        response_body: None,
+        response_body: Some(err_body),
         reasoning_body: None,
         api_key_name: Some(user.api_key_name),
         api_format: "relay".to_string(),
