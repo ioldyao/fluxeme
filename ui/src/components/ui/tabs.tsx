@@ -79,4 +79,4 @@ function TabsContent({ className, ...props }: TabsPrimitive.TabsContentProps) {
   )
 }
 
-export { Tabs, TabsList, TabsTrigger, TabsContent, tabsListVariants }
+export { Tabs, TabsList, TabsTrigger, TabsContent }

@@ -103,10 +103,12 @@ export default function ModelPricingPage() {
 
   // Snapshot original currency when a model is first selected
   useEffect(() => {
-    if (selectedId && !(selectedId in initialCurrency)) {
-      setInitialCurrency((prev) => ({ ...prev, [selectedId]: modelCurrency[selectedId] ?? 'usd' }));
-    }
-  }, [selectedId]);
+    if (!selectedId) return;
+    setInitialCurrency((prev) => {
+      if (selectedId in prev) return prev;
+      return { ...prev, [selectedId]: modelCurrency[selectedId] ?? 'usd' };
+    });
+  }, [selectedId, modelCurrency]);
 
   function isDirty(id: string): boolean {
     if (dirty[id]) return true;
