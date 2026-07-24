@@ -145,17 +145,16 @@ export default function Dashboard() {
           </div>
         </div>
         {[
-          { title: t('dash.requests'), val: requests24h.toLocaleString(), hint: t('dash.rangeLabel', { days }), icon: <Activity className="size-4" /> },
-          { title: t('usage.totalTokens'), val: totalTokens24h.toLocaleString(), hint: t('dash.rangeLabel', { days }), icon: <Layers3 className="size-4" /> },
-          { title: t('dash.avgLatency'), val: fmtLat(avgLat), hint: t('dash.rangeLabel', { days }), icon: <ShieldCheck className="size-4" /> },
-          { title: t('dash.cost24h'), val: fmt(sym, rate, agg?.cost_24h), hint: t('dash.rangeLabel', { days }), icon: <Wallet className="size-4" /> },
+          { title: t('dash.requests'), val: requests24h.toLocaleString(), icon: <Activity className="size-4" /> },
+          { title: t('usage.totalTokens'), val: totalTokens24h.toLocaleString(), icon: <Layers3 className="size-4" /> },
+          { title: t('dash.avgLatency'), val: fmtLat(avgLat), icon: <ShieldCheck className="size-4" /> },
+          { title: t('dash.cost24h'), val: fmt(sym, rate, agg?.cost_24h), icon: <Wallet className="size-4" /> },
         ].map(m => (
           <div key={m.title} className="rounded-xl border bg-card p-4 shadow-sm">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span className="rounded-md bg-brand/10 p-1 text-brand">{m.icon}</span> {m.title}
             </div>
             <div className="mt-3 text-2xl font-semibold tracking-tight">{m.val}</div>
-            <div className="mt-1 text-xs text-muted-foreground">{m.hint}</div>
           </div>
         ))}
       </section>
