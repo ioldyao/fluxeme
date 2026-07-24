@@ -22,6 +22,7 @@ pub struct Channel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Endpoint {
     pub id: Option<i64>,
+    #[allow(dead_code)]
     #[serde(skip)]
     pub channel_id: String,
     pub url: String,

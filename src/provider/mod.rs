@@ -1,8 +1,8 @@
-pub mod openai;
 pub mod anthropic;
 pub mod anthropic_compat;
-pub mod vllm;
 pub mod generic;
+pub mod openai;
+pub mod vllm;
 
 use std::net::IpAddr;
 use std::pin::Pin;
@@ -106,13 +106,13 @@ pub fn request_timeout(
 ) -> Duration {
     match kind {
         RequestKind::Unary { body_size } => {
-            let base = endpoint.timeout_secs.unwrap_or(config.unary_base_timeout_secs);
+            let base = endpoint
+                .timeout_secs
+                .unwrap_or(config.unary_base_timeout_secs);
             let extra = (body_size / 100_000) as u64 * config.body_size_extra_secs_per_100kb;
             Duration::from_secs(base + extra)
         }
-        RequestKind::Streaming => {
-            Duration::from_secs(config.stream_total_timeout_secs)
-        }
+        RequestKind::Streaming => Duration::from_secs(config.stream_total_timeout_secs),
     }
 }
 
@@ -174,7 +174,10 @@ static ALLOW_PRIVATE_IPS: AtomicBool = AtomicBool::new(true);
 /// Set whether private IPs are allowed.
 pub fn set_allow_private_ips(allow: bool) {
     ALLOW_PRIVATE_IPS.store(allow, Ordering::Relaxed);
-    tracing::info!("Private IP access: {}", if allow { "ALLOWED" } else { "BLOCKED" });
+    tracing::info!(
+        "Private IP access: {}",
+        if allow { "ALLOWED" } else { "BLOCKED" }
+    );
 }
 
 /// Validate that an endpoint URL doesn't resolve to a private/reserved IP (SSRF protection).
@@ -183,12 +186,11 @@ pub async fn validate_endpoint_url(url_str: &str) -> Result<(), ProviderError> {
         return Ok(());
     }
 
-    let parsed = Url::parse(url_str).map_err(|_| {
-        ProviderError::new("Invalid endpoint URL format", ErrorKind::Other)
-    })?;
-    let host = parsed.host_str().ok_or_else(|| {
-        ProviderError::new("Endpoint URL has no host", ErrorKind::Other)
-    })?;
+    let parsed = Url::parse(url_str)
+        .map_err(|_| ProviderError::new("Invalid endpoint URL format", ErrorKind::Other))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| ProviderError::new("Endpoint URL has no host", ErrorKind::Other))?;
 
     // Check if host is an IP literal
     if let Ok(ip) = host.parse::<IpAddr>() {
@@ -226,17 +228,14 @@ pub async fn validate_endpoint_url(url_str: &str) -> Result<(), ProviderError> {
 fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
+            v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified()
         }
         IpAddr::V6(v6) => {
             v6.is_loopback()
                 || v6.is_unspecified()
-                || v6.to_ipv4_mapped().is_some_and(|v4| {
-                    v4.is_private() || v4.is_loopback()
-                })
+                || v6
+                    .to_ipv4_mapped()
+                    .is_some_and(|v4| v4.is_private() || v4.is_loopback())
         }
     }
 }
@@ -271,7 +270,9 @@ pub async fn relay_request(
         headers.insert(
             reqwest::header::AUTHORIZATION,
             reqwest::header::HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key))
-                .map_err(|e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other))?,
+                .map_err(|e| {
+                    ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other)
+                })?,
         );
     }
     headers.insert(
@@ -291,7 +292,11 @@ pub async fn relay_request(
     );
 
     let resp_start = std::time::Instant::now();
-    let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
+    let req = client
+        .post(&url)
+        .headers(headers)
+        .json(&body)
+        .timeout(timeout);
     let resp = req.send().await.map_err(|e| {
         let kind = classify_reqwest_error(&e);
         tracing::error!(
@@ -315,7 +320,10 @@ pub async fn relay_request(
     );
 
     let body_resp = resp.bytes().await.map_err(|e| {
-        ProviderError::new(format!("Failed to read response body: {}", e), ErrorKind::Parse)
+        ProviderError::new(
+            format!("Failed to read response body: {}", e),
+            ErrorKind::Parse,
+        )
     })?;
     tracing::info!(
         endpoint = %endpoint.url,
@@ -335,8 +343,9 @@ pub async fn relay_request(
         ));
     }
 
-    let resp_body: Value = serde_json::from_slice(&body_resp)
-        .map_err(|e| ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse))?;
+    let resp_body: Value = serde_json::from_slice(&body_resp).map_err(|e| {
+        ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse)
+    })?;
     Ok(resp_body)
 }
 

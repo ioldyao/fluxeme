@@ -40,7 +40,8 @@ pub(crate) async fn get_user_detail(
     let user = state
         .db
         .get_user(&id)
-        .await.map_err(db_err)?
+        .await
+        .map_err(db_err)?
         .ok_or_else(|| AdminError::not_found("User not found"))?;
     let keys = state.db.list_api_keys(&id).await.map_err(db_err)?;
     Ok(Json(UserDetail { user, keys }))
@@ -133,7 +134,8 @@ pub(crate) async fn update_user(
     let existing = state
         .db
         .get_user(&id)
-        .await.map_err(db_err)?
+        .await
+        .map_err(db_err)?
         .ok_or_else(|| AdminError::not_found("User not found"))?;
 
     let user = User {

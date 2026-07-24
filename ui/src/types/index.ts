@@ -225,18 +225,20 @@ export interface ChannelCheckResult {
   error?: string | null;
 }
 
+export interface ProbeResult {
+  id: string;
+  channel_id: string;
+  model_id: string;
+  success: boolean;
+  latency_ms: number;
+  error?: string | null;
+  probed_at: string;
+  endpoint_url?: string | null;
+}
+
 export interface ModelHealthCheckResult {
   model_id: string;
-  channel_results: Array<{
-    id: string;
-    channel_id: string;
-    model_id: string;
-    success: boolean;
-    latency_ms: number;
-    error?: string | null;
-    probed_at: string;
-    endpoint_url?: string | null;
-  }>;
+  channel_results: ProbeResult[];
 }
 
 export interface BillingSummary {

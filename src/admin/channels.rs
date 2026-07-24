@@ -183,13 +183,27 @@ pub(crate) async fn get_channel_health(
     let eps = state.routing.channel_health(&id);
     let ch = state.db.get_channel(&id).await.map_err(db_err)?;
     let channel_id = ch.as_ref().map(|c| c.id.clone()).unwrap_or(id);
-    // Read latest probe result from database (persisted across restarts)
+    // Read latest endpoint-aware probe results from database (persisted across restarts)
     let latest_probe = state.db.all_latest_probe_results().await.map_err(db_err)?;
-    let (probe_success, probe_latency_ms) = latest_probe
+    let channel_probe_rows: Vec<_> = latest_probe
         .iter()
-        .find(|r| r.channel_id == channel_id)
-        .map(|r| (Some(r.success), Some(r.latency_ms)))
-        .unwrap_or((None, None));
+        .filter(|row| row.channel_id == channel_id && row.endpoint_url.is_some())
+        .collect();
+    let (probe_success, probe_latency_ms) = if channel_probe_rows.is_empty() {
+        latest_probe
+            .iter()
+            .find(|row| row.channel_id == channel_id && row.endpoint_url.is_none())
+            .map(|row| (Some(row.success), Some(row.latency_ms)))
+            .unwrap_or((None, None))
+    } else {
+        let all_success = channel_probe_rows.iter().all(|row| row.success);
+        let max_latency = channel_probe_rows
+            .iter()
+            .map(|row| row.latency_ms)
+            .max()
+            .unwrap_or(0);
+        (Some(all_success), Some(max_latency))
+    };
     let mut endpoints = Vec::with_capacity(eps.len());
     for (eid, enabled, available) in eps {
         let url = state
@@ -207,7 +221,12 @@ pub(crate) async fn get_channel_health(
             available,
         });
     }
-    Ok(Json(ChannelHealthResponse { channel_id, endpoints, probe_success, probe_latency_ms }))
+    Ok(Json(ChannelHealthResponse {
+        channel_id,
+        endpoints,
+        probe_success,
+        probe_latency_ms,
+    }))
 }
 
 pub(crate) async fn toggle_endpoint(
@@ -221,7 +240,8 @@ pub(crate) async fn toggle_endpoint(
     state
         .db
         .update_endpoint_enabled(id, body.enabled)
-        .await.map_err(db_err)?;
+        .await
+        .map_err(db_err)?;
     state.routing.set_endpoint_enabled(id, body.enabled);
     Ok(Json(serde_json::json!({ "success": true })))
 }

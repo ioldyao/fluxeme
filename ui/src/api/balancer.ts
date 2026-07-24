@@ -11,7 +11,9 @@ export interface EndpointHealthItem {
 export interface ChannelHealthResponse {
   channel_id: string;
   endpoints: EndpointHealthItem[];
+  /** True only when the latest probe result for every endpoint is healthy. */
   probe_success?: boolean | null;
+  /** Aggregated latest probe latency across endpoints (currently max latency). */
   probe_latency_ms?: number | null;
 }
 

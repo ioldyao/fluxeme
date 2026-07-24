@@ -62,6 +62,7 @@ pub struct AuthResult {
     pub rate_limits: Option<(u64, u64)>,
     pub allowed_models: Option<Vec<String>>,
     pub api_key_name: String,
+    #[allow(dead_code)]
     pub concurrency_limit: u32,
 }
 

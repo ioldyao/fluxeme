@@ -19,7 +19,11 @@ pub(crate) async fn get_allow_private_ips(
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:settings").await?;
-    let value = state.db.get_setting("allow_private_ips").await.map_err(db_err)?;
+    let value = state
+        .db
+        .get_setting("allow_private_ips")
+        .await
+        .map_err(db_err)?;
     // Default to true when no setting is stored (matches AtomicBool default)
     let enabled = value.as_deref() != Some("false");
     Ok(Json(serde_json::json!({ "enabled": enabled })))
@@ -38,7 +42,11 @@ pub(crate) async fn set_allow_private_ips(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:settings").await?;
     let value = if req.enabled { "true" } else { "false" };
-    state.db.set_setting("allow_private_ips", value).await.map_err(db_err)?;
+    state
+        .db
+        .set_setting("allow_private_ips", value)
+        .await
+        .map_err(db_err)?;
     crate::provider::set_allow_private_ips(req.enabled);
     Ok(Json(serde_json::json!({ "enabled": req.enabled })))
 }

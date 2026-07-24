@@ -169,6 +169,7 @@ impl ContentFilterService {
     /// Apply mask rules to a response body.
     ///
     /// Returns the masked body (or the original if no rules match).
+    #[allow(dead_code)]
     pub fn apply_response(&self, body_str: &str, channel_id: Option<&str>) -> String {
         let rules = self.rules.read().unwrap();
         let mut result = body_str.to_string();
@@ -227,11 +228,7 @@ fn match_compiled(text: &str, compiled: &CompiledRule) -> bool {
 
 /// Replace all matches of the rule's pattern in `text` with the replacement.
 fn apply_mask_compiled(text: &str, compiled: &CompiledRule) -> String {
-    let replacement = compiled
-        .rule
-        .replacement
-        .as_deref()
-        .unwrap_or("[REDACTED]");
+    let replacement = compiled.rule.replacement.as_deref().unwrap_or("[REDACTED]");
 
     match compiled.rule.pattern_type.as_str() {
         "regex" => {
@@ -243,12 +240,7 @@ fn apply_mask_compiled(text: &str, compiled: &CompiledRule) -> String {
         }
         _ => {
             let mut result = text.to_string();
-            let keywords: Vec<&str> = compiled
-                .rule
-                .pattern
-                .split(',')
-                .map(|s| s.trim())
-                .collect();
+            let keywords: Vec<&str> = compiled.rule.pattern.split(',').map(|s| s.trim()).collect();
             for kw in keywords {
                 if !kw.is_empty() {
                     result = result.replace(kw, replacement);

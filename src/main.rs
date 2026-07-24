@@ -29,7 +29,10 @@ use crate::db::Database;
 use crate::provider::ProviderRegistry;
 use crate::ratelimit::RateLimiter;
 use crate::server::{build_router, AppState};
-use crate::service::{AuthService, ContentFilterService, HealthProbeService, HealthService, RoutingService, UsageService};
+use crate::service::{
+    AuthService, ContentFilterService, HealthProbeService, HealthService, RoutingService,
+    UsageService,
+};
 
 async fn migrate_endpoint_credentials(
     db: &Database,
@@ -94,8 +97,10 @@ async fn main() {
     dotenvy::dotenv().ok();
 
     // Initialise tracing subscriber (fmt + optional OTLP layer).
-    let _otlp_provider =
-        crate::observability::trace::init_subscriber("ai_gateway=info,tower_http=info", "ai-gateway");
+    let _otlp_provider = crate::observability::trace::init_subscriber(
+        "ai_gateway=info,tower_http=info",
+        "ai-gateway",
+    );
 
     let config_path =
         std::env::var("GATEWAY_CONFIG").unwrap_or_else(|_| "config/config.yaml".to_string());
@@ -117,7 +122,10 @@ async fn main() {
         let db_name = std::env::var("DB_NAME").unwrap_or_else(|_| "aigateway".to_string());
         let host = std::env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string());
         let port = std::env::var("DB_PORT").unwrap_or_else(|_| "5432".to_string());
-        format!("postgres://{}:{}@{}:{}/{}", user, password, host, port, db_name)
+        format!(
+            "postgres://{}:{}@{}:{}/{}",
+            user, password, host, port, db_name
+        )
     } else {
         raw_config.database.pg_url.clone()
     };
@@ -125,9 +133,7 @@ async fn main() {
     let encryption_key = loader::resolve_encryption_key(&raw_config);
     let previous_encryption_key = loader::resolve_previous_encryption_key(&raw_config);
     if encryption_key == jwt_secret {
-        panic!(
-            "CRITICAL: GATEWAY_ENCRYPTION_KEY must be different from GATEWAY_JWT_SECRET"
-        );
+        panic!("CRITICAL: GATEWAY_ENCRYPTION_KEY must be different from GATEWAY_JWT_SECRET");
     }
     let config = Arc::new(RwLock::new(raw_config));
 
@@ -174,7 +180,9 @@ async fn main() {
     let providers = Arc::new(ProviderRegistry::new());
     let rate_limiter = Arc::new(RateLimiter::new());
     rate_limiter.start_cleanup_task();
-    let health = Arc::new(HealthService::new(db.clone(), &encryption_key).expect("Failed to create HealthService"));
+    let health = Arc::new(
+        HealthService::new(db.clone(), &encryption_key).expect("Failed to create HealthService"),
+    );
     let admin = Arc::new(AdminModule::new(&jwt_secret, &encryption_key, db.clone()));
 
     let sso_config = config.read().unwrap().sso.clone();
@@ -205,7 +213,11 @@ async fn main() {
             let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%S").to_string();
             match db.purge_usage_logs(&cutoff_str).await {
                 Ok(count) => {
-                    tracing::info!("Purged {} usage log records older than {} days", count, days)
+                    tracing::info!(
+                        "Purged {} usage log records older than {} days",
+                        count,
+                        days
+                    )
                 }
                 Err(e) => tracing::error!("Failed to purge usage logs: {}", e),
             }
@@ -224,22 +236,20 @@ async fn main() {
     // Initialize Redis cache (noop when disabled)
     let cache_config = config.read().unwrap().cache.clone();
     let cache_ttl = gateway_config.read().unwrap().cache_ttl_secs;
-    let cache = Arc::new(
-        if cache_config.enabled {
-            match RedisCache::new(&cache_config.redis_url, cache_ttl).await {
-                Ok(c) => {
-                    tracing::info!("Redis cache enabled");
-                    c
-                }
-                Err(e) => {
-                    tracing::error!("Failed to connect to Redis: {}", e);
-                    RedisCache::noop()
-                }
+    let cache = Arc::new(if cache_config.enabled {
+        match RedisCache::new(&cache_config.redis_url, cache_ttl).await {
+            Ok(c) => {
+                tracing::info!("Redis cache enabled");
+                c
             }
-        } else {
-            RedisCache::noop()
-        },
-    );
+            Err(e) => {
+                tracing::error!("Failed to connect to Redis: {}", e);
+                RedisCache::noop()
+            }
+        }
+    } else {
+        RedisCache::noop()
+    });
 
     // Event bus for real-time observability (WebSocket push to admin UI)
     let event_bus = observability::event_bus::EventBus::new(8192);
@@ -248,7 +258,8 @@ async fn main() {
     let (usage, usage_handle) = UsageService::new(db.clone(), cache.clone(), event_bus.clone());
 
     // In-memory gate cache (populated by inspection, read by handler when Redis is down)
-    let gate_cache: Arc<AsyncRwLock<HashMap<String, GateStatus>>> = Arc::new(AsyncRwLock::new(HashMap::new()));
+    let gate_cache: Arc<AsyncRwLock<HashMap<String, GateStatus>>> =
+        Arc::new(AsyncRwLock::new(HashMap::new()));
 
     // Periodic inspection task: sync user gate status from PostgreSQL to Redis
     // and the local fallback cache. Pagination keeps each query bounded.
@@ -276,7 +287,8 @@ async fn main() {
                     let mut local_updates = Vec::with_capacity(page.len());
                     for (user_id, balance, frozen) in &page {
                         let status = crate::cache::compute_gate_status(*balance, *frozen);
-                        if let Err(e) = cache.set_gate_and_balance(user_id, status, *balance).await {
+                        if let Err(e) = cache.set_gate_and_balance(user_id, status, *balance).await
+                        {
                             tracing::warn!(user_id, "Inspection: failed to update Redis: {}", e);
                         }
                         local_updates.push((user_id.clone(), status));
@@ -307,7 +319,11 @@ async fn main() {
     let content_filter = Arc::new(ContentFilterService::new(db.clone()).await);
 
     // Initialize health probe service
-    let health_probe = Arc::new(HealthProbeService::new(db.clone(), providers.clone(), routing.clone()));
+    let health_probe = Arc::new(HealthProbeService::new(
+        db.clone(),
+        providers.clone(),
+        routing.clone(),
+    ));
 
     let state = Arc::new(AppState {
         config,
@@ -342,7 +358,9 @@ async fn main() {
         IpAddr::V6(_) => TcpSocket::new_v6(),
     }
     .expect("Failed to create TcpSocket");
-    socket.set_reuseaddr(true).expect("Failed to set SO_REUSEADDR");
+    socket
+        .set_reuseaddr(true)
+        .expect("Failed to set SO_REUSEADDR");
     socket.bind(addr).expect("Failed to bind address");
     let listener = socket.listen(32768).expect("Failed to listen");
 

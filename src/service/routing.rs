@@ -1,16 +1,16 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 
 use crate::balancer::LoadBalancer;
 use crate::config::types::EndpointConfig;
 
 type RouteCacheEntry = (String, Arc<LoadBalancer>);
 type RouteCache = RwLock<HashMap<String, RouteCacheEntry>>;
+use crate::db::Database;
 use crate::domain::channel::Channel;
 use crate::domain::model::Model;
 use crate::domain::routing::RoutingRule;
-use crate::db::Database;
 
 /// In-memory route cache, rebuilt from DB on startup and after admin changes.
 pub struct RoutingService {
@@ -43,7 +43,10 @@ impl RoutingService {
     pub async fn reload(&self) -> Result<(), String> {
         match self.db.list_channels().await {
             Ok(chs) => {
-                let map: HashMap<_, _> = chs.into_iter().map(|c| (c.id.clone(), Arc::new(c))).collect();
+                let map: HashMap<_, _> = chs
+                    .into_iter()
+                    .map(|c| (c.id.clone(), Arc::new(c)))
+                    .collect();
                 *self.channels.write().unwrap_or_else(|e| e.into_inner()) = map;
             }
             Err(e) => tracing::error!("Failed to load channels: {}", e),
@@ -52,23 +55,30 @@ impl RoutingService {
             let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
             let mut cache_map = HashMap::new();
             for (id, ch) in chs.iter() {
-                let endpoints: Vec<EndpointConfig> = ch.endpoints.iter()
-                    .map(|ep| Ok(EndpointConfig {
-                        id: ep.id,
-                        url: ep.url.clone(),
-                        api_key: crate::crypto::decrypt_load(&ep.api_key, &self.enc_key)
-                            .map_err(|e| {
-                                format!(
+                let endpoints: Vec<EndpointConfig> = ch
+                    .endpoints
+                    .iter()
+                    .map(|ep| {
+                        Ok(EndpointConfig {
+                            id: ep.id,
+                            url: ep.url.clone(),
+                            api_key: crate::crypto::decrypt_load(&ep.api_key, &self.enc_key)
+                                .map_err(|e| {
+                                    format!(
                                     "failed to decrypt API key for channel '{}' endpoint {:?}: {}",
                                     id, ep.id, e
                                 )
-                            })?,
-                        weight: ep.weight,
-                        timeout_secs: ep.timeout_secs,
-                        enabled: ep.enabled,
-                    }))
+                                })?,
+                            weight: ep.weight,
+                            timeout_secs: ep.timeout_secs,
+                            enabled: ep.enabled,
+                        })
+                    })
                     .collect::<Result<Vec<_>, String>>()?;
-                cache_map.insert(id.clone(), (ch.provider.clone(), Arc::new(LoadBalancer::new(&endpoints))));
+                cache_map.insert(
+                    id.clone(),
+                    (ch.provider.clone(), Arc::new(LoadBalancer::new(&endpoints))),
+                );
             }
             *self.cache.write().unwrap_or_else(|e| e.into_inner()) = cache_map;
         }
@@ -84,17 +94,25 @@ impl RoutingService {
     }
 
     pub fn get_channel(&self, id: &str) -> Option<Channel> {
-        self.channels.read().unwrap_or_else(|e| e.into_inner()).get(id).map(|c| c.as_ref().clone())
+        self.channels
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .map(|c| c.as_ref().clone())
     }
 
     #[allow(dead_code)]
     pub fn get_enabled_channel(&self, id: &str) -> Option<Channel> {
-        self.channels.read().unwrap_or_else(|e| e.into_inner()).get(id)
+        self.channels
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
             .filter(|c| c.enabled)
             .map(|c| c.as_ref().clone())
     }
 
     /// Resolve a channel_id to its provider adapter name and endpoint configs.
+    #[allow(dead_code)]
     pub fn resolve_channel(
         &self,
         channel_id: &str,
@@ -114,19 +132,23 @@ impl RoutingService {
         let endpoints: Vec<EndpointConfig> = ch
             .endpoints
             .iter()
-            .map(|ep| Ok(EndpointConfig {
-                id: ep.id,
-                url: ep.url.clone(),
-                api_key: crate::crypto::decrypt_load(&ep.api_key, &self.enc_key).map_err(|e| {
-                    format!(
-                        "failed to decrypt API key for channel '{}' endpoint {:?}: {}",
-                        channel_id, ep.id, e
-                    )
-                })?,
-                weight: ep.weight,
-                timeout_secs: ep.timeout_secs,
-                enabled: ep.enabled,
-            }))
+            .map(|ep| {
+                Ok(EndpointConfig {
+                    id: ep.id,
+                    url: ep.url.clone(),
+                    api_key: crate::crypto::decrypt_load(&ep.api_key, &self.enc_key).map_err(
+                        |e| {
+                            format!(
+                                "failed to decrypt API key for channel '{}' endpoint {:?}: {}",
+                                channel_id, ep.id, e
+                            )
+                        },
+                    )?,
+                    weight: ep.weight,
+                    timeout_secs: ep.timeout_secs,
+                    enabled: ep.enabled,
+                })
+            })
             .collect::<Result<Vec<_>, String>>()?;
         Ok(Some((ch.provider.clone(), endpoints)))
     }
@@ -158,11 +180,18 @@ impl RoutingService {
         if let Some(ch) = chs.get(channel_id) {
             if let Some((_, balancer)) = cache.get(channel_id) {
                 let balancer = balancer.as_health_aware();
-                return ch.endpoints
+                return ch
+                    .endpoints
                     .iter()
                     .enumerate()
                     .filter_map(|(i, ep)| {
-                        ep.id.map(|id| (id, balancer.breakers()[i].is_enabled(), balancer.breakers()[i].is_available()))
+                        ep.id.map(|id| {
+                            (
+                                id,
+                                balancer.breakers()[i].is_enabled(),
+                                balancer.breakers()[i].is_available(),
+                            )
+                        })
                     })
                     .collect();
             }
@@ -196,9 +225,15 @@ impl RoutingService {
             .collect()
     }
 
-    pub async fn route(&self, user_id: &str, model: &str) -> Result<(String, Option<String>), RouteError> {
+    pub async fn route(
+        &self,
+        user_id: &str,
+        model: &str,
+    ) -> Result<(String, Option<String>), RouteError> {
         // Load subscribed model IDs for this user
-        let subscribed: HashSet<String> = self.db.list_subscribed_model_ids(user_id)
+        let subscribed: HashSet<String> = self
+            .db
+            .list_subscribed_model_ids(user_id)
             .await
             .unwrap_or_default()
             .into_iter()
@@ -223,8 +258,15 @@ impl RoutingService {
                     for binding in &model_cfg.channels {
                         if let Some(ch) = chs.get(&binding.channel_id) {
                             if ch.enabled {
-                                let upstream = binding.upstream_model.clone().unwrap_or(model_cfg.name.clone());
-                                candidates.push((binding.priority, binding.channel_id.clone(), upstream));
+                                let upstream = binding
+                                    .upstream_model
+                                    .clone()
+                                    .unwrap_or(model_cfg.name.clone());
+                                candidates.push((
+                                    binding.priority,
+                                    binding.channel_id.clone(),
+                                    upstream,
+                                ));
                             }
                         }
                     }
@@ -236,7 +278,10 @@ impl RoutingService {
                 candidates.sort_by_key(|(p, _, _)| *p);
                 // Group by priority level, round-robin within each level
                 let best_priority = candidates[0].0;
-                let same: Vec<&(i32, String, String)> = candidates.iter().filter(|(p, _, _)| *p == best_priority).collect();
+                let same: Vec<&(i32, String, String)> = candidates
+                    .iter()
+                    .filter(|(p, _, _)| *p == best_priority)
+                    .collect();
                 let idx = (self.zone_counter.fetch_add(1, Ordering::Relaxed) as usize) % same.len();
                 let (_, ch_id, m_id) = &same[idx];
                 return Ok((ch_id.clone(), Some(m_id.clone())));
@@ -253,7 +298,12 @@ impl RoutingService {
                 let model_match = match_pattern(model, &rule.model_pattern);
 
                 if user_match && model_match {
-                    if let Some(ch) = self.channels.read().unwrap_or_else(|e| e.into_inner()).get(&rule.channel_id) {
+                    if let Some(ch) = self
+                        .channels
+                        .read()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .get(&rule.channel_id)
+                    {
                         if ch.enabled {
                             matched.push((ch.priority, ch.id.clone()));
                         }
@@ -268,10 +318,7 @@ impl RoutingService {
             }
         }
 
-        Err(RouteError(format!(
-            "No route found for model '{}'",
-            model
-        )))
+        Err(RouteError(format!("No route found for model '{}'", model)))
     }
 }
 

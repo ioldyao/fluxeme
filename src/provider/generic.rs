@@ -2,7 +2,7 @@ use std::pin::Pin;
 use std::time::Instant;
 
 use futures::stream::StreamExt;
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, AUTHORIZATION};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::Value;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -81,8 +81,9 @@ impl ProviderAdapter for GenericAdapter {
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key))
-                .map_err(|e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other))?,
+            HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key)).map_err(|e| {
+                ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other)
+            })?,
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
@@ -100,7 +101,11 @@ impl ProviderAdapter for GenericAdapter {
         );
 
         let resp_start = Instant::now();
-        let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
+        let req = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .timeout(timeout);
         let resp = req.send().await.map_err(|e| {
             let kind = classify_reqwest_error(&e);
             tracing::error!(
@@ -122,7 +127,10 @@ impl ProviderAdapter for GenericAdapter {
         );
 
         let body_resp = resp.bytes().await.map_err(|e| {
-            ProviderError::new(format!("Failed to read response body: {}", e), ErrorKind::Parse)
+            ProviderError::new(
+                format!("Failed to read response body: {}", e),
+                ErrorKind::Parse,
+            )
         })?;
         tracing::info!(
             endpoint = %endpoint.url,
@@ -141,8 +149,9 @@ impl ProviderAdapter for GenericAdapter {
             ));
         }
 
-        let resp_body: Value = serde_json::from_slice(&body_resp)
-            .map_err(|e| ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse))?;
+        let resp_body: Value = serde_json::from_slice(&body_resp).map_err(|e| {
+            ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse)
+        })?;
         Ok(resp_body)
     }
 
@@ -160,8 +169,9 @@ impl ProviderAdapter for GenericAdapter {
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key))
-                .map_err(|e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other))?,
+            HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key)).map_err(|e| {
+                ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other)
+            })?,
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
@@ -174,19 +184,19 @@ impl ProviderAdapter for GenericAdapter {
             "Sending stream request to upstream ({})", self.name
         );
 
-        let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
-        let response = req.send().await
-            .map_err(|e| {
-                let kind = classify_reqwest_error(&e);
-                ProviderError::new(format!("Stream request failed: {}", e), kind)
-            })?;
+        let req = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .timeout(timeout);
+        let response = req.send().await.map_err(|e| {
+            let kind = classify_reqwest_error(&e);
+            ProviderError::new(format!("Stream request failed: {}", e), kind)
+        })?;
 
         let status = response.status();
         if !status.is_success() {
-            let body = response
-                .text()
-                .await
-                .unwrap_or_default();
+            let body = response.text().await.unwrap_or_default();
             let kind = classify_status(status.as_u16());
             tracing::error!(%status, body = %body, "{} upstream stream request failed", self.name);
             return Err(ProviderError::new(
@@ -197,9 +207,8 @@ impl ProviderAdapter for GenericAdapter {
 
         let byte_stream = response.bytes_stream();
         let mapped = byte_stream.map(|chunk| match chunk {
-            Ok(bytes) => String::from_utf8(bytes.to_vec()).unwrap_or_else(|e| {
-                String::from_utf8_lossy(e.as_bytes()).to_string()
-            }),
+            Ok(bytes) => String::from_utf8(bytes.to_vec())
+                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).to_string()),
             Err(e) => format!("data: {{\"error\":\"{}\"}}\n\n", e),
         });
 
@@ -220,13 +229,11 @@ impl ProviderAdapter for GenericAdapter {
         let mut headers = HeaderMap::new();
         headers.insert(
             "x-api-key",
-            HeaderValue::from_str(&endpoint.api_key)
-                .map_err(|e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other))?,
+            HeaderValue::from_str(&endpoint.api_key).map_err(|e| {
+                ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other)
+            })?,
         );
-        headers.insert(
-            "anthropic-version",
-            HeaderValue::from_static("2023-06-01"),
-        );
+        headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
@@ -243,7 +250,11 @@ impl ProviderAdapter for GenericAdapter {
         );
 
         let resp_start = Instant::now();
-        let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
+        let req = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .timeout(timeout);
         let resp = req.send().await.map_err(|e| {
             let kind = classify_reqwest_error(&e);
             tracing::error!(
@@ -265,7 +276,10 @@ impl ProviderAdapter for GenericAdapter {
         );
 
         let body_resp = resp.bytes().await.map_err(|e| {
-            ProviderError::new(format!("Failed to read response body: {}", e), ErrorKind::Parse)
+            ProviderError::new(
+                format!("Failed to read response body: {}", e),
+                ErrorKind::Parse,
+            )
         })?;
         tracing::info!(
             endpoint = %endpoint.url,
@@ -284,8 +298,9 @@ impl ProviderAdapter for GenericAdapter {
             ));
         }
 
-        let resp_body: Value = serde_json::from_slice(&body_resp)
-            .map_err(|e| ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse))?;
+        let resp_body: Value = serde_json::from_slice(&body_resp).map_err(|e| {
+            ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse)
+        })?;
         Ok(resp_body)
     }
 
@@ -303,13 +318,11 @@ impl ProviderAdapter for GenericAdapter {
         let mut headers = HeaderMap::new();
         headers.insert(
             "x-api-key",
-            HeaderValue::from_str(&endpoint.api_key)
-                .map_err(|e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other))?,
+            HeaderValue::from_str(&endpoint.api_key).map_err(|e| {
+                ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other)
+            })?,
         );
-        headers.insert(
-            "anthropic-version",
-            HeaderValue::from_static("2023-06-01"),
-        );
+        headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         let timeout = request_timeout(&RequestKind::Streaming, endpoint, &default_config());
@@ -319,7 +332,11 @@ impl ProviderAdapter for GenericAdapter {
             "Sending stream request to upstream ({}, anthropic format)", self.name
         );
 
-        let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
+        let req = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .timeout(timeout);
         let response = req.send().await.map_err(|e| {
             let kind = classify_reqwest_error(&e);
             ProviderError::new(format!("Stream request failed: {}", e), kind)
@@ -356,9 +373,7 @@ impl ProviderAdapter for GenericAdapter {
                         }
                     }
                     Err(e) => {
-                        let _ =
-                            tx.send(format!("data: {{\"error\":\"{}\"}}\n\n", e))
-                                .await;
+                        let _ = tx.send(format!("data: {{\"error\":\"{}\"}}\n\n", e)).await;
                         break;
                     }
                 }

@@ -1,15 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from './client';
-
-export interface ProbeResult {
-  id: string;
-  channel_id: string;
-  model_id: string;
-  success: boolean;
-  latency_ms: number;
-  error?: string | null;
-  probed_at: string;
-}
+import type { ProbeResult } from '@/types';
 
 export function useProbeResults(opts?: { enabled?: boolean }) {
   return useQuery({

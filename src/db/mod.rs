@@ -28,6 +28,7 @@ impl From<sqlx_core::Error> for DbError {
 #[derive(Debug, Clone)]
 pub struct WalletTransactionRow {
     pub id: String,
+    #[allow(dead_code)]
     pub user_id: String,
     pub tx_type: String,
     pub amount: f64,
@@ -90,6 +91,7 @@ pub struct Database {
     pub backend: Box<dyn DbBackend>,
 }
 
+#[allow(dead_code)]
 impl Database {
     pub async fn new(pg_url: &str) -> Self {
         let backend = pg_backend::PgBackend::new(pg_url)
@@ -179,11 +181,7 @@ impl Database {
     pub async fn get_endpoint(&self, id: i64) -> Result<Option<Endpoint>, DbError> {
         self.backend.get_endpoint(id).await
     }
-    pub async fn update_endpoint_api_key(
-        &self,
-        id: i64,
-        api_key: &str,
-    ) -> Result<(), DbError> {
+    pub async fn update_endpoint_api_key(&self, id: i64, api_key: &str) -> Result<(), DbError> {
         self.backend.update_endpoint_api_key(id, api_key).await
     }
     pub async fn update_endpoint_enabled(&self, id: i64, enabled: bool) -> Result<(), DbError> {
@@ -220,7 +218,9 @@ impl Database {
         id: &str,
         context_length: i64,
     ) -> Result<(), DbError> {
-        self.backend.set_model_context_length(id, context_length).await
+        self.backend
+            .set_model_context_length(id, context_length)
+            .await
     }
 
     // ── Subscriptions ────────────────────────────────────────────────────
@@ -275,10 +275,7 @@ impl Database {
     ) -> Result<Vec<UsageRecord>, DbError> {
         self.backend.query_usage(limit, offset, filter).await
     }
-    pub async fn get_usage_detail(
-        &self,
-        request_id: &str,
-    ) -> Result<Option<UsageRecord>, DbError> {
+    pub async fn get_usage_detail(&self, request_id: &str) -> Result<Option<UsageRecord>, DbError> {
         self.backend.get_usage_detail(request_id).await
     }
     pub async fn purge_usage_logs(&self, cutoff: &str) -> Result<usize, DbError> {
@@ -348,7 +345,9 @@ impl Database {
         month: u32,
         user_id: Option<&str>,
     ) -> Result<Vec<(String, f64)>, DbError> {
-        self.backend.period_model_breakdown(year, month, user_id).await
+        self.backend
+            .period_model_breakdown(year, month, user_id)
+            .await
     }
     pub async fn period_channel_breakdown(
         &self,
@@ -356,7 +355,9 @@ impl Database {
         month: u32,
         user_id: Option<&str>,
     ) -> Result<Vec<(String, String, f64)>, DbError> {
-        self.backend.period_channel_breakdown(year, month, user_id).await
+        self.backend
+            .period_channel_breakdown(year, month, user_id)
+            .await
     }
     pub async fn daily_deductions(
         &self,
@@ -372,7 +373,9 @@ impl Database {
         month: u32,
         user_id: Option<&str>,
     ) -> Result<usize, DbError> {
-        self.backend.count_daily_deductions(year, month, user_id).await
+        self.backend
+            .count_daily_deductions(year, month, user_id)
+            .await
     }
     pub async fn daily_deductions_paginated(
         &self,
@@ -395,7 +398,10 @@ impl Database {
     pub async fn period_summary_all(&self) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
         self.backend.period_summary_all().await
     }
-    pub async fn period_summary_for_user(&self, user_id: &str) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
+    pub async fn period_summary_for_user(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
         self.backend.period_summary_for_user(user_id).await
     }
     pub async fn lookup_model_pricing(&self, model_name: &str) -> Result<(f64, f64), DbError> {
@@ -409,6 +415,7 @@ impl Database {
     pub async fn update_wallet_balance(&self, user_id: &str, balance: f64) -> Result<(), DbError> {
         self.backend.update_wallet_balance(user_id, balance).await
     }
+    #[allow(clippy::too_many_arguments)]
     pub async fn add_wallet_transaction(
         &self,
         id: &str,
@@ -423,7 +430,15 @@ impl Database {
     ) -> Result<(), DbError> {
         self.backend
             .add_wallet_transaction(
-                id, user_id, tx_type, amount, balance_before, balance_after, method, status, note,
+                id,
+                user_id,
+                tx_type,
+                amount,
+                balance_before,
+                balance_after,
+                method,
+                status,
+                note,
             )
             .await
     }
@@ -433,7 +448,9 @@ impl Database {
         page: usize,
         size: usize,
     ) -> Result<Vec<WalletTransactionRow>, DbError> {
-        self.backend.get_wallet_transactions(user_id, page, size).await
+        self.backend
+            .get_wallet_transactions(user_id, page, size)
+            .await
     }
     pub async fn count_wallet_transactions(&self, user_id: &str) -> Result<usize, DbError> {
         self.backend.count_wallet_transactions(user_id).await
@@ -487,7 +504,9 @@ impl Database {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<RechargeKeyRow>, DbError> {
-        self.backend.list_recharge_keys_paginated(limit, offset).await
+        self.backend
+            .list_recharge_keys_paginated(limit, offset)
+            .await
     }
     pub async fn count_recharge_keys_filtered(
         &self,
@@ -522,10 +541,7 @@ impl Database {
     pub async fn get_gateway_config(&self) -> Result<GatewayRuntimeConfig, DbError> {
         self.backend.get_gateway_config().await
     }
-    pub async fn set_gateway_config(
-        &self,
-        config: &GatewayRuntimeConfig,
-    ) -> Result<(), DbError> {
+    pub async fn set_gateway_config(&self, config: &GatewayRuntimeConfig) -> Result<(), DbError> {
         self.backend.set_gateway_config(config).await
     }
     pub async fn get_balances_page(
@@ -558,15 +574,23 @@ impl Database {
         self.backend.all_latest_probe_results().await
     }
 
-    pub async fn channel_usage_24h(&self) -> Result<Vec<(String, String, u64, u64, f64, f64)>, DbError> {
+    pub async fn channel_usage_24h(
+        &self,
+    ) -> Result<Vec<(String, String, u64, u64, f64, f64)>, DbError> {
         self.backend.channel_usage_24h().await
     }
 
-    pub async fn recent_request_paths(&self, limit: usize) -> Result<Vec<(String, String, String, Option<i64>, u64, bool)>, DbError> {
+    pub async fn recent_request_paths(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(String, String, String, Option<i64>, u64, bool)>, DbError> {
         self.backend.recent_request_paths(limit).await
     }
 
-    pub async fn routing_flow_snapshot(&self, hours: u32) -> Result<Vec<(String, String, Option<i64>, u64)>, DbError> {
+    pub async fn routing_flow_snapshot(
+        &self,
+        hours: u32,
+    ) -> Result<Vec<(String, String, Option<i64>, u64)>, DbError> {
         self.backend.routing_flow_snapshot(hours).await
     }
 
@@ -576,7 +600,9 @@ impl Database {
         end: &str,
         model: Option<&str>,
     ) -> Result<Vec<RoutingHistoryBucket>, DbError> {
-        self.backend.routing_history_buckets(start, end, model).await
+        self.backend
+            .routing_history_buckets(start, end, model)
+            .await
     }
 
     pub async fn routing_history_endpoint_stats(
@@ -585,13 +611,20 @@ impl Database {
         end: &str,
         model: Option<&str>,
     ) -> Result<Vec<RoutingEndpointStat>, DbError> {
-        self.backend.routing_history_endpoint_stats(start, end, model).await
+        self.backend
+            .routing_history_endpoint_stats(start, end, model)
+            .await
     }
 
     pub async fn routing_history_endpoint_details(
-        &self, start: &str, end: &str, model: Option<&str>,
+        &self,
+        start: &str,
+        end: &str,
+        model: Option<&str>,
     ) -> Result<Vec<(String, Option<i64>, Option<String>, u64, u64, f64, f64)>, DbError> {
-        self.backend.routing_history_endpoint_details(start, end, model).await
+        self.backend
+            .routing_history_endpoint_details(start, end, model)
+            .await
     }
 
     // ── Batch Operations ────────────────────────────────────────────────

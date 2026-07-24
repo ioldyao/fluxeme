@@ -21,8 +21,8 @@ pub fn init_subscriber(
     default_filter: &str,
     service_name: &str,
 ) -> Option<opentelemetry_sdk::trace::SdkTracerProvider> {
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(default_filter));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
 
     let endpoint = match std::env::var("OTLP_ENDPOINT") {
         Ok(v) if !v.is_empty() => v,

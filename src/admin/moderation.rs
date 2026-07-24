@@ -18,7 +18,11 @@ pub(crate) async fn get_content_moderation_enabled(
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:moderation").await?;
-    let value = state.db.get_setting("content_moderation_enabled").await.map_err(db_err)?;
+    let value = state
+        .db
+        .get_setting("content_moderation_enabled")
+        .await
+        .map_err(db_err)?;
     let enabled = value.as_deref() != Some("false");
     Ok(Json(serde_json::json!({ "enabled": enabled })))
 }
@@ -30,9 +34,18 @@ pub(crate) async fn set_content_moderation_enabled(
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:moderation").await?;
-    let enabled = body.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
-    state.db.set_setting("content_moderation_enabled", if enabled { "true" } else { "false" })
-        .await.map_err(db_err)?;
+    let enabled = body
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    state
+        .db
+        .set_setting(
+            "content_moderation_enabled",
+            if enabled { "true" } else { "false" },
+        )
+        .await
+        .map_err(db_err)?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 

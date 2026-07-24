@@ -28,6 +28,7 @@ use crate::service::moderation::FilterBlocked;
 
 // ── Error type ────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum GatewayError {
     Auth(String),
@@ -147,13 +148,17 @@ fn normalize_messages_body(body: &mut Value) {
             if let Some(content) = msg.get("content") {
                 match content {
                     Value::String(s) => {
-                        if !system_text.is_empty() { system_text.push('\n'); }
+                        if !system_text.is_empty() {
+                            system_text.push('\n');
+                        }
                         system_text.push_str(s);
                     }
                     Value::Array(blocks) => {
                         for block in blocks {
                             if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
-                                if !system_text.is_empty() { system_text.push('\n'); }
+                                if !system_text.is_empty() {
+                                    system_text.push('\n');
+                                }
                                 system_text.push_str(t);
                             }
                         }
@@ -185,16 +190,13 @@ fn normalize_messages_body(body: &mut Value) {
 ///   1. Redis gate_status (fast path)
 ///   2. In-memory gate cache (populated by the inspection task)
 ///   3. PostgreSQL `get_wallet_balance` (source of truth, final fallback)
-async fn check_wallet_balance(
-    state: &AppState,
-    user_id: &str,
-) -> Result<(), GatewayError> {
+async fn check_wallet_balance(state: &AppState, user_id: &str) -> Result<(), GatewayError> {
     match state.cache.get_gate_status(user_id).await {
         Ok(Some(GateStatus::Blocked)) => {
             return Err(GatewayError::PaymentRequired("Insufficient balance".into()));
         }
         Ok(Some(_)) => return Ok(()), // ok or low — pass through
-        Ok(None) => {} // fall through to local cache
+        Ok(None) => {}                // fall through to local cache
         Err(e) => {
             tracing::warn!(user_id, "Gate status read error, trying local cache: {}", e);
         }
@@ -204,13 +206,17 @@ async fn check_wallet_balance(
         let guard = state.gate_cache.read().await;
         if let Some(status) = guard.get(user_id) {
             return match status {
-                GateStatus::Blocked => Err(GatewayError::PaymentRequired("Insufficient balance".into())),
+                GateStatus::Blocked => {
+                    Err(GatewayError::PaymentRequired("Insufficient balance".into()))
+                }
                 _ => Ok(()),
             };
         }
     }
     // Final fallback — read from PostgreSQL directly
-    let (balance, frozen) = state.db.get_wallet_balance(user_id)
+    let (balance, frozen) = state
+        .db
+        .get_wallet_balance(user_id)
         .await
         .map_err(|e| GatewayError::Internal(e.0))?;
     if balance - frozen < 0.0001 {
@@ -309,7 +315,7 @@ impl RouteTarget {
     /// Try the next available endpoint from the balancer.
     /// Returns `false` if no more endpoints available.
     fn retry_next(&mut self) -> bool {
-        if let Some((idx, ep)) = self.balancer.as_health_aware().select() {
+        if let Some((_idx, ep)) = self.balancer.as_health_aware().select() {
             self.endpoint = ep.clone();
             true
         } else {
@@ -329,7 +335,7 @@ fn resolve_route(state: &AppState, channel_id: &str) -> Result<RouteTarget, Gate
         .get(provider_name.as_str())
         .ok_or_else(|| GatewayError::Internal("Provider not available".into()))?;
 
-    let (idx, endpoint) = balancer
+    let (_idx, endpoint) = balancer
         .as_health_aware()
         .select()
         .ok_or_else(|| GatewayError::Internal("No available endpoints".into()))?;
@@ -357,13 +363,24 @@ fn extract_sse_content(data: &str) -> (String, String) {
         let json_str = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
         if let Ok(val) = serde_json::from_str::<Value>(json_str) {
             // OpenAI format: choices[0].delta.{reasoning_content, content}
-            if let Some(delta) = val.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("delta")) {
-                if let Some(text) = delta.get("reasoning") // normalized name (from normalize_sse_reasoning)
+            if let Some(delta) = val
+                .get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|c| c.get("delta"))
+            {
+                if let Some(text) = delta
+                    .get("reasoning") // normalized name (from normalize_sse_reasoning)
                     .or_else(|| delta.get("reasoning_content"))
-                    .and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                {
                     reasoning.push_str(text);
                 }
-                if let Some(text) = delta.get("content").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                if let Some(text) = delta
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                {
                     content.push_str(text);
                 }
             }
@@ -371,12 +388,20 @@ fn extract_sse_content(data: &str) -> (String, String) {
             if val.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
                 if let Some(delta) = val.get("delta") {
                     if delta.get("type").and_then(|t| t.as_str()) == Some("thinking_delta") {
-                        if let Some(text) = delta.get("thinking").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                        if let Some(text) = delta
+                            .get("thinking")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                        {
                             reasoning.push_str(text);
                         }
                     }
                     if delta.get("type").and_then(|t| t.as_str()) == Some("text_delta") {
-                        if let Some(text) = delta.get("text").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                        if let Some(text) = delta
+                            .get("text")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                        {
                             content.push_str(text);
                         }
                     }
@@ -404,14 +429,28 @@ fn parse_sse_usage(data: &str) -> (u64, u64, u64) {
         if let Ok(val) = serde_json::from_str::<Value>(json_str) {
             // OpenAI format: {usage: {prompt_tokens, completion_tokens, prompt_tokens_details: {cached_tokens}}}
             if let Some(usage) = val.get("usage") {
-                if usage.is_null() { continue; }
-                let p = usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                let c = usage.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                if p > p_tokens { p_tokens = p; }
-                if c > c_tokens { c_tokens = c; }
+                if usage.is_null() {
+                    continue;
+                }
+                let p = usage
+                    .get("prompt_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let c = usage
+                    .get("completion_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                if p > p_tokens {
+                    p_tokens = p;
+                }
+                if c > c_tokens {
+                    c_tokens = c;
+                }
                 if let Some(details) = usage.get("prompt_tokens_details") {
                     if let Some(cached) = details.get("cached_tokens").and_then(|v| v.as_u64()) {
-                        if cached > cache_hit { cache_hit = cached; }
+                        if cached > cache_hit {
+                            cache_hit = cached;
+                        }
                     }
                 }
             }
@@ -420,13 +459,22 @@ fn parse_sse_usage(data: &str) -> (u64, u64, u64) {
                 if let Some(msg) = val.get("message") {
                     if let Some(usage) = msg.get("usage") {
                         if let Some(p) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
-                            if p > p_tokens { p_tokens = p; }
+                            if p > p_tokens {
+                                p_tokens = p;
+                            }
                         }
                         if let Some(c) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
-                            if c > c_tokens { c_tokens = c; }
+                            if c > c_tokens {
+                                c_tokens = c;
+                            }
                         }
-                        if let Some(cached) = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()) {
-                            if cached > cache_hit { cache_hit = cached; }
+                        if let Some(cached) = usage
+                            .get("cache_read_input_tokens")
+                            .and_then(|v| v.as_u64())
+                        {
+                            if cached > cache_hit {
+                                cache_hit = cached;
+                            }
                         }
                     }
                 }
@@ -435,10 +483,14 @@ fn parse_sse_usage(data: &str) -> (u64, u64, u64) {
             if val.get("type").and_then(|t| t.as_str()) == Some("message_delta") {
                 if let Some(usage) = val.get("usage") {
                     if let Some(p) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
-                        if p > p_tokens { p_tokens = p; }
+                        if p > p_tokens {
+                            p_tokens = p;
+                        }
                     }
                     if let Some(c) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
-                        if c > c_tokens { c_tokens = c; }
+                        if c > c_tokens {
+                            c_tokens = c;
+                        }
                     }
                 }
             }
@@ -617,46 +669,53 @@ impl<S> UsageTrackingStream<S> {
             }
         }
 
-        self.usage.record_with_endpoint(UsageRecord {
-            timestamp: Utc::now().to_rfc3339(),
-            request_id: self.request_id.clone(),
-            user_id: self.user_id.clone(),
-            user_name: self.user_name.clone(),
-            channel_id: self.channel_id.clone(),
+        self.usage.record_with_endpoint(
+            UsageRecord {
+                timestamp: Utc::now().to_rfc3339(),
+                request_id: self.request_id.clone(),
+                user_id: self.user_id.clone(),
+                user_name: self.user_name.clone(),
+                channel_id: self.channel_id.clone(),
                 model: self.model.clone(),
-            prompt_tokens: p_tokens,
-            completion_tokens: c_tokens,
-            total_tokens: p_tokens + c_tokens,
-            cache_hit_input_tokens: cache_hit,
-            latency_ms,
-            status_code: if completed { 200 } else { 499 },
-            success: completed,
-            request_body: self.req_body.clone(),
-            api_key_name: Some(self.api_key_name.clone()),
-            api_format: self.api_format.clone(),
-            reasoning_body: {
-                let (reasoning, _) = extract_sse_content(&self.resp_buf);
-                Some(if reasoning.len() > 102400 {
-                    reasoning.chars().take(102400).collect()
-                } else {
-                    reasoning
-                })
+                prompt_tokens: p_tokens,
+                completion_tokens: c_tokens,
+                total_tokens: p_tokens + c_tokens,
+                cache_hit_input_tokens: cache_hit,
+                latency_ms,
+                status_code: if completed { 200 } else { 499 },
+                success: completed,
+                request_body: self.req_body.clone(),
+                api_key_name: Some(self.api_key_name.clone()),
+                api_format: self.api_format.clone(),
+                reasoning_body: {
+                    let (reasoning, _) = extract_sse_content(&self.resp_buf);
+                    Some(if reasoning.len() > 102400 {
+                        reasoning.chars().take(102400).collect()
+                    } else {
+                        reasoning
+                    })
+                },
+                response_body: {
+                    let (reasoning, content) = extract_sse_content(&self.resp_buf);
+                    let text = if content.is_empty() {
+                        reasoning
+                    } else {
+                        content
+                    };
+                    Some(if text.len() > 102400 {
+                        text.chars().take(102400).collect()
+                    } else {
+                        text
+                    })
+                },
+                stream: true,
+                prompt_price: 0.0,
+                completion_price: 0.0,
+                cache_read_price: 0.0,
+                client_ip: Some(self.client_ip.clone()),
             },
-            response_body: {
-                let (reasoning, content) = extract_sse_content(&self.resp_buf);
-                let text = if content.is_empty() { reasoning } else { content };
-                Some(if text.len() > 102400 {
-                    text.chars().take(102400).collect()
-                } else {
-                    text
-                })
-            },
-            stream: true,
-            prompt_price: 0.0,
-            completion_price: 0.0,
-            cache_read_price: 0.0,
-            client_ip: Some(self.client_ip.clone()),
-        }, self.endpoint_id);
+            self.endpoint_id,
+        );
     }
 }
 
@@ -670,6 +729,7 @@ impl<S> UsageTrackingStream<S> {
 /// for model "thinking" before tightening the per-chunk expectation.
 struct IdleTimeoutStream {
     inner: Pin<Box<dyn Stream<Item = String> + Send>>,
+    #[allow(dead_code)]
     first_byte_timeout: Duration,
     idle_timeout: Duration,
     sleep: Pin<Box<tokio::time::Sleep>>,
@@ -709,9 +769,9 @@ impl Stream for IdleTimeoutStream {
                 if !this.has_received_data {
                     this.has_received_data = true;
                 }
-                this.sleep.as_mut().reset(
-                    tokio::time::Instant::now() + this.idle_timeout,
-                );
+                this.sleep
+                    .as_mut()
+                    .reset(tokio::time::Instant::now() + this.idle_timeout);
                 Poll::Ready(Some(data))
             }
             Poll::Ready(None) => Poll::Ready(None),
@@ -734,6 +794,7 @@ impl Stream for IdleTimeoutStream {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_streaming(
     state: &AppState,
     adapter: Arc<dyn crate::provider::ProviderAdapter>,
@@ -763,8 +824,12 @@ async fn handle_streaming(
                 )
             };
             let stream = IdleTimeoutStream::new(stream, first_byte_timeout, idle_timeout);
-            let stream = SseBuffer { inner: stream, buf: String::new(), overflow_error: None }
-                .map(|data| normalize_sse_reasoning(&data));
+            let stream = SseBuffer {
+                inner: stream,
+                buf: String::new(),
+                overflow_error: None,
+            }
+            .map(|data| normalize_sse_reasoning(&data));
             let usage_stream = UsageTrackingStream {
                 inner: stream,
                 resp_buf: String::new(),
@@ -783,9 +848,8 @@ async fn handle_streaming(
                 endpoint_id: endpoint.id,
             };
 
-            let body_stream = usage_stream.map(|data| {
-                Ok::<_, std::convert::Infallible>(Bytes::from(data))
-            });
+            let body_stream =
+                usage_stream.map(|data| Ok::<_, std::convert::Infallible>(Bytes::from(data)));
 
             Ok(Response::builder()
                 .header("content-type", "text/event-stream")
@@ -829,6 +893,7 @@ async fn handle_streaming(
 
 // ── Messages streaming (Anthropic-native format) ──────────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_messages_streaming(
     state: &AppState,
     adapter: Arc<dyn crate::provider::ProviderAdapter>,
@@ -858,7 +923,11 @@ async fn handle_messages_streaming(
                 )
             };
             let stream = IdleTimeoutStream::new(stream, first_byte_timeout, idle_timeout);
-            let stream = SseBuffer { inner: stream, buf: String::new(), overflow_error: None };
+            let stream = SseBuffer {
+                inner: stream,
+                buf: String::new(),
+                overflow_error: None,
+            };
             let usage_stream = UsageTrackingStream {
                 inner: stream,
                 resp_buf: String::new(),
@@ -877,9 +946,8 @@ async fn handle_messages_streaming(
                 endpoint_id: endpoint.id,
             };
 
-            let body_stream = usage_stream.map(|data| {
-                Ok::<_, std::convert::Infallible>(Bytes::from(data))
-            });
+            let body_stream =
+                usage_stream.map(|data| Ok::<_, std::convert::Infallible>(Bytes::from(data)));
 
             Ok(Response::builder()
                 .header("content-type", "text/event-stream")
@@ -923,6 +991,7 @@ async fn handle_messages_streaming(
 
 // ── Non-streaming ─────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_non_streaming(
     state: &AppState,
     route: &mut RouteTarget,
@@ -945,7 +1014,10 @@ async fn handle_non_streaming(
     let mut retry_count = 0u32;
 
     let err_msg: String = loop {
-        let result = route.adapter.chat_complete(&route.endpoint, body.clone()).await;
+        let result = route
+            .adapter
+            .chat_complete(&route.endpoint, body.clone())
+            .await;
 
         match result {
             Ok(mut resp) => {
@@ -953,9 +1025,12 @@ async fn handle_non_streaming(
 
                 let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
                 let completion_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0);
-                let cache_hit = resp["usage"]["prompt_tokens_details"]["cached_tokens"].as_u64().unwrap_or(0);
+                let cache_hit = resp["usage"]["prompt_tokens_details"]["cached_tokens"]
+                    .as_u64()
+                    .unwrap_or(0);
 
-                let reasoning = resp.get("choices")
+                let reasoning = resp
+                    .get("choices")
                     .and_then(|c| c.get(0))
                     .and_then(|c| c.get("message"))
                     .and_then(|m| m.get("reasoning_content"))
@@ -964,32 +1039,35 @@ async fn handle_non_streaming(
                     .map(|s| s.to_string());
 
                 let latency_ms = start.elapsed().as_millis() as u64;
-                state.usage.record_with_endpoint(UsageRecord {
-                    timestamp: Utc::now().to_rfc3339(),
-                    request_id,
-                    user_id: user_id.clone(),
-                    user_name,
-                    channel_id,
+                state.usage.record_with_endpoint(
+                    UsageRecord {
+                        timestamp: Utc::now().to_rfc3339(),
+                        request_id,
+                        user_id: user_id.clone(),
+                        user_name,
+                        channel_id,
 
-                    model,
-                    prompt_tokens,
-                    completion_tokens,
-                    total_tokens: prompt_tokens + completion_tokens,
-                    cache_hit_input_tokens: cache_hit,
-                    latency_ms,
-                    status_code: 200,
-                    success: true,
-                    request_body: req_body.clone(),
-                    response_body: serde_json::to_string(&resp).ok(),
-                    reasoning_body: reasoning,
-                    api_key_name: Some(api_key_name),
-                    api_format: "openai".to_string(),
-                    stream: false,
-                    prompt_price: 0.0,
-                    completion_price: 0.0,
-                    cache_read_price: 0.0,
-                    client_ip: Some(client_ip.clone()),
-                }, route.endpoint.id);
+                        model,
+                        prompt_tokens,
+                        completion_tokens,
+                        total_tokens: prompt_tokens + completion_tokens,
+                        cache_hit_input_tokens: cache_hit,
+                        latency_ms,
+                        status_code: 200,
+                        success: true,
+                        request_body: req_body.clone(),
+                        response_body: serde_json::to_string(&resp).ok(),
+                        reasoning_body: reasoning,
+                        api_key_name: Some(api_key_name),
+                        api_format: "openai".to_string(),
+                        stream: false,
+                        prompt_price: 0.0,
+                        completion_price: 0.0,
+                        cache_read_price: 0.0,
+                        client_ip: Some(client_ip.clone()),
+                    },
+                    route.endpoint.id,
+                );
 
                 // Cache the response for non-streaming requests
                 if let Some(ref ck) = cache_key {
@@ -1000,7 +1078,8 @@ async fn handle_non_streaming(
                 }
 
                 let mut resp = Json(resp).into_response();
-                resp.headers_mut().insert("x-cache", HeaderValue::from_static("MISS"));
+                resp.headers_mut()
+                    .insert("x-cache", HeaderValue::from_static("MISS"));
                 return Ok(resp);
             }
             Err(e) if e.kind() == ErrorKind::ConnectFailed => {
@@ -1087,6 +1166,7 @@ async fn handle_non_streaming(
 
 // ── Messages non-streaming (Anthropic-native format) ──────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_messages_non_streaming(
     state: &AppState,
     route: &mut RouteTarget,
@@ -1112,25 +1192,29 @@ async fn handle_messages_non_streaming(
 
         match result {
             Ok(resp) => {
-
                 let prompt_tokens = resp["usage"]["input_tokens"].as_u64().unwrap_or(0);
                 let completion_tokens = resp["usage"]["output_tokens"].as_u64().unwrap_or(0);
-                let cache_hit = resp["usage"]["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                let cache_hit = resp["usage"]["cache_read_input_tokens"]
+                    .as_u64()
+                    .unwrap_or(0);
 
-                let reasoning = resp.get("content")
+                let reasoning = resp
+                    .get("content")
                     .and_then(|c| c.as_array())
                     .and_then(|blocks| {
-                        blocks.iter().find_map(|b| {
-                            if b["type"] == "thinking" {
-                                b["thinking"].as_str()
-                            } else if b["type"] == "redacted_thinking" {
-                                b["data"].as_str()
-                            } else {
-                                None
-                            }
-                        })
-                        .filter(|s| !s.is_empty())
-                        .map(|s| s.to_string())
+                        blocks
+                            .iter()
+                            .find_map(|b| {
+                                if b["type"] == "thinking" {
+                                    b["thinking"].as_str()
+                                } else if b["type"] == "redacted_thinking" {
+                                    b["data"].as_str()
+                                } else {
+                                    None
+                                }
+                            })
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string())
                     });
 
                 let latency_ms = start.elapsed().as_millis() as u64;
@@ -1251,7 +1335,10 @@ pub async fn chat_completions(
     let request_id = Uuid::new_v4().to_string();
     let start = Instant::now();
 
-    let content_len = headers.get("content-length").and_then(|v| v.to_str().ok()).unwrap_or("unknown");
+    let content_len = headers
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("unknown");
 
     // Read gateway config once — avoids 3-5 lock acquisitions per request
     let gw_cfg = state.gateway_config.read().unwrap().clone();
@@ -1271,18 +1358,23 @@ pub async fn chat_completions(
 
     if let Some(ref allowed) = user.allowed_models {
         if !allowed.contains(&model) {
-            return Err(GatewayError::Auth(format!("Model '{}' not allowed for this API key", model)));
+            return Err(GatewayError::Auth(format!(
+                "Model '{}' not allowed for this API key",
+                model
+            )));
         }
     }
 
     if let Some((rpm, tpm)) = user.rate_limits {
         state.rate_limiter.check_rpm(&user.user_id, rpm)?;
-        state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens(&body))?;
+        state
+            .rate_limiter
+            .check_tpm(&user.user_id, tpm, estimate_tokens(&body))?;
     }
 
     // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
     if gw_cfg.billing_enabled {
-        check_wallet_balance(&*state, &user.user_id).await?;
+        check_wallet_balance(&state, &user.user_id).await?;
     }
 
     let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model).await?;
@@ -1291,7 +1383,10 @@ pub async fn chat_completions(
     }
     let mut route = resolve_route(&state, &channel_id)?;
 
-    let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let is_streaming = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let client_ip = extract_client_ip(&headers, addr);
 
     // Broadcast route-decision event immediately so the admin UI shows
@@ -1312,22 +1407,25 @@ pub async fn chat_completions(
 
     // ── Content filter check (request body) ──
     if state.content_filter.is_enabled() {
-        match state.content_filter.check_request(&body_str, Some(&channel_id)) {
-        crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
-            tracing::warn!(request_id, rule = %rule_name, "Request blocked by content filter");
-            return Err(GatewayError::BadRequest(format!(
-                "Request blocked by content filter rule: {}",
-                rule_name
-            )));
-        }
-        crate::service::moderation::FilterOutcome::Masked(masked) => {
-            if let Ok(v) = serde_json::from_str(&masked) {
-                body = v;
-                body_str = masked;
-                tracing::info!(request_id, "Request body masked by content filter");
+        match state
+            .content_filter
+            .check_request(&body_str, Some(&channel_id))
+        {
+            crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
+                tracing::warn!(request_id, rule = %rule_name, "Request blocked by content filter");
+                return Err(GatewayError::BadRequest(format!(
+                    "Request blocked by content filter rule: {}",
+                    rule_name
+                )));
             }
-        }
-        crate::service::moderation::FilterOutcome::Pass => {}
+            crate::service::moderation::FilterOutcome::Masked(masked) => {
+                if let Ok(v) = serde_json::from_str(&masked) {
+                    body = v;
+                    body_str = masked;
+                    tracing::info!(request_id, "Request body masked by content filter");
+                }
+            }
+            crate::service::moderation::FilterOutcome::Pass => {}
         }
     }
 
@@ -1361,14 +1459,34 @@ pub async fn chat_completions(
     let result = tokio::time::timeout(handler_timeout, async move {
         if is_streaming {
             handle_streaming(
-                &state_clone, route.adapter, route.endpoint, body,
-                request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start, client_ip,
+                &state_clone,
+                route.adapter,
+                route.endpoint,
+                body,
+                request_id,
+                user.user_id,
+                user.user_name,
+                user.api_key_name,
+                route.channel_id,
+                model,
+                start,
+                client_ip,
             )
             .await
         } else {
             handle_non_streaming(
-                &state_clone, &mut route, body,
-                request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start, cache_key, client_ip_clone,
+                &state_clone,
+                &mut route,
+                body,
+                request_id,
+                user.user_id,
+                user.user_name,
+                user.api_key_name,
+                channel_id,
+                model,
+                start,
+                cache_key,
+                client_ip_clone,
             )
             .await
         }
@@ -1378,7 +1496,11 @@ pub async fn chat_completions(
     match result {
         Ok(inner) => inner,
         Err(_) => {
-            tracing::error!(rid, handler_timeout_s = handler_timeout.as_secs(), "Chat completions handler timed out");
+            tracing::error!(
+                rid,
+                handler_timeout_s = handler_timeout.as_secs(),
+                "Chat completions handler timed out"
+            );
             Err(GatewayError::Upstream("Request timed out".into()))
         }
     }
@@ -1412,18 +1534,23 @@ pub async fn messages(
 
     if let Some(ref allowed) = user.allowed_models {
         if !allowed.contains(&model) {
-            return Err(GatewayError::Auth(format!("Model '{}' not allowed for this API key", model)));
+            return Err(GatewayError::Auth(format!(
+                "Model '{}' not allowed for this API key",
+                model
+            )));
         }
     }
 
     if let Some((rpm, tpm)) = user.rate_limits {
         state.rate_limiter.check_rpm(&user.user_id, rpm)?;
-        state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body))?;
+        state
+            .rate_limiter
+            .check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body))?;
     }
 
     // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
     if gw_cfg.billing_enabled {
-        check_wallet_balance(&*state, &user.user_id).await?;
+        check_wallet_balance(&state, &user.user_id).await?;
     }
 
     let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model).await?;
@@ -1453,37 +1580,44 @@ pub async fn messages(
     if let Some(ref ch) = state.routing.get_channel(&channel_id) {
         if ch.anthropic_compat && ch.provider == "openai" {
             route.adapter = Arc::new(
-                crate::provider::anthropic_compat::AnthropicCompatAdapter::new(route.adapter.clone()),
+                crate::provider::anthropic_compat::AnthropicCompatAdapter::new(
+                    route.adapter.clone(),
+                ),
             );
         }
     }
 
-    let is_streaming = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let is_streaming = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let client_ip = extract_client_ip(&headers, addr);
 
     tracing::info!(request_id, channel = %channel_id, endpoint = %route.endpoint.url, "Messages routing resolved");
 
     // ── Serialize body once after all mutations ──
-    let mut body_str = serde_json::to_string(&body).unwrap_or_default();
+    let body_str = serde_json::to_string(&body).unwrap_or_default();
 
     // ── Content filter check (request body) ──
     if state.content_filter.is_enabled() {
-        match state.content_filter.check_request(&body_str, Some(&channel_id)) {
-        crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
-            tracing::warn!(request_id, rule = %rule_name, "Messages request blocked by content filter");
-            return Err(GatewayError::BadRequest(format!(
-                "Request blocked by content filter rule: {}",
-                rule_name
-            )));
-        }
-        crate::service::moderation::FilterOutcome::Masked(masked) => {
-            if let Ok(v) = serde_json::from_str(&masked) {
-                body = v;
-                body_str = masked;
-                tracing::info!(request_id, "Messages request body masked by content filter");
+        match state
+            .content_filter
+            .check_request(&body_str, Some(&channel_id))
+        {
+            crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
+                tracing::warn!(request_id, rule = %rule_name, "Messages request blocked by content filter");
+                return Err(GatewayError::BadRequest(format!(
+                    "Request blocked by content filter rule: {}",
+                    rule_name
+                )));
             }
-        }
-        crate::service::moderation::FilterOutcome::Pass => {}
+            crate::service::moderation::FilterOutcome::Masked(masked) => {
+                if let Ok(v) = serde_json::from_str(&masked) {
+                    body = v;
+                    tracing::info!(request_id, "Messages request body masked by content filter");
+                }
+            }
+            crate::service::moderation::FilterOutcome::Pass => {}
         }
     }
 
@@ -1495,14 +1629,33 @@ pub async fn messages(
     let result = tokio::time::timeout(handler_timeout, async move {
         if is_streaming {
             handle_messages_streaming(
-                &state_clone, route.adapter, route.endpoint, body,
-                request_id, user.user_id, user.user_name, user.api_key_name, route.channel_id, model, start, client_ip,
+                &state_clone,
+                route.adapter,
+                route.endpoint,
+                body,
+                request_id,
+                user.user_id,
+                user.user_name,
+                user.api_key_name,
+                route.channel_id,
+                model,
+                start,
+                client_ip,
             )
             .await
         } else {
             handle_messages_non_streaming(
-                &state_clone, &mut route, body,
-                request_id, user.user_id, user.user_name, user.api_key_name, channel_id, model, start, client_ip_clone,
+                &state_clone,
+                &mut route,
+                body,
+                request_id,
+                user.user_id,
+                user.user_name,
+                user.api_key_name,
+                channel_id,
+                model,
+                start,
+                client_ip_clone,
             )
             .await
         }
@@ -1512,7 +1665,11 @@ pub async fn messages(
     match result {
         Ok(inner) => inner,
         Err(_) => {
-            tracing::error!(rid, handler_timeout_s = handler_timeout.as_secs(), "Messages handler timed out");
+            tracing::error!(
+                rid,
+                handler_timeout_s = handler_timeout.as_secs(),
+                "Messages handler timed out"
+            );
             Err(GatewayError::Upstream("Request timed out".into()))
         }
     }
@@ -1520,6 +1677,7 @@ pub async fn messages(
 
 // ── Relay ─────────────────────────────────────────────────────────
 
+#[allow(clippy::option_map_unit_fn)]
 async fn relay_to_upstream(
     state: &AppState,
     headers: &HeaderMap,
@@ -1542,13 +1700,18 @@ async fn relay_to_upstream(
 
     if let Some(ref allowed) = user.allowed_models {
         if !allowed.contains(&model) {
-            return Err(GatewayError::Auth(format!("Model '{}' not allowed for this API key", model)));
+            return Err(GatewayError::Auth(format!(
+                "Model '{}' not allowed for this API key",
+                model
+            )));
         }
     }
 
     if let Some((rpm, tpm)) = user.rate_limits {
         state.rate_limiter.check_rpm(&user.user_id, rpm)?;
-        state.rate_limiter.check_tpm(&user.user_id, tpm, estimate_tokens(&body))?;
+        state
+            .rate_limiter
+            .check_tpm(&user.user_id, tpm, estimate_tokens(&body))?;
     }
 
     // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
@@ -1579,21 +1742,24 @@ async fn relay_to_upstream(
 
     // ── Content filter check (request body) ──
     if state.content_filter.is_enabled() {
-        match state.content_filter.check_request(&body_str, Some(&channel_id)) {
-        crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
-            tracing::warn!(request_id, rule = %rule_name, "Relay request blocked by content filter");
-            return Err(GatewayError::BadRequest(format!(
-                "Request blocked by content filter rule: {}",
-                rule_name
-            )));
-        }
-        crate::service::moderation::FilterOutcome::Masked(masked) => {
-            if let Ok(v) = serde_json::from_str(&masked) {
-                body = v;
-                body_str = masked;
+        match state
+            .content_filter
+            .check_request(&body_str, Some(&channel_id))
+        {
+            crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
+                tracing::warn!(request_id, rule = %rule_name, "Relay request blocked by content filter");
+                return Err(GatewayError::BadRequest(format!(
+                    "Request blocked by content filter rule: {}",
+                    rule_name
+                )));
             }
-        }
-        crate::service::moderation::FilterOutcome::Pass => {}
+            crate::service::moderation::FilterOutcome::Masked(masked) => {
+                if let Ok(v) = serde_json::from_str(&masked) {
+                    body = v;
+                    body_str = masked;
+                }
+            }
+            crate::service::moderation::FilterOutcome::Pass => {}
         }
     }
 
@@ -1601,16 +1767,22 @@ async fn relay_to_upstream(
     let mut retry_count = 0u32;
 
     let err_msg: String = loop {
-        let result = route.adapter.relay(&route.endpoint, upstream_path, body.clone()).await;
+        let result = route
+            .adapter
+            .relay(&route.endpoint, upstream_path, body.clone())
+            .await;
 
         match result {
             Ok(mut resp) => {
                 normalize_reasoning_inner(&mut resp);
                 let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
                 let completion_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0);
-                let cache_hit = resp["usage"]["prompt_tokens_details"]["cached_tokens"].as_u64().unwrap_or(0);
+                let cache_hit = resp["usage"]["prompt_tokens_details"]["cached_tokens"]
+                    .as_u64()
+                    .unwrap_or(0);
 
-                let reasoning = resp.get("choices")
+                let reasoning = resp
+                    .get("choices")
                     .and_then(|c| c.get(0))
                     .and_then(|c| c.get("message"))
                     .and_then(|m| m.get("reasoning_content"))
@@ -1730,8 +1902,16 @@ pub async fn completions(
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
     let client_ip = extract_client_ip(&headers, addr);
-    relay_to_upstream(&state, &headers, body.0, "/v1/completions",
-        Uuid::new_v4().to_string(), Instant::now(), client_ip).await
+    relay_to_upstream(
+        &state,
+        &headers,
+        body.0,
+        "/v1/completions",
+        Uuid::new_v4().to_string(),
+        Instant::now(),
+        client_ip,
+    )
+    .await
 }
 
 pub async fn embeddings(
@@ -1741,8 +1921,16 @@ pub async fn embeddings(
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
     let client_ip = extract_client_ip(&headers, addr);
-    relay_to_upstream(&state, &headers, body.0, "/v1/embeddings",
-        Uuid::new_v4().to_string(), Instant::now(), client_ip).await
+    relay_to_upstream(
+        &state,
+        &headers,
+        body.0,
+        "/v1/embeddings",
+        Uuid::new_v4().to_string(),
+        Instant::now(),
+        client_ip,
+    )
+    .await
 }
 
 pub async fn batches(
@@ -1752,8 +1940,16 @@ pub async fn batches(
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
     let client_ip = extract_client_ip(&headers, addr);
-    relay_to_upstream(&state, &headers, body.0, "/v1/messages/batches",
-        Uuid::new_v4().to_string(), Instant::now(), client_ip).await
+    relay_to_upstream(
+        &state,
+        &headers,
+        body.0,
+        "/v1/messages/batches",
+        Uuid::new_v4().to_string(),
+        Instant::now(),
+        client_ip,
+    )
+    .await
 }
 
 pub async fn tokenize(
@@ -1763,8 +1959,16 @@ pub async fn tokenize(
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
     let client_ip = extract_client_ip(&headers, addr);
-    relay_to_upstream(&state, &headers, body.0, "/tokenize",
-        Uuid::new_v4().to_string(), Instant::now(), client_ip).await
+    relay_to_upstream(
+        &state,
+        &headers,
+        body.0,
+        "/tokenize",
+        Uuid::new_v4().to_string(),
+        Instant::now(),
+        client_ip,
+    )
+    .await
 }
 
 pub async fn detokenize(
@@ -1774,8 +1978,16 @@ pub async fn detokenize(
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
     let client_ip = extract_client_ip(&headers, addr);
-    relay_to_upstream(&state, &headers, body.0, "/detokenize",
-        Uuid::new_v4().to_string(), Instant::now(), client_ip).await
+    relay_to_upstream(
+        &state,
+        &headers,
+        body.0,
+        "/detokenize",
+        Uuid::new_v4().to_string(),
+        Instant::now(),
+        client_ip,
+    )
+    .await
 }
 
 // ── Other ─────────────────────────────────────────────────────────
@@ -1793,15 +2005,22 @@ pub async fn list_models(
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<Value>, GatewayError> {
     let user = state.auth.authenticate(&headers)?;
-    let subs = state.db.list_subscriptions(&user.user_id).await.unwrap_or_default();
+    let subs = state
+        .db
+        .list_subscriptions(&user.user_id)
+        .await
+        .unwrap_or_default();
     let subscribed: std::collections::HashSet<String> = subs.iter().map(|m| m.id.clone()).collect();
 
-    let mut models: Vec<Value> = state.routing.list_display_models()
+    let mut models: Vec<Value> = state
+        .routing
+        .list_display_models()
         .into_iter()
         .filter(|m| subscribed.contains(m["upstream_id"].as_str().unwrap_or("")))
         .collect();
 
-    let limit: usize = params.get("limit")
+    let limit: usize = params
+        .get("limit")
         .and_then(|v| v.parse().ok())
         .unwrap_or(20)
         .min(1000);
@@ -1823,8 +2042,12 @@ pub async fn list_models(
     let has_more = models.len() > limit;
     models.truncate(limit);
 
-    let first_id = models.first().and_then(|m| m["id"].as_str().map(|s| s.to_string()));
-    let last_id = models.last().and_then(|m| m["id"].as_str().map(|s| s.to_string()));
+    let first_id = models
+        .first()
+        .and_then(|m| m["id"].as_str().map(|s| s.to_string()));
+    let last_id = models
+        .last()
+        .and_then(|m| m["id"].as_str().map(|s| s.to_string()));
 
     Ok(Json(serde_json::json!({
         "data": models,
@@ -1856,7 +2079,8 @@ fn estimate_tokens_anthropic(body: &Value) -> u64 {
             msgs.iter()
                 .map(|m| match &m["content"] {
                     Value::String(s) => s.len(),
-                    Value::Array(arr) => arr.iter()
+                    Value::Array(arr) => arr
+                        .iter()
                         .filter_map(|c| c["text"].as_str())
                         .map(|s| s.len())
                         .sum(),

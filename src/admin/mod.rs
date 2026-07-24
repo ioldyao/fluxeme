@@ -9,9 +9,9 @@ use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation}
 use serde::{Deserialize, Serialize};
 
 use crate::authz::AuthzModule;
+use crate::db::Database;
 use crate::domain::user::SessionInfo;
 use crate::ratelimit::RateLimiter;
-use crate::db::Database;
 
 const SESSION_TTL_SECS: i64 = 24 * 3600;
 
@@ -92,7 +92,8 @@ impl AdminModule {
 
     fn decode_token(&self, token: &str) -> Result<SessionInfo, AdminError> {
         let mut validation = Validation::default();
-        validation.required_spec_claims = std::collections::HashSet::from(["sub".to_string(), "exp".to_string()]);
+        validation.required_spec_claims =
+            std::collections::HashSet::from(["sub".to_string(), "exp".to_string()]);
         let data = decode::<JwtClaims>(
             token,
             &DecodingKey::from_secret(self.secret.as_bytes()),
@@ -124,13 +125,19 @@ impl Clone for AdminModule {
 
 fn validate_password(pw: &str) -> Result<(), AdminError> {
     if pw.len() < 8 {
-        return Err(AdminError::bad_request("Password must be at least 8 characters"));
+        return Err(AdminError::bad_request(
+            "Password must be at least 8 characters",
+        ));
     }
     if !pw.chars().any(|c| c.is_uppercase()) {
-        return Err(AdminError::bad_request("Password must contain an uppercase letter"));
+        return Err(AdminError::bad_request(
+            "Password must contain an uppercase letter",
+        ));
     }
     if !pw.chars().any(|c| c.is_lowercase()) {
-        return Err(AdminError::bad_request("Password must contain a lowercase letter"));
+        return Err(AdminError::bad_request(
+            "Password must contain a lowercase letter",
+        ));
     }
     if !pw.chars().any(|c| c.is_ascii_digit()) {
         return Err(AdminError::bad_request("Password must contain a digit"));
@@ -162,11 +169,17 @@ fn extract_token(headers: &HeaderMap) -> Result<String, AdminError> {
     Err(AdminError::unauthorized("Missing or invalid admin token"))
 }
 
-pub(crate) async fn require_session_internal(admin: &AdminModule, headers: &HeaderMap) -> Result<SessionInfo, AdminError> {
+pub(crate) async fn require_session_internal(
+    admin: &AdminModule,
+    headers: &HeaderMap,
+) -> Result<SessionInfo, AdminError> {
     require_session(admin, headers).await
 }
 
-async fn require_session(admin: &AdminModule, headers: &HeaderMap) -> Result<SessionInfo, AdminError> {
+async fn require_session(
+    admin: &AdminModule,
+    headers: &HeaderMap,
+) -> Result<SessionInfo, AdminError> {
     let token = extract_token(headers)?;
     let session = admin.decode_token(&token)?;
 
@@ -194,7 +207,11 @@ async fn require_session(admin: &AdminModule, headers: &HeaderMap) -> Result<Ses
 
 /// Check Casbin permission for the given session.
 /// Returns 403 if the session's role lacks the permission.
-async fn check_perm(authz: &AuthzModule, session: &SessionInfo, perm: &str) -> Result<(), AdminError> {
+async fn check_perm(
+    authz: &AuthzModule,
+    session: &SessionInfo,
+    perm: &str,
+) -> Result<(), AdminError> {
     if !authz.enforce(&session.role, perm).await {
         return Err(AdminError::forbidden("Insufficient permissions"));
     }
@@ -203,6 +220,7 @@ async fn check_perm(authz: &AuthzModule, session: &SessionInfo, perm: &str) -> R
 
 // ── Error type ────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum AdminError {
     Unauthorized(String),
@@ -240,7 +258,10 @@ impl IntoResponse for AdminError {
             AdminError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
             AdminError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             AdminError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
-            AdminError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string()),
+            AdminError::Internal(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal server error".to_string(),
+            ),
             AdminError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             AdminError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, msg),
         };
@@ -273,7 +294,9 @@ fn tz_offset_seconds(tz: Option<&str>) -> i64 {
     match name.parse::<Tz>() {
         Ok(tz) => {
             let now = Utc::now();
-            tz.offset_from_utc_datetime(&now.naive_utc()).fix().local_minus_utc() as i64
+            tz.offset_from_utc_datetime(&now.naive_utc())
+                .fix()
+                .local_minus_utc() as i64
         }
         Err(_) => {
             tracing::warn!(tz = name, "Invalid timezone, falling back to UTC");
@@ -299,10 +322,7 @@ fn since_local_days_ago(days: i64, offset_seconds: i64) -> String {
 pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
     Router::new()
         .route("/api/login", axum::routing::post(auth::admin_login))
-        .route(
-            "/api/setup/status",
-            axum::routing::get(auth::setup_status),
-        )
+        .route("/api/setup/status", axum::routing::get(auth::setup_status))
         .route(
             "/api/setup/register",
             axum::routing::post(auth::setup_register),
@@ -319,7 +339,10 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             "/api/sso/callback",
             axum::routing::get(crate::sso::sso_callback_handler),
         )
-        .route("/api/dashboard", axum::routing::get(dashboard::admin_dashboard))
+        .route(
+            "/api/dashboard",
+            axum::routing::get(dashboard::admin_dashboard),
+        )
         .route(
             "/api/dashboard/aggregations",
             axum::routing::get(dashboard::dashboard_aggregations),
@@ -434,7 +457,8 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         )
         .route(
             "/api/me/subscriptions/{model_id}",
-            axum::routing::post(subscriptions::subscribe_model).delete(subscriptions::unsubscribe_model),
+            axum::routing::post(subscriptions::subscribe_model)
+                .delete(subscriptions::unsubscribe_model),
         )
         .route(
             "/api/me/test-connection",
@@ -452,31 +476,88 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         // Usage
         .route("/api/usage", axum::routing::get(usage::get_usage))
         .route("/api/usage/daily", axum::routing::get(usage::daily_usage))
-        .route("/api/usage/aggregate", axum::routing::get(usage::usage_aggregate))
-        .route("/api/usage/model-activity", axum::routing::get(usage::model_activity))
-        .route("/api/routing/snapshot", axum::routing::get(routing::routing_flow_snapshot_handler))
-        .route("/api/routing/history", axum::routing::get(routing::routing_history))
+        .route(
+            "/api/usage/aggregate",
+            axum::routing::get(usage::usage_aggregate),
+        )
+        .route(
+            "/api/usage/model-activity",
+            axum::routing::get(usage::model_activity),
+        )
+        .route(
+            "/api/routing/snapshot",
+            axum::routing::get(routing::routing_flow_snapshot_handler),
+        )
+        .route(
+            "/api/routing/history",
+            axum::routing::get(routing::routing_history),
+        )
         .route(
             "/api/usage/{request_id}",
             axum::routing::get(usage::get_usage_detail),
         )
         // Billing
-        .route("/api/billing/summary", axum::routing::get(billing::billing_summary))
-        .route("/api/billing/period-summary", axum::routing::get(billing::billing_period_summary))
-        .route("/api/billing/deductions", axum::routing::get(billing::billing_deductions))
-        .route("/api/billing/topups", axum::routing::get(billing::billing_topups))
-        .route("/api/billing/invoices", axum::routing::get(billing::billing_invoices))
-        .route("/api/billing/months", axum::routing::get(billing::billing_months))
-        .route("/api/billing/period-summary-all", axum::routing::get(billing::billing_period_summary_all))
+        .route(
+            "/api/billing/summary",
+            axum::routing::get(billing::billing_summary),
+        )
+        .route(
+            "/api/billing/period-summary",
+            axum::routing::get(billing::billing_period_summary),
+        )
+        .route(
+            "/api/billing/deductions",
+            axum::routing::get(billing::billing_deductions),
+        )
+        .route(
+            "/api/billing/topups",
+            axum::routing::get(billing::billing_topups),
+        )
+        .route(
+            "/api/billing/invoices",
+            axum::routing::get(billing::billing_invoices),
+        )
+        .route(
+            "/api/billing/months",
+            axum::routing::get(billing::billing_months),
+        )
+        .route(
+            "/api/billing/period-summary-all",
+            axum::routing::get(billing::billing_period_summary_all),
+        )
         // Wallet
-        .route("/api/wallet/overview", axum::routing::get(wallet::wallet_overview))
-        .route("/api/wallet/recharge", axum::routing::post(wallet::wallet_recharge))
-        .route("/api/wallet/create-key", axum::routing::post(wallet::wallet_create_key))
-        .route("/api/wallet/redeem-key", axum::routing::post(wallet::wallet_redeem_key))
-        .route("/api/wallet/keys", axum::routing::get(wallet::wallet_list_keys))
-        .route("/api/wallet/revoke-key", axum::routing::post(wallet::wallet_revoke_key))
-        .route("/api/wallet/transactions", axum::routing::get(wallet::wallet_transactions))
-        .route("/api/wallet/estimated-days", axum::routing::get(wallet::wallet_estimated_days))
+        .route(
+            "/api/wallet/overview",
+            axum::routing::get(wallet::wallet_overview),
+        )
+        .route(
+            "/api/wallet/recharge",
+            axum::routing::post(wallet::wallet_recharge),
+        )
+        .route(
+            "/api/wallet/create-key",
+            axum::routing::post(wallet::wallet_create_key),
+        )
+        .route(
+            "/api/wallet/redeem-key",
+            axum::routing::post(wallet::wallet_redeem_key),
+        )
+        .route(
+            "/api/wallet/keys",
+            axum::routing::get(wallet::wallet_list_keys),
+        )
+        .route(
+            "/api/wallet/revoke-key",
+            axum::routing::post(wallet::wallet_revoke_key),
+        )
+        .route(
+            "/api/wallet/transactions",
+            axum::routing::get(wallet::wallet_transactions),
+        )
+        .route(
+            "/api/wallet/estimated-days",
+            axum::routing::get(wallet::wallet_estimated_days),
+        )
         // Health check
         .route(
             "/api/health-check/models",
@@ -494,7 +575,8 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         // Settings
         .route(
             "/api/settings/allow-private-ips",
-            axum::routing::get(settings::get_allow_private_ips).put(settings::set_allow_private_ips),
+            axum::routing::get(settings::get_allow_private_ips)
+                .put(settings::set_allow_private_ips),
         )
         .route(
             "/api/gateway/config",
@@ -508,7 +590,8 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         )
         .route(
             "/api/moderation/rules/{id}",
-            axum::routing::put(moderation::update_filter_rule).delete(moderation::delete_filter_rule),
+            axum::routing::put(moderation::update_filter_rule)
+                .delete(moderation::delete_filter_rule),
         )
         .route(
             "/api/moderation/enabled",

@@ -156,7 +156,8 @@ impl SsoModule {
         db: &Database,
     ) -> Result<String, AdminError> {
         // Clean up expired states
-        self.pending_states.retain(|_, expires| *expires > Instant::now());
+        self.pending_states
+            .retain(|_, expires| *expires > Instant::now());
 
         // Verify CSRF state
         if self.pending_states.remove(state).is_none() {
@@ -169,9 +170,8 @@ impl SsoModule {
             .ok_or_else(|| AdminError::internal("SSO not configured"))?;
 
         // Exchange authorization code for tokens
-        let client_secret =
-            crate::crypto::decrypt_load(&self.client_secret, &self.enc_key)
-                .map_err(|e| AdminError::internal(format!("SSO secret decryption failed: {e}")))?;
+        let client_secret = crate::crypto::decrypt_load(&self.client_secret, &self.enc_key)
+            .map_err(|e| AdminError::internal(format!("SSO secret decryption failed: {e}")))?;
         let params = [
             ("grant_type", "authorization_code"),
             ("code", code),
@@ -195,7 +195,10 @@ impl SsoModule {
         let user_info: UserInfo = self
             .http_client
             .get(&meta.userinfo_endpoint)
-            .header("Authorization", format!("Bearer {}", token_resp.access_token))
+            .header(
+                "Authorization",
+                format!("Bearer {}", token_resp.access_token),
+            )
             .send()
             .await
             .map_err(|e| AdminError::internal(format!("UserInfo request failed: {e}")))?
@@ -223,7 +226,8 @@ impl SsoModule {
                 concurrency_limit: 2000,
                 currency: "usd".to_string(),
             };
-            db.create_user(&user).await
+            db.create_user(&user)
+                .await
                 .map_err(|e| AdminError::internal(format!("Failed to create user: {e}")))?;
         }
 
@@ -247,9 +251,7 @@ pub struct SsoCallbackParams {
 }
 
 /// SSO status endpoint (public, no auth needed)
-pub async fn sso_status_handler(
-    State(state): State<Arc<AppState>>,
-) -> axum::Json<Value> {
+pub async fn sso_status_handler(State(state): State<Arc<AppState>>) -> axum::Json<Value> {
     axum::Json(serde_json::json!({
         "enabled": state.sso.is_enabled(),
         "provider_name": state.sso.provider_name(),
@@ -257,9 +259,7 @@ pub async fn sso_status_handler(
 }
 
 /// SSO login redirect handler
-pub async fn sso_login_handler(
-    State(state): State<Arc<AppState>>,
-) -> Result<Redirect, AdminError> {
+pub async fn sso_login_handler(State(state): State<Arc<AppState>>) -> Result<Redirect, AdminError> {
     if !state.sso.is_enabled() {
         return Err(AdminError::unauthorized("SSO not enabled"));
     }

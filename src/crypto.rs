@@ -29,7 +29,9 @@ pub fn encrypt(plaintext: &str, secret: &str) -> String {
     let cipher = Aes256Gcm::new_from_slice(&key).expect("Valid AES-256 key");
     let nonce_bytes = generate_nonce();
     let nonce = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher.encrypt(nonce, plaintext.as_bytes()).expect("encryption failed");
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext.as_bytes())
+        .expect("encryption failed");
     let mut combined = Vec::with_capacity(12 + ciphertext.len());
     combined.extend_from_slice(&nonce_bytes);
     combined.extend_from_slice(&ciphertext);
@@ -40,13 +42,17 @@ pub fn encrypt(plaintext: &str, secret: &str) -> String {
 pub fn decrypt(encoded: &str, secret: &str) -> Result<String, String> {
     let key = derive_key(secret);
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| format!("Invalid key: {}", e))?;
-    let combined = BASE64.decode(encoded).map_err(|e| format!("Invalid base64: {}", e))?;
+    let combined = BASE64
+        .decode(encoded)
+        .map_err(|e| format!("Invalid base64: {}", e))?;
     if combined.len() < 12 {
         return Err("Ciphertext too short".to_string());
     }
     let (nonce_bytes, ciphertext) = combined.split_at(12);
     let nonce = Nonce::from_slice(nonce_bytes);
-    let plaintext = cipher.decrypt(nonce, ciphertext).map_err(|e| format!("Decryption failed: {}", e))?;
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|e| format!("Decryption failed: {}", e))?;
     String::from_utf8(plaintext).map_err(|e| format!("Invalid UTF-8: {}", e))
 }
 
