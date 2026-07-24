@@ -65,7 +65,8 @@ pub struct RedisCache {
 impl RedisCache {
     /// Create a new cache backed by the given Redis URL.
     pub async fn new(redis_url: &str, default_ttl_secs: u64) -> Result<Self, String> {
-        let client = redis::Client::open(redis_url).map_err(|e| format!("Redis URL error: {}", e))?;
+        let client =
+            redis::Client::open(redis_url).map_err(|e| format!("Redis URL error: {}", e))?;
         let con = client
             .get_multiplexed_async_connection()
             .await
@@ -78,9 +79,13 @@ impl RedisCache {
 
     /// No-op cache — all operations are implicit no-ops.
     pub fn noop() -> Self {
-        Self { con: None, default_ttl_secs: 0 }
+        Self {
+            con: None,
+            default_ttl_secs: 0,
+        }
     }
 
+    #[allow(dead_code)]
     pub fn is_enabled(&self) -> bool {
         self.con.is_some()
     }
@@ -115,13 +120,18 @@ impl RedisCache {
             None => return Ok(()),
         };
         let redis_key = build_redis_key(tenant_id, cache_key);
-        let ttl = if ttl_secs > 0 { ttl_secs } else { self.default_ttl_secs };
+        let ttl = if ttl_secs > 0 {
+            ttl_secs
+        } else {
+            self.default_ttl_secs
+        };
         redis::Cmd::set_ex(&redis_key, value, ttl)
             .query_async::<()>(&mut con)
             .await
             .map_err(|e| format!("Redis SET error: {}", e))
     }
 
+    #[allow(dead_code)]
     pub fn default_ttl(&self) -> u64 {
         self.default_ttl_secs
     }
@@ -146,6 +156,7 @@ impl RedisCache {
     }
 
     /// Set the gate status for a user in Redis (persistent, no TTL).
+    #[allow(dead_code)]
     pub async fn set_gate_status(&self, user_id: &str, status: GateStatus) -> Result<(), String> {
         let mut con = match self.con.clone() {
             Some(c) => c,
@@ -160,6 +171,7 @@ impl RedisCache {
 
     /// Write the current balance to Redis for fast read by the inspection
     /// task (persistent, no TTL).
+    #[allow(dead_code)]
     pub async fn set_balance(&self, user_id: &str, balance: f64) -> Result<(), String> {
         let mut con = match self.con.clone() {
             Some(c) => c,

@@ -23,7 +23,8 @@ impl AuthzModule {
 
         // Seed: admin role gets all admin:* permissions via the wildcard
         if !e.has_policy(vec!["admin".to_owned(), "admin:*".to_owned()]) {
-            e.add_policy(vec!["admin".to_owned(), "admin:*".to_owned()]).await?;
+            e.add_policy(vec!["admin".to_owned(), "admin:*".to_owned()])
+                .await?;
             tracing::info!("Seeded default Casbin policy: admin -> admin:*");
         }
 
@@ -39,7 +40,9 @@ impl AuthzModule {
     /// Returns `true` if the role (directly or via role inheritance) is allowed.
     pub async fn enforce(&self, role: &str, permission: &str) -> bool {
         let guard = self.enforcer.read().await;
-        guard.enforce((role.to_owned(), permission.to_owned())).unwrap_or(false)
+        guard
+            .enforce((role.to_owned(), permission.to_owned()))
+            .unwrap_or(false)
     }
 }
 

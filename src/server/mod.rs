@@ -4,12 +4,12 @@ pub mod ws;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use axum::Router;
 use axum::http::HeaderValue;
+use axum::Router;
 use tokio::sync::RwLock as AsyncRwLock;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::{CorsLayer, AllowOrigin};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
@@ -18,7 +18,10 @@ use crate::cache::{GateStatus, RedisCache};
 use crate::config::types::{AppConfig, GatewayRuntimeConfig};
 use crate::provider::ProviderRegistry;
 use crate::ratelimit::RateLimiter;
-use crate::service::{AuthService, ContentFilterService, HealthProbeService, HealthService, RoutingService, UsageService};
+use crate::service::{
+    AuthService, ContentFilterService, HealthProbeService, HealthService, RoutingService,
+    UsageService,
+};
 use crate::sso::SsoModule;
 
 #[derive(Clone)]
@@ -58,7 +61,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .cors
         .allowed_origins
         .iter()
-        .map(|o| o.parse().expect("Invalid origin URL in cors.allowed_origins"))
+        .map(|o| {
+            o.parse()
+                .expect("Invalid origin URL in cors.allowed_origins")
+        })
         .collect();
 
     let cors = CorsLayer::new()

@@ -17,7 +17,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/api/client';
 import { CURRENCY_SYMBOL, usePricingCurrency, useCurrency } from '@/store/currency';
-import type { Model, UpstreamModel } from '@/types';
+import type { Model, ProbeResult, UpstreamModel } from '@/types';
 
 const CATEGORY_ORDER = ['chat', 'reasoning', 'tools', 'web', 'vision', 'rerank', 'embedding'];
 const CATEGORY_LABELS: Record<string, string> = {
@@ -74,7 +74,26 @@ export default function Models() {
   };
 
 
-  const channelHc = (chId: string) => probeResults?.find((r) => r.channel_id === chId);
+  const channelProbeRows = useCallback(
+    (channelId: string): ProbeResult[] => probeResults?.filter((row) => row.channel_id === channelId) ?? [],
+    [probeResults],
+  );
+  const aggregateChannelProbe = useCallback(
+    (channelId: string) => {
+      const rows = channelProbeRows(channelId);
+      const endpointRows = rows.filter((row) => row.endpoint_url);
+      const effectiveRows = endpointRows.length > 0 ? endpointRows : rows;
+      if (effectiveRows.length === 0) {
+        return null;
+      }
+      return {
+        success: effectiveRows.every((row) => row.success),
+        latency_ms: Math.max(...effectiveRows.map((row) => row.latency_ms)),
+        rows: effectiveRows,
+      };
+    },
+    [channelProbeRows],
+  );
 
   const filteredModels = useMemo(() => {
     let rows = [...(models ?? [])];
@@ -89,8 +108,11 @@ export default function Models() {
         case 'match': av = a.model_pattern; bv = b.model_pattern; break;
         case 'channel': {
           const aCh = a.channels[0]?.channel_id; const bCh = b.channels[0]?.channel_id;
-          av = aCh ? probeResults?.find((r) => r.channel_id === aCh)?.latency_ms ?? 99999 : 99999;
-          bv = bCh ? probeResults?.find((r) => r.channel_id === bCh)?.latency_ms ?? 99999 : 99999; break;
+          const aProbe = aCh ? aggregateChannelProbe(aCh) : null;
+          const bProbe = bCh ? aggregateChannelProbe(bCh) : null;
+          av = aProbe ? (aProbe.success ? aProbe.latency_ms : 1_000_000 + aProbe.latency_ms) : 9_999_999;
+          bv = bProbe ? (bProbe.success ? bProbe.latency_ms : 1_000_000 + bProbe.latency_ms) : 9_999_999;
+          break;
         }
         case 'ctx': av = a.context_length ?? 0; bv = b.context_length ?? 0; break;
         case 'price': av = a.pricing.prompt_price; bv = b.pricing.prompt_price; break;
@@ -100,7 +122,7 @@ export default function Models() {
       return typeof av === 'string' ? av.localeCompare(bv) * sortDir : (av - bv) * sortDir;
     });
     return rows;
-  }, [models, channelName, search, modalFilter, statusFilter, sortKey, sortDir, probeResults]);
+  }, [models, channelName, search, modalFilter, statusFilter, sortKey, sortDir, aggregateChannelProbe]);
 
   const handleSort = (key: SortKey) => { if (sortKey === key) setSortDir((d) => d * -1); else { setSortKey(key); setSortDir(1); } };
   const SortArrow = ({ k }: { k: SortKey }) => (
@@ -108,7 +130,10 @@ export default function Models() {
   );
 
   const totalPublished = models?.filter((m) => m.published).length ?? 0;
-  const totalAlerts = models?.filter((m) => m.channels.some((b) => { const pr = channelHc(b.channel_id); return pr && !pr.success; })).length ?? 0;
+  const totalAlerts = models?.filter((m) => m.channels.some((b) => {
+    const aggregate = aggregateChannelProbe(b.channel_id);
+    return aggregate ? !aggregate.success : false;
+  })).length ?? 0;
 
   // ── Sync dialog ──
   const qc = useQueryClient();
@@ -180,7 +205,9 @@ export default function Models() {
       <td className="px-4 py-3">
         {m.channels.length > 0 ? (
           <div className="flex items-center gap-1.5">{m.channels.map((b) => {
-            const hc = channelHc(b.channel_id); const ok = hc?.success; const lat = hc?.latency_ms;
+            const hc = aggregateChannelProbe(b.channel_id);
+            const ok = hc?.success;
+            const lat = hc?.latency_ms;
             return (
               <div key={b.channel_id} className="group relative inline-flex">
                 <span className={cn('inline-block w-2.5 h-2.5 rounded-full cursor-help', hc ? (ok ? 'bg-green-500' : 'bg-destructive') : 'bg-muted-foreground/40')} />
@@ -188,7 +215,16 @@ export default function Models() {
                   <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg px-3 py-2 text-xs whitespace-nowrap space-y-1">
                     <div className="flex items-center gap-1.5"><span className={cn('inline-block w-2 h-2 rounded-full', hc ? (ok ? 'bg-green-500' : 'bg-destructive') : 'bg-muted-foreground/40')} /><span className="font-semibold">{channelName(b.channel_id)}</span></div>
                     <div className="text-muted-foreground font-mono">{b.channel_id}</div>
-                    {lat != null && <div className={cn('font-mono', lat > 5000 ? 'text-destructive' : 'text-muted-foreground')}>{lat}ms</div>}
+                    {hc?.rows?.map((row) => (
+                      <div key={`${b.channel_id}-${row.endpoint_url ?? row.id}`} className="flex items-center justify-between gap-3 font-mono">
+                        <span className="text-muted-foreground max-w-[220px] truncate">{row.endpoint_url ?? 'channel'}</span>
+                        <span className={cn(row.success ? 'text-green-600' : 'text-destructive')}>
+                          {row.success ? `${row.latency_ms}ms` : '失败'}
+                        </span>
+                      </div>
+                    ))}
+                    {!hc && <div className="text-muted-foreground">未测试</div>}
+                    {lat != null && <div className={cn('font-mono', lat > 5000 ? 'text-destructive' : 'text-muted-foreground')}>聚合 {lat}ms</div>}
                   </div>
                 </div>
               </div>

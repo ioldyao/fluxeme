@@ -21,7 +21,8 @@ pub(crate) async fn list_my_subscriptions(
     let models = state
         .db
         .list_subscriptions(&session.user_id)
-        .await.map_err(db_err)?;
+        .await
+        .map_err(db_err)?;
     Ok(Json(models))
 }
 
@@ -31,7 +32,11 @@ pub(crate) async fn subscribe_model(
     Path(model_id): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    state.db.subscribe_user(&session.user_id, &model_id).await.map_err(db_err)?;
+    state
+        .db
+        .subscribe_user(&session.user_id, &model_id)
+        .await
+        .map_err(db_err)?;
     Ok(Json(serde_json::json!({ "subscribed": model_id })))
 }
 
@@ -61,7 +66,8 @@ pub(crate) async fn test_subscription_connection(
     let subscribed = state
         .db
         .list_subscribed_model_ids(&session.user_id)
-        .await.map_err(db_err)?;
+        .await
+        .map_err(db_err)?;
     if !subscribed.contains(&body.model_id) {
         return Err(AdminError::forbidden("未订阅此模型"));
     }
@@ -70,7 +76,8 @@ pub(crate) async fn test_subscription_connection(
     let model = state
         .db
         .get_model(&body.model_id)
-        .await.map_err(db_err)?
+        .await
+        .map_err(db_err)?
         .ok_or_else(|| AdminError::not_found("模型不存在"))?;
 
     // Find the first enabled channel for this model (by priority)
@@ -79,7 +86,13 @@ pub(crate) async fn test_subscription_connection(
 
     let channel_id = bindings
         .iter()
-        .find_map(|b| state.routing.get_channel(&b.channel_id).filter(|ch| ch.enabled).map(|ch| ch.id.clone()))
+        .find_map(|b| {
+            state
+                .routing
+                .get_channel(&b.channel_id)
+                .filter(|ch| ch.enabled)
+                .map(|ch| ch.id.clone())
+        })
         .ok_or_else(|| AdminError::internal("该模型没有可用的通道"))?;
 
     // Resolve provider adapter + endpoint from the channel

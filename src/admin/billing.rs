@@ -31,12 +31,21 @@ pub(crate) async fn billing_summary(
     let records = state
         .usage
         .cost_rows_since("1970-01-01T00:00:00", user_filter)
-        .await.map_err(AdminError::internal)?;
+        .await
+        .map_err(AdminError::internal)?;
     let total_cost: f64 = records
         .iter()
         .map(|r| {
-            let pp = if r.prompt_price > 0.0 { r.prompt_price } else { 0.0 };
-            let cp = if r.completion_price > 0.0 { r.completion_price } else { 0.0 };
+            let pp = if r.prompt_price > 0.0 {
+                r.prompt_price
+            } else {
+                0.0
+            };
+            let cp = if r.completion_price > 0.0 {
+                r.completion_price
+            } else {
+                0.0
+            };
             (r.prompt_tokens as f64 / 1000000.0 * pp)
                 + (r.completion_tokens as f64 / 1000000.0 * cp)
                 + (r.cache_hit_input_tokens as f64 / 1000000.0 * r.cache_read_price)
@@ -98,29 +107,56 @@ pub(crate) async fn billing_period_summary(
         Some(&session.user_id)
     };
 
-    let (total_cost, total_requests, total_tokens) = state.db.period_summary(year, month, user_filter)
-        .await.map_err(db_err)?;
+    let (total_cost, total_requests, total_tokens) = state
+        .db
+        .period_summary(year, month, user_filter)
+        .await
+        .map_err(db_err)?;
 
-    let by_model = state.db.period_model_breakdown(year, month, user_filter)
-        .await.map_err(db_err)?
+    let by_model = state
+        .db
+        .period_model_breakdown(year, month, user_filter)
+        .await
+        .map_err(db_err)?
         .into_iter()
         .map(|(model, cost)| {
-            let pct = if total_cost > 0.0 { (cost / total_cost * 100.0 * 10.0).round() / 10.0 } else { 0.0 };
-            ModelCostShare { model, cost: (cost * 100.0).round() / 100.0, percentage: pct }
+            let pct = if total_cost > 0.0 {
+                (cost / total_cost * 100.0 * 10.0).round() / 10.0
+            } else {
+                0.0
+            };
+            ModelCostShare {
+                model,
+                cost: (cost * 100.0).round() / 100.0,
+                percentage: pct,
+            }
         })
         .collect();
 
-    let by_channel = state.db.period_channel_breakdown(year, month, user_filter)
-        .await.map_err(db_err)?
+    let by_channel = state
+        .db
+        .period_channel_breakdown(year, month, user_filter)
+        .await
+        .map_err(db_err)?
         .into_iter()
         .map(|(channel, name, cost)| {
-            let pct = if total_cost > 0.0 { (cost / total_cost * 100.0 * 10.0).round() / 10.0 } else { 0.0 };
-            ChannelCostShare { channel, name, cost: (cost * 100.0).round() / 100.0, percentage: pct }
+            let pct = if total_cost > 0.0 {
+                (cost / total_cost * 100.0 * 10.0).round() / 10.0
+            } else {
+                0.0
+            };
+            ChannelCostShare {
+                channel,
+                name,
+                cost: (cost * 100.0).round() / 100.0,
+                percentage: pct,
+            }
         })
         .collect();
 
     Ok(Json(PeriodSummary {
-        year, month,
+        year,
+        month,
         total_cost: (total_cost * 100.0).round() / 100.0,
         total_requests,
         total_tokens,
@@ -164,15 +200,24 @@ pub(crate) async fn billing_deductions(
         Some(&session.user_id)
     };
 
-    let total = state.db.count_daily_deductions(year, month, user_filter)
-        .await.map_err(db_err)?;
-    let records = state.db.daily_deductions_paginated(year, month, user_filter, limit, offset)
-        .await.map_err(db_err)?;
-    let items: Vec<DeductionRecord> = records.into_iter().map(|(day, amount, _count)| DeductionRecord {
-        time: format!("{}T00:00:00", day),
-        amount: -((amount * 100.0).round() / 100.0),
-        method: "按量计费".to_string(),
-    }).collect();
+    let total = state
+        .db
+        .count_daily_deductions(year, month, user_filter)
+        .await
+        .map_err(db_err)?;
+    let records = state
+        .db
+        .daily_deductions_paginated(year, month, user_filter, limit, offset)
+        .await
+        .map_err(db_err)?;
+    let items: Vec<DeductionRecord> = records
+        .into_iter()
+        .map(|(day, amount, _count)| DeductionRecord {
+            time: format!("{}T00:00:00", day),
+            amount: -((amount * 100.0).round() / 100.0),
+            method: "按量计费".to_string(),
+        })
+        .collect();
 
     Ok(Json(serde_json::json!({ "items": items, "total": total })))
 }
@@ -202,7 +247,11 @@ pub(crate) async fn billing_months(
     let months = if can_view_all {
         state.db.billing_months().await.map_err(db_err)?
     } else {
-        state.db.billing_months_for_user(&session.user_id).await.map_err(db_err)?
+        state
+            .db
+            .billing_months_for_user(&session.user_id)
+            .await
+            .map_err(db_err)?
     };
     Ok(Json(months))
 }
@@ -224,12 +273,21 @@ pub(crate) async fn billing_period_summary_all(
     let records = if can_view_all {
         state.db.period_summary_all().await.map_err(db_err)?
     } else {
-        state.db.period_summary_for_user(&session.user_id).await.map_err(db_err)?
+        state
+            .db
+            .period_summary_for_user(&session.user_id)
+            .await
+            .map_err(db_err)?
     };
-    Ok(Json(records.into_iter().map(|(month, cost, req, tok)| MonthSummary {
-        month,
-        total_cost: (cost * 100.0).round() / 100.0,
-        total_requests: req,
-        total_tokens: tok,
-    }).collect()))
+    Ok(Json(
+        records
+            .into_iter()
+            .map(|(month, cost, req, tok)| MonthSummary {
+                month,
+                total_cost: (cost * 100.0).round() / 100.0,
+                total_requests: req,
+                total_tokens: tok,
+            })
+            .collect(),
+    ))
 }

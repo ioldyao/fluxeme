@@ -33,7 +33,8 @@ pub(crate) async fn change_my_password(
     let user = state
         .db
         .get_user_with_password(&session.user_id)
-        .await.map_err(db_err)?;
+        .await
+        .map_err(db_err)?;
 
     if let Some(u) = user {
         if let Some(ref hash) = u.password_hash {
@@ -68,7 +69,8 @@ pub(crate) async fn change_my_password(
     let existing = state
         .db
         .get_user(&session.user_id)
-        .await.map_err(db_err)?
+        .await
+        .map_err(db_err)?
         .ok_or_else(|| AdminError::not_found("User not found"))?;
 
     let updated = User {
@@ -97,7 +99,11 @@ pub(crate) async fn get_my_timezone(
     headers: HeaderMap,
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    let tz = state.db.get_user_timezone(&session.user_id).await.map_err(db_err)?;
+    let tz = state
+        .db
+        .get_user_timezone(&session.user_id)
+        .await
+        .map_err(db_err)?;
     Ok(Json(serde_json::json!({ "timezone": tz })))
 }
 
@@ -116,9 +122,12 @@ pub(crate) async fn update_my_timezone(
     state
         .db
         .update_user_timezone(&session.user_id, &req.timezone)
-        .await.map_err(db_err)?;
+        .await
+        .map_err(db_err)?;
 
-    Ok(Json(serde_json::json!({ "ok": true, "timezone": req.timezone })))
+    Ok(Json(
+        serde_json::json!({ "ok": true, "timezone": req.timezone }),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -131,7 +140,11 @@ pub(crate) async fn get_my_currency(
     headers: HeaderMap,
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    let cur = state.db.get_user_currency(&session.user_id).await.map_err(db_err)?;
+    let cur = state
+        .db
+        .get_user_currency(&session.user_id)
+        .await
+        .map_err(db_err)?;
     Ok(Json(serde_json::json!({ "currency": cur })))
 }
 
@@ -141,8 +154,14 @@ pub(crate) async fn update_my_currency(
     Json(req): Json<UpdateCurrencyReq>,
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    state.db.update_user_currency(&session.user_id, &req.currency).await.map_err(db_err)?;
-    Ok(Json(serde_json::json!({ "ok": true, "currency": req.currency })))
+    state
+        .db
+        .update_user_currency(&session.user_id, &req.currency)
+        .await
+        .map_err(db_err)?;
+    Ok(Json(
+        serde_json::json!({ "ok": true, "currency": req.currency }),
+    ))
 }
 
 pub(crate) async fn my_keys(
@@ -150,7 +169,11 @@ pub(crate) async fn my_keys(
     headers: HeaderMap,
 ) -> Result<Json<Vec<ApiKey>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    let keys = state.db.list_api_keys(&session.user_id).await.map_err(db_err)?;
+    let keys = state
+        .db
+        .list_api_keys(&session.user_id)
+        .await
+        .map_err(db_err)?;
     Ok(Json(keys))
 }
 
@@ -213,7 +236,11 @@ pub(crate) async fn update_my_key(
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
 
-    let keys = state.db.list_api_keys(&session.user_id).await.map_err(db_err)?;
+    let keys = state
+        .db
+        .list_api_keys(&session.user_id)
+        .await
+        .map_err(db_err)?;
     let existing = keys
         .iter()
         .find(|k| k.key == key_val)
@@ -243,7 +270,11 @@ pub(crate) async fn delete_my_key(
     let session = require_session(&state.admin, &headers).await?;
 
     // Verify the key belongs to the current user
-    let keys = state.db.list_api_keys(&session.user_id).await.map_err(db_err)?;
+    let keys = state
+        .db
+        .list_api_keys(&session.user_id)
+        .await
+        .map_err(db_err)?;
     if !keys.iter().any(|k| k.key == key_val) {
         return Err(AdminError::not_found("Key not found"));
     }
@@ -267,7 +298,11 @@ pub(crate) async fn toggle_my_key(
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
 
-    let keys = state.db.list_api_keys(&session.user_id).await.map_err(db_err)?;
+    let keys = state
+        .db
+        .list_api_keys(&session.user_id)
+        .await
+        .map_err(db_err)?;
     if !keys.iter().any(|k| k.key == key_val) {
         return Err(AdminError::not_found("Key not found"));
     }

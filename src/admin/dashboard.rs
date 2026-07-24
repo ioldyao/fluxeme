@@ -48,8 +48,16 @@ pub(crate) async fn admin_dashboard(
             total_requests,
         }))
     } else {
-        let api_keys = state.db.list_api_keys(&session.user_id).await.map_err(db_err)?;
-        let user_requests = state.usage.count_by_user(&session.user_id).await.unwrap_or(0);
+        let api_keys = state
+            .db
+            .list_api_keys(&session.user_id)
+            .await
+            .map_err(db_err)?;
+        let user_requests = state
+            .usage
+            .count_by_user(&session.user_id)
+            .await
+            .unwrap_or(0);
 
         Ok(Json(DashboardResp {
             users: 0,
@@ -87,7 +95,11 @@ pub(crate) async fn dashboard_aggregations(
     headers: HeaderMap,
 ) -> Result<Json<DashboardAggregations>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    let tz = state.db.get_user_timezone(&session.user_id).await.map_err(db_err)?;
+    let tz = state
+        .db
+        .get_user_timezone(&session.user_id)
+        .await
+        .map_err(db_err)?;
     let offset = tz_offset_seconds(Some(&tz));
     let since_24h = since_local_days_ago(1, offset);
 
@@ -104,11 +116,19 @@ pub(crate) async fn dashboard_aggregations(
     for m in &models {
         pricing.insert(
             m.name.clone(),
-            (m.pricing.prompt_price, m.pricing.completion_price, m.pricing.cache_read_price),
+            (
+                m.pricing.prompt_price,
+                m.pricing.completion_price,
+                m.pricing.cache_read_price,
+            ),
         );
         pricing.insert(
             m.model_pattern.clone(),
-            (m.pricing.prompt_price, m.pricing.completion_price, m.pricing.cache_read_price),
+            (
+                m.pricing.prompt_price,
+                m.pricing.completion_price,
+                m.pricing.cache_read_price,
+            ),
         );
     }
 
@@ -148,7 +168,6 @@ pub(crate) async fn dashboard_aggregations(
         .await
         .unwrap_or((0, 0, 0, 0));
 
-
     if requests_24h == 0 {
         return Ok(Json(DashboardAggregations {
             total_requests,
@@ -166,7 +185,8 @@ pub(crate) async fn dashboard_aggregations(
     let records = state
         .usage
         .cost_rows_since(&since_24h, user_filter)
-        .await.map_err(AdminError::internal)?;
+        .await
+        .map_err(AdminError::internal)?;
     let mut total_cost_24h = 0.0_f64;
     let mut model_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for r in &records {
@@ -186,7 +206,8 @@ pub(crate) async fn dashboard_aggregations(
     let all_records = state
         .usage
         .cost_rows_since("1970-01-01T00:00:00", user_filter)
-        .await.map_err(AdminError::internal)?;
+        .await
+        .map_err(AdminError::internal)?;
     let total_cost: f64 = all_records
         .iter()
         .map(|r| {
@@ -220,7 +241,7 @@ pub(crate) async fn dashboard_aggregations(
             model,
         })
         .collect();
-    top_models.sort_by(|a, b| b.count.cmp(&a.count));
+    top_models.sort_by_key(|model| std::cmp::Reverse(model.count));
     top_models.truncate(10);
 
     Ok(Json(DashboardAggregations {

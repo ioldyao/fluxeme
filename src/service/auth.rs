@@ -46,9 +46,9 @@ impl AuthService {
     }
 
     pub fn authenticate(&self, headers: &HeaderMap) -> Result<AuthResult, AuthError> {
-        let key = self.extract_key(headers).ok_or_else(|| {
-            AuthError("Missing or invalid API key".into())
-        })?;
+        let key = self
+            .extract_key(headers)
+            .ok_or_else(|| AuthError("Missing or invalid API key".into()))?;
 
         // Check user API keys
         {
@@ -72,9 +72,10 @@ impl AuthService {
                 return Ok(AuthResult {
                     user_id: user.id.clone(),
                     user_name: user.name.clone(),
-                    rate_limits: user.rate_limits.as_ref().map(|rl| {
-                        (rl.rpm.unwrap_or(u64::MAX), rl.tpm.unwrap_or(u64::MAX))
-                    }),
+                    rate_limits: user
+                        .rate_limits
+                        .as_ref()
+                        .map(|rl| (rl.rpm.unwrap_or(u64::MAX), rl.tpm.unwrap_or(u64::MAX))),
                     allowed_models: api_key.allowed_models.clone(),
                     api_key_name: api_key.name.clone(),
                     concurrency_limit: user.concurrency_limit,

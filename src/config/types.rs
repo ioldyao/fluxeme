@@ -110,7 +110,9 @@ impl Default for CacheConfig {
     }
 }
 
-fn default_cache_enabled() -> bool { true }
+fn default_cache_enabled() -> bool {
+    true
+}
 
 fn default_cache_redis_url() -> String {
     "redis://127.0.0.1:16379".to_string()
@@ -160,15 +162,33 @@ pub struct GatewayRuntimeConfig {
     pub billing_enabled: bool,
 }
 
-fn default_connect_timeout() -> u64 { 10 }
-fn default_unary_base_timeout() -> u64 { 60 }
-fn default_body_size_extra() -> u64 { 5 }
-fn default_stream_first_byte_timeout() -> u64 { 60 }
-fn default_stream_idle_timeout() -> u64 { 30 }
-fn default_stream_total_timeout() -> u64 { 600 }
-fn default_max_retries() -> u32 { 2 }
-fn default_handler_timeout() -> u64 { 240 }
-fn default_cache_ttl() -> u64 { 300 }
+fn default_connect_timeout() -> u64 {
+    10
+}
+fn default_unary_base_timeout() -> u64 {
+    60
+}
+fn default_body_size_extra() -> u64 {
+    5
+}
+fn default_stream_first_byte_timeout() -> u64 {
+    60
+}
+fn default_stream_idle_timeout() -> u64 {
+    30
+}
+fn default_stream_total_timeout() -> u64 {
+    600
+}
+fn default_max_retries() -> u32 {
+    2
+}
+fn default_handler_timeout() -> u64 {
+    240
+}
+fn default_cache_ttl() -> u64 {
+    300
+}
 
 impl Default for GatewayRuntimeConfig {
     fn default() -> Self {

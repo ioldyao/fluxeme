@@ -1,5 +1,5 @@
-use tokio::sync::broadcast;
 use serde::Serialize;
+use tokio::sync::broadcast;
 
 use super::event::{RequestCompleted, RouteDecided};
 

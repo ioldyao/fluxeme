@@ -103,7 +103,10 @@ impl ProviderAdapter for AnthropicCompatAdapter {
             .unwrap_or("")
             .to_string();
         let openai_body = anthropic_to_openai(&body);
-        let stream = self.inner.chat_complete_stream(endpoint, openai_body).await?;
+        let stream = self
+            .inner
+            .chat_complete_stream(endpoint, openai_body)
+            .await?;
         Ok(wrap_openai_sse_for_anthropic(stream, model))
     }
 }
@@ -143,8 +146,13 @@ pub fn anthropic_to_openai(body: &Value) -> Value {
 
     // shared parameters
     for key in &[
-        "max_tokens", "temperature", "top_p", "stop", "stream",
-        "frequency_penalty", "presence_penalty",
+        "max_tokens",
+        "temperature",
+        "top_p",
+        "stop",
+        "stream",
+        "frequency_penalty",
+        "presence_penalty",
     ] {
         if let Some(v) = body.get(key) {
             openai[key] = v.clone();
@@ -320,11 +328,13 @@ impl ConvertState {
 
         // accumulate usage
         if let Some(u) = val.get("usage") {
-            let p = u.get("prompt_tokens")
+            let p = u
+                .get("prompt_tokens")
                 .or_else(|| u.get("input_tokens"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
-            let c = u.get("completion_tokens")
+            let c = u
+                .get("completion_tokens")
                 .or_else(|| u.get("output_tokens"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
@@ -335,7 +345,8 @@ impl ConvertState {
                 self.output_tokens = c;
             }
             tracing::debug!(
-                p, c,
+                p,
+                c,
                 input_tokens = self.input_tokens,
                 output_tokens = self.output_tokens,
                 "anthropic_compat stream: usage chunk received"

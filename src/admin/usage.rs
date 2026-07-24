@@ -57,14 +57,10 @@ pub(crate) async fn get_usage(
         end_date: q.end_date,
     };
 
-    let total = state
-        .usage
-        .count_filtered(&filter)
-        .await
-        .map_err(|e| {
-            tracing::error!("Usage count failed: {}", e);
-            AdminError::internal("Internal server error")
-        })?;
+    let total = state.usage.count_filtered(&filter).await.map_err(|e| {
+        tracing::error!("Usage count failed: {}", e);
+        AdminError::internal("Internal server error")
+    })?;
 
     let records = state
         .usage
@@ -95,7 +91,8 @@ pub(crate) async fn get_usage_detail(
         })?
         .ok_or_else(|| AdminError::not_found("Usage record not found"))?;
 
-    if !state.authz.enforce(&session.role, "admin:usage").await && record.user_id != session.user_id {
+    if !state.authz.enforce(&session.role, "admin:usage").await && record.user_id != session.user_id
+    {
         return Err(AdminError::not_found("Usage record not found"));
     }
 
@@ -116,7 +113,11 @@ pub(crate) async fn daily_usage(
     let session = require_session(&state.admin, &headers).await?;
 
     let days = q.limit.unwrap_or(14) as i64;
-    let tz = state.db.get_user_timezone(&session.user_id).await.map_err(db_err)?;
+    let tz = state
+        .db
+        .get_user_timezone(&session.user_id)
+        .await
+        .map_err(db_err)?;
     let offset = tz_offset_seconds(Some(&tz));
     let since = since_local_days_ago(days, offset);
 
@@ -130,7 +131,8 @@ pub(crate) async fn daily_usage(
     let records = state
         .usage
         .daily_counts(&since, user_filter, offset)
-        .await.map_err(AdminError::internal)?;
+        .await
+        .map_err(AdminError::internal)?;
 
     Ok(Json(
         records
@@ -168,7 +170,11 @@ pub(crate) async fn usage_aggregate(
     let session = require_session(&state.admin, &headers).await?;
 
     let days = q.days.unwrap_or(14);
-    let tz = state.db.get_user_timezone(&session.user_id).await.map_err(db_err)?;
+    let tz = state
+        .db
+        .get_user_timezone(&session.user_id)
+        .await
+        .map_err(db_err)?;
     let offset = tz_offset_seconds(Some(&tz));
     let since = since_local_days_ago(days, offset);
 
@@ -182,7 +188,8 @@ pub(crate) async fn usage_aggregate(
     let records = state
         .usage
         .daily_stats(&since, user_filter, offset)
-        .await.map_err(AdminError::internal)?;
+        .await
+        .map_err(AdminError::internal)?;
 
     Ok(Json(
         records
@@ -220,8 +227,12 @@ pub(crate) async fn model_activity(
     Query(q): Query<UsageAggregateQuery>,
 ) -> Result<Json<Vec<ModelActivity>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    let days = q.days.unwrap_or(7) as i64;
-    let tz = state.db.get_user_timezone(&session.user_id).await.map_err(db_err)?;
+    let days = q.days.unwrap_or(7);
+    let tz = state
+        .db
+        .get_user_timezone(&session.user_id)
+        .await
+        .map_err(db_err)?;
     let offset = tz_offset_seconds(Some(&tz));
     let since = since_local_days_ago(days, offset);
     let can_view_all = state.authz.enforce(&session.role, "admin:usage").await;

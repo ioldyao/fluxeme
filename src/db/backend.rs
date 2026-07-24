@@ -14,6 +14,7 @@ use super::{DbError, ProbeResultRow, RechargeKeyRow, WalletTransactionRow};
 ///
 /// The contract remains separate from `PgBackend` so services can use test
 /// doubles without adding another production database implementation.
+#[allow(dead_code, clippy::too_many_arguments)]
 #[async_trait]
 pub trait DbBackend: Send + Sync {
     // ── Migration ────────────────────────────────────────────────────────
@@ -79,55 +80,176 @@ pub trait DbBackend: Send + Sync {
     async fn count_usage(&self) -> Result<usize, DbError>;
     async fn count_usage_by_user(&self, user_id: &str) -> Result<usize, DbError>;
     async fn count_usage_filtered(&self, filter: &UsageFilter) -> Result<usize, DbError>;
-    async fn query_usage(&self, limit: usize, offset: usize, filter: &UsageFilter) -> Result<Vec<UsageRecord>, DbError>;
+    async fn query_usage(
+        &self,
+        limit: usize,
+        offset: usize,
+        filter: &UsageFilter,
+    ) -> Result<Vec<UsageRecord>, DbError>;
     async fn get_usage_detail(&self, request_id: &str) -> Result<Option<UsageRecord>, DbError>;
     async fn purge_usage_logs(&self, cutoff: &str) -> Result<usize, DbError>;
-    async fn usage_stats_since(&self, since: &str, user_id: Option<&str>) -> Result<(u64, u64, u64, u64), DbError>;
-    async fn usage_cost_rows_since(&self, since: &str, user_id: Option<&str>) -> Result<Vec<UsageRecord>, DbError>;
-    async fn query_usage_since(&self, since: &str, user_id: Option<&str>) -> Result<Vec<UsageRecord>, DbError>;
-    async fn daily_usage_counts(&self, since: &str, user_id: Option<&str>, tz_offset_seconds: i64) -> Result<Vec<(String, i64)>, DbError>;
-    async fn daily_usage_stats(&self, since: &str, user_id: Option<&str>, tz_offset_seconds: i64) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64, u64)>, DbError>;
-    async fn model_activity(&self, since: &str, user_id: Option<&str>) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError>;
+    async fn usage_stats_since(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<(u64, u64, u64, u64), DbError>;
+    async fn usage_cost_rows_since(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<Vec<UsageRecord>, DbError>;
+    async fn query_usage_since(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<Vec<UsageRecord>, DbError>;
+    async fn daily_usage_counts(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+        tz_offset_seconds: i64,
+    ) -> Result<Vec<(String, i64)>, DbError>;
+    async fn daily_usage_stats(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+        tz_offset_seconds: i64,
+    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64, u64)>, DbError>;
+    async fn model_activity(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError>;
 
     // ── Billing / Period ─────────────────────────────────────────────────
-    async fn period_summary(&self, year: i32, month: u32, user_id: Option<&str>) -> Result<(f64, u64, u64), DbError>;
-    async fn period_model_breakdown(&self, year: i32, month: u32, user_id: Option<&str>) -> Result<Vec<(String, f64)>, DbError>;
-    async fn period_channel_breakdown(&self, year: i32, month: u32, user_id: Option<&str>) -> Result<Vec<(String, String, f64)>, DbError>;
-    async fn daily_deductions(&self, year: i32, month: u32, user_id: Option<&str>) -> Result<Vec<(String, f64, u64)>, DbError>;
-    async fn count_daily_deductions(&self, year: i32, month: u32, user_id: Option<&str>) -> Result<usize, DbError>;
-    async fn daily_deductions_paginated(&self, year: i32, month: u32, user_id: Option<&str>, limit: usize, offset: usize) -> Result<Vec<(String, f64, u64)>, DbError>;
+    async fn period_summary(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+    ) -> Result<(f64, u64, u64), DbError>;
+    async fn period_model_breakdown(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, f64)>, DbError>;
+    async fn period_channel_breakdown(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, String, f64)>, DbError>;
+    async fn daily_deductions(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, f64, u64)>, DbError>;
+    async fn count_daily_deductions(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+    ) -> Result<usize, DbError>;
+    async fn daily_deductions_paginated(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<(String, f64, u64)>, DbError>;
     async fn billing_months(&self) -> Result<Vec<String>, DbError>;
     async fn billing_months_for_user(&self, user_id: &str) -> Result<Vec<String>, DbError>;
     async fn period_summary_all(&self) -> Result<Vec<(String, f64, u64, u64)>, DbError>;
-    async fn period_summary_for_user(&self, user_id: &str) -> Result<Vec<(String, f64, u64, u64)>, DbError>;
+    async fn period_summary_for_user(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<(String, f64, u64, u64)>, DbError>;
     async fn lookup_model_pricing(&self, model_name: &str) -> Result<(f64, f64), DbError>;
 
     // ── Wallet ───────────────────────────────────────────────────────────
     async fn get_wallet_balance(&self, user_id: &str) -> Result<(f64, f64), DbError>;
     async fn update_wallet_balance(&self, user_id: &str, balance: f64) -> Result<(), DbError>;
-    async fn add_wallet_transaction(&self, id: &str, user_id: &str, tx_type: &str, amount: f64, balance_before: f64, balance_after: f64, method: &str, status: &str, note: &str) -> Result<(), DbError>;
-    async fn get_wallet_transactions(&self, user_id: &str, page: usize, size: usize) -> Result<Vec<WalletTransactionRow>, DbError>;
+    async fn add_wallet_transaction(
+        &self,
+        id: &str,
+        user_id: &str,
+        tx_type: &str,
+        amount: f64,
+        balance_before: f64,
+        balance_after: f64,
+        method: &str,
+        status: &str,
+        note: &str,
+    ) -> Result<(), DbError>;
+    async fn get_wallet_transactions(
+        &self,
+        user_id: &str,
+        page: usize,
+        size: usize,
+    ) -> Result<Vec<WalletTransactionRow>, DbError>;
     async fn count_wallet_transactions(&self, user_id: &str) -> Result<usize, DbError>;
-    async fn list_wallet_tx_by_dates(&self, user_id: Option<&str>, page: usize, size: usize, since: Option<&str>, until: Option<&str>, tx_type: Option<&str>) -> Result<(Vec<WalletTransactionRow>, usize), DbError>;
+    async fn list_wallet_tx_by_dates(
+        &self,
+        user_id: Option<&str>,
+        page: usize,
+        size: usize,
+        since: Option<&str>,
+        until: Option<&str>,
+        tx_type: Option<&str>,
+    ) -> Result<(Vec<WalletTransactionRow>, usize), DbError>;
     async fn get_total_consumed(&self, user_id: &str) -> Result<f64, DbError>;
     async fn get_total_recharged(&self, user_id: &str) -> Result<f64, DbError>;
     async fn get_wallet_estimated_days(&self, user_id: &str) -> Result<Option<f64>, DbError>;
 
     // ── Recharge Keys ────────────────────────────────────────────────────
-    async fn create_recharge_key(&self, key: &str, amount: f64, created_by: &str, expires_at: Option<&str>) -> Result<(), DbError>;
+    async fn create_recharge_key(
+        &self,
+        key: &str,
+        amount: f64,
+        created_by: &str,
+        expires_at: Option<&str>,
+    ) -> Result<(), DbError>;
     async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<f64, DbError>;
     async fn revoke_recharge_key(&self, key: &str) -> Result<(), DbError>;
     async fn list_recharge_keys(&self) -> Result<Vec<RechargeKeyRow>, DbError>;
-    async fn list_recharge_keys_paginated(&self, limit: usize, offset: usize) -> Result<Vec<RechargeKeyRow>, DbError>;
-    async fn count_recharge_keys_filtered(&self, search: Option<&str>, status: Option<&str>, user_search: Option<&str>) -> Result<usize, DbError>;
-    async fn list_recharge_keys_filtered(&self, limit: usize, offset: usize, search: Option<&str>, status: Option<&str>, user_search: Option<&str>) -> Result<Vec<RechargeKeyRow>, DbError>;
+    async fn list_recharge_keys_paginated(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<RechargeKeyRow>, DbError>;
+    async fn count_recharge_keys_filtered(
+        &self,
+        search: Option<&str>,
+        status: Option<&str>,
+        user_search: Option<&str>,
+    ) -> Result<usize, DbError>;
+    async fn list_recharge_keys_filtered(
+        &self,
+        limit: usize,
+        offset: usize,
+        search: Option<&str>,
+        status: Option<&str>,
+        user_search: Option<&str>,
+    ) -> Result<Vec<RechargeKeyRow>, DbError>;
 
     // ── Settings ─────────────────────────────────────────────────────────
     async fn get_setting(&self, key: &str) -> Result<Option<String>, DbError>;
     async fn set_setting(&self, key: &str, value: &str) -> Result<(), DbError>;
-    async fn get_gateway_config(&self) -> Result<crate::config::types::GatewayRuntimeConfig, DbError>;
-    async fn set_gateway_config(&self, config: &crate::config::types::GatewayRuntimeConfig) -> Result<(), DbError>;
-    async fn get_balances_page(&self, limit: usize, offset: usize) -> Result<Vec<(String, f64, f64)>, DbError>;
+    async fn get_gateway_config(
+        &self,
+    ) -> Result<crate::config::types::GatewayRuntimeConfig, DbError>;
+    async fn set_gateway_config(
+        &self,
+        config: &crate::config::types::GatewayRuntimeConfig,
+    ) -> Result<(), DbError>;
+    async fn get_balances_page(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<(String, f64, f64)>, DbError>;
 
     // ── Content Filter Rules ──────────────────────────────────────────────
     async fn list_filter_rules(&self) -> Result<Vec<ContentFilterRule>, DbError>;
@@ -137,19 +259,28 @@ pub trait DbBackend: Send + Sync {
 
     // ── Health Probe Results ──────────────────────────────────────────────
     async fn insert_probe_result(&self, row: &ProbeResultRow) -> Result<(), DbError>;
-    /// Returns the most recent probe result for each channel.
+    /// Returns the most recent probe result for each (channel, endpoint_url)
+    /// target. Channel-scoped failures with no endpoint URL are preserved as a
+    /// separate latest record.
     async fn all_latest_probe_results(&self) -> Result<Vec<ProbeResultRow>, DbError>;
 
     /// Per-model per-channel usage stats for the health/routing dashboard.
     /// Returns Vec<(channel_id, model, requests_count, success_count, avg_latency, p95_latency)>.
-    async fn channel_usage_24h(&self) -> Result<Vec<(String, String, u64, u64, f64, f64)>, DbError>;
+    async fn channel_usage_24h(&self)
+        -> Result<Vec<(String, String, u64, u64, f64, f64)>, DbError>;
 
     /// Aggregated (model, channel_id, endpoint_id, count) for the last N hours.
     /// Used by the routing flow panel to restore history on page load.
-    async fn routing_flow_snapshot(&self, hours: u32) -> Result<Vec<(String, String, Option<i64>, u64)>, DbError>;
+    async fn routing_flow_snapshot(
+        &self,
+        hours: u32,
+    ) -> Result<Vec<(String, String, Option<i64>, u64)>, DbError>;
     /// Recent request paths with endpoint_id for the routing flow panel.
     /// Returns Vec<(timestamp, model, channel_id, Option<endpoint_id>, latency_ms, success)>.
-    async fn recent_request_paths(&self, limit: usize) -> Result<Vec<(String, String, String, Option<i64>, u64, bool)>, DbError>;
+    async fn recent_request_paths(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(String, String, String, Option<i64>, u64, bool)>, DbError>;
 
     /// Time-bucketed aggregates for routing flow history charts.
     /// Bucket size: hourly when span < 2 days, daily otherwise.

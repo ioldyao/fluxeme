@@ -19,10 +19,7 @@ fn build_anthropic_headers(endpoint: &EndpointConfig) -> Result<HeaderMap, Provi
         HeaderValue::from_str(&endpoint.api_key)
             .map_err(|e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other))?,
     );
-    headers.insert(
-        "anthropic-version",
-        HeaderValue::from_static("2023-06-01"),
-    );
+    headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     Ok(headers)
 }
@@ -78,7 +75,11 @@ impl ProviderAdapter for AnthropicAdapter {
         );
 
         let resp_start = Instant::now();
-        let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
+        let req = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .timeout(timeout);
         let resp = req.send().await.map_err(|e| {
             let kind = classify_reqwest_error(&e);
             tracing::error!(
@@ -100,7 +101,10 @@ impl ProviderAdapter for AnthropicAdapter {
         );
 
         let body_resp = resp.bytes().await.map_err(|e| {
-            ProviderError::new(format!("Failed to read response body: {}", e), ErrorKind::Parse)
+            ProviderError::new(
+                format!("Failed to read response body: {}", e),
+                ErrorKind::Parse,
+            )
         })?;
         tracing::info!(
             endpoint = %endpoint.url,
@@ -118,8 +122,9 @@ impl ProviderAdapter for AnthropicAdapter {
             ));
         }
 
-        let resp_body: Value = serde_json::from_slice(&body_resp)
-            .map_err(|e| ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse))?;
+        let resp_body: Value = serde_json::from_slice(&body_resp).map_err(|e| {
+            ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse)
+        })?;
         Ok(resp_body)
     }
 
@@ -143,7 +148,11 @@ impl ProviderAdapter for AnthropicAdapter {
             "Sending stream request to upstream (anthropic)"
         );
 
-        let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
+        let req = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .timeout(timeout);
         let response = req.send().await.map_err(|e| {
             let kind = classify_reqwest_error(&e);
             tracing::error!(
@@ -186,9 +195,7 @@ impl ProviderAdapter for AnthropicAdapter {
                         }
                     }
                     Err(e) => {
-                        let _ =
-                            tx.send(format!("data: {{\"error\":\"{}\"}}\n\n", e))
-                                .await;
+                        let _ = tx.send(format!("data: {{\"error\":\"{}\"}}\n\n", e)).await;
                         break;
                     }
                 }
@@ -234,7 +241,11 @@ impl ProviderAdapter for AnthropicAdapter {
         );
 
         let resp_start = Instant::now();
-        let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
+        let req = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .timeout(timeout);
         let resp = req.send().await.map_err(|e| {
             let kind = classify_reqwest_error(&e);
             tracing::error!(
@@ -255,7 +266,10 @@ impl ProviderAdapter for AnthropicAdapter {
             "Upstream response header received (anthropic relay)"
         );
         let body_resp = resp.bytes().await.map_err(|e| {
-            ProviderError::new(format!("Failed to read response body: {}", e), ErrorKind::Parse)
+            ProviderError::new(
+                format!("Failed to read response body: {}", e),
+                ErrorKind::Parse,
+            )
         })?;
         tracing::info!(
             endpoint = %endpoint.url,
@@ -274,8 +288,9 @@ impl ProviderAdapter for AnthropicAdapter {
             ));
         }
 
-        let resp_body: Value = serde_json::from_slice(&body_resp)
-            .map_err(|e| ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse))?;
+        let resp_body: Value = serde_json::from_slice(&body_resp).map_err(|e| {
+            ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse)
+        })?;
         Ok(resp_body)
     }
 }

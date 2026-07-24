@@ -75,6 +75,7 @@ impl CircuitBreaker {
         inner.enabled = enabled;
     }
 
+    #[allow(dead_code)]
     pub fn status(&self) -> BreakerStatus {
         self.inner.read().unwrap_or_else(|e| e.into_inner()).status
     }
@@ -108,7 +109,7 @@ impl CircuitBreaker {
 #[derive(Clone)]
 enum Strategy {
     RoundRobin,
-    WeightedRoundRobin { weights: Vec<u32>, total: u32 },
+    WeightedRoundRobin { total: u32 },
 }
 
 #[derive(Clone)]
@@ -131,10 +132,7 @@ impl HealthAwareBalancer {
             Strategy::RoundRobin
         } else {
             let total: u32 = endpoints.iter().map(|e| e.weight).sum();
-            Strategy::WeightedRoundRobin {
-                weights: endpoints.iter().map(|e| e.weight).collect(),
-                total,
-            }
+            Strategy::WeightedRoundRobin { total }
         };
 
         Self {
@@ -145,6 +143,7 @@ impl HealthAwareBalancer {
         }
     }
 
+    #[allow(dead_code)]
     pub fn endpoint_count(&self) -> usize {
         self.endpoints.len()
     }
@@ -179,10 +178,9 @@ impl HealthAwareBalancer {
     fn pick_index(&self, candidates: &[usize]) -> usize {
         match &self.strategy {
             Strategy::RoundRobin => {
-                let pos = self.counter.fetch_add(1, Ordering::Relaxed) % candidates.len();
-                pos
+                self.counter.fetch_add(1, Ordering::Relaxed) % candidates.len()
             }
-            Strategy::WeightedRoundRobin { total, .. } => {
+            Strategy::WeightedRoundRobin { total } => {
                 let counter_val = self.counter.fetch_add(1, Ordering::Relaxed);
                 let pos = counter_val % *total as usize;
 
@@ -210,8 +208,15 @@ impl HealthAwareBalancer {
         }
     }
 
+    #[allow(dead_code)]
     pub fn endpoint(&self, idx: usize) -> Option<&EndpointConfig> {
         self.endpoints.get(idx)
+    }
+
+    /// Return all configured endpoints for administrative health checks.
+    /// This intentionally bypasses load-balancing selection.
+    pub fn endpoints(&self) -> &[EndpointConfig] {
+        &self.endpoints
     }
 }
 
@@ -229,6 +234,7 @@ impl LoadBalancer {
         }
     }
 
+    #[allow(dead_code)]
     pub fn select<'a>(&'a self, _endpoints: &'a EndpointGroup) -> Option<&'a EndpointConfig> {
         self.inner.select().map(|(_, ep)| ep)
     }

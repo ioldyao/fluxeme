@@ -2,7 +2,7 @@ use std::pin::Pin;
 use std::time::Instant;
 
 use futures::stream::StreamExt;
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, AUTHORIZATION};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::Value;
 
 use super::{
@@ -38,8 +38,9 @@ impl ProviderAdapter for OpenAIAdapter {
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key))
-                .map_err(|e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other))?,
+            HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key)).map_err(|e| {
+                ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other)
+            })?,
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
@@ -57,7 +58,11 @@ impl ProviderAdapter for OpenAIAdapter {
         );
 
         let resp_start = Instant::now();
-        let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
+        let req = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .timeout(timeout);
         let resp = req.send().await.map_err(|e| {
             let kind = classify_reqwest_error(&e);
             tracing::error!(
@@ -79,7 +84,10 @@ impl ProviderAdapter for OpenAIAdapter {
         );
 
         let body_resp = resp.bytes().await.map_err(|e| {
-            ProviderError::new(format!("Failed to read response body: {}", e), ErrorKind::Parse)
+            ProviderError::new(
+                format!("Failed to read response body: {}", e),
+                ErrorKind::Parse,
+            )
         })?;
         tracing::info!(
             endpoint = %endpoint.url,
@@ -98,8 +106,9 @@ impl ProviderAdapter for OpenAIAdapter {
             ));
         }
 
-        let resp_body: Value = serde_json::from_slice(&body_resp)
-            .map_err(|e| ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse))?;
+        let resp_body: Value = serde_json::from_slice(&body_resp).map_err(|e| {
+            ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse)
+        })?;
         Ok(resp_body)
     }
 
@@ -117,8 +126,9 @@ impl ProviderAdapter for OpenAIAdapter {
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key))
-                .map_err(|e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other))?,
+            HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key)).map_err(|e| {
+                ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other)
+            })?,
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
@@ -131,19 +141,19 @@ impl ProviderAdapter for OpenAIAdapter {
             "Sending stream request to upstream (openai)"
         );
 
-        let req = client.post(&url).headers(headers).json(&body).timeout(timeout);
-        let response = req.send().await
-            .map_err(|e| {
-                let kind = classify_reqwest_error(&e);
-                ProviderError::new(format!("Stream request failed: {}", e), kind)
-            })?;
+        let req = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .timeout(timeout);
+        let response = req.send().await.map_err(|e| {
+            let kind = classify_reqwest_error(&e);
+            ProviderError::new(format!("Stream request failed: {}", e), kind)
+        })?;
 
         let status = response.status();
         if !status.is_success() {
-            let body = response
-                .text()
-                .await
-                .unwrap_or_default();
+            let body = response.text().await.unwrap_or_default();
             let kind = classify_status(status.as_u16());
             tracing::error!(%status, body = %body, "openai upstream stream request failed");
             return Err(ProviderError::new(
@@ -154,9 +164,8 @@ impl ProviderAdapter for OpenAIAdapter {
 
         let byte_stream = response.bytes_stream();
         let mapped = byte_stream.map(|chunk| match chunk {
-            Ok(bytes) => String::from_utf8(bytes.to_vec()).unwrap_or_else(|e| {
-                String::from_utf8_lossy(e.as_bytes()).to_string()
-            }),
+            Ok(bytes) => String::from_utf8(bytes.to_vec())
+                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).to_string()),
             Err(e) => format!("data: {{\"error\":\"{}\"}}\n\n", e),
         });
 

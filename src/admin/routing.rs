@@ -21,7 +21,8 @@ pub(crate) async fn routing_health(
     let models = state.db.list_models().await.map_err(db_err)?;
     let usage = state.db.channel_usage_24h().await.map_err(db_err)?;
 
-    let mut usage_map: std::collections::HashMap<(String, String), (u64, u64, f64, f64)> = std::collections::HashMap::new();
+    let mut usage_map: std::collections::HashMap<(String, String), (u64, u64, f64, f64)> =
+        std::collections::HashMap::new();
     for (ch, md, req, suc, avg, p95) in &usage {
         usage_map.insert((ch.clone(), md.clone()), (*req, *suc, *avg, *p95));
     }
@@ -39,15 +40,21 @@ pub(crate) async fn routing_health(
         for binding in &m.channels {
             let key = (binding.channel_id.clone(), m.name.clone());
             let (req, suc, avg, p95) = usage_map.get(&key).copied().unwrap_or((0, 0, 0.0, 0.0));
-            if req > 0 { model_total += req; }
+            if req > 0 {
+                model_total += req;
+            }
 
             let health = state.routing.channel_health(&binding.channel_id);
-            let circuit_ok = health.iter().any(|(_, enabled, available)| *enabled && *available);
+            let circuit_ok = health
+                .iter()
+                .any(|(_, enabled, available)| *enabled && *available);
             let any_enabled = health.iter().any(|(_, enabled, _)| *enabled);
             let circuit_enabled = any_enabled || health.is_empty();
 
             if req > 0 || any_enabled {
-                let ch_name = state.routing.get_channel(&binding.channel_id)
+                let ch_name = state
+                    .routing
+                    .get_channel(&binding.channel_id)
                     .map(|c| if c.name.is_empty() { c.id } else { c.name })
                     .unwrap_or_else(|| binding.channel_id.clone());
 
@@ -60,13 +67,16 @@ pub(crate) async fn routing_health(
                     }
                 }
 
-                let endpoints: Vec<serde_json::Value> = health.iter().map(|(eid, enabled, available)| {
-                    serde_json::json!({
-                        "endpoint_id": eid,
-                        "enabled": enabled,
-                        "available": available,
+                let endpoints: Vec<serde_json::Value> = health
+                    .iter()
+                    .map(|(eid, enabled, available)| {
+                        serde_json::json!({
+                            "endpoint_id": eid,
+                            "enabled": enabled,
+                            "available": available,
+                        })
                     })
-                }).collect();
+                    .collect();
 
                 ch_results.push(serde_json::json!({
                     "channel_id": binding.channel_id,
@@ -96,7 +106,11 @@ pub(crate) async fn routing_health(
         }
     }
 
-    let overall_rate = if total_requests_24h > 0 { total_success as f64 / total_requests_24h as f64 } else { 0.0 };
+    let overall_rate = if total_requests_24h > 0 {
+        total_success as f64 / total_requests_24h as f64
+    } else {
+        0.0
+    };
 
     Ok(Json(serde_json::json!({
         "models": model_results,
@@ -118,11 +132,7 @@ pub(crate) async fn recent_request_paths(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:dashboard").await?;
 
-    let records = state
-        .db
-        .recent_request_paths(15)
-        .await
-        .map_err(db_err)?;
+    let records = state.db.recent_request_paths(15).await.map_err(db_err)?;
 
     let paths: Vec<serde_json::Value> = records
         .into_iter()
@@ -184,9 +194,17 @@ pub(crate) struct EndptDetail {
     p95_latency: f64,
 }
 
-pub(crate) async fn routing_flow_snapshot_handler(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Result<Json<Vec<(String, String, Option<i64>, u64)>>, AdminError> {
+pub(crate) async fn routing_flow_snapshot_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<(String, String, Option<i64>, u64)>>, AdminError> {
     let _session = require_session(&state.admin, &headers).await?;
-    state.db.routing_flow_snapshot(24).await.map(Json).map_err(|e| AdminError::internal(e.to_string()))
+    state
+        .db
+        .routing_flow_snapshot(24)
+        .await
+        .map(Json)
+        .map_err(|e| AdminError::internal(e.to_string()))
 }
 
 pub(crate) async fn routing_history(
@@ -218,28 +236,48 @@ pub(crate) async fn routing_history(
             AdminError::internal(e.to_string())
         })?;
 
-    let details = state.db.routing_history_endpoint_details(&q.start, &q.end, model_filter).await
-        .map_err(|e| { tracing::error!(error=%e.0,"routing_history_endpoint_details query failed"); AdminError::internal(e.to_string()) })?;
-    let mut ep_by_channel: std::collections::HashMap<String, Vec<EndptDetail>> = std::collections::HashMap::new();
+    let details = state
+        .db
+        .routing_history_endpoint_details(&q.start, &q.end, model_filter)
+        .await
+        .map_err(|e| {
+            tracing::error!(error=%e.0,"routing_history_endpoint_details query failed");
+            AdminError::internal(e.to_string())
+        })?;
+    let mut ep_by_channel: std::collections::HashMap<String, Vec<EndptDetail>> =
+        std::collections::HashMap::new();
     for (ch, eid, url, reqs, succs, avg, p95) in &details {
-        let rate = if *reqs > 0 { (*succs as f64 / *reqs as f64) * 100.0 } else { 0.0 };
-        ep_by_channel.entry(ch.clone()).or_default().push(EndptDetail {
-            endpoint_id: *eid, url: url.clone().unwrap_or_default(), requests: *reqs,
-            success_rate: (rate*10.0).round()/10.0, avg_latency: (avg*10.0).round()/10.0, p95_latency: (p95*10.0).round()/10.0,
-        });
+        let rate = if *reqs > 0 {
+            (*succs as f64 / *reqs as f64) * 100.0
+        } else {
+            0.0
+        };
+        ep_by_channel
+            .entry(ch.clone())
+            .or_default()
+            .push(EndptDetail {
+                endpoint_id: *eid,
+                url: url.clone().unwrap_or_default(),
+                requests: *reqs,
+                success_rate: (rate * 10.0).round() / 10.0,
+                avg_latency: (avg * 10.0).round() / 10.0,
+                p95_latency: (p95 * 10.0).round() / 10.0,
+            });
     }
 
     // Build time-series: one series per channel
-    let mut channel_map: std::collections::HashMap<String, Vec<(String, u64, u64)>> = std::collections::HashMap::new();
+    let mut channel_map: std::collections::HashMap<String, Vec<(String, u64, u64)>> =
+        std::collections::HashMap::new();
     let mut all_buckets: Vec<String> = Vec::new();
     for b in &buckets {
         if all_buckets.last() != Some(&b.bucket) {
             all_buckets.push(b.bucket.clone());
         }
-        channel_map
-            .entry(b.channel_id.clone())
-            .or_default()
-            .push((b.bucket.clone(), b.requests, b.successes));
+        channel_map.entry(b.channel_id.clone()).or_default().push((
+            b.bucket.clone(),
+            b.requests,
+            b.successes,
+        ));
     }
 
     let mut series = std::collections::HashMap::new();
@@ -249,28 +287,64 @@ pub(crate) async fn routing_history(
             .get_channel(ch_id)
             .map(|c| c.name)
             .unwrap_or_else(|| ch_id.clone());
-        let volume: Vec<u64> = all_buckets.iter().map(|bk| {
-            points.iter().find(|(b, _, _)| b == bk).map(|(_, v, _)| *v).unwrap_or(0)
-        }).collect();
-        let success_rate: Vec<f64> = all_buckets.iter().map(|bk| {
-            points.iter().find(|(b, _, _)| b == bk).map(|(_, v, s)| {
-                if *v > 0 { (*s as f64 / *v as f64) * 100.0 } else { 0.0 }
-            }).unwrap_or(0.0)
-        }).collect();
-        series.insert(ch_id.clone(), ChannelSeries { channel_name: ch_name, volume, success_rate });
+        let volume: Vec<u64> = all_buckets
+            .iter()
+            .map(|bk| {
+                points
+                    .iter()
+                    .find(|(b, _, _)| b == bk)
+                    .map(|(_, v, _)| *v)
+                    .unwrap_or(0)
+            })
+            .collect();
+        let success_rate: Vec<f64> = all_buckets
+            .iter()
+            .map(|bk| {
+                points
+                    .iter()
+                    .find(|(b, _, _)| b == bk)
+                    .map(|(_, v, s)| {
+                        if *v > 0 {
+                            (*s as f64 / *v as f64) * 100.0
+                        } else {
+                            0.0
+                        }
+                    })
+                    .unwrap_or(0.0)
+            })
+            .collect();
+        series.insert(
+            ch_id.clone(),
+            ChannelSeries {
+                channel_name: ch_name,
+                volume,
+                success_rate,
+            },
+        );
     }
 
-    let summary: Vec<ChannelSummary> = stats.iter().map(|s| {
-        let rate = if s.requests > 0 { (s.successes as f64 / s.requests as f64) * 100.0 } else { 0.0 };
-        ChannelSummary {
-            channel_id: s.channel_id.clone(),
-            requests: s.requests,
-            success_rate: (rate * 10.0).round() / 10.0,
-            avg_latency: (s.avg_latency * 10.0).round() / 10.0,
-            p95_latency: (s.p95_latency * 10.0).round() / 10.0,
-            endpoints: ep_by_channel.remove(&s.channel_id).unwrap_or_default(),
-        }
-    }).collect();
+    let summary: Vec<ChannelSummary> = stats
+        .iter()
+        .map(|s| {
+            let rate = if s.requests > 0 {
+                (s.successes as f64 / s.requests as f64) * 100.0
+            } else {
+                0.0
+            };
+            ChannelSummary {
+                channel_id: s.channel_id.clone(),
+                requests: s.requests,
+                success_rate: (rate * 10.0).round() / 10.0,
+                avg_latency: (s.avg_latency * 10.0).round() / 10.0,
+                p95_latency: (s.p95_latency * 10.0).round() / 10.0,
+                endpoints: ep_by_channel.remove(&s.channel_id).unwrap_or_default(),
+            }
+        })
+        .collect();
 
-    Ok(Json(RoutingHistoryResponse { buckets: all_buckets, series, summary }))
+    Ok(Json(RoutingHistoryResponse {
+        buckets: all_buckets,
+        series,
+        summary,
+    }))
 }

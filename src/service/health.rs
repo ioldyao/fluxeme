@@ -52,13 +52,19 @@ impl HealthService {
             .timeout(std::time::Duration::from_secs(10))
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-        Ok(Self { db, client, enc_key: enc_key.to_string() })
+        Ok(Self {
+            db,
+            client,
+            enc_key: enc_key.to_string(),
+        })
     }
 
     /// Check a single channel by ID. Returns per-endpoint health results.
     pub async fn check_channel(&self, channel_id: &str) -> Result<ChannelHealthResult, String> {
         let channels = self.db.list_channels().await.map_err(|e| e.0)?;
-        let ch = channels.iter().find(|c| c.id == channel_id)
+        let ch = channels
+            .iter()
+            .find(|c| c.id == channel_id)
             .ok_or_else(|| format!("Channel '{}' not found", channel_id))?;
 
         let mut ep_results = Vec::new();
@@ -135,13 +141,18 @@ impl HealthService {
 
     /// Fetch raw upstream model list from a channel's endpoint.
     /// Returns deduplicated model info, keeping the max max_model_len across endpoints.
-    pub async fn list_upstream_models(&self, channel_id: &str) -> Result<Vec<UpstreamModelInfo>, String> {
+    pub async fn list_upstream_models(
+        &self,
+        channel_id: &str,
+    ) -> Result<Vec<UpstreamModelInfo>, String> {
         let channels = self.db.list_channels().await.map_err(|e| e.0)?;
-        let ch = channels.iter()
+        let ch = channels
+            .iter()
             .find(|c| c.id == channel_id)
             .ok_or_else(|| format!("Channel '{}' not found", channel_id))?;
 
-        let mut seen: std::collections::HashMap<String, Option<i64>> = std::collections::HashMap::new();
+        let mut seen: std::collections::HashMap<String, Option<i64>> =
+            std::collections::HashMap::new();
         for ep in &ch.endpoints {
             let base = ep.url.trim_end_matches('/').trim_end_matches("/v1");
             let url = format!("{}/v1/models", base);
@@ -179,16 +190,26 @@ impl HealthService {
     }
 
     /// Fetch /v1/models from a single endpoint and return raw upstream models.
-    async fn fetch_upstream_models(&self, url: &str, api_key: &str) -> Result<Vec<UpstreamModel>, String> {
+    async fn fetch_upstream_models(
+        &self,
+        url: &str,
+        api_key: &str,
+    ) -> Result<Vec<UpstreamModel>, String> {
         let mut req = self.client.get(url);
         if !api_key.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", api_key));
         }
-        let resp = req.send().await.map_err(|e| format!("HTTP request failed: {}", e))?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("HTTP request failed: {}", e))?;
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status()));
         }
-        let body: UpstreamModelsResponse = resp.json().await.map_err(|e| format!("JSON parse failed: {}", e))?;
+        let body: UpstreamModelsResponse = resp
+            .json()
+            .await
+            .map_err(|e| format!("JSON parse failed: {}", e))?;
         Ok(body.data)
     }
 
@@ -202,14 +223,19 @@ impl HealthService {
 
         let mut updated = 0;
         for upstream in &body {
-            let Some(len) = upstream.max_model_len else { continue };
+            let Some(len) = upstream.max_model_len else {
+                continue;
+            };
 
             // Match upstream model ID against gateway model_patterns
             for m in &models {
                 if match_pattern(&upstream.id, &m.model_pattern) {
                     let current = m.context_length.unwrap_or(0);
                     if len > current {
-                        self.db.set_model_context_length(&m.id, len).await.map_err(|e| e.0)?;
+                        self.db
+                            .set_model_context_length(&m.id, len)
+                            .await
+                            .map_err(|e| e.0)?;
                         updated += 1;
                     }
                 }

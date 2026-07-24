@@ -27,10 +27,7 @@ pub(crate) async fn admin_login(
 ) -> Result<axum::response::Response, AdminError> {
     // Rate limit login attempts by real peer IP
     let client_ip = addr.ip().to_string();
-    if let Some(fwd) = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-    {
+    if let Some(fwd) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
         tracing::debug!(real_ip = %client_ip, forwarded_for = %fwd, "login attempt");
     }
     state
@@ -42,7 +39,8 @@ pub(crate) async fn admin_login(
     let user = state
         .db
         .get_user_with_password(&req.username)
-        .await.map_err(db_err)?;
+        .await
+        .map_err(db_err)?;
 
     let mut password_matched = false;
     if let Some(ref u) = user {
@@ -62,7 +60,10 @@ pub(crate) async fn admin_login(
         }
     } else {
         // Constant-time dummy to prevent user enumeration via timing
-        let _ = bcrypt::verify(&req.password, "$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36PQm4sEPhMNPfFhpYN76Oe");
+        let _ = bcrypt::verify(
+            &req.password,
+            "$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36PQm4sEPhMNPfFhpYN76Oe",
+        );
     }
 
     if password_matched {
@@ -94,7 +95,8 @@ pub(crate) async fn admin_login(
                 "timezone": u.timezone,
                 "currency": u.currency,
             })),
-        ).into_response());
+        )
+            .into_response());
     }
 
     Err(AdminError::unauthorized("Invalid credentials"))
@@ -149,14 +151,14 @@ pub(crate) async fn setup_register(
     if state
         .db
         .get_user(&req.username)
-        .await.map_err(db_err)?
+        .await
+        .map_err(db_err)?
         .is_some()
     {
         return Err(AdminError::bad_request("Username already exists"));
     }
 
-    let hash =
-        bcrypt::hash(&req.password, 10).map_err(|e| AdminError::internal(e.to_string()))?;
+    let hash = bcrypt::hash(&req.password, 10).map_err(|e| AdminError::internal(e.to_string()))?;
 
     let user = User {
         id: req.username.clone(),

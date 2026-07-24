@@ -59,7 +59,11 @@ pub(crate) async fn update_model(
     if model.id != old_id {
         return Err(AdminError::bad_request("Model ID cannot be changed"));
     }
-    state.db.update_model(&old_id, &model).await.map_err(db_err)?;
+    state
+        .db
+        .update_model(&old_id, &model)
+        .await
+        .map_err(db_err)?;
     state.routing.reload().await.map_err(AdminError::internal)?;
 
     tracing::info!(
@@ -118,7 +122,8 @@ pub(crate) async fn toggle_publish_model(
     state
         .db
         .set_model_published(&id, new_status)
-        .await.map_err(db_err)?;
+        .await
+        .map_err(db_err)?;
     if !new_status {
         let _ = state.db.delete_subscriptions_by_model(&id).await;
     }
@@ -144,7 +149,11 @@ pub(crate) async fn update_model_pricing(
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:model-pricing").await?;
-    state.db.set_model_pricing(&id, &pricing).await.map_err(db_err)?;
+    state
+        .db
+        .set_model_pricing(&id, &pricing)
+        .await
+        .map_err(db_err)?;
 
     tracing::info!(
         "admin={} action=update_model_pricing target={}",
@@ -178,7 +187,7 @@ pub(crate) async fn model_health_check(
         .health_probe
         .probe_model(&model_id, &request.channel_ids, request.stream)
         .await
-        .map_err(|e| AdminError::internal(e))?;
+        .map_err(AdminError::internal)?;
 
     Ok(Json(serde_json::json!({
         "model_id": model_id,
@@ -190,14 +199,28 @@ fn normalize_and_validate_model(model: &mut Model) -> Result<(), AdminError> {
     model.id = model.id.trim().to_string();
     model.name = model.name.trim().to_string();
     model.model_pattern = model.model_pattern.trim().to_string();
-    if model.id.is_empty() { return Err(AdminError::bad_request("Model ID is required")); }
-    if model.name.is_empty() { return Err(AdminError::bad_request("Model name is required")); }
-    if model.model_pattern.is_empty() { return Err(AdminError::bad_request("Model pattern is required")); }
-    if model.channels.iter().any(|binding| binding.channel_id.trim().is_empty()) {
+    if model.id.is_empty() {
+        return Err(AdminError::bad_request("Model ID is required"));
+    }
+    if model.name.is_empty() {
+        return Err(AdminError::bad_request("Model name is required"));
+    }
+    if model.model_pattern.is_empty() {
+        return Err(AdminError::bad_request("Model pattern is required"));
+    }
+    if model
+        .channels
+        .iter()
+        .any(|binding| binding.channel_id.trim().is_empty())
+    {
         return Err(AdminError::bad_request("Channel ID cannot be empty"));
     }
     let mut channel_ids = std::collections::HashSet::new();
-    if model.channels.iter().any(|binding| !channel_ids.insert(&binding.channel_id)) {
+    if model
+        .channels
+        .iter()
+        .any(|binding| !channel_ids.insert(&binding.channel_id))
+    {
         return Err(AdminError::bad_request("Duplicate channel binding"));
     }
     Ok(())
@@ -211,6 +234,10 @@ pub(crate) async fn list_probe_results(
 ) -> Result<Json<Vec<crate::db::ProbeResultRow>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:health").await?;
-    let results = state.health_probe.all_latest_probes().await.map_err(|e| AdminError::internal(e))?;
+    let results = state
+        .health_probe
+        .all_latest_probes()
+        .await
+        .map_err(AdminError::internal)?;
     Ok(Json(results))
 }

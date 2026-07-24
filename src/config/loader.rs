@@ -95,15 +95,11 @@ pub fn resolve_encryption_key(cfg: &AppConfig) -> String {
         .ok()
         .or_else(|| cfg.encryption_key.clone())
         .unwrap_or_else(|| {
-            panic!(
-                "GATEWAY_ENCRYPTION_KEY must be set via config or environment variable"
-            );
+            panic!("GATEWAY_ENCRYPTION_KEY must be set via config or environment variable");
         });
 
     if key.starts_with("${") {
-        panic!(
-            "CRITICAL: encryption key references an environment variable which is not set"
-        );
+        panic!("CRITICAL: encryption key references an environment variable which is not set");
     }
     if key.len() < 32 {
         panic!("CRITICAL: GATEWAY_ENCRYPTION_KEY must contain at least 32 characters");
@@ -123,19 +119,14 @@ pub fn resolve_previous_encryption_key(cfg: &AppConfig) -> Option<String> {
             return None;
         }
         if value.len() < 32 {
-            panic!(
-                "CRITICAL: GATEWAY_PREVIOUS_ENCRYPTION_KEY must contain at least 32 characters"
-            );
+            panic!("CRITICAL: GATEWAY_PREVIOUS_ENCRYPTION_KEY must contain at least 32 characters");
         }
     }
     key
 }
 
 /// Seed database from config YAML if database is empty.
-pub async fn seed_from_config(
-    config_path: &str,
-    db: &Database,
-) -> Result<(), String> {
+pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), String> {
     let content = fs::read_to_string(Path::new(config_path))
         .map_err(|e| format!("Failed to read config file: {}", e))?;
 
