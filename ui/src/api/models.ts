@@ -105,8 +105,13 @@ export function useUpdateModelPricing() {
 }
 
 export function useModelHealthCheck() {
+  const qc = useQueryClient();
   return useMutation({
-    mutationFn: (modelId: string) =>
-      api<ModelHealthCheckResult>(`/models/${encodeURIComponent(modelId)}/health-check`, { method: 'POST' }),
+    mutationFn: ({ modelId, channelIds, stream }: { modelId: string; channelIds: string[]; stream: boolean }) =>
+      api<ModelHealthCheckResult>(`/models/${encodeURIComponent(modelId)}/health-check`, {
+        method: 'POST',
+        body: { channel_ids: channelIds, stream },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['probe-results'] }),
   });
 }

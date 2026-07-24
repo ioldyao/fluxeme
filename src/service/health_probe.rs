@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 use crate::db::{Database, ProbeResultRow};
@@ -27,7 +28,7 @@ impl HealthProbeService {
     }
 
     /// Probe all channel bindings for a model and return per-channel results.
-    pub async fn probe_model(&self, model_id: &str) -> Result<Vec<ProbeResultRow>, String> {
+    pub async fn probe_model(&self, model_id: &str, channel_ids: &[String], stream: bool) -> Result<Vec<ProbeResultRow>, String> {
         let model = self
             .db
             .get_model(model_id)
@@ -42,6 +43,12 @@ impl HealthProbeService {
             .collect();
 
         let mut bindings = model.channels.clone();
+        if !channel_ids.is_empty() {
+            bindings.retain(|binding| channel_ids.contains(&binding.channel_id));
+        }
+        if bindings.is_empty() {
+            return Err("No channel bindings selected".to_string());
+        }
         bindings.sort_by_key(|b| b.priority);
         let mut results = Vec::new();
 
@@ -87,21 +94,34 @@ impl HealthProbeService {
                 "model": upstream_name,
                 "messages": [{"role": "user", "content": "hi"}],
                 "temperature": 0.01,
-                "max_tokens": 512,
+                "max_tokens": 1,
                 "top_p": 0.01,
-                "stream": false,
+                "stream": stream,
             });
 
             let start = Instant::now();
-            let result = if provider_name == "anthropic" {
+            let result: Result<(), crate::provider::ProviderError> = if provider_name == "anthropic" {
                 let body = serde_json::json!({
                     "model": upstream_name,
                     "messages": [{"role": "user", "content": "hi"}],
-                    "max_tokens": 512,
+                    "max_tokens": 1,
+                    "stream": stream,
                 });
-                adapter.messages(endpoint, body).await
+                if stream {
+                    match adapter.messages_stream(endpoint, body).await {
+                        Ok(mut response) => response.next().await.map(|_| ()).ok_or_else(|| crate::provider::ProviderError::new("Upstream returned an empty stream", crate::provider::ErrorKind::Other)),
+                        Err(error) => Err(error),
+                    }
+                } else {
+                    adapter.messages(endpoint, body).await.map(|_| ())
+                }
+            } else if stream {
+                match adapter.chat_complete_stream(endpoint, test_body).await {
+                    Ok(mut response) => response.next().await.map(|_| ()).ok_or_else(|| crate::provider::ProviderError::new("Upstream returned an empty stream", crate::provider::ErrorKind::Other)),
+                    Err(error) => Err(error),
+                }
             } else {
-                adapter.chat_complete(endpoint, test_body).await
+                adapter.chat_complete(endpoint, test_body).await.map(|_| ())
             };
             let latency_ms = start.elapsed().as_millis() as u64;
 
