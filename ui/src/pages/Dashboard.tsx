@@ -202,7 +202,7 @@ export default function Dashboard() {
                       <h3 className="mt-1.5 text-sm font-semibold text-foreground">请求入口</h3>
                       <div className="mt-4 text-2xl font-semibold tracking-tight">{total.toLocaleString()}</div>
                       <div className="mt-1 text-[11px] text-muted-foreground">请求数</div>
-                      <div className="mt-3 text-xl font-semibold tracking-tight">{(totalTokens / 100000000).toFixed(1)} 亿</div>
+                      <div className="mt-3 text-xl font-semibold tracking-tight">{totalTokens >= 1000000 ? `${(totalTokens / 1000000).toFixed(1)}M` : totalTokens >= 1000 ? `${(totalTokens / 1000).toFixed(1)}K` : totalTokens.toLocaleString()}</div>
                       <div className="mt-1 text-[11px] text-muted-foreground">Token 数</div>
                       <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
                         <div><span className="text-muted-foreground">平均 QPS</span><div className="font-semibold">{avgQps.toFixed(1)}</div></div>
