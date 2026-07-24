@@ -10,11 +10,10 @@ use crate::domain::user::{ApiKey, User};
 
 use super::{DbError, ProbeResultRow, RechargeKeyRow, WalletTransactionRow};
 
-/// Trait that abstracts the database backend.
+/// PostgreSQL persistence contract used by application services.
 ///
-/// Two implementations exist:
-/// - `SqliteBackend` — wraps synchronous rusqlite calls in `spawn_blocking`.
-/// - `PgBackend` — uses `sqlx::PgPool` natively async.
+/// The contract remains separate from `PgBackend` so services can use test
+/// doubles without adding another production database implementation.
 #[async_trait]
 pub trait DbBackend: Send + Sync {
     // ── Migration ────────────────────────────────────────────────────────

@@ -1,6 +1,5 @@
 pub mod backend;
 pub mod pg_backend;
-pub mod sqlite_backend;
 
 use crate::config::types::GatewayRuntimeConfig;
 use crate::db::backend::DbBackend;
@@ -20,14 +19,8 @@ impl std::fmt::Display for DbError {
     }
 }
 
-impl From<rusqlite::Error> for DbError {
-    fn from(e: rusqlite::Error) -> Self {
-        Self(e.to_string())
-    }
-}
-
-impl From<sqlx::Error> for DbError {
-    fn from(e: sqlx::Error) -> Self {
+impl From<sqlx_core::Error> for DbError {
+    fn from(e: sqlx_core::Error) -> Self {
         Self(e.to_string())
     }
 }
@@ -96,22 +89,12 @@ pub struct Database {
 }
 
 impl Database {
-    pub async fn new(db_type: &str, path: &str, pg_url: &str) -> Self {
-        match db_type {
-            "sqlite" => Self {
-                backend: Box::new(
-                    sqlite_backend::SqliteBackend::new(path)
-                        .expect("Failed to create SQLite backend"),
-                ),
-            },
-            _ => {
-                let backend = pg_backend::PgBackend::new(pg_url)
-                    .await
-                    .expect("Failed to create PostgreSQL backend");
-                Self {
-                    backend: Box::new(backend),
-                }
-            }
+    pub async fn new(pg_url: &str) -> Self {
+        let backend = pg_backend::PgBackend::new(pg_url)
+            .await
+            .expect("Failed to create PostgreSQL backend");
+        Self {
+            backend: Box::new(backend),
         }
     }
 

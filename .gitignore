@@ -1,7 +1,4 @@
 /target
-gateway.db
-gateway.db-shm
-gateway.db-wal
 gateway.log
 node_modules/
 config/config.yaml

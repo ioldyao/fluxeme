@@ -40,7 +40,7 @@ pub struct AppState {
     pub gateway_config: Arc<RwLock<GatewayRuntimeConfig>>,
     pub cache: Arc<RedisCache>,
     /// In-memory gate-status cache used as second fallback when Redis is
-    /// unavailable (avoids SQLite mutex contention during Redis outages).
+    /// unavailable (avoids a database query during Redis outages).
     pub gate_cache: Arc<AsyncRwLock<HashMap<String, GateStatus>>>,
     /// Content filter service for request/response moderation.
     pub content_filter: Arc<ContentFilterService>,

@@ -4,12 +4,12 @@ export
 .PHONY: up down logs restart build
 
 up:
-ifeq ($(DB_TYPE),docker)
-	@echo "Starting with local PostgreSQL..."
-	docker compose -f docker-compose.yml -f compose.psql.yml up -d
-else
+ifeq ($(DB_DEPLOYMENT),remote)
 	@echo "Starting with remote PostgreSQL..."
 	docker compose -f docker-compose.yml up -d
+else
+	@echo "Starting with local PostgreSQL..."
+	docker compose -f docker-compose.yml -f compose.psql.yml up -d
 endif
 
 down:
