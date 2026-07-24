@@ -9,7 +9,7 @@ export function Layout() {
       <div className="flex min-w-0 flex-1 flex-col ml-48">
         <TopBar />
         <main className="flex-1 p-4 lg:p-6 animate-fade-in">
-          <div className="mx-auto w-full max-w-7xl">
+          <div className="mx-auto w-full max-w-[1600px]">
             <Outlet />
           </div>
         </main>
