@@ -201,6 +201,7 @@ const en: Record<string, string> = {
   'usage.chartNotAvailable': 'Aggregation API not yet implemented, switching to list view',
   'usage.allUsers': 'All Users',
   'usage.detailTitle': 'Request Detail',
+  'usage.requestLifecycle': 'Request Lifecycle',
   'usage.request': 'Request',
   'usage.thinking': 'Thinking',
   'usage.output': 'Output',

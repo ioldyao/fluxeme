@@ -1,11 +1,9 @@
 import { useTranslation } from 'react-i18next';
 import { useUsageDetail } from '@/api/usage';
-import { usePublicModels } from '@/api/models';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { CheckCircle2, XCircle, Radio, RadioIcon } from 'lucide-react';
 import { useCurrency } from '@/store/currency';
 import { formatCost, getRecordPricing } from '@/lib/cost';
-import type { Model } from '@/types';
+import type { UsageRecord } from '@/types';
 
 interface Props {
   requestId: string | null;
@@ -13,62 +11,61 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
+const COLORS: Record<string, string> = { ok: '#14966a', pending: '#87939e', streaming: '#2d7fb8', warn: '#c97800', fail: '#d84b4b' };
+
+function estimateEvents(record: UsageRecord) {
+  const ts = new Date(record.timestamp);
+  const tsStr = ts.toLocaleTimeString();
+  const events: { cls: string; title: string; time: string; detail: string }[] = [];
+
+  events.push({ cls: 'ok', title: 'Gateway Accepted', time: tsStr, detail: '请求已进入网关' });
+
+  if (record.latency_ms > 0) {
+    const authTime = new Date(ts.getTime() + 50);
+    events.push({ cls: 'ok', title: 'Auth & Route', time: authTime.toLocaleTimeString(), detail: `${record.api_format ?? 'openai'} · ${record.channel_id}` });
+
+    if (record.success) {
+      const startTs = new Date(ts.getTime() + record.latency_ms * 0.3);
+      events.push({ cls: record.stream ? 'streaming' : 'ok', title: record.stream ? 'Streaming Started' : 'Provider Processing', time: startTs.toLocaleTimeString(), detail: record.stream ? `Streaming ${record.completion_tokens} tokens` : `Processing ${record.total_tokens} tokens` });
+      const endTs = new Date(ts.getTime() + record.latency_ms);
+      events.push({ cls: 'ok', title: record.stream ? 'Completed' : 'Response Received', time: endTs.toLocaleTimeString(), detail: `Status ${record.status_code} · ${record.latency_ms}ms` });
+    } else {
+      const failTs = new Date(ts.getTime() + record.latency_ms);
+      events.push({ cls: 'fail', title: 'Failed', time: failTs.toLocaleTimeString(), detail: `Status ${record.status_code} · ${record.latency_ms}ms` });
+    }
+  }
+
+  return events;
+}
+
+function formatJson(val: string | null | undefined) {
+  if (!val) return '(empty)';
+  try { return JSON.stringify(JSON.parse(val), null, 2); } catch { return val; }
+}
+
+function formatResponse(val: string | null | undefined) {
+  if (!val) return '(empty)';
+  if (!val.trim().startsWith('data:')) return val;
+  const lines = val.split('\n').filter(l => l.trim());
+  const parsed: string[] = [];
+  for (const line of lines) {
+    const sse = line.replace(/^data:\s*/, '');
+    if (sse === '[DONE]') continue;
+    try {
+      const d = JSON.parse(sse);
+      const content = d.choices?.[0]?.delta?.content || d.choices?.[0]?.delta?.reasoning_content || d.choices?.[0]?.text || '';
+      if (content) parsed.push(content);
+    } catch { continue; }
+  }
+  return parsed.length > 0 ? parsed.join('') : val;
+}
+
 export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
   const { t } = useTranslation();
   const { data: record, isLoading, error } = useUsageDetail(requestId);
-  const { data: models } = usePublicModels();
-
-  const isStreaming = (record: { request_body?: string | null }) => {
-    if (!record.request_body) return false;
-    try {
-      const body = JSON.parse(record.request_body);
-      return body.stream === true;
-    } catch {
-      return false;
-    }
-  };
-
-  const findModel = (modelName: string): Model | undefined => {
-    return models?.find(m => m.name === modelName || modelName.startsWith(m.name));
-  };
-
-  const formatJson = (val: string | null | undefined) => {
-    if (!val) return '(empty)';
-    try {
-      return JSON.stringify(JSON.parse(val), null, 2);
-    } catch {
-      return val;
-    }
-  };
-
-  const formatResponse = (val: string | null | undefined) => {
-    if (!val) return '(empty)';
-    // New format: extracted plain text
-    if (!val.trim().startsWith('data:')) return val;
-    // Old format: raw SSE data — parse and extract
-    const lines = val.split('\n').filter(l => l.trim());
-    const parsed: string[] = [];
-    for (const line of lines) {
-      const sse = line.replace(/^data:\s*/, '');
-      if (sse === '[DONE]') continue;
-      try {
-        const d = JSON.parse(sse);
-        const content = d.choices?.[0]?.delta?.content
-          || d.choices?.[0]?.delta?.reasoning_content
-          || d.choices?.[0]?.text
-          || '';
-        if (content) parsed.push(content);
-      } catch {
-        continue;
-      }
-    }
-    return parsed.length > 0 ? parsed.join('') : val;
-  };
-
   const { currency, rate } = useCurrency();
-  const streaming = record ? isStreaming(record) : false;
-  const matchedModel = record ? findModel(record.model) : undefined;
-  const costStr = record ? formatCost(record.prompt_tokens, record.completion_tokens, record.cache_hit_input_tokens, getRecordPricing(record, { [record.model]: matchedModel?.pricing }), currency, rate) : null;
+
+  const costStr = record ? formatCost(record.prompt_tokens, record.completion_tokens, record.cache_hit_input_tokens, getRecordPricing(record, {}), currency, rate) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -76,136 +73,121 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {t('usage.detailTitle')}
-            {record && (
-              <span className="font-mono text-xs text-muted-foreground">
-                {record.request_id.substring(0, 12)}
-                {record.api_key_name && <span className="ml-2 not-italic font-normal">· {record.api_key_name}</span>}
-              </span>
-            )}
+            {record && <span className="font-mono text-xs text-muted-foreground">{record.request_id.substring(0, 12)}</span>}
           </DialogTitle>
         </DialogHeader>
 
         {isLoading ? (
           <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>
         ) : record ? (
-          <div className="space-y-4 min-w-0">
-            {/* Meta info deck */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 min-w-0">
-              <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('table.user')}</div>
-                <div className="font-medium truncate">{record.user_name}</div>
-              </div>
-              <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('table.model')}</div>
-                <div className="font-medium truncate flex items-center gap-1.5">
-                  {record.model}
-                  {streaming ? (
-                    <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-yellow-600 bg-yellow-50 dark:text-yellow-400 dark:bg-yellow-950 px-1.5 py-0.5 rounded">
-                      <Radio className="h-2.5 w-2.5" />stream
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-950 px-1.5 py-0.5 rounded">
-                      <RadioIcon className="h-2.5 w-2.5" />sync
-                    </span>
-                  )}
+          <div className="space-y-5 min-w-0">
+
+            {/* Meta info row */}
+            <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+              {[
+                { label: t('table.user'), value: record.user_name },
+                { label: t('table.model'), value: record.model },
+                { label: t('usage.apiKey'), value: record.api_key_name ?? '—' },
+                { label: t('usage.apiFormat'), value: record.api_format ?? '—' },
+                { label: t('usage.channel'), value: record.channel_id },
+                { label: 'Client IP', value: record.client_ip ?? '—' },
+              ].map(m => (
+                <div key={m.label} className="rounded-lg border bg-card p-3">
+                  <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">{m.label}</div>
+                  <div className="text-sm font-medium truncate">{m.value}</div>
                 </div>
-              </div>
-              <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('table.status')}</div>
-                <div className="flex items-center gap-1.5">
-                  {record.success ? (
-                    <CheckCircle2 className="h-4 w-4 text-green-500" />
-                  ) : (
-                    <XCircle className="h-4 w-4 text-red-500" />
-                  )}
-                  <span className="font-medium">{record.status_code}</span>
-                </div>
-              </div>
-              <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('table.latency')}</div>
-                <div className="font-medium font-mono">{record.latency_ms}ms</div>
-              </div>
-              <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('usage.promptTokens')}</div>
-                <div className="font-medium font-mono">{record.prompt_tokens.toLocaleString()}</div>
-              </div>
-              <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('table.cacheHit')}</div>
-                <div className="font-medium font-mono">{record.cache_hit_input_tokens > 0 ? record.cache_hit_input_tokens.toLocaleString() : '—'}</div>
-              </div>
-              <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('usage.completionTokens')}</div>
-                <div className="font-medium font-mono">{record.completion_tokens.toLocaleString()}</div>
-              </div>
-              <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('usage.totalTokens')}</div>
-                <div className="font-medium font-mono">{record.total_tokens.toLocaleString()}</div>
-              </div>
-              <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('usage.cost')}</div>
-                <div className="font-medium font-mono">
-                  {costStr || <span className="text-muted-foreground text-xs">—</span>}
-                </div>
-              </div>
-              <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('usage.channel')}</div>
-                <div className="font-medium font-mono text-xs truncate">{record.channel_id}</div>
-              </div>
-              {record.api_key_name && (
-                <div className="rounded-lg border p-3 space-y-1">
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('usage.apiKey')}</div>
-                  <div className="font-medium text-xs truncate">{record.api_key_name}</div>
-                </div>
-              )}
-              <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('usage.apiFormat')}</div>
-                <div className="font-medium font-mono text-xs">{record.api_format ?? '—'}</div>
-              </div>
-              <div className="rounded-lg border p-3 space-y-1">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{t('table.time')}</div>
-                <div className="font-medium text-xs">{new Date(record.timestamp).toLocaleString()}</div>
-              </div>
-              {record.client_ip && (
-                <div className="rounded-lg border p-3 space-y-1">
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Client IP</div>
-                  <div className="font-medium text-xs font-mono">{record.client_ip}</div>
-                </div>
-              )}
+              ))}
             </div>
+
+            {/* Token & Cost row */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              {[
+                { label: t('usage.promptTokens'), value: record.prompt_tokens.toLocaleString() },
+                { label: t('usage.cacheHit'), value: record.cache_hit_input_tokens > 0 ? record.cache_hit_input_tokens.toLocaleString() : '—' },
+                { label: t('usage.completionTokens'), value: record.completion_tokens.toLocaleString() },
+                { label: t('usage.cost'), value: costStr || '—' },
+              ].map(m => (
+                <div key={m.label} className="rounded-lg border bg-card p-3">
+                  <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">{m.label}</div>
+                  <div className="text-sm font-semibold font-mono">{m.value}</div>
+                </div>
+              ))}
+            </div>
+
+            <hr className="border-border" />
+
+            {/* Request Lifecycle Timeline (Scheme C) */}
+            <div>
+              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                {t('usage.requestLifecycle')}
+              </h3>
+              <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.65fr] gap-4">
+                {/* Timeline */}
+                <div className="relative pl-[34px]">
+                  <div className="absolute left-[10px] top-[8px] bottom-[8px] w-[2px] bg-border" />
+                  {estimateEvents(record).map((ev, i) => (
+                    <div key={i} className="relative pb-4 last:pb-0">
+                      <div className="absolute left-[-29px] top-[3px] w-[12px] h-[12px] rounded-full bg-card border-[3px]" style={{ borderColor: COLORS[ev.cls] || COLORS.ok }} />
+                      <div className="flex justify-between gap-3">
+                        <div className="font-semibold text-sm">{ev.title}</div>
+                        <div className="text-[11px] font-mono text-muted-foreground shrink-0">{ev.time}</div>
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">{ev.detail}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Inspector panel */}
+                <div className="rounded-lg border bg-card p-4">
+                  <h4 className="text-sm font-semibold mb-2">{t('usage.detailTitle')}</h4>
+                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${record.success ? 'bg-emerald-500/10 text-emerald-700' : 'bg-red-500/10 text-red-700'}`}>
+                    <span className={`size-1.5 rounded-full ${record.success ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                    {record.success ? t('usage.success') : t('usage.failure')} · HTTP {record.status_code}
+                  </span>
+                  <div className="mt-3 space-y-0">
+                    {[
+                      [t('table.status'), `${record.success ? t('usage.success') : t('usage.failure')}`],
+                      ['Request ID', record.request_id],
+                      [t('table.latency'), `${record.latency_ms}ms`],
+                      [t('usage.totalTokens'), record.total_tokens.toLocaleString()],
+                      [t('usage.cost'), costStr || '—'],
+                    ].map((r, i) => (
+                      <div key={i} className="flex justify-between gap-3 py-2 border-t border-border/60 first:border-0">
+                        <span className="text-xs text-muted-foreground">{r[0]}</span>
+                        <b className="text-xs text-right">{r[1]}</b>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <hr className="border-border" />
 
             {/* Request body */}
             <div>
-              <h4 className="text-sm font-medium mb-1">{t('usage.request')}</h4>
-              <pre className="rounded-lg bg-muted p-3 text-xs overflow-x-auto max-h-60 overflow-y-auto whitespace-pre-wrap break-all max-w-full">
-                {formatJson(record.request_body)}
-              </pre>
+              <h4 className="text-sm font-medium mb-2">{t('usage.request')}</h4>
+              <pre className="rounded-lg bg-muted p-3 text-xs overflow-x-auto max-h-60 overflow-y-auto whitespace-pre-wrap break-all max-w-full">{formatJson(record.request_body)}</pre>
             </div>
 
-            {/* Reasoning (thinking) body */}
+            {/* Reasoning / Thinking */}
             {record.reasoning_body && (
               <div>
                 <details>
-                  <summary className="text-sm font-medium cursor-pointer select-none">
-                    {t('usage.thinking')} {streaming && <span className="ml-1 text-xs text-yellow-500">(streaming)</span>}
-                  </summary>
-                  <pre className="rounded-lg bg-muted p-3 text-xs overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap break-all max-w-full mt-1">
-                    {record.reasoning_body}
-                  </pre>
+                  <summary className="text-sm font-medium cursor-pointer select-none">{t('usage.thinking')}</summary>
+                  <pre className="rounded-lg bg-muted p-3 text-xs overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap break-all max-w-full mt-2">{record.reasoning_body}</pre>
                 </details>
               </div>
             )}
 
             {/* Response body */}
-            <div className="max-w-full">
-              <div className="flex items-center gap-2 mb-1">
-                <h4 className="text-sm font-medium">{t('usage.output')}</h4>
-                {streaming && <span className="text-xs text-yellow-500">(streaming)</span>}
-              </div>
-              <div className="text-xs text-muted-foreground mb-1">{t('usage.reply')}</div>
-              <pre className="rounded-lg bg-muted p-3 text-xs overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap break-all max-w-full">
-                {formatResponse(record.response_body)}
-              </pre>
+            <div>
+              <h4 className="text-sm font-medium mb-2">{t('usage.output')}</h4>
+              <div className="text-xs text-muted-foreground mb-2">{t('usage.reply')}</div>
+              <pre className="rounded-lg bg-muted p-3 text-xs overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap break-all max-w-full">{formatResponse(record.response_body)}</pre>
             </div>
+
           </div>
         ) : error ? (
           <div className="p-8 text-center text-destructive">{error.message}</div>
