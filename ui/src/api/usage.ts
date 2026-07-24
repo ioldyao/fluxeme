@@ -65,6 +65,10 @@ export interface FunnelStats {
   upstream_error_count: number;
   timeout_count: number;
   other_error_count: number;
+  p50_latency: number;
+  p95_latency: number;
+  p99_latency: number;
+  avg_latency: number;
 }
 
 export function useUsageFunnel(days: number) {
