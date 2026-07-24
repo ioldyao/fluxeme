@@ -1102,14 +1102,15 @@ async fn handle_non_streaming(
             Err(e) => {
                 // Non-retryable (4xx etc.) — don't record failure on the breaker,
                 // return immediately without retrying.
+                let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
                 let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
                     request_id: request_id.clone(),
-                    user_id,
-                    user_name,
-                    channel_id,
-                    model,
+                    user_id: user_id.clone(),
+                    user_name: user_name.clone(),
+                    channel_id: channel_id.clone(),
+                    model: model.clone(),
                     prompt_tokens: 0,
                     completion_tokens: 0,
                     total_tokens: 0,
@@ -1117,8 +1118,8 @@ async fn handle_non_streaming(
                     latency_ms,
                     status_code: 502,
                     success: false,
-                    request_body: req_body,
-                    response_body: None,
+                    request_body: req_body.clone(),
+                    response_body: Some(err_body),
                     reasoning_body: None,
                     api_key_name: None,
                     api_format: "openai".to_string(),
@@ -1136,6 +1137,7 @@ async fn handle_non_streaming(
 
     // All retry attempts exhausted without success
     let latency_ms = start.elapsed().as_millis() as u64;
+    let err_body = serde_json::json!({"error": {"message": &err_msg}}).to_string();
     state.usage.record(UsageRecord {
         timestamp: Utc::now().to_rfc3339(),
         request_id,
@@ -1151,7 +1153,7 @@ async fn handle_non_streaming(
         status_code: 502,
         success: false,
         request_body: req_body,
-        response_body: None,
+        response_body: Some(err_body),
         reasoning_body: None,
         api_key_name: None,
         api_format: "openai".to_string(),
@@ -1262,6 +1264,7 @@ async fn handle_messages_non_streaming(
                 }
             }
             Err(e) => {
+                let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
                 let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
@@ -1277,8 +1280,8 @@ async fn handle_messages_non_streaming(
                     latency_ms,
                     status_code: 502,
                     success: false,
-                    request_body: req_body,
-                    response_body: None,
+                    request_body: req_body.clone(),
+                    response_body: Some(err_body),
                     reasoning_body: None,
                     api_key_name: None,
                     api_format: "anthropic".to_string(),
@@ -1295,6 +1298,7 @@ async fn handle_messages_non_streaming(
     };
 
     let latency_ms = start.elapsed().as_millis() as u64;
+    let err_body = serde_json::json!({"error": {"message": &err_msg}}).to_string();
     state.usage.record(UsageRecord {
         timestamp: Utc::now().to_rfc3339(),
         request_id,
@@ -1310,7 +1314,7 @@ async fn handle_messages_non_streaming(
         status_code: 502,
         success: false,
         request_body: req_body,
-        response_body: None,
+        response_body: Some(err_body),
         reasoning_body: None,
         api_key_name: None,
         api_format: "anthropic".to_string(),
