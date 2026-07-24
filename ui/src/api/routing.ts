@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query';
 import { api } from './client';
 
 export interface RoutingHistoryChannelSeries {
@@ -50,4 +51,17 @@ export async function fetchRoutingHistory(
   const params = new URLSearchParams({ start, end });
   if (model && model !== 'all') params.set('model', model);
   return api<RoutingHistoryResponse>(`/routing/history?${params.toString()}`);
+}
+
+export function useRoutingHistory(
+  start: string,
+  end: string,
+  opts?: { model?: string; enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: ['routing', 'history', start, end, opts?.model ?? 'all'],
+    queryFn: () => fetchRoutingHistory(start, end, opts?.model),
+    enabled: opts?.enabled !== false,
+    refetchInterval: 60_000,
+  });
 }
