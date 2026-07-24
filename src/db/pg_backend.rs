@@ -37,8 +37,6 @@ impl PgBackend {
         .bind(model_name)
         .fetch_optional(&self.pool)
         .await;
-        let _ = raw_sql("ALTER TABLE probe_results ADD COLUMN IF NOT EXISTS endpoint_url TEXT")
-            .execute(&self.pool).await;
 
         match result {
             Ok(Some(p)) => p,
@@ -375,6 +373,8 @@ impl DbBackend for PgBackend {
         .execute(&self.pool)
         .await
         .map_err(|e| DbError(format!("Migration error: {}", e)))?;
+        let _ = raw_sql("ALTER TABLE probe_results ADD COLUMN IF NOT EXISTS endpoint_url TEXT")
+            .execute(&self.pool).await;
 
         // Backward-compat columns — inline helper to avoid async closure issues
         macro_rules! add_col {
