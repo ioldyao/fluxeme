@@ -34,6 +34,10 @@ export default function Models() {
     (id: string) => channels?.find((c) => c.id === id)?.name || id,
     [channels],
   );
+  const channelEndpoints = useCallback(
+    (id: string) => channels?.find((c) => c.id === id)?.endpoints ?? [],
+    [channels],
+  );
   const createModel = useCreateModel();
   const deleteModel = useDeleteModel();
   const publishModel = usePublishModel();
@@ -297,6 +301,7 @@ export default function Models() {
         open={!!healthTarget}
         onOpenChange={(open) => { if (!open) setHealthTarget(null); }}
         channelName={channelName}
+        channelEndpoints={channelEndpoints}
       />
     </div>
   );
