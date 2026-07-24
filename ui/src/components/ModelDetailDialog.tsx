@@ -195,11 +195,9 @@ export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props
   const { effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
   const sym = CURRENCY_SYMBOL[model ? getEffectiveCurrency(currency, model.id) : 'usd'];
 
-  if (!model) return null;
-
   const ANTHROPIC_COMPAT_PROVIDERS = ['anthropic', 'deepseek', 'dashscope', 'zhipu', 'minimax'];
-  const hasAnthropic = model.channels?.some(c => c.provider && ANTHROPIC_COMPAT_PROVIDERS.includes(c.provider)) ?? false;
-  const hasOpenAi = model.channels?.some(c => c.provider && c.provider !== 'anthropic') ?? true;
+  const hasAnthropic = model?.channels?.some(c => c.provider && ANTHROPIC_COMPAT_PROVIDERS.includes(c.provider)) ?? false;
+  const hasOpenAi = model?.channels?.some(c => c.provider && c.provider !== 'anthropic') ?? true;
 
   useEffect(() => {
     if (!hasAnthropic && format === 'anthropic') {
@@ -209,6 +207,8 @@ export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props
       setFormat('anthropic');
     }
   }, [model?.id, hasAnthropic, hasOpenAi, format]);
+
+  if (!model) return null;
 
   const code = buildCode(model, format, lang);
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, Fragment } from 'react';
+import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useModels, useCreateModel, useUpdateModel, useDeleteModel, usePublishModel, useModelHealthCheck } from '@/api/models';
@@ -29,7 +29,10 @@ export default function Models() {
   const { t } = useTranslation();
   const { data: models, isLoading, isError, refetch } = useModels();
   const { data: channels } = useChannels();
-  const channelName = (id: string) => channels?.find((c) => c.id === id)?.name || id;
+  const channelName = useCallback(
+    (id: string) => channels?.find((c) => c.id === id)?.name || id,
+    [channels],
+  );
   const createModel = useCreateModel();
   const deleteModel = useDeleteModel();
   const publishModel = usePublishModel();
@@ -88,7 +91,7 @@ export default function Models() {
   const channelHc = (chId: string) => probeResults?.find((r) => r.channel_id === chId);
 
   const filteredModels = useMemo(() => {
-    let rows = models ?? [];
+    let rows = [...(models ?? [])];
     const q = search.toLowerCase().trim();
     if (q) rows = rows.filter((m) => m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q) || m.channels.some((b) => channelName(b.channel_id).toLowerCase().includes(q)));
     if (modalFilter !== 'all') rows = rows.filter((m) => m.category?.split(',').filter(Boolean).includes(modalFilter));
@@ -112,7 +115,7 @@ export default function Models() {
       return typeof av === 'string' ? av.localeCompare(bv) * sortDir : (av - bv) * sortDir;
     });
     return rows;
-  }, [models, search, modalFilter, statusFilter, sortKey, sortDir, probeResults, channels]);
+  }, [models, channelName, search, modalFilter, statusFilter, sortKey, sortDir, probeResults]);
 
   // Group by display name
   const nameGroups = useMemo(() => {
