@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSubscriptions, useUnsubscribeModel, useTestModelConnection, type ModelTestResult } from '@/api/models';
+import { useSubscriptions, useUnsubscribeModel, useTestModelConnection } from '@/api/models';
 import { PageHeader } from '@/components/PageHeader';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
