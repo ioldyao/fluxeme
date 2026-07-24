@@ -2163,9 +2163,26 @@ impl DbBackend for PgBackend {
               COUNT(*) FILTER (WHERE success = false AND status_code = 400)::bigint, \
               COUNT(*) FILTER (WHERE success = false AND status_code IN (502,503))::bigint, \
               COUNT(*) FILTER (WHERE success = false AND status_code = 504)::bigint, \
-              COUNT(*) FILTER (WHERE success = false AND status_code NOT IN (400,401,403,429,502,503,504))::bigint \
+              COUNT(*) FILTER (WHERE success = false AND status_code NOT IN (400,401,403,429,502,503,504))::bigint, \
+              percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms), \
+              percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms), \
+              percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms), \
+              COALESCE(AVG(latency_ms)::double precision,0) \
             FROM usage_logs WHERE timestamp >= $1";
-        let row: (i64, i64, i64, i64, i64, i64, i64, i64) = if let Some(uid) = user_id {
+        let row: (
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            Option<f64>,
+            Option<f64>,
+            Option<f64>,
+            f64,
+        ) = if let Some(uid) = user_id {
             let q = format!("{} AND user_id = $2", sql);
             query_as(&q)
                 .bind(since)
@@ -2184,6 +2201,10 @@ impl DbBackend for PgBackend {
             upstream_error_count: row.5 as u64,
             timeout_count: row.6 as u64,
             other_error_count: row.7 as u64,
+            p50_latency: row.8.unwrap_or(0.0),
+            p95_latency: row.9.unwrap_or(0.0),
+            p99_latency: row.10.unwrap_or(0.0),
+            avg_latency: row.11,
         })
     }
 

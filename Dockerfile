@@ -1,5 +1,5 @@
 # ── Frontend build ──
-FROM node:22-alpine AS frontend
+FROM swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/node:22-alpine AS frontend
 ENV CI=true
 RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app

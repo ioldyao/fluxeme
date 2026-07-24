@@ -35,6 +35,10 @@ pub struct FunnelStats {
     pub upstream_error_count: u64,
     pub timeout_count: u64,
     pub other_error_count: u64,
+    pub p50_latency: f64,
+    pub p95_latency: f64,
+    pub p99_latency: f64,
+    pub avg_latency: f64,
 }
 
 #[derive(Debug, Clone)]

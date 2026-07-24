@@ -272,6 +272,10 @@ pub(crate) struct FunnelResponse {
     pub upstream_error_count: u64,
     pub timeout_count: u64,
     pub other_error_count: u64,
+    pub p50_latency: f64,
+    pub p95_latency: f64,
+    pub p99_latency: f64,
+    pub avg_latency: f64,
 }
 
 pub(crate) async fn usage_funnel(
@@ -308,5 +312,9 @@ pub(crate) async fn usage_funnel(
         upstream_error_count: stats.upstream_error_count,
         timeout_count: stats.timeout_count,
         other_error_count: stats.other_error_count,
+        p50_latency: stats.p50_latency,
+        p95_latency: stats.p95_latency,
+        p99_latency: stats.p99_latency,
+        avg_latency: stats.avg_latency,
     }))
 }

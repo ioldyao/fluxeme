@@ -183,14 +183,17 @@ export default function Dashboard() {
                 const otherErrCount = f?.other_error_count ?? 0;
                 const totalTokens = agg?.total_tokens_24h ?? 0;
                 const intervalSecs = days * 86400;
-                const avgLatMs = avgLat;
+                const funnelLat = f;
                 const avgQps = intervalSecs > 0 ? (total / intervalSecs) : 0;
                 const avgTps = intervalSecs > 0 ? (totalTokens / intervalSecs) : 0;
                 const slaLvl = total > 0 ? (successCount / total) * 100 : 0;
                 const sysErrors = upstreamErrCount + timeoutCount;
                 const bizLimits = rateLimitCount + badReqCount + authCount;
                 const healthy = sysErrors + bizLimits === 0;
-                const avgLatSeconds = avgLatMs / 1000;
+                const p50s = funnelLat?.p50_latency ? funnelLat.p50_latency / 1000 : avgLat / 1000;
+                const p95s = funnelLat?.p95_latency ? funnelLat.p95_latency / 1000 : (avgLat / 1000) * 2.5;
+                const p99s = funnelLat?.p99_latency ? funnelLat.p99_latency / 1000 : (avgLat / 1000) * 4;
+                const avgS = funnelLat?.avg_latency ? funnelLat.avg_latency / 1000 : avgLat / 1000;
                 return (
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 md:grid-cols-5">
                     {/* Stage 01 */}
@@ -224,12 +227,12 @@ export default function Dashboard() {
                     <div className="rounded-lg border bg-muted/20 p-4">
                       <div className="text-[11px] font-medium text-muted-foreground">阶段 03</div>
                       <h3 className="mt-1.5 text-sm font-semibold text-foreground">首 Token 响应</h3>
-                      <div className="mt-4 text-2xl font-semibold tracking-tight">{avgLatSeconds.toFixed(2)}s</div>
+                      <div className="mt-4 text-2xl font-semibold tracking-tight">{p50s.toFixed(2)}s</div>
                       <div className="mt-1 text-[11px] text-muted-foreground">TTFT · P50</div>
                       <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
-                        <div><span className="text-muted-foreground">P95</span><div className="font-semibold">{(avgLatSeconds * 2.5).toFixed(2)}s</div></div>
-                        <div><span className="text-muted-foreground">P99</span><div className="font-semibold">{(avgLatSeconds * 4).toFixed(2)}s</div></div>
-                        <div className="col-span-2"><span className="text-muted-foreground">平均</span><div className="font-semibold">{avgLatSeconds.toFixed(2)}s</div></div>
+                        <div><span className="text-muted-foreground">P95</span><div className="font-semibold">{p95s.toFixed(2)}s</div></div>
+                        <div><span className="text-muted-foreground">P99</span><div className="font-semibold">{p99s.toFixed(2)}s</div></div>
+                        <div className="col-span-2"><span className="text-muted-foreground">平均</span><div className="font-semibold">{avgS.toFixed(2)}s</div></div>
                       </div>
                     </div>
 
@@ -237,11 +240,11 @@ export default function Dashboard() {
                     <div className="rounded-lg border bg-muted/20 p-4">
                       <div className="text-[11px] font-medium text-muted-foreground">阶段 04</div>
                       <h3 className="mt-1.5 text-sm font-semibold text-foreground">模型执行</h3>
-                      <div className="mt-4 text-2xl font-semibold tracking-tight">{avgLatSeconds.toFixed(2)}s</div>
+                      <div className="mt-4 text-2xl font-semibold tracking-tight">{avgS.toFixed(2)}s</div>
                       <div className="mt-1 text-[11px] text-muted-foreground">平均请求时长</div>
                       <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
-                        <div><span className="text-muted-foreground">P95</span><div className="font-semibold">{(avgLatSeconds * 2.5).toFixed(2)}s</div></div>
-                        <div><span className="text-muted-foreground">P99</span><div className="font-semibold">{(avgLatSeconds * 4).toFixed(2)}s</div></div>
+                        <div><span className="text-muted-foreground">P95</span><div className="font-semibold">{p95s.toFixed(2)}s</div></div>
+                        <div><span className="text-muted-foreground">P99</span><div className="font-semibold">{p99s.toFixed(2)}s</div></div>
                       </div>
                       <div className="mt-3 space-y-1 text-[11px]">
                         <div className="flex justify-between"><span className="text-muted-foreground">排队中</span><b>{rateLimitCount}</b></div>
