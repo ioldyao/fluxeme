@@ -247,6 +247,61 @@ export default function Dashboard() {
               )}
             </CardContent>
           </Card>
+
+          {/* Request Logs */}
+          <Card className="card-hover">
+            <CardHeader className="flex flex-row items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold leading-none">{t('dash.requestLogs')}</h2>
+                <CardDescription>{t('dash.requestLogsSub')}</CardDescription>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => window.location.href = '/usage'}>{t('dash.viewAllUsage')}</Button>
+            </CardHeader>
+            <CardContent className="p-0">
+              {!recent ? (
+                <div className="space-y-3 p-5">
+                  {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-10 animate-pulse rounded bg-muted/60" />)}
+                </div>
+              ) : recent?.records.length === 0 ? (
+                <p className="py-12 text-center text-sm text-muted-foreground">{t('dash.noRecentUsage')}</p>
+              ) : (
+                <div className="overflow-auto">
+                  <table className="min-w-full border-collapse text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/20 text-left text-xs text-muted-foreground">
+                        <th className="px-4 py-3 font-medium">{t('table.time')}</th>
+                        <th className="px-4 py-3 font-medium">{t('table.status')}</th>
+                        <th className="px-4 py-3 font-medium">{t('table.model')}</th>
+                        <th className="px-4 py-3 font-medium">ID</th>
+                        <th className="px-4 py-3 font-medium">{t('table.tokens')}</th>
+                        <th className="px-4 py-3 font-medium">{t('table.latency')}</th>
+                        <th className="px-4 py-3 font-medium">{t('table.key')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recent?.records.slice(0, 8).map(r => (
+                        <tr key={r.request_id} className="border-b last:border-0">
+                          <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{new Date(r.timestamp).toLocaleString()}</td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${r.success ? 'bg-emerald-500/10 text-emerald-700' : 'bg-red-500/10 text-red-700'}`}>
+                              <span className={`size-1.5 rounded-full ${r.success ? 'bg-emerald-500' : 'bg-red-500'}`} aria-hidden="true" />
+                              {r.success ? t('usage.success') : t('usage.failure')}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 font-medium text-foreground">{r.model}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{r.request_id}</td>
+                          <td className="px-4 py-3">{r.total_tokens.toLocaleString()}</td>
+                          <td className="px-4 py-3">{r.latency_ms}ms</td>
+                          <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{r.api_key_name ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="border-t px-4 py-2.5 text-[11px] text-muted-foreground">{t('dash.logsFooter', { count: Math.min(recent?.records.length ?? 0, 8) })}</div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
 
         {/* ── Right Column ── */}
@@ -367,60 +422,6 @@ export default function Dashboard() {
 
       </section>
 
-      {/* ── Request Logs (full width below grid) ── */}
-      <Card className="card-hover">
-          <CardHeader className="flex flex-row items-start justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold leading-none">{t('dash.requestLogs')}</h2>
-              <CardDescription>{t('dash.requestLogsSub')}</CardDescription>
-            </div>
-            <Button variant="ghost" size="sm" onClick={() => window.location.href = '/usage'}>{t('dash.viewAllUsage')}</Button>
-          </CardHeader>
-          <CardContent className="p-0">
-            {!recent ? (
-              <div className="space-y-3 p-5">
-                {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-10 animate-pulse rounded bg-muted/60" />)}
-              </div>
-            ) : recent?.records.length === 0 ? (
-              <p className="py-12 text-center text-sm text-muted-foreground">{t('dash.noRecentUsage')}</p>
-            ) : (
-              <div className="overflow-auto">
-                <table className="min-w-full border-collapse text-sm">
-                  <thead>
-                    <tr className="border-b bg-muted/20 text-left text-xs text-muted-foreground">
-                      <th className="px-4 py-3 font-medium">{t('table.time')}</th>
-                      <th className="px-4 py-3 font-medium">{t('table.status')}</th>
-                      <th className="px-4 py-3 font-medium">{t('table.model')}</th>
-                      <th className="px-4 py-3 font-medium">ID</th>
-                      <th className="px-4 py-3 font-medium">{t('table.tokens')}</th>
-                      <th className="px-4 py-3 font-medium">{t('table.latency')}</th>
-                      <th className="px-4 py-3 font-medium">{t('table.key')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recent?.records.slice(0, 8).map(r => (
-                      <tr key={r.request_id} className="border-b last:border-0">
-                        <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{new Date(r.timestamp).toLocaleString()}</td>
-                        <td className="px-4 py-3">
-                          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${r.success ? 'bg-emerald-500/10 text-emerald-700' : 'bg-red-500/10 text-red-700'}`}>
-                            <span className={`size-1.5 rounded-full ${r.success ? 'bg-emerald-500' : 'bg-red-500'}`} aria-hidden="true" />
-                            {r.success ? t('usage.success') : t('usage.failure')}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 font-medium text-foreground">{r.model}</td>
-                        <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{r.request_id}</td>
-                        <td className="px-4 py-3">{r.total_tokens.toLocaleString()}</td>
-                        <td className="px-4 py-3">{r.latency_ms}ms</td>
-                        <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{r.api_key_name ?? '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div className="border-t px-4 py-2.5 text-[11px] text-muted-foreground">{t('dash.logsFooter', { count: Math.min(recent?.records.length ?? 0, 8) })}</div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
     </div>
   );
 }
