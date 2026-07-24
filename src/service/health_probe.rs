@@ -64,7 +64,7 @@ impl HealthProbeService {
             let route = match self.routing.get_route(&binding.channel_id) {
                 Some(r) => r,
                 None => {
-                    let row = self.make_row(&binding.channel_id, model_id, false, 0, Some("Route not available"));
+                    let row = self.make_row(&binding.channel_id, model_id, false, 0, Some("Route not available"), None);
                     self.db.insert_probe_result(&row).await.map_err(|e| e.0)?;
                     results.push(row);
                     continue;
@@ -74,7 +74,7 @@ impl HealthProbeService {
             let adapter = match self.providers.get(&provider_name) {
                 Some(a) => a,
                 None => {
-                    let row = self.make_row(&binding.channel_id, model_id, false, 0, Some("Provider adapter not found"));
+                    let row = self.make_row(&binding.channel_id, model_id, false, 0, Some("Provider adapter not found"), None);
                     self.db.insert_probe_result(&row).await.map_err(|e| e.0)?;
                     results.push(row);
                     continue;
@@ -83,7 +83,7 @@ impl HealthProbeService {
             let (endpoint_idx, endpoint) = match route.1.as_health_aware().select() {
                 Some(r) => r,
                 None => {
-                    let row = self.make_row(&binding.channel_id, model_id, false, 0, Some("No available endpoints"));
+                    let row = self.make_row(&binding.channel_id, model_id, false, 0, Some("No available endpoints"), None);
                     self.db.insert_probe_result(&row).await.map_err(|e| e.0)?;
                     results.push(row);
                     continue;
@@ -128,13 +128,13 @@ impl HealthProbeService {
             match result {
                 Ok(_) => {
                     route.1.as_health_aware().record_success(endpoint_idx);
-                    let row = self.make_row(&binding.channel_id, model_id, true, latency_ms, None);
+                    let row = self.make_row(&binding.channel_id, model_id, true, latency_ms, None, Some(endpoint.url.clone()));
                     self.db.insert_probe_result(&row).await.map_err(|e| e.0)?;
                     results.push(row);
                 }
                 Err(e) => {
                     route.1.as_health_aware().record_failure(endpoint_idx);
-                    let row = self.make_row(&binding.channel_id, model_id, false, latency_ms, Some(&e.0));
+                    let row = self.make_row(&binding.channel_id, model_id, false, latency_ms, Some(&e.0), Some(endpoint.url.clone()));
                     self.db.insert_probe_result(&row).await.map_err(|e| e.0)?;
                     results.push(row);
                 }
@@ -156,6 +156,7 @@ impl HealthProbeService {
         success: bool,
         latency_ms: u64,
         error: Option<&str>,
+        endpoint_url: Option<String>,
     ) -> ProbeResultRow {
         ProbeResultRow {
             id: Uuid::new_v4().to_string(),
@@ -165,6 +166,7 @@ impl HealthProbeService {
             latency_ms,
             error: error.map(|s| s.to_string()),
             probed_at: chrono::Utc::now().to_rfc3339(),
+            endpoint_url,
         }
     }
 }

@@ -105,7 +105,7 @@ export function ModelHealthCheckDialog({ model, open, onOpenChange, channelName 
               onCheckedChange={() => setSelected(selected.size === model?.channels.length ? new Set() : new Set(model?.channels.map((item) => item.channel_id)))}
               disabled={healthCheck.isPending}
             />
-            <span>渠道</span><span>上游模型</span><span>结果</span><span className="text-right">操作</span>
+            <span>渠道 / 端点</span><span>上游模型</span><span>结果</span><span className="text-right">操作</span>
           </div>
           <div className="max-h-80 overflow-y-auto divide-y">
             {bindings.length === 0 ? (
@@ -115,7 +115,7 @@ export function ModelHealthCheckDialog({ model, open, onOpenChange, channelName 
               return (
                 <div key={binding.channel_id} className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(160px,1fr)_120px_90px] items-center px-3 py-3 text-sm">
                   <Checkbox checked={selected.has(binding.channel_id)} onCheckedChange={() => toggle(binding.channel_id)} disabled={healthCheck.isPending} />
-                  <div className="min-w-0"><div className="font-medium truncate">{channelName(binding.channel_id)}</div><div className="text-xs text-muted-foreground truncate">{binding.channel_id}</div></div>
+                  <div className="min-w-0"><div className="font-medium truncate">{channelName(binding.channel_id)}</div><div className="text-xs text-muted-foreground truncate">{item?.endpoint_url || binding.channel_id}</div></div>
                   <span className="truncate text-muted-foreground">{binding.upstream_model || model?.name}</span>
                   <div>{!item ? <span className="text-muted-foreground">未测试</span> : item.success
                     ? <span className="inline-flex items-center gap-1 text-green-600"><CheckCircle2 className="size-4" />{item.latency_ms}ms</span>

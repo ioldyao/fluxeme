@@ -60,6 +60,8 @@ pub struct ProbeResultRow {
     pub latency_ms: u64,
     pub error: Option<String>,
     pub probed_at: String,
+    #[serde(default)]
+    pub endpoint_url: Option<String>,
 }
 
 /// Per-time-bucket per-channel per-endpoint aggregate for routing flow history charts.

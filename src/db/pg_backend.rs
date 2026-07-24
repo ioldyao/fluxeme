@@ -37,6 +37,8 @@ impl PgBackend {
         .bind(model_name)
         .fetch_optional(&self.pool)
         .await;
+        let _ = raw_sql("ALTER TABLE probe_results ADD COLUMN IF NOT EXISTS endpoint_url TEXT")
+            .execute(&self.pool).await;
 
         match result {
             Ok(Some(p)) => p,
@@ -2949,7 +2951,7 @@ impl DbBackend for PgBackend {
 
     async fn insert_probe_result(&self, row: &ProbeResultRow) -> Result<(), DbError> {
         query(
-            "INSERT INTO probe_results (id, channel_id, model_id, success, latency_ms, error, probed_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO probe_results (id, channel_id, model_id, success, latency_ms, error, probed_at, endpoint_url) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(&row.id)
         .bind(&row.channel_id)
@@ -2958,6 +2960,7 @@ impl DbBackend for PgBackend {
         .bind(row.latency_ms as i64)
         .bind(&row.error)
         .bind(&row.probed_at)
+        .bind(&row.endpoint_url)
         .execute(&self.pool)
         .await
         .map_err(|e| DbError(format!("Failed to insert probe result: {}", e)))?;
@@ -2965,8 +2968,8 @@ impl DbBackend for PgBackend {
     }
 
     async fn all_latest_probe_results(&self) -> Result<Vec<ProbeResultRow>, DbError> {
-        let rows = query_as::<_, (String, String, String, bool, i64, Option<String>, String)>(
-            "SELECT p.id, p.channel_id, p.model_id, p.success, p.latency_ms, p.error, p.probed_at
+        let rows = query_as::<_, (String, String, String, bool, i64, Option<String>, String, Option<String>)>(
+            "SELECT p.id, p.channel_id, p.model_id, p.success, p.latency_ms, p.error, p.probed_at, p.endpoint_url
              FROM probe_results p
              INNER JOIN (
                  SELECT channel_id, MAX(probed_at) AS max_ts
@@ -2979,8 +2982,8 @@ impl DbBackend for PgBackend {
         .await
         .map_err(|e| DbError(format!("Failed to list probe results: {}", e)))?;
 
-        Ok(rows.into_iter().map(|(id, channel_id, model_id, success, latency_ms, error, probed_at)| ProbeResultRow {
-            id, channel_id, model_id, success, latency_ms: latency_ms as u64, error, probed_at,
+        Ok(rows.into_iter().map(|(id, channel_id, model_id, success, latency_ms, error, probed_at, endpoint_url)| ProbeResultRow {
+            id, channel_id, model_id, success, latency_ms: latency_ms as u64, error, probed_at, endpoint_url,
         }).collect())
     }
 
