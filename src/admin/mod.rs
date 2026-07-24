@@ -484,6 +484,7 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             "/api/usage/model-activity",
             axum::routing::get(usage::model_activity),
         )
+        .route("/api/usage/funnel", axum::routing::get(usage::usage_funnel))
         .route(
             "/api/routing/snapshot",
             axum::routing::get(routing::routing_flow_snapshot_handler),
