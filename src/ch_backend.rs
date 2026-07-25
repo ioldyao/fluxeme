@@ -46,7 +46,7 @@ impl ClickHouseBackend {
             return Ok(None);
         }
 
-        let url = format!("http://{}:{}", cfg.host, cfg.port + 1); // HTTP port = TCP + 1
+        let url = format!("http://{}:{}", cfg.host, cfg.port);
         let client = Client::default()
             .with_url(&url)
             .with_user(&cfg.user)
