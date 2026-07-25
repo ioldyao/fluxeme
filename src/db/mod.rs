@@ -242,23 +242,6 @@ impl Database {
             .await
     }
 
-    // ── Subscriptions ────────────────────────────────────────────────────
-    pub async fn subscribe_user(&self, user_id: &str, model_id: &str) -> Result<(), DbError> {
-        self.backend.subscribe_user(user_id, model_id).await
-    }
-    pub async fn unsubscribe_user(&self, user_id: &str, model_id: &str) -> Result<(), DbError> {
-        self.backend.unsubscribe_user(user_id, model_id).await
-    }
-    pub async fn delete_subscriptions_by_model(&self, model_id: &str) -> Result<(), DbError> {
-        self.backend.delete_subscriptions_by_model(model_id).await
-    }
-    pub async fn list_subscribed_model_ids(&self, user_id: &str) -> Result<Vec<String>, DbError> {
-        self.backend.list_subscribed_model_ids(user_id).await
-    }
-    pub async fn list_subscriptions(&self, user_id: &str) -> Result<Vec<Model>, DbError> {
-        self.backend.list_subscriptions(user_id).await
-    }
-
     // ── Routing Rules ────────────────────────────────────────────────────
     pub async fn list_rules(&self) -> Result<Vec<RoutingRule>, DbError> {
         self.backend.list_rules().await

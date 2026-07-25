@@ -1,15 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useQueryClient } from '@tanstack/react-query';
-import { usePublicModels, useSubscriptions, useSubscribeModel, useUnsubscribeModel } from '@/api/models';
+import { usePublicModels } from '@/api/models';
 import { PageHeader } from '@/components/PageHeader';
 import { EmptyState } from '@/components/EmptyState';
 import { ModelDetailDialog } from '@/components/ModelDetailDialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Search, Check, Loader2, Cpu, RefreshCw, Info } from 'lucide-react';
-import { toast } from 'sonner';
+import { Search, Cpu, RefreshCw, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CURRENCY_SYMBOL, usePricingCurrency, useCurrency } from '@/store/currency';
 import type { Model } from '@/types';
@@ -52,21 +50,11 @@ const ICON_BASE = '/icons';
 
 export default function ModelsMarketplace() {
   const { t } = useTranslation();
-  const queryClient = useQueryClient();
   const { data: models, isLoading, isError, refetch } = usePublicModels();
-  const { data: subscriptions } = useSubscriptions();
-  const subscribe = useSubscribeModel();
-  const unsubscribe = useUnsubscribeModel();
-  const [pendingId, setPendingId] = useState<string | null>(null);
   const [author, setAuthor] = useState<string | null>(null);
   const [serviceProvider, setServiceProvider] = useState<string | null>(null);
   const [modality, setModality] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-
-  const subscribedIds = useMemo(() => new Set(subscriptions?.map((m) => m.id) ?? []), [subscriptions]);
-  // Same-named models share channels via merge_same_named_models.
-  // A card is “subscribed” if any model entry with the same name is subscribed.
-  const subscribedNames = useMemo(() => new Set(subscriptions?.map((m) => m.name) ?? []), [subscriptions]);
 
   const authors = useMemo(() => {
     if (!models) return [];
@@ -89,29 +77,6 @@ export default function ModelsMarketplace() {
         return m.name.toLowerCase().includes(q) || m.model_pattern.toLowerCase().includes(q) || m._provider.toLowerCase().includes(q);
       });
   }, [models, author, serviceProvider, modality, query]);
-
-  const handleToggle = (modelId: string, isSubscribed: boolean) => {
-    setPendingId(modelId);
-    const opts = {
-      onSuccess: () => {
-        setPendingId(null);
-        toast.success(isSubscribed ? t('marketplace.unsubSuccess') : t('marketplace.subSuccess'));
-        refetch();
-        queryClient.invalidateQueries({ queryKey: ['me', 'subscriptions'] });
-      },
-      onError: (err: Error) => {
-        setPendingId(null);
-        toast.error(err.message);
-      },
-    };
-    if (isSubscribed) {
-      unsubscribe.mutate(modelId, opts);
-    } else {
-      subscribe.mutate(modelId, opts);
-    }
-  };
-
-  const isPending = (id: string) => pendingId === id;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -184,18 +149,12 @@ export default function ModelsMarketplace() {
             </div>
           ) : enriched.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {enriched.map((model) => {
-                const isSubscribed = subscribedIds.has(model.id) || subscribedNames.has(model.name);
-                return (
-                  <ModelCard
-                    key={model.id}
-                    model={model}
-                    isSubscribed={isSubscribed}
-                    pending={isPending(model.id)}
-                    onToggle={handleToggle}
-                  />
-                );
-              })}
+              {enriched.map((model) => (
+                <ModelCard
+                  key={model.id}
+                  model={model}
+                />
+              ))}
             </div>
           ) : (
             <EmptyState message={query ? t('marketplace.noMatch') : t('marketplace.noModels')} />
@@ -236,14 +195,8 @@ function formatContextLength(len: number | null | undefined): string {
 
 function ModelCard({
   model,
-  isSubscribed,
-  pending,
-  onToggle,
 }: {
   model: Model & { _provider: string };
-  isSubscribed: boolean;
-  pending: boolean;
-  onToggle: (id: string, subscribed: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [detailOpen, setDetailOpen] = useState(false);
@@ -271,7 +224,6 @@ function ModelCard({
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h3 className="font-semibold leading-none truncate">{model.name}</h3>
-                {isSubscribed && <Badge variant="default" className="shrink-0">{t('marketplace.subscribed')}</Badge>}
               </div>
               <div className="flex items-center gap-2 mt-1">
                 <p className="text-xs text-muted-foreground">{model._provider || t('marketplace.provider')}</p>
@@ -324,20 +276,6 @@ function ModelCard({
             </div>
           )}
         </div>
-
-        {/* Action */}
-        <Button
-          variant={isSubscribed ? 'outline' : 'default'}
-          size="sm"
-          onClick={() => onToggle(model.id, isSubscribed)}
-          disabled={pending}
-          className="w-full mt-auto"
-        >
-          {isSubscribed ? (
-            pending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4 mr-1" />
-          ) : null}
-          {isSubscribed ? t('marketplace.subscribed') : t('marketplace.subscribe')}
-        </Button>
       </CardContent>
 
       <ModelDetailDialog

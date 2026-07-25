@@ -2013,19 +2013,12 @@ pub async fn list_models(
     headers: HeaderMap,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<Value>, GatewayError> {
-    let user = state.auth.authenticate(&headers)?;
-    let subs = state
-        .db
-        .list_subscriptions(&user.user_id)
-        .await
-        .unwrap_or_default();
-    let subscribed: std::collections::HashSet<String> = subs.iter().map(|m| m.id.clone()).collect();
+    let _user = state.auth.authenticate(&headers)?;
 
     let mut models: Vec<Value> = state
         .routing
         .list_display_models()
         .into_iter()
-        .filter(|m| subscribed.contains(m["upstream_id"].as_str().unwrap_or("")))
         .collect();
 
     let limit: usize = params
