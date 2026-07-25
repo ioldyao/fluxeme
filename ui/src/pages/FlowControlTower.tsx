@@ -1,5 +1,4 @@
 import { useState, useMemo, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
 import { useDashboard, useDashboardAggregations } from '@/api/dashboard';
 import { useUsageFunnel, useUsageAggregate, useUsage, useModelActivity } from '@/api/usage';
 import { useWalletOverview, useEstimatedDays } from '@/api/wallet';
@@ -26,11 +25,6 @@ const C = {
 };
 
 // ── helpers ─────────────────────────────────────────────────────
-function fmtLat(ms: number) {
-  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${ms.toFixed(0)}ms`;
-}
-
 function fmtLatShort(ms: number) {
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
   return `${ms.toFixed(0)}ms`;
@@ -156,7 +150,6 @@ function Clock() {
 
 // ── Main page ───────────────────────────────────────────────────
 export default function FlowControlTower() {
-  const { t } = useTranslation();
   const [days] = useState(1);
 
   const { data: stats } = useDashboard();
@@ -416,7 +409,7 @@ export default function FlowControlTower() {
                 points={timelinePoints.map(p => `${(p.x / 100) * 1488},${p.tokenY}`).join(' ')} />
               {/* error markers */}
               {ua && ua.map((d, i) => {
-                const errCount = d.count - (d as any).success_count ?? 0;
+                const errCount = d.count - ((d as any).success_count ?? 0);
                 if (errCount <= 0) return null;
                 const x = (i / Math.max(1, ua.length - 1)) * 1488;
                 const y = 100 - Math.min(errCount / 5, 1) * 90;
