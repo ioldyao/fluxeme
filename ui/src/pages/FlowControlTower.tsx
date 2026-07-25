@@ -7,7 +7,6 @@ import { fetchRoutingFlowSnapshot } from '@/api/routing';
 import type { Channel, Model } from '@/types';
 
 // ── design tokens ──────────────────────────────────────────────────
-const LOAD_COLORS = { low: '#4a7fc9', mid: '#d99a2b', high: '#c94a4a' };
 const keyFor = (...parts: (string | number)[]) => parts.join('>');
 
 // ── helpers ─────────────────────────────────────────────────────
@@ -26,21 +25,19 @@ function fmtTokens(n: number) {
   return String(n);
 }
 
-// ── Animated counter ───────────────────────────────────────────
+// ── Animated counter ───────────────────────────────────────────────
 function AnimatedNumber({ value, style }: { value: number; style?: React.CSSProperties }) {
   const prevRef = useRef(value);
   const [display, setDisplay] = useState(value);
   useEffect(() => {
     if (value === prevRef.current) return;
     const start = prevRef.current;
-    const end = value;
     const duration = 300;
     const t0 = performance.now();
     let raf = 0;
     function tick(now: number) {
-      const elapsed = now - t0;
-      const p = Math.min(1, elapsed / duration);
-      setDisplay(Math.round(start + (end - start) * (1 - Math.pow(1 - p, 3))));
+      const p = Math.min(1, (now - t0) / duration);
+      setDisplay(Math.round(start + (value - start) * (1 - Math.pow(1 - p, 3))));
       if (p < 1) raf = requestAnimationFrame(tick);
     }
     raf = requestAnimationFrame(tick);
@@ -50,142 +47,7 @@ function AnimatedNumber({ value, style }: { value: number; style?: React.CSSProp
   return <span style={{ ...style, fontVariantNumeric: 'tabular-nums' }}>{display.toLocaleString()}</span>;
 }
 
-// ── Skeleton ───────────────────────────────────────────────────
-function SkeletonBar() {
-  return (
-    <div style={{ marginTop: 6, height: 4, borderRadius: 2, background: '#e5e4e0', overflow: 'hidden' }}>
-      <div style={{ width: '40%', height: '100%', borderRadius: 2, background: '#d0cfca', animation: 'sk-shimmer 1.4s infinite' }} />
-    </div>
-  );
-}
-
-// ── FlowNode (from RoutingFlow) ────────────────────────────────
-function FlowNode({
-  title, subtitle, count, loadCls, skeleton, barPct, pinged,
-}: {
-  title: string; subtitle?: string; count: number;
-  loadCls?: 'low' | 'mid' | 'high' | null; skeleton?: boolean; barPct?: number; pinged?: boolean;
-}) {
-  const color = loadCls ? LOAD_COLORS[loadCls] : null;
-  const w = barPct != null ? barPct : loadCls === 'high' ? 100 : loadCls === 'mid' ? 60 : 25;
-  return (
-    <div style={{
-      borderRadius: 8, border: `1.5px solid ${color || '#d8d7d1'}`,
-      background: '#fafaf8', padding: '9px 12px', fontSize: 12.5,
-      transition: 'transform 150ms, border-color 300ms',
-      transform: pinged ? 'scale(1.03)' : 'scale(1)',
-    }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-        <span style={{ fontWeight: 600, color: color || '#1a1a18', fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
-        {skeleton
-          ? <div style={{ width: 32, height: 14, borderRadius: 3, background: '#eeede8' }} />
-          : <AnimatedNumber value={count} style={{ fontSize: 12, color: '#6b6a64', whiteSpace: 'nowrap' }} />}
-      </div>
-      {subtitle && <div style={{ fontSize: 10.5, color: '#9a988f', marginTop: 2 }}>{subtitle}</div>}
-      {!skeleton && (
-        <div style={{ marginTop: 6, height: 4, borderRadius: 2, background: '#eeede8', overflow: 'hidden' }}>
-          <div style={{ height: '100%', borderRadius: 2, width: `${loadCls ? w : 0}%`, background: color || 'transparent', transition: 'width 400ms ease' }} />
-        </div>
-      )}
-      {skeleton && <SkeletonBar />}
-    </div>
-  );
-}
-
-// ── Comet pulse ───────────────────────────────────────────────
-function CometPulse({ pathD, onDone }: { pathD: string; onDone: () => void }) {
-  const svgRef = useRef<SVGSVGElement | null>(null);
-  const doneRef = useRef(onDone);
-  doneRef.current = onDone;
-  useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const pathEl = svg.querySelector('path');
-    if (!pathEl) return;
-    const len = pathEl.getTotalLength();
-    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    circle.setAttribute('r', '3.5');
-    circle.setAttribute('fill', '#4a7fc9');
-    svg.appendChild(circle);
-    const start = performance.now();
-    const duration = 650;
-    let raf = 0;
-    function step(now: number) {
-      const t = Math.min(1, (now - start) / duration);
-      const pt = pathEl!.getPointAtLength(t * len);
-      circle.setAttribute('cx', String(pt.x));
-      circle.setAttribute('cy', String(pt.y));
-      circle.setAttribute('opacity', String(1 - t * 0.3));
-      if (t < 1) raf = requestAnimationFrame(step);
-      else { circle.remove(); doneRef.current(); }
-    }
-    raf = requestAnimationFrame(step);
-    return () => { cancelAnimationFrame(raf); circle.remove(); };
-  }, [pathD]);
-  return (<g ref={svgRef}><path d={pathD} fill="none" stroke="none" /></g>);
-}
-
-// ── Connectors hook ───────────────────────────────────────────
-function useConnectors(containerRef: React.RefObject<HTMLDivElement | null>, pairs: { key: string; fromEl: HTMLElement | null; toEl: HTMLElement | null }[]) {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const [paths, setPaths] = useState<{ key: string; d: string }[]>([]);
-  const recompute = useCallback(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const cRect = container.getBoundingClientRect();
-    const next = pairs
-      .map(({ key, fromEl, toEl }) => {
-        if (!fromEl || !toEl) return null;
-        const fr = fromEl.getBoundingClientRect();
-        const tr = toEl.getBoundingClientRect();
-        const p0 = { x: fr.right - cRect.left, y: fr.top + fr.height / 2 - cRect.top };
-        const p1 = { x: tr.left - cRect.left, y: tr.top + tr.height / 2 - cRect.top };
-        const midX = (p0.x + p1.x) / 2;
-        return { key, d: `M ${p0.x} ${p0.y} C ${midX} ${p0.y}, ${midX} ${p1.y}, ${p1.x} ${p1.y}` };
-      })
-      .filter((v): v is { key: string; d: string } => !!v);
-    setPaths(next);
-  }, [containerRef, pairs]);
-  useEffect(() => {
-    recompute();
-    const ro = new ResizeObserver(recompute);
-    if (containerRef.current) ro.observe(containerRef.current);
-    window.addEventListener('resize', recompute);
-    return () => { ro.disconnect(); window.removeEventListener('resize', recompute); };
-  }, [recompute, containerRef]);
-  return { svgRef, paths };
-}
-
-// ── Timeline scrub ──────────────────────────────────────────────
-function TimelineScrub({ aggregates }: {
-  aggregates: { date: string; count: number; total_tokens: number }[];
-}) {
-  const [pos, setPos] = useState(24);
-  const factor = 0.55 + 0.45 * Math.sin((pos / 24) * Math.PI);
-  const timeLabel = pos === 24 ? '现在' : `${String(pos).padStart(2, '0')}:00 · 历史回放`;
-  const peak = aggregates.length > 0 ? Math.max(...aggregates.map(d => d.count)) : 0;
-  return (
-    <div>
-      <div className="flex justify-between text-[11px] text-muted-foreground mb-1.5">
-        <span>24 小时流量回放</span>
-        <span>{timeLabel}</span>
-      </div>
-      <input type="range" min={0} max={24} value={pos} step={1}
-        onChange={e => setPos(Number(e.target.value))}
-        className="w-full accent-[var(--chart-1)]" />
-      <div className="flex justify-between gap-3 text-[11px] text-muted-foreground mt-1">
-        <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>现在</span>
-      </div>
-      <div className="flex gap-4 flex-wrap mt-3 text-[11px] text-muted-foreground">
-        <span><i className="inline-block w-5 h-2 rounded-sm mr-1 align-middle" style={{ background: 'var(--chart-1)' }} />峰值 {fmtCount(Math.round(peak * factor))} req</span>
-        <span><i className="inline-block w-5 h-[3px] rounded-sm mr-1 align-middle" style={{ background: 'var(--chart-2)' }} />TPS</span>
-        <span className="text-muted-foreground/60">当前滑块可拖动查看历史时刻</span>
-      </div>
-    </div>
-  );
-}
-
-// ── Build topology ────────────────────────────────────────────
+// ── Build topology ────────────────────────────────────────────────
 interface TopoChannel { id: string; name: string }
 interface TopoModel { model: string; pattern: string; channels: TopoChannel[] }
 
@@ -205,15 +67,7 @@ function buildTopology(models: Model[], channels: Channel[]): TopoModel[] {
   return [...merged.values()];
 }
 
-function loadClass(count: number, siblings: number[]): 'low' | 'mid' | 'high' {
-  const max = Math.max(1, ...siblings);
-  const ratio = count / max;
-  if (ratio >= 0.66) return 'high';
-  if (ratio >= 0.33) return 'mid';
-  return 'low';
-}
-
-// ── Real-time routing stream (simplified from RoutingFlow) ───
+// ── Real-time routing stream ──────────────────────────────────────
 function useLiveCounts(topology: TopoModel[]) {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [totalCount, setTotalCount] = useState(0);
@@ -223,19 +77,15 @@ function useLiveCounts(topology: TopoModel[]) {
   const topoRef = useRef(topology);
   topoRef.current = topology;
 
-  // Load 24h snapshot once
   useEffect(() => {
     fetchRoutingFlowSnapshot().then(snap => {
       if (Object.keys(snap).length === 0) return;
       setCounts(snap);
-      const total = Object.entries(snap)
-        .filter(([k]) => k.split('>').length === 1)
-        .reduce((s, [, v]) => s + v, 0);
+      const total = Object.entries(snap).filter(([k]) => k.split('>').length === 1).reduce((s, [, v]) => s + v, 0);
       setTotalCount(total);
     }).catch(() => {});
   }, []);
 
-  // WebSocket live events
   useEffect(() => {
     let ws: WebSocket | null = null;
     let closed = false;
@@ -248,11 +98,10 @@ function useLiveCounts(topology: TopoModel[]) {
         try { ev = JSON.parse(e.data); } catch { return; }
         if (!ev || typeof ev.model !== 'string' || typeof ev.channel_id !== 'string') return;
         const topo = topoRef.current;
-        const m = topo.find(t => t.model === ev.model) || topo.find(t => t.pattern === '*' || ev.model.startsWith(t.pattern.replace('*', '')));
+        const m = topo.find(t => t.model === ev.model || (t.pattern !== '*' && ev.model.startsWith(t.pattern.replace('*', ''))));
         if (!m) return;
         const ch = m.channels.find(c => c.id === ev.channel_id);
         if (!ch) return;
-
         setCounts(prev => {
           const next = { ...prev };
           next[keyFor(m.model)] = (next[keyFor(m.model)] || 0) + 1;
@@ -283,7 +132,66 @@ function useLiveCounts(topology: TopoModel[]) {
   return { counts, totalCount, connected, reconnectIn, pulseEvent };
 }
 
-// ── Main page ───────────────────────────────────────────────────
+// ── Comet pulse for SVG river paths ────────────────────────────────
+function RiverPulse({ pathD, onDone }: { pathD: string; onDone: () => void }) {
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const doneRef = useRef(onDone);
+  doneRef.current = onDone;
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const pathEl = svg.querySelector('path');
+    if (!pathEl) return;
+    const len = pathEl.getTotalLength();
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('r', '4');
+    circle.setAttribute('fill', '#267b7b');
+    svg.appendChild(circle);
+    const start = performance.now();
+    const duration = 700;
+    let raf = 0;
+    function step(now: number) {
+      const t = Math.min(1, (now - start) / duration);
+      const pt = pathEl!.getPointAtLength(t * len);
+      circle.setAttribute('cx', String(pt.x));
+      circle.setAttribute('cy', String(pt.y));
+      circle.setAttribute('opacity', String(1 - t * 0.4));
+      if (t < 1) raf = requestAnimationFrame(step);
+      else { circle.remove(); doneRef.current(); }
+    }
+    raf = requestAnimationFrame(step);
+    return () => { cancelAnimationFrame(raf); circle.remove(); };
+  }, [pathD]);
+  return (<g ref={svgRef}><path d={pathD} fill="none" stroke="none" /></g>);
+}
+
+// ── Timeline scrub ────────────────────────────────────────────────
+function TimelineScrub({ aggregates }: {
+  aggregates: { date: string; count: number; total_tokens: number }[];
+}) {
+  const [pos, setPos] = useState(24);
+  const factor = 0.55 + 0.45 * Math.sin((pos / 24) * Math.PI);
+  const peak = aggregates.length > 0 ? Math.max(...aggregates.map(d => d.count)) : 0;
+  return (
+    <div>
+      <div className="flex justify-between text-[11px] text-muted-foreground mb-1.5">
+        <span>24 小时流量回放</span>
+        <span>{pos === 24 ? '现在' : `${String(pos).padStart(2, '0')}:00 · 历史回放`}</span>
+      </div>
+      <input type="range" min={0} max={24} value={pos} step={1}
+        onChange={e => setPos(Number(e.target.value))}
+        className="w-full accent-[var(--chart-1)]" />
+      <div className="flex justify-between gap-3 text-[11px] text-muted-foreground mt-1">
+        <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>现在</span>
+      </div>
+      <div className="flex gap-4 flex-wrap mt-3 text-[11px] text-muted-foreground">
+        <span><i className="inline-block w-5 h-2 rounded-sm mr-1 align-middle" style={{ background: 'var(--chart-1)' }} />峰值 {fmtCount(Math.round(peak * factor))} req</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────
 export default function FlowControlTower() {
   const [days] = useState(1);
   const { data: stats } = useDashboard();
@@ -301,60 +209,7 @@ export default function FlowControlTower() {
   const { counts, totalCount, connected, reconnectIn, pulseEvent } = useLiveCounts(topology);
   const loading = mLoading || cLoading;
 
-  // Topology refs for connectors
-  const containerRef = useRef<HTMLDivElement>(null);
-  const modelRefs = useRef<Record<string, React.RefObject<HTMLDivElement | null>>>({});
-  const channelRefs = useRef<Record<string, React.RefObject<HTMLDivElement | null>>>({});
-  topology.forEach(m => {
-    if (!modelRefs.current[m.model]) modelRefs.current[m.model] = { current: null };
-    m.channels.forEach(c => {
-      if (!channelRefs.current[c.id]) channelRefs.current[c.id] = { current: null };
-    });
-  });
-
-  // Connector pairs
-  const connectorPairs = useMemo(() => {
-    const pairs: { key: string; fromEl: HTMLElement | null; toEl: HTMLElement | null }[] = [];
-    topology.forEach(m => {
-      m.channels.forEach(c => {
-        pairs.push({
-          key: keyFor(m.model, c.id),
-          fromEl: modelRefs.current[m.model]?.current,
-          toEl: channelRefs.current[c.id]?.current,
-        });
-      });
-    });
-    return pairs;
-  }, [topology]);
-
-  const { svgRef, paths } = useConnectors(containerRef, connectorPairs);
-
-  // Pulse tracks
-  const [pulses, setPulses] = useState<{ id: string; pathD: string }[]>([]);
-  const [pinged, setPinged] = useState<Record<string, boolean>>({});
-  const prevTsRef = useRef(0);
-
-  useEffect(() => {
-    if (!pulseEvent || pulseEvent.ts === prevTsRef.current) return;
-    prevTsRef.current = pulseEvent.ts;
-    const { model, channel } = pulseEvent;
-    const p = paths.find(pp => pp.key === keyFor(model, channel));
-    if (p) {
-      setPulses(prev => [...prev, { id: `${pulseEvent.ts}`, pathD: p.d }]);
-      const mk = keyFor(model);
-      const ck = keyFor(model, channel);
-      setPinged(prev => ({ ...prev, [mk]: true }));
-      setTimeout(() => setPinged(prev => ({ ...prev, [mk]: false })), 300);
-      setTimeout(() => {
-        setPinged(prev => ({ ...prev, [ck]: true }));
-        setTimeout(() => setPinged(prev => ({ ...prev, [ck]: false })), 300);
-      }, 400);
-    }
-  }, [pulseEvent, paths]);
-
-  const removePulse = useCallback((id: string) => setPulses(prev => prev.filter(p => p.id !== id)), []);
-
-  // ── derived dashboard data ──────────────────────────────────
+  // ── derived dashboard data ────────────────────────────────────
   const availability = agg?.success_rate_24h ?? 0;
   const avgLat = agg?.avg_latency_ms_24h ?? 0;
   const requests24h = agg?.requests_24h ?? 0;
@@ -369,7 +224,100 @@ export default function FlowControlTower() {
   const p50 = funnel?.p50_latency ?? avgLat;
   const p95 = funnel?.p95_latency ?? avgLat;
   const qps = funnelTotal > 0 ? (funnelTotal / 86400) : 0;
-  const tps = totalTokens24h > 0 ? (totalTokens24h / 86400) : 0;
+
+  // Model→Channel count map for SVG river widths
+  const modelChCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    topology.forEach(t => { m[t.model] = counts[keyFor(t.model)] || 0; });
+    return m;
+  }, [topology, counts]);
+
+  const chReqMap = useMemo(() => {
+    const m: Record<string, number> = {};
+    topology.forEach(t => {
+      t.channels.forEach(c => {
+        const k = keyFor(t.model, c.id);
+        m[k] = counts[k] || 0;
+      });
+    });
+    return m;
+  }, [topology, counts]);
+
+  const maxModelCount = Math.max(...Object.values(modelChCounts), 1);
+  const sortedModels = useMemo(() =>
+    topology.slice().sort((a, b) => (counts[keyFor(b.model)] || 0) - (counts[keyFor(a.model)] || 0)),
+    [topology, counts]
+  );
+  const topModels = sortedModels.slice(0, 5);
+
+  // Collect all unique channels across all models (for right-side provider list)
+  const allChannelReqs = useMemo(() => {
+    const sum: Record<string, { name: string; count: number }> = {};
+    topology.forEach(t => {
+      t.channels.forEach(c => {
+        const cnt = counts[keyFor(t.model, c.id)] || 0;
+        if (sum[c.id]) sum[c.id].count += cnt;
+        else sum[c.id] = { name: c.name, count: cnt };
+      });
+    });
+    return Object.entries(sum)
+      .map(([id, v]) => ({ id, name: v.name, count: v.count }))
+      .sort((a, b) => b.count - a.count);
+  }, [topology, counts]);
+  const maxChCount = Math.max(...allChannelReqs.map(c => c.count), 1);
+
+  // Pulse animation state for river bands
+  const [pulses, setPulses] = useState<{ id: string; pathD: string }[]>([]);
+  const prevTsRef = useRef(0);
+  const pulseCooldown = useRef<Record<string, number>>({});
+  const COOLDOWN = 400;
+
+  // Generate SVG path for a model band (left edge → gate center)
+  const modelBandPath = useCallback((index: number, total: number, _count: number) => {
+    const y = 60 + index * (380 / Math.max(total, 1));
+    const ty = 190 + (index - (total - 1) / 2) * 12;
+    return `M0,${y} C240,${y + 5} 400,${140 + index * 8} 620,${ty} C670,${ty + 5} 700,${ty + 8} 718,${ty + 10}`;
+  }, []);
+
+  // Generate SVG path from gate to provider
+  const providerBandPath = useCallback((index: number, total: number) => {
+    const ty = 120 + index * (260 / Math.max(total, 1));
+    return `M770,${ty + 10} C850,${ty + 5} 950,${ty - 10} 1200,${ty - 20}`;
+  }, []);
+
+  // Pulse on WebSocket event
+  useEffect(() => {
+    if (!pulseEvent || pulseEvent.ts === prevTsRef.current) return;
+    prevTsRef.current = pulseEvent.ts;
+    const { model, channel, ts } = pulseEvent;
+    const mi = topModels.findIndex(t => t.model === model);
+    if (mi >= 0) {
+      const bandKey = `model-${model}`;
+      const last = pulseCooldown.current[bandKey] || 0;
+      if (ts - last >= COOLDOWN) {
+        pulseCooldown.current[bandKey] = ts;
+        const cnt = modelChCounts[model] || 1;
+        const d = modelBandPath(mi, Math.max(topModels.length, 1), cnt);
+        setPulses(prev => [...prev, { id: `${ts}-${model}`, pathD: d }]);
+      }
+    }
+    // provider pulse
+    const ci = allChannelReqs.findIndex(c => {
+      const found = topology.find(t => t.model === model);
+      return found?.channels.some(ch => ch.id === channel);
+    });
+    if (ci >= 0) {
+      const bandKey = `ch-${channel}`;
+      const last = pulseCooldown.current[bandKey] || 0;
+      if (ts - last >= COOLDOWN) {
+        pulseCooldown.current[bandKey] = ts;
+        const d = providerBandPath(ci, Math.max(allChannelReqs.length, 1));
+        setPulses(prev => [...prev, { id: `${ts}-${channel}`, pathD: d }]);
+      }
+    }
+  }, [pulseEvent, topModels, modelChCounts, allChannelReqs, topology, modelBandPath, providerBandPath]);
+
+  const removePulse = useCallback((id: string) => setPulses(prev => prev.filter(p => p.id !== id)), []);
 
   return (
     <div className="space-y-0">
@@ -388,162 +336,144 @@ export default function FlowControlTower() {
           </span>
           <span className="text-[11px] font-mono tabular-nums flex items-center gap-1.5">
             <span className={`inline-block w-1.5 h-1.5 rounded-full ${connected ? 'bg-emerald-500' : 'bg-muted-foreground'}`} />
-            {connected ? 'LIVE' : reconnectIn > 0 ? `重连 ${reconnectIn}s` : '离线'}
+            {connected ? 'LIVE' : reconnectIn > 0 ? `${reconnectIn}s` : '离线'}
           </span>
         </div>
         <div className="flex items-center gap-5 flex-wrap text-muted-foreground">
           <span>请求 <strong className="text-foreground tabular-nums">{fmtCount(totalCount || funnelTotal)}</strong></span>
           <span>Token <strong className="text-foreground tabular-nums">{fmtTokens(totalTokens24h)}</strong></span>
-          <span>TPS <strong className="text-foreground tabular-nums">{tps.toFixed(1)}</strong></span>
+          <span>QPS <strong className="text-foreground tabular-nums">{qps.toFixed(1)}</strong></span>
         </div>
       </div>
 
-      {/* ═══ ROUTING TOPOLOGY ═══ */}
-      <div className="py-5">
-        <div ref={containerRef} className="relative" style={{ minHeight: 300 }}>
-          {/* SVG connectors layer */}
-          <svg ref={svgRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: 'visible' }}>
-            {paths.map(p => <path key={p.key} d={p.d} fill="none" stroke="#d8d7d1" strokeWidth="1.5" />)}
-            {pulses.map(pulse => <CometPulse key={pulse.id} pathD={pulse.pathD} onDone={() => removePulse(pulse.id)} />)}
+      {/* ═══ RIVER FLOW ═══ */}
+      <div className="relative py-5">
+        <div className="grid grid-cols-3 text-xs text-muted-foreground mb-1">
+          <div>模型入口</div>
+          <div className="text-center">网关闸门</div>
+          <div className="text-right">供应商出口</div>
+        </div>
+
+        <section className="relative h-[480px] border rounded-xl bg-card/40 overflow-hidden">
+          {/* SVG river */}
+          <svg viewBox="0 0 1200 480" preserveAspectRatio="none" className="absolute inset-0 w-full h-full">
+            <defs>
+              <linearGradient id="rw1" x1="0" x2="1">
+                <stop offset="0%" stopColor="#7fc1b5" stopOpacity="0.85" />
+                <stop offset="100%" stopColor="#267b7b" stopOpacity="0.6" />
+              </linearGradient>
+              <linearGradient id="rw2" x1="0" x2="1">
+                <stop offset="0%" stopColor="#a8d5c9" stopOpacity="0.75" />
+                <stop offset="100%" stopColor="#4f9b8e" stopOpacity="0.5" />
+              </linearGradient>
+            </defs>
+
+            {/* Faint background grid */}
+            <g opacity="0.15">
+              <line x1="400" y1="0" x2="400" y2="480" stroke="#688082" strokeWidth="0.5" />
+              <line x1="800" y1="0" x2="800" y2="480" stroke="#688082" strokeWidth="0.5" />
+            </g>
+
+            {/* Model→Gateway bands */}
+            {topModels.map((m, i) => {
+              const cnt = modelChCounts[m.model] || 0;
+              const w = Math.max(6, Math.min(40, 8 + (cnt / maxModelCount) * 32));
+              const grad = i % 2 === 0 ? 'url(#rw1)' : 'url(#rw2)';
+              const y = 55 + i * 75;
+              const ty = 190 + (i - (Math.max(topModels.length, 1) - 1) / 2) * 15;
+              return (
+                <path key={m.model}
+                  d={`M0,${y} C240,${y + 5} 400,${140 + i * 6} 620,${ty} C670,${ty + 3} 700,${ty + 5} 720,${ty + 6}`}
+                  fill="none" stroke={grad} strokeWidth={w} strokeLinecap="round" opacity={0.85} />
+              );
+            })}
+
+            {/* Intercepted/dropped trickle (dashed) */}
+            {(blocked + upstreamErrTotal) > 0 && (
+              <path d="M0,440 C260,440 380,380 560,350"
+                fill="none" stroke="#c65d50" strokeWidth="5" strokeDasharray="8 6" strokeLinecap="round" opacity="0.7" />
+            )}
+
+            {/* Gateway node */}
+            <ellipse cx="600" cy="240" rx="160" ry="200" fill="rgba(38,123,123,0.04)" />
+            <rect x="540" y="195" width="120" height="90" rx="16" fill="rgba(255,255,255,0.92)" stroke="#267b7b" strokeWidth="1.5" opacity="0.9" />
+
+            {/* Gateway→Provider bands */}
+            {allChannelReqs.slice(0, 3).map((ch, i) => {
+              const w = Math.max(6, Math.min(36, 8 + (ch.count / maxChCount) * 28));
+              const grad = i === 0 ? 'url(#rw1)' : 'url(#rw2)';
+              const ty = 160 + i * 80;
+              return (
+                <path key={ch.id}
+                  d={`M780,${ty} C880,${ty - 5} 980,${ty - 12} 1200,${ty - 18}`}
+                  fill="none" stroke={grad} strokeWidth={w} strokeLinecap="round" opacity={0.75} />
+              );
+            })}
+
+            {/* Pulse comets */}
+            {pulses.map(p => <RiverPulse key={p.id} pathD={p.pathD} onDone={() => removePulse(p.id)} />)}
           </svg>
 
-          {loading ? (
-            <>
-              <div className="flex gap-8 items-center justify-center py-16">
-                <div className="w-48"><FlowNode title="" count={0} skeleton /></div>
-                <div className="text-muted-foreground text-xs text-center">加载中...</div>
-                <div className="w-48"><FlowNode title="" count={0} skeleton /></div>
-              </div>
-            </>
-          ) : topology.length === 0 ? (
-            <div className="text-center py-20 text-sm text-muted-foreground">暂无拓扑数据 · 请先配置模型和渠道绑定</div>
-          ) : (
-            <div className="space-y-6">
-              {topology.map(m => {
-                const modelCnt = counts[keyFor(m.model)] || 0;
-                const chCounts = m.channels.map(c => counts[keyFor(m.model, c.id)] || 0);
-                return (
-                  <div key={m.model} className="rounded-xl border bg-card p-5 shadow-sm">
-                    {/* Model header row */}
-                    <div className="flex items-center gap-3 mb-4">
-                      <span className="font-semibold text-sm">{m.model}</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground font-mono">{m.pattern}</span>
-                      <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-                        共 <b className="text-foreground"><AnimatedNumber value={modelCnt} /></b> 次请求
-                      </span>
-                    </div>
+          {/* ═══ OVERLAY LABELS ═══ */}
 
-                    {/* Model → Channels grid */}
-                    <div className="grid grid-cols-[1fr_auto_1fr] gap-4 items-center">
-                      {/* Model node (left) */}
-                      <div ref={modelRefs.current[m.model]}>
-                        <FlowNode title={m.model} count={modelCnt} pinged={pinged[keyFor(m.model)]} />
-                      </div>
-
-                      {/* Arrow */}
-                      <div className="text-muted-foreground/40 text-xs select-none">→</div>
-
-                      {/* Channel nodes (right) */}
-                      <div className="space-y-2">
-                        {m.channels.map(c => {
-                          const cnt = counts[keyFor(m.model, c.id)] || 0;
-                          const cls = loadClass(cnt, chCounts);
-                          return (
-                            <div key={c.id} ref={channelRefs.current[c.id]}>
-                              <FlowNode
-                                title={c.name}
-                                count={cnt}
-                                loadCls={cls}
-                                barPct={chCounts.reduce((a, b) => a + b, 0) > 0 ? Math.round((cnt / Math.max(1, chCounts.reduce((a, b) => a + b, 0))) * 100) : 0}
-                                pinged={pinged[keyFor(m.model, c.id)]}
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+          {/* Model labels (left) */}
+          <div className="absolute inset-y-8 left-0 flex flex-col justify-around z-[3] pointer-events-none">
+            {topModels.map(m => {
+              const cnt = modelChCounts[m.model] || 0;
+              const pct = funnelTotal > 0 ? (cnt / funnelTotal) * 100 : 0;
+              return (
+                <div key={m.model} className="pl-4">
+                  <b className="text-xs leading-tight">{m.model.length > 16 ? `${m.model.slice(0, 14)}..` : m.model}</b>
+                  <div className="text-[10px] text-muted-foreground tabular-nums">
+                    {fmtCount(cnt)} req · {pct.toFixed(1)}%
                   </div>
-                );
-              })}
-            </div>
-          )}
+                </div>
+              );
+            })}
+            {topModels.length === 0 && !loading && (
+              <div className="pl-4 text-[10px] text-muted-foreground">暂无模型数据</div>
+            )}
+          </div>
 
-          {/* Connection overlay */}
-          {!loading && topology.length > 0 && !connected && (
-            <div className="absolute inset-0 rounded-xl bg-background/55 backdrop-blur-[1px] flex items-center justify-center z-10">
-              <span className="text-sm text-muted-foreground font-medium">
-                🔌 连接断开{reconnectIn > 0 ? ` · ${reconnectIn}s 后重试` : ' · 重连中...'}
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ═══ GATE STATS + WATERLINE ═══ */}
-      <div className="grid grid-cols-[1fr_auto_1fr] gap-4 items-stretch py-4 border-y">
-        {/* left: funnel stats */}
-        <div className="flex flex-col gap-3">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">拦截统计</div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="border rounded-lg p-3 text-center">
-              <b className="text-lg tabular-nums">{upstreamErrTotal + (funnel?.other_error_count ?? 0)}</b>
-              <span className="block text-[10px] text-muted-foreground">异常拦截</span>
-            </div>
-            <div className="border rounded-lg p-3 text-center">
-              <b className="text-lg tabular-nums">{blocked}</b>
-              <span className="block text-[10px] text-muted-foreground">业务限制</span>
-            </div>
-            <div className="border rounded-lg p-3 text-center">
-              <b className="text-lg tabular-nums">{availability.toFixed(1)}%</b>
-              <span className="block text-[10px] text-muted-foreground">SLA</span>
-            </div>
-            <div className="border rounded-lg p-3 text-center">
-              <b className="text-lg tabular-nums">{qps.toFixed(1)}</b>
-              <span className="block text-[10px] text-muted-foreground">QPS</span>
+          {/* Gateway gate card */}
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[160px] z-[4] pointer-events-none">
+            <div className="bg-white/92 backdrop-blur rounded-xl border border-[rgba(38,123,123,0.3)] shadow-sm p-3.5 text-center">
+              <div className="text-[9px] uppercase tracking-widest text-muted-foreground">GATEWAY</div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2 mt-2.5">
+                <div><b className="text-base tabular-nums">{upstreamErrTotal + (funnel?.other_error_count ?? 0)}</b><div className="text-[9px] text-muted-foreground">异常拦截</div></div>
+                <div><b className="text-base tabular-nums">{blocked}</b><div className="text-[9px] text-muted-foreground">业务限制</div></div>
+                <div><b className="text-base tabular-nums">{availability.toFixed(1)}%</b><div className="text-[9px] text-muted-foreground">SLA</div></div>
+                <div><b className="text-base tabular-nums">{qps.toFixed(1)}</b><div className="text-[9px] text-muted-foreground">QPS</div></div>
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* center: load legend */}
-        <div className="flex flex-col justify-center px-6 border-x text-[11px] text-muted-foreground">
-          <div className="space-y-2">
-            <span className="flex items-center gap-2"><i className="inline-block w-5 h-[5px] rounded-sm" style={{ background: LOAD_COLORS.low }} />低负载</span>
-            <span className="flex items-center gap-2"><i className="inline-block w-5 h-[5px] rounded-sm" style={{ background: LOAD_COLORS.mid }} />中负载</span>
-            <span className="flex items-center gap-2"><i className="inline-block w-5 h-[5px] rounded-sm" style={{ background: LOAD_COLORS.high }} />高负载</span>
+          {/* Provider labels (right) */}
+          <div className="absolute inset-y-8 right-0 flex flex-col justify-around z-[3] pointer-events-none text-right">
+            {loading ? (
+              <div className="pr-4 text-[10px] text-muted-foreground">加载中...</div>
+            ) : allChannelReqs.length > 0 ? allChannelReqs.slice(0, 3).map(ch => (
+              <div key={ch.id} className="pr-4">
+                <b className="text-xs leading-tight">{ch.name}</b>
+                <div className="text-[10px] text-muted-foreground tabular-nums">{fmtCount(ch.count)} req</div>
+              </div>
+            )) : (
+              <div className="pr-4 text-[10px] text-muted-foreground">暂无渠道流量</div>
+            )}
           </div>
-          <div className="mt-4 text-xs">
-            <div>TTFT P50 <b className="text-foreground">{fmtLat(p50)}</b></div>
-            <div>TTFT P99 <b className="text-foreground">{fmtLat(p99)}</b></div>
-            <div>请求 P95 <b className="text-foreground">{fmtLat(p95)}</b></div>
-          </div>
-        </div>
 
-        {/* right: aggregate metrics */}
-        <div className="flex flex-col gap-3">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">流量概览</div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="border rounded-lg p-3">
-              <div className="text-[10px] text-muted-foreground">请求总量</div>
-              <b className="text-base tabular-nums">{fmtCount(funnelTotal)}</b>
-            </div>
-            <div className="border rounded-lg p-3">
-              <div className="text-[10px] text-muted-foreground">Token 总量</div>
-              <b className="text-base tabular-nums">{fmtTokens(totalTokens24h)}</b>
-            </div>
-            <div className="border rounded-lg p-3">
-              <div className="text-[10px] text-muted-foreground">P99 延迟</div>
-              <b className="text-base tabular-nums">{fmtLat(p99)}</b>
-            </div>
-            <div className="border rounded-lg p-3">
-              <div className="text-[10px] text-muted-foreground">P50 延迟</div>
-              <b className="text-base tabular-nums">{fmtLat(p50)}</b>
-            </div>
+          {/* Waterline metrics */}
+          <div className="absolute left-[15%] right-[15%] bottom-3 flex justify-around text-[10px] text-muted-foreground z-[5]">
+            <span>TTFT P50 <b className="text-foreground">{fmtLat(p50)}</b></span>
+            <span>TTFT P99 <b className="text-foreground">{fmtLat(p99)}</b></span>
+            <span>P95 <b className="text-foreground">{fmtLat(p95)}</b></span>
+            <span>Max <b className="text-foreground">{fmtLat(funnel?.p99_latency ?? avgLat)}</b></span>
           </div>
-        </div>
+        </section>
       </div>
 
       {/* ═══ TIMELINE ═══ */}
-      <section className="pt-4">
+      <section className="pt-2 pb-4">
         {ua && ua.length > 0 ? <TimelineScrub aggregates={ua} /> : (
           <div className="text-xs text-muted-foreground text-center py-8">暂无时序数据</div>
         )}
