@@ -1,86 +1,119 @@
 # AI Gateway
 
-A reverse proxy gateway for large language model APIs. Provides a unified OpenAI-compatible endpoint that routes requests to upstream providers with channel management, load balancing, usage tracking, rate limiting, and a full-featured admin UI with wallet/billing management.
+A reverse proxy gateway for LLM APIs. Compatible with OpenAI and Anthropic protocols — routes requests to upstream providers with channel management, load balancing, usage tracking, rate limiting, and a full admin UI.
 
 [中文文档](./README_zh.md)
 
-## Features
+---
 
-- **Unified API** — Single endpoint compatible with OpenAI and Anthropic API formats
-- **Channel Management** — Route requests to multiple upstream providers with weight-based load balancing and health checks
-- **Model Marketplace** — Browse, subscribe, and publish models through the admin UI
-- **API Key Management** — Multi-key support with user binding and granular permissions
-- **Usage Tracking** — Token counting, cost calculation, aggregate charts, and detailed usage logs with deduplication
-- **Rate Limiting** — Per-key and per-user rate limits
-- **Wallet & Billing** — Balance management, recharge (manual and key-based), transaction history, low-balance alerts, and estimated days remaining
-- **Recharge Key Management** — Create, revoke, and filter recharge keys with optional expiry and usage tracking
-- **User Management** — Admin panel for user creation, role assignment, and activity monitoring
-- **Custom Routing Rules** — Define routing logic per model or API key
-- **Redis Caching** — Exact cache for non-streaming requests
-- **SSO** — OIDC-based single sign-on
-- **Health Checks** — Monitor upstream model connectivity and channel status
+## Requirements
 
-![AI Gateway Admin UI](docs/images/aigateway.png)
+| Dependency | Notes |
+|------------|-------|
+| Docker & Docker Compose | Deployment |
+| PostgreSQL 16 | Started by docker compose |
+| Redis 7 | Started by docker compose |
 
-## Quick Start
+Optional: ClickHouse (observability), Jaeger (distributed tracing).
 
-### Docker Compose (recommended)
+---
+
+## Quick Deploy
+
+### 1. Configure environment
 
 ```bash
 cp .env.example .env
-# Edit .env and config/config.yaml as needed
+```
 
-# Start all services (DB_TYPE=docker → also starts PostgreSQL)
+Required — must be set (no defaults, gateway will panic if missing):
+
+| Variable | Requirement | Example |
+|----------|-------------|---------|
+| `GATEWAY_JWT_SECRET` | Any string | `openssl rand -base64 32` |
+| `GATEWAY_ENCRYPTION_KEY` | ≥32 chars, must differ from JWT secret | `openssl rand -base64 32` |
+| `REDIS_PASSWORD` | Redis password | `openssl rand -base64 16` |
+| `DB_PASSWORD` | PostgreSQL password | anything |
+
+Optionally adjust `DB_DEPLOYMENT`, `CLICKHOUSE_DEPLOYMENT`, etc.
+
+### 2. Start
+
+```bash
 make up
 ```
 
-The gateway and admin UI will be available at `http://localhost:8080`.
+Open `http://localhost:8080` — the first visit will guide you through admin registration.
+
+| Command | Description |
+|---------|-------------|
+| `make up` | Start all services |
+| `make down` | Stop all services |
+| `make logs` | Tail logs |
+| `make restart` | Restart |
+| `make build` | Rebuild images |
+
+### 3. Configure models & channels
+
+Via the admin UI:
+1. **Channels** → add upstream providers (OpenAI, Anthropic, vLLM, etc.)
+2. **Models** → add models and bind them to channels
+3. **Model Marketplace** → publish models for users
+
+---
+
+## Manual Build (without Docker)
+
+### Backend
 
 ```bash
-# Other commands
-make down     # Stop all services
-make logs     # Tail logs
-make restart  # Restart all services
-```
+# Requires Rust 1.88+, a running PostgreSQL and Redis
+cp .env.example .env
+# Edit .env — set DB_HOST, REDIS_PASSWORD etc. to your local instances
 
-### Manual Build
-
-```bash
-# Backend
 cargo build --release
 ./target/release/ai-gateway
+```
 
-# Frontend development (separate terminal)
+### Frontend
+
+```bash
 cd ui
 pnpm install
-pnpm run dev    # Serves on :5173 with hot reload, proxies API to :8080
-
-# Build frontend for production (output to ../web/)
-cd ui && pnpm run build
+pnpm run dev       # Dev mode, proxies API to localhost:8080
+pnpm run build     # Production build → ../web/
 ```
+
+---
 
 ## Configuration
 
-Edit `config/config.yaml`. Key settings:
+Main config file: `config/config.yaml`. Supports `${VAR}` and `${VAR:-default}` env var expansion.
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `server.host` | Listen address | `0.0.0.0` |
-| `server.port` | Listen port | `8080` |
-| `admin.username` | Admin login username | `admin` |
-| `admin.password` | Admin login password | `admin123` |
-| `database.path` | SQLite database path | `data/gateway.db` |
-| `jwt_secret` | JWT signing secret | `${GATEWAY_JWT_SECRET}` |
-| `cache.enabled` | Enable Redis cache | `true` |
-| `cache.redis_url` | Redis connection URL（支持 `${VAR}` 环境变量） | `redis://127.0.0.1:6379` |
+```yaml
+server:
+  host: 0.0.0.0
+  port: 8080
 
-Environment variables in config (`${VAR_NAME}`) are resolved from `.env` or environment.
+database:
+  pg_url: ""                    # When empty, built from DB_USER/DB_PASSWORD/DB_HOST/DB_PORT/DB_NAME
+  retention_days: 90            # Usage log retention
 
-## Usage
+redis:
+  enabled: true
+  url: "redis://:${REDIS_PASSWORD}@127.0.0.1:16379"   # Note port 16379
 
-### API Endpoints
+jwt_secret: ${GATEWAY_JWT_SECRET}
+encryption_key: ${GATEWAY_ENCRYPTION_KEY}
+```
 
-Compatible with OpenAI and Anthropic SDKs:
+On first start, `channels`, `models`, and `routing_rules` defined in `config.yaml` are auto-seeded into the database.
+
+> Runtime config (timeouts, retries, cache TTL, billing toggle) can be changed live via the **Settings** page.
+
+---
+
+## API
 
 ```bash
 curl http://localhost:8080/v1/chat/completions \
@@ -89,26 +122,16 @@ curl http://localhost:8080/v1/chat/completions \
   -d '{"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]}'
 ```
 
-### Admin UI
+Also supports Anthropic format (`POST /v1/messages`) and any OpenAI-compatible SDK.
 
-Open `http://localhost:8080/` in browser. Log in with admin credentials from config.
+---
 
-## Architecture
+## Ports
 
-```
-                    ┌─────────────┐
-                    │   Clients   │
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-                    │  AI Gateway │
-                    │  (Axum/Rust)│
-                    └──────┬──────┘
-                           │
-              ┌────────────┼────────────┐
-              ▼            ▼            ▼
-        ┌──────────┐ ┌──────────┐ ┌──────────┐
-        │ OpenAI   │ │Anthropic │ │  vLLM    │
-        │ Channel  │ │ Channel  │ │ Channel  │
-        └──────────┘ └──────────┘ └──────────┘
-```
+| Port | Service |
+|------|---------|
+| 8080 | AI Gateway (proxy + admin UI) |
+| 16379 | Redis |
+| 5432 | PostgreSQL |
+| 8123 | ClickHouse HTTP |
+| 16686 | Jaeger UI |
