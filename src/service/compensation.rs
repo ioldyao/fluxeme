@@ -51,8 +51,11 @@ pub async fn start_compensation_loop(
                 let cost_amount = r.prompt_tokens.max(0) as f64 / 1_000_000.0 * r.prompt_price
                     + r.completion_tokens.max(0) as f64 / 1_000_000.0 * r.completion_price
                     + r.cache_hit_input_tokens.max(0) as f64 / 1_000_000.0 * r.cache_read_price;
+                let ts = chrono::DateTime::parse_from_rfc3339(&r.timestamp)
+                    .map(|dt| dt.timestamp() as u32)
+                    .unwrap_or_else(|_| chrono::Utc::now().timestamp() as u32);
                 UsageEvent {
-                    timestamp: r.timestamp.clone(),
+                    timestamp: ts,
                     request_id: r.request_id.clone(),
                     user_id: r.user_id.clone(),
                     user_name: r.user_name.clone(),
