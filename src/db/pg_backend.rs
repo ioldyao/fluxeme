@@ -390,17 +390,30 @@ impl DbBackend for PgBackend {
                 created_at TEXT NOT NULL DEFAULT NOW(),
                 updated_at TEXT NOT NULL DEFAULT NOW()
             );
-            -- Migrate old-format rules: add new columns if missing
-            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS id TEXT;
-            UPDATE routing_rules SET id = gen_random_uuid()::TEXT WHERE id IS NULL;
-            ALTER TABLE routing_rules ALTER COLUMN id SET NOT NULL;
-            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'system';
-            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS source_model TEXT NOT NULL DEFAULT '*';
-            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS target_model TEXT NOT NULL DEFAULT '';
-            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS upstream_model TEXT NOT NULL DEFAULT '';
-            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0;
-            -- enabled may already exist as INTEGER — convert to BOOLEAN
+            -- Migrate old-format routing_rules to new schema (idempotent)
+            -- Old schema: name PK, model_pattern, channel_id FK → new schema: id PK, name+new cols
             DO $$ BEGIN
+                -- Drop legacy foreign key (user rules use empty channel_id)
+                ALTER TABLE routing_rules DROP CONSTRAINT IF EXISTS routing_rules_channel_id_fkey;
+                -- Drop legacy model_pattern column
+                ALTER TABLE routing_rules DROP COLUMN IF EXISTS model_pattern;
+                -- Add id column and make it the primary key
+                ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS id TEXT;
+                UPDATE routing_rules SET id = gen_random_uuid()::TEXT WHERE id IS NULL;
+                ALTER TABLE routing_rules ALTER COLUMN id SET NOT NULL;
+                -- Switch primary key from name to id (drop old PK, create new)
+                ALTER TABLE routing_rules DROP CONSTRAINT IF EXISTS routing_rules_pkey;
+                ALTER TABLE routing_rules ADD PRIMARY KEY (id);
+                -- Add new columns
+                ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'system';
+                ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS source_model TEXT NOT NULL DEFAULT '*';
+                ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS target_model TEXT NOT NULL DEFAULT '';
+                ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS upstream_model TEXT NOT NULL DEFAULT '';
+                ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+                ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS created_at TEXT NOT NULL DEFAULT NOW();
+                ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT NOW();
+                -- enabled column: new tables have BOOLEAN, old may have INTEGER
                 IF EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='routing_rules' AND column_name='enabled'
                     AND data_type='integer') THEN
@@ -409,15 +422,6 @@ impl DbBackend for PgBackend {
                     ALTER TABLE routing_rules ALTER COLUMN enabled SET DEFAULT true;
                 END IF;
             END $$;
-            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
-            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS created_at TEXT NOT NULL DEFAULT NOW();
-            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT NOW();
-            -- Drop model_pattern column (no longer used — models match by exact name)
-            ALTER TABLE routing_rules DROP COLUMN IF EXISTS model_pattern;
-            -- Drop foreign key constraint on channel_id (can now be empty for user-level rules)
-            ALTER TABLE routing_rules DROP CONSTRAINT IF EXISTS routing_rules_channel_id_fkey;
-            -- Remove NOT NULL from channel_id for system rules that only do model rewrite
-            -- (pg doesn't support ALTER COLUMN DROP NOT NULL for this, already nullable via empty default)
 
             CREATE TABLE IF NOT EXISTS usage_logs (
                 id BIGSERIAL PRIMARY KEY,
