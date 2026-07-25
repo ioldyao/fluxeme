@@ -391,6 +391,9 @@ impl DbBackend for PgBackend {
                 updated_at TEXT NOT NULL DEFAULT NOW()
             );
             -- Migrate old-format rules: add new columns if missing
+            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS id TEXT;
+            UPDATE routing_rules SET id = gen_random_uuid()::TEXT WHERE id IS NULL;
+            ALTER TABLE routing_rules ALTER COLUMN id SET NOT NULL;
             ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'system';
             ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS source_model TEXT NOT NULL DEFAULT '*';
             ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS target_model TEXT NOT NULL DEFAULT '';

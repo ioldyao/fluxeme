@@ -24,7 +24,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   chat: '对话', reasoning: '推理', tools: '工具', web: '网页', vision: '视觉', rerank: '重排序', embedding: '嵌入',
 };
 
-type SortKey = 'name' | 'match' | 'channel' | 'ctx' | 'price' | 'status';
+type SortKey = 'name' | 'channel' | 'ctx' | 'price' | 'status';
 
 export default function Models() {
   const { t } = useTranslation();
@@ -56,6 +56,8 @@ export default function Models() {
   const [modalFilter, setModalFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortKey, setSortKey] = useState<SortKey>('name');
+
+  // ── Synchronize upstream models ─────────────────────────────────
   const [sortDir, setSortDir] = useState(1);
 
   const handleDelete = () => {
@@ -106,7 +108,6 @@ export default function Models() {
       let av: any, bv: any;
       switch (sortKey) {
         case 'name': av = a.name; bv = b.name; break;
-        case 'match': av = a.name; bv = b.name; break;
         case 'channel': {
           const aCh = a.channels[0]?.channel_id; const bCh = b.channels[0]?.channel_id;
           const aProbe = aCh ? aggregateChannelProbe(a.id, aCh) : null;
@@ -201,7 +202,6 @@ export default function Models() {
   const renderRow = (m: Model) => (
     <tr key={m.id} className="border-b last:border-0 hover:bg-muted/50 transition-colors">
       <td className="px-4 py-3"><span className="font-semibold text-foreground">{m.name}</span></td>
-      <td className="px-4 py-3"><span className="font-mono text-xs text-muted-foreground">{m.name}</span></td>
       <td className="px-4 py-3">
         {m.channels.length > 0 ? (
           <div className="flex items-center gap-1.5">{m.channels.map((b) => {
@@ -297,7 +297,7 @@ export default function Models() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="bg-muted/50 border-b">
-                {([{ k: 'name', l: '名称' }, { k: 'match', l: '模型匹配' }, { k: 'channel', l: '绑定渠道' }] as const).map(({ k, l }) => (<th key={k} onClick={() => handleSort(k)} className="text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground px-4 py-3 border-b border-border whitespace-nowrap cursor-pointer select-none hover:text-foreground">{l}<SortArrow k={k} /></th>))}
+                {([{ k: 'name', l: '名称' }, { k: 'channel', l: '绑定渠道' }] as const).map(({ k, l }) => (<th key={k} onClick={() => handleSort(k)} className="text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground px-4 py-3 border-b border-border whitespace-nowrap cursor-pointer select-none hover:text-foreground">{l}<SortArrow k={k} /></th>))}
                 <th className="text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground px-4 py-3 border-b border-border cursor-default">模态类型</th>
                 {([{ k: 'ctx', l: '上下文' }, { k: 'price', l: '定价' }, { k: 'status', l: '发布' }] as const).map(({ k, l }) => (<th key={k} onClick={() => handleSort(k)} className="text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground px-4 py-3 border-b border-border whitespace-nowrap cursor-pointer select-none hover:text-foreground">{l}<SortArrow k={k} /></th>))}
                 <th className="text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground px-4 py-3 border-b border-border">操作</th>
