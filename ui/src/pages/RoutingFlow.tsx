@@ -464,26 +464,55 @@ export default function RoutingFlow() {
   const [rateTick, setRateTick] = useState(0);
   useEffect(() => { const id = setInterval(() => setRateTick(v => v + 1), 5000); return () => clearInterval(id); }, []);
 
-  // Path width from event count in the 60s window (not cumulative total)
+  // Hybrid path width: cumulative snapshot (initial) → sliding-window rate (after WS warms up)
   const pathWidthMap = useMemo(() => {
     const map: Record<string, number> = {};
     const now = performance.now();
     const cutoff = now - WINDOW_MS;
-    const acc: Record<string, number> = {};
-    let maxC = 0;
 
-    for (const [key, timestamps] of eventLogRef.current.entries()) {
-      let c = 0;
-      for (const ts of timestamps) { if (ts >= cutoff) c++; }
-      if (c > 0) { acc[key] = c; if (c > maxC) maxC = c; }
+    // Check if event log has recent data
+    let recentTotal = 0;
+    for (const timestamps of eventLogRef.current.values()) {
+      for (const ts of timestamps) { if (ts >= cutoff) recentTotal++; }
     }
 
-    if (maxC === 0) return map;
-    const scale = (cnt: number) => Math.max(1.5, Math.min(10, 1.5 + (cnt / maxC) * 8.5));
-    for (const [key, c] of Object.entries(acc)) map[key] = scale(c);
+    if (recentTotal > 0) {
+      // ── Rate-based from 60s sliding window ──
+      const acc: Record<string, number> = {};
+      let maxC = 0;
+      for (const [key, timestamps] of eventLogRef.current.entries()) {
+        let c = 0;
+        for (const ts of timestamps) { if (ts >= cutoff) c++; }
+        if (c > 0) { acc[key] = c; if (c > maxC) maxC = c; }
+      }
+      if (maxC > 0) {
+        const scale = (cnt: number) => Math.max(1.5, Math.min(10, 1.5 + (cnt / maxC) * 8.5));
+        for (const [key, c] of Object.entries(acc)) map[key] = scale(c);
+      }
+    } else {
+      // ── Fallback: cumulative counts (24h snapshot, survives refresh) ──
+      let maxCnt = 0;
+      const acc: Record<string, number> = {};
+      topology.forEach((m) => {
+        m.channels.forEach((c) => {
+          const cnt = counts[keyFor(m.model, c.id)] || 0;
+          const k = `m2c:${m.model}>${c.id}`;
+          acc[k] = cnt; if (cnt > maxCnt) maxCnt = cnt;
+          c.endpoints.forEach((e) => {
+            const cnt2 = counts[keyFor(m.model, c.id, e.key)] || 0;
+            const k2 = `c2e:${c.id}>${e.key}`;
+            acc[k2] = cnt2; if (cnt2 > maxCnt) maxCnt = cnt2;
+          });
+        });
+      });
+      if (maxCnt > 0) {
+        const scale = (cnt: number) => Math.max(1.5, Math.min(10, 1.5 + (cnt / maxCnt) * 8.5));
+        for (const [key, v] of Object.entries(acc)) map[key] = scale(v);
+      }
+    }
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rateTick, topology]);
+  }, [rateTick, topology, counts]);
 
   // ── Pulse / ping state ──
   const [pulses, setPulses] = useState<{ id: string; pathD: string }[]>([]);
