@@ -230,15 +230,6 @@ impl RoutingService {
         user_id: &str,
         model: &str,
     ) -> Result<(String, Option<String>), RouteError> {
-        // Load subscribed model IDs for this user
-        let subscribed: HashSet<String> = self
-            .db
-            .list_subscribed_model_ids(user_id)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
-
         // 1. Try model-based routing.
         // Collect ALL channels from ALL same-named (or pattern-matching)
         // model entries, then round-robin across them.
@@ -249,9 +240,6 @@ impl RoutingService {
             // Gather candiates: (priority, channel_id, model_id)
             let mut candidates: Vec<(i32, String, String)> = Vec::new();
             for model_cfg in models.iter() {
-                if !subscribed.contains(&model_cfg.id) {
-                    continue;
-                }
                 if match_pattern(model, &model_cfg.model_pattern)
                     || (!model_cfg.name.is_empty() && model == model_cfg.name)
                 {

@@ -28,7 +28,6 @@ pub mod moderation;
 pub mod routing;
 pub mod rules;
 pub mod settings;
-pub mod subscriptions;
 pub mod usage;
 pub mod users;
 pub mod wallet;
@@ -449,20 +448,6 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         .route(
             "/api/models/{id}",
             axum::routing::put(models::update_model).delete(models::delete_model),
-        )
-        // Subscriptions
-        .route(
-            "/api/me/subscriptions",
-            axum::routing::get(subscriptions::list_my_subscriptions),
-        )
-        .route(
-            "/api/me/subscriptions/{model_id}",
-            axum::routing::post(subscriptions::subscribe_model)
-                .delete(subscriptions::unsubscribe_model),
-        )
-        .route(
-            "/api/me/test-connection",
-            axum::routing::post(subscriptions::test_subscription_connection),
         )
         // Routing rules
         .route(

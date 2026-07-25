@@ -65,13 +65,6 @@ pub trait DbBackend: Send + Sync {
     async fn set_model_pricing(&self, id: &str, pricing: &Pricing) -> Result<(), DbError>;
     async fn set_model_context_length(&self, id: &str, context_length: i64) -> Result<(), DbError>;
 
-    // ── Subscriptions ────────────────────────────────────────────────────
-    async fn subscribe_user(&self, user_id: &str, model_id: &str) -> Result<(), DbError>;
-    async fn unsubscribe_user(&self, user_id: &str, model_id: &str) -> Result<(), DbError>;
-    async fn delete_subscriptions_by_model(&self, model_id: &str) -> Result<(), DbError>;
-    async fn list_subscribed_model_ids(&self, user_id: &str) -> Result<Vec<String>, DbError>;
-    async fn list_subscriptions(&self, user_id: &str) -> Result<Vec<Model>, DbError>;
-
     // ── Routing Rules ────────────────────────────────────────────────────
     async fn list_rules(&self) -> Result<Vec<RoutingRule>, DbError>;
     async fn create_rule(&self, r: &RoutingRule) -> Result<(), DbError>;

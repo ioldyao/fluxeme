@@ -124,9 +124,6 @@ pub(crate) async fn toggle_publish_model(
         .set_model_published(&id, new_status)
         .await
         .map_err(db_err)?;
-    if !new_status {
-        let _ = state.db.delete_subscriptions_by_model(&id).await;
-    }
     state.routing.reload().await.map_err(AdminError::internal)?;
 
     tracing::info!(
