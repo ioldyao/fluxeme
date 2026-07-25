@@ -1,85 +1,119 @@
 # AI Gateway
 
-大语言模型 API 反向代理网关。提供统一的 OpenAI 兼容接口，将请求路由到上游供应商，支持渠道管理、负载均衡、用量跟踪、速率限制，以及包含钱包和账单管理的完整管理后台。
+大语言模型 API 反向代理网关。兼容 OpenAI/Anthropic 协议，支持多供应商路由、渠道管理、负载均衡、用量跟踪、限流和完整管理后台。
 
 [English](./README.md)
 
-## 功能
+---
 
-- **统一接口** — 兼容 OpenAI 和 Anthropic API 格式
-- **渠道管理** — 多上游供应商加权负载均衡，支持健康检查
-- **模型广场** — 浏览、订阅和发布模型
-- **API 密钥管理** — 支持多密钥和用户绑定，粒度权限控制
-- **用量跟踪** — Token 统计、费用图表、详细日志与去重
-- **速率限制** — 按密钥和用户限流
-- **钱包与账单** — 余额管理、充值（手动和 Key 充值）、交易流水、低余额预警和可用天数预估
-- **充值 Key 管理** — 创建、撤销、筛选充值 Key，支持过期时间和使用跟踪
-- **用户管理** — 管理后台支持用户创建、角色分配和活动监控
-- **自定义路由规则** — 按模型或 API Key 自定义路由逻辑
-- **Redis 缓存** — 非流式请求精确缓存
-- **SSO** — OIDC 单点登录
-- **健康检查** — 监控上游模型连通性和渠道状态
+## 部署要求
 
-![AI Gateway Admin UI](docs/images/aigateway.png)
+| 依赖 | 说明 |
+|------|------|
+| Docker & Docker Compose | 部署方式 |
+| PostgreSQL 16 | 主数据库（docker compose 自动启动）|
+| Redis 7 | 缓存和消息队列（docker compose 自动启动）|
 
-## 快速开始
+可选：ClickHouse（观测查询加速）、Jaeger（分布式追踪）。
 
-### Docker Compose（推荐）
+---
+
+## 快速部署
+
+### 1. 配置环境变量
 
 ```bash
 cp .env.example .env
-# 按需修改 .env 和 config/config.yaml
+```
 
-# 启动所有服务（DB_TYPE=docker 时会同时启动 PostgreSQL）
+必须修改以下值（没有默认值，缺失会启动失败）：
+
+| 变量 | 要求 | 生成示例 |
+|------|------|----------|
+| `GATEWAY_JWT_SECRET` | 任意字符串 | `openssl rand -base64 32` |
+| `GATEWAY_ENCRYPTION_KEY` | ≥32字符，不能和 JWT 相同 | `openssl rand -base64 32` |
+| `REDIS_PASSWORD` | Redis 密码 | `openssl rand -base64 16` |
+| `DB_PASSWORD` | PostgreSQL 密码 | 随意设置 |
+
+其他变量按需调整（`DB_DEPLOYMENT`、`CLICKHOUSE_DEPLOYMENT` 等）。
+
+### 2. 启动
+
+```bash
 make up
 ```
 
-访问 `http://localhost:8080` 进入管理后台。
+访问 `http://localhost:8080`，首次打开会引导注册管理员账号。
+
+| 命令 | 说明 |
+|------|------|
+| `make up` | 启动全部服务 |
+| `make down` | 停止全部服务 |
+| `make logs` | 查看日志 |
+| `make restart` | 重启 |
+| `make build` | 重新构建镜像 |
+
+### 3. 配置模型和渠道
+
+启动后通过管理后台操作：
+1. 登录后进入 **Channels** 页面 → 添加上游供应商（OpenAI / Anthropic / vLLM 等）
+2. 进入 **Models** 页面 → 添加模型并绑定渠道
+3. 进入 **Model Marketplace** → 发布模型给用户使用
+
+---
+
+## 手动构建（不通过 Docker）
+
+### 后端
 
 ```bash
-make down     # 停止所有服务
-make logs     # 查看日志
-make restart  # 重启所有服务
-```
+# 需要 Rust 1.88+，PostgreSQL 和 Redis 需自行启动
+cp .env.example .env
+# 编辑 .env，配置 DB_HOST、REDIS_PASSWORD 等指向本地实例
 
-### 手动构建
-
-```bash
-# 后端
 cargo build --release
 ./target/release/ai-gateway
-
-# 前端开发（另开终端）
-cd ui
-pnpm install
-pnpm run dev    # 在 :5173 启动开发服务器，API 代理到 :8080
-
-# 构建前端用于生产（输出到 ../web/）
-cd ui && pnpm run build
 ```
 
-## 配置
+### 前端
 
-编辑 `config/config.yaml`。关键配置项：
+```bash
+cd ui
+pnpm install
+pnpm run dev       # 开发模式，API 代理到 localhost:8080
+pnpm run build     # 生产构建，输出到 ../web/
+```
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `server.host` | 监听地址 | `0.0.0.0` |
-| `server.port` | 监听端口 | `8080` |
-| `admin.username` | 管理员用户名 | `admin` |
-| `admin.password` | 管理员密码 | `admin123` |
-| `database.path` | 数据库路径 | `data/gateway.db` |
-| `jwt_secret` | JWT 签名密钥 | `${GATEWAY_JWT_SECRET}` |
-| `cache.enabled` | 启用缓存 | `true` |
-| `cache.redis_url` | Redis 连接地址（支持 `${VAR}` 环境变量） | `redis://127.0.0.1:6379` |
+---
 
-配置文件中的 `${VAR_NAME}` 会自动从 `.env` 文件或环境变量中读取。
+## 配置说明
 
-## 使用
+主配置文件：`config/config.yaml`。支持 `${VAR}` 和 `$(VAR:-default}` 语法引用环境变量。
 
-### API 接口
+```yaml
+server:
+  host: 0.0.0.0
+  port: 8080
 
-兼容 OpenAI 和 Anthropic SDK：
+database:
+  pg_url: ""                    # 为空时从 DB_USER/DB_PASSWORD/DB_HOST/DB_PORT/DB_NAME 拼装
+  retention_days: 90            # 用量日志保留天数
+
+redis:
+  enabled: true
+  url: "redis://:${REDIS_PASSWORD}@127.0.0.1:16379"   # 注意端口 16379
+
+jwt_secret: ${GATEWAY_JWT_SECRET}
+encryption_key: ${GATEWAY_ENCRYPTION_KEY}
+```
+
+首次启动时，`config.yaml` 里的 `channels`、`models`、`routing_rules` 配置会自动写入数据库（种子数据）。
+
+> 管理后台运行时配置（超时、重试、缓存 TTL、计费开关）可在 **Settings** 页面实时修改。
+
+---
+
+## API 使用
 
 ```bash
 curl http://localhost:8080/v1/chat/completions \
@@ -88,27 +122,16 @@ curl http://localhost:8080/v1/chat/completions \
   -d '{"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]}'
 ```
 
-### 管理后台
+也支持 Anthropic 格式（`POST /v1/messages`）和 OpenAI 兼容 SDK。
 
-浏览器访问 `http://localhost:8080/`，使用配置文件中的管理员账号登录。
+---
 
-## 架构
+## 端口占用
 
-```
-                    ┌─────────────┐
-                    │   Clients   │
-                    │    客户端    │
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-                    │  AI Gateway │
-                    │  (Axum/Rust)│
-                    └──────┬──────┘
-                           │
-              ┌────────────┼────────────┐
-              ▼            ▼            ▼
-        ┌──────────┐ ┌──────────┐ ┌──────────┐
-        │ OpenAI   │ │Anthropic │ │  vLLM    │
-        │ Channel  │ │ Channel  │ │ Channel  │
-        └──────────┘ └──────────┘ └──────────┘
-```
+| 端口 | 服务 |
+|------|------|
+| 8080 | AI Gateway（代理 + 管理后台）|
+| 16379 | Redis |
+| 5432 | PostgreSQL |
+| 8123 | ClickHouse HTTP |
+| 16686 | Jaeger UI |
