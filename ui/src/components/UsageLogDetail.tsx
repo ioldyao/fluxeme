@@ -23,8 +23,6 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
           <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>
         ) : record ? (
           <div className="space-y-5 min-w-0">
-
-            {/* Meta info row */}
             <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
               <div className="rounded-lg border bg-card p-3">
                 <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">{t('table.user')}</div>
@@ -32,7 +30,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
               </div>
               <div className="rounded-lg border bg-card p-3">
                 <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">{t('table.model')}</div>
-                {record.original_model ? (
+                {record.original_model && record.original_model !== record.model ? (
                   <div className="space-y-0.5">
                     <div className="text-sm font-medium truncate">{record.original_model}</div>
                     <div className="text-xs text-muted-foreground/60 truncate">→ {record.model}</div>
