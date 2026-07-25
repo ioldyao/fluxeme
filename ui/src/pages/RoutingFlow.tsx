@@ -435,65 +435,76 @@ export default function RoutingFlow() {
 
   const { svgRef, paths } = useConnectors(containerRef, connectorPairs);
 
-  // ── Traffic-rate-based path width (sliding 60s window) ──
-  const eventLogRef = useRef<Map<string, number[]>>(new Map());
-  const WINDOW_MS = 60000;
+  // ── Path width via EWMA (Exponentially Weighted Moving Average) ──
+  const EWMA_ALPHA = 0.25;
+  const ewmaRef = useRef<Record<string, number>>({});
+  const rawBurstRef = useRef<Record<string, number>>({});
+  const [ewmaTick, setEwmaTick] = useState(0);
 
-  // Log each pulse event for rate tracking
+  // 5s tick to advance EWMA
+  useEffect(() => { const id = setInterval(() => setEwmaTick(v => v + 1), 5000); return () => clearInterval(id); }, []);
+
+  // Collect raw event counts between ticks
   useEffect(() => {
     if (!lastEvent) return;
-    const now = lastEvent.ts;
     const { model, channel, endpoint } = lastEvent;
-    const push = (key: string) => {
-      if (!eventLogRef.current.has(key)) eventLogRef.current.set(key, []);
-      eventLogRef.current.get(key)!.push(now);
-    };
-    push(`m2c:${model}>${channel}`);
-    if (endpoint) push(`c2e:${channel}>${endpoint}`);
-
-    // Prune when buffer exceeds 1000 entries
-    let total = 0;
-    for (const t of eventLogRef.current.values()) total += t.length;
-    if (total > 1000) {
-      const cutoff = now - WINDOW_MS;
-      for (const t of eventLogRef.current.values()) { while (t.length > 0 && t[0] < cutoff) t.shift(); }
-    }
+    const inc = (key: string) => { rawBurstRef.current[key] = (rawBurstRef.current[key] ?? 0) + 1; };
+    inc(`m2c:${model}>${channel}`);
+    if (endpoint) inc(`c2e:${channel}>${endpoint}`);
   }, [lastEvent]);
 
-  // Tick every 5s to recompute widths from recent event rate
-  const [rateTick, setRateTick] = useState(0);
-  useEffect(() => { const id = setInterval(() => setRateTick(v => v + 1), 5000); return () => clearInterval(id); }, []);
+  // Each tick: update EWMA with burst, decay idle paths
+  useEffect(() => {
+    const burst = rawBurstRef.current;
+    rawBurstRef.current = {};
 
-  // Hybrid path width: cumulative snapshot (initial) → sliding-window rate (after enough data warms up)
-  const pathWidthMap = useMemo(() => {
-    const map: Record<string, number> = {};
-    const now = performance.now();
-    const cutoff = now - WINDOW_MS;
-
-    // Only switch to rate mode when ≥3 distinct paths or ≥10 events in window
-    const pathsWithEvents = new Set<string>();
-    let recentTotal = 0;
-    for (const [key, timestamps] of eventLogRef.current.entries()) {
-      for (const ts of timestamps) {
-        if (ts >= cutoff) { recentTotal++; pathsWithEvents.add(key); break; }
-      }
+    // Seed from cumulative snapshot on first tick when EWMA is empty
+    const firstTick = Object.keys(ewmaRef.current).length === 0 && topology.length > 0;
+    if (firstTick) {
+      let maxC = 0;
+      const seed: Record<string, number> = {};
+      topology.forEach((m) => {
+        m.channels.forEach((c) => {
+          const cnt = counts[keyFor(m.model, c.id)] || 0; const k = `m2c:${m.model}>${c.id}`;
+          seed[k] = cnt; if (cnt > maxC) maxC = cnt;
+          c.endpoints.forEach((e) => {
+            const cnt2 = counts[keyFor(m.model, c.id, e.key)] || 0; const k2 = `c2e:${c.id}>${e.key}`;
+            seed[k2] = cnt2; if (cnt2 > maxC) maxC = cnt2;
+          });
+        });
+      });
+      if (maxC > 0) for (const [k, v] of Object.entries(seed)) ewmaRef.current[k] = v / maxC;
     }
 
-    if (recentTotal >= 10 || pathsWithEvents.size >= 3) {
-      // ── Rate-based from 60s sliding window ──
-      const acc: Record<string, number> = {};
-      let maxC = 0;
-      for (const [key, timestamps] of eventLogRef.current.entries()) {
-        let c = 0;
-        for (const ts of timestamps) { if (ts >= cutoff) c++; }
-        if (c > 0) { acc[key] = c; if (c > maxC) maxC = c; }
+    // Update EWMA for paths with new events
+    for (const [key, count] of Object.entries(burst)) {
+      const prev = ewmaRef.current[key] ?? 0;
+      ewmaRef.current[key] = EWMA_ALPHA * count + (1 - EWMA_ALPHA) * prev;
+    }
+    // Decay paths without events
+    for (const key of Object.keys(ewmaRef.current)) {
+      if (!(key in burst)) {
+        const v = ewmaRef.current[key] * (1 - EWMA_ALPHA);
+        if (v > 0.01) ewmaRef.current[key] = v; else delete ewmaRef.current[key];
       }
-      if (maxC > 0) {
-        const scale = (cnt: number) => Math.max(1.5, Math.min(10, 1.5 + (cnt / maxC) * 8.5));
-        for (const [key, c] of Object.entries(acc)) map[key] = scale(c);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ewmaTick]);
+
+  // Map EWMA values to stroke widths
+  const pathWidthMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    const entries = Object.entries(ewmaRef.current);
+
+    if (entries.length >= 2) {
+      let maxV = 0;
+      for (const [, v] of entries) if (v > maxV) maxV = v;
+      if (maxV > 0) {
+        const scale = (cnt: number) => Math.max(1.5, Math.min(10, 1.5 + (cnt / maxV) * 8.5));
+        for (const [k, v] of entries) map[k] = scale(v);
       }
     } else {
-      // ── Fallback: cumulative counts (24h snapshot, survives refresh) ──
+      // Fallback: cumulative counts (24h snapshot)
       let maxCnt = 0;
       const acc: Record<string, number> = {};
       topology.forEach((m) => {
@@ -510,12 +521,12 @@ export default function RoutingFlow() {
       });
       if (maxCnt > 0) {
         const scale = (cnt: number) => Math.max(1.5, Math.min(10, 1.5 + (cnt / maxCnt) * 8.5));
-        for (const [key, v] of Object.entries(acc)) map[key] = scale(v);
+        for (const [k, v] of Object.entries(acc)) map[k] = scale(v);
       }
     }
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rateTick, topology, counts]);
+  }, [ewmaTick, topology, counts]);
 
   // ── Pulse / ping state ──
   const [pulses, setPulses] = useState<{ id: string; pathD: string }[]>([]);
