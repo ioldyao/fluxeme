@@ -1,7 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { useUsageDetail } from '@/api/usage';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Skeleton } from '@/components/ui/skeleton';
 
 interface Props {
   requestId: string | null;
