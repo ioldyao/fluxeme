@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct RoutingRule {
     #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub name: String,
     /// "system" (admin-managed) or "user" (self-service)
     #[serde(default)]

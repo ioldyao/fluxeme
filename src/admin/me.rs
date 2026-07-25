@@ -385,6 +385,9 @@ pub(crate) async fn create_my_rule(
     if rule.id.is_empty() {
         rule.id = uuid::Uuid::new_v4().to_string();
     }
+    if rule.name.is_empty() {
+        rule.name = format!("{}→{}", rule.source_model, rule.target_model);
+    }
     rule.scope = "user".to_string();
     rule.user_id = session.user_id.clone();
     rule.channel_id.clear();
