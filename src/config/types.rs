@@ -96,7 +96,7 @@ impl Default for ClickHouseConfig {
 }
 
 fn default_ch_host() -> String { "localhost".to_string() }
-fn default_ch_port() -> u16 { 9000 }
+fn default_ch_port() -> u16 { 8123 }
 fn default_ch_user() -> String { "default".to_string() }
 fn default_ch_db() -> String { "aigateway".to_string() }
 
