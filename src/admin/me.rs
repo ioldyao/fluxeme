@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::domain::user::{ApiKey, User};
+use crate::domain::routing::RoutingRule;
 use crate::server::AppState;
 
 use super::*;
@@ -352,4 +353,66 @@ pub(crate) async fn my_permissions(
         }
     }
     Ok(Json(granted))
+}
+
+// ── User-level routing rules (self-service) ────────────────────────
+
+pub(crate) async fn list_my_rules(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<RoutingRule>>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    let rules = state
+        .db
+        .list_user_rules(&session.user_id)
+        .await
+        .map_err(db_err)?;
+    Ok(Json(rules))
+}
+
+pub(crate) async fn create_my_rule(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(mut rule): Json<RoutingRule>,
+) -> Result<Json<RoutingRule>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    if rule.source_model.is_empty() {
+        return Err(AdminError::bad_request("source_model is required"));
+    }
+    if rule.target_model.is_empty() {
+        return Err(AdminError::bad_request("target_model is required"));
+    }
+    if rule.id.is_empty() {
+        rule.id = uuid::Uuid::new_v4().to_string();
+    }
+    rule.scope = "user".to_string();
+    rule.user_id = session.user_id.clone();
+    rule.channel_id.clear();
+    rule.upstream_model.clear();
+    let now = chrono::Utc::now().to_rfc3339();
+    rule.created_at = now.clone();
+    rule.updated_at = now;
+    state.db.create_rule(&rule).await.map_err(db_err)?;
+    state.routing.reload().await.map_err(AdminError::internal)?;
+    Ok(Json(rule))
+}
+
+pub(crate) async fn delete_my_rule(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    // Only allow deleting own rules
+    let rules = state
+        .db
+        .list_user_rules(&session.user_id)
+        .await
+        .map_err(db_err)?;
+    if !rules.iter().any(|r| r.id == id) {
+        return Err(AdminError::not_found("Rule not found"));
+    }
+    state.db.delete_rule(&id).await.map_err(db_err)?;
+    state.routing.reload().await.map_err(AdminError::internal)?;
+    Ok(Json(serde_json::json!({ "deleted": id })))
 }

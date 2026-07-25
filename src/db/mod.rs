@@ -252,8 +252,11 @@ impl Database {
     pub async fn update_rule(&self, r: &RoutingRule) -> Result<(), DbError> {
         self.backend.update_rule(r).await
     }
-    pub async fn delete_rule(&self, name: &str) -> Result<(), DbError> {
-        self.backend.delete_rule(name).await
+    pub async fn delete_rule(&self, id: &str) -> Result<(), DbError> {
+        self.backend.delete_rule(id).await
+    }
+    pub async fn list_user_rules(&self, user_id: &str) -> Result<Vec<RoutingRule>, DbError> {
+        self.backend.list_user_rules(user_id).await
     }
 
     // ── Usage Logs ───────────────────────────────────────────────────────

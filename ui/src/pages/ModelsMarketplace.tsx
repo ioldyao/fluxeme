@@ -58,7 +58,7 @@ export default function ModelsMarketplace() {
 
   const authors = useMemo(() => {
     if (!models) return [];
-    return [...new Set(models.map((m) => inferProvider(m.model_pattern)).filter(Boolean))].sort();
+    return [...new Set(models.map((m) => inferProvider(m.name)).filter(Boolean))].sort();
   }, [models]);
 
   const enriched = useMemo(() => {
@@ -66,7 +66,7 @@ export default function ModelsMarketplace() {
     return models
       .map((m) => ({
         ...m,
-        _provider: inferProvider(m.model_pattern),
+        _provider: inferProvider(m.name),
       }))
       .filter((m) => {
         if (author && m._provider !== author) return false;
@@ -74,7 +74,7 @@ export default function ModelsMarketplace() {
         if (modality && !(m.category?.split(',').includes(modality) ?? false)) return false;
         if (!query) return true;
         const q = query.toLowerCase();
-        return m.name.toLowerCase().includes(q) || m.model_pattern.toLowerCase().includes(q) || m._provider.toLowerCase().includes(q);
+        return m.name.toLowerCase().includes(q) || m.name.toLowerCase().includes(q) || m._provider.toLowerCase().includes(q);
       });
   }, [models, author, serviceProvider, modality, query]);
 
@@ -249,7 +249,7 @@ function ModelCard({
         {/* Pattern + Context Length */}
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs font-mono text-muted-foreground bg-muted/50 rounded px-2 py-1 flex-1 truncate">
-            {model.model_pattern}
+            {model.name}
           </p>
           {model.context_length != null && model.context_length > 0 && (
             <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0.5 gap-1">

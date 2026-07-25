@@ -449,14 +449,23 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             "/api/models/{id}",
             axum::routing::put(models::update_model).delete(models::delete_model),
         )
-        // Routing rules
+        // Routing rules (system-level, admin)
         .route(
             "/api/rules",
             axum::routing::get(rules::list_rules).post(rules::create_rule),
         )
         .route(
-            "/api/rules/{name}",
+            "/api/rules/{id}",
             axum::routing::put(rules::update_rule).delete(rules::delete_rule),
+        )
+        // User-level routing rules (self-service)
+        .route(
+            "/api/me/rules",
+            axum::routing::get(me::list_my_rules).post(me::create_my_rule),
+        )
+        .route(
+            "/api/me/rules/{id}",
+            axum::routing::delete(me::delete_my_rule),
         )
         // Usage
         .route("/api/usage", axum::routing::get(usage::get_usage))

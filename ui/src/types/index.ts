@@ -68,7 +68,6 @@ export interface ModelChannel {
 export interface Model {
   id: string;
   name: string;
-  model_pattern: string;
   pricing: Pricing;
   channels: ModelChannel[];
   published?: boolean;
@@ -77,10 +76,19 @@ export interface Model {
 }
 
 export interface RoutingRule {
+  id: string;
   name: string;
+  scope: string;
   user_id: string;
-  model_pattern: string;
+  source_model: string;
+  target_model: string;
   channel_id: string;
+  upstream_model: string;
+  priority: number;
+  enabled: boolean;
+  description: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface UsageRecord {

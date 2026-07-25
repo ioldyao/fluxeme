@@ -376,11 +376,32 @@ impl DbBackend for PgBackend {
             );
 
             CREATE TABLE IF NOT EXISTS routing_rules (
-                name TEXT PRIMARY KEY,
+                id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+                name TEXT NOT NULL,
+                scope TEXT NOT NULL DEFAULT 'system',
                 user_id TEXT NOT NULL DEFAULT '*',
-                model_pattern TEXT NOT NULL,
-                channel_id TEXT NOT NULL REFERENCES channels(id)
+                source_model TEXT NOT NULL DEFAULT '*',
+                target_model TEXT NOT NULL DEFAULT '',
+                channel_id TEXT NOT NULL DEFAULT '',
+                upstream_model TEXT NOT NULL DEFAULT '',
+                priority INTEGER NOT NULL DEFAULT 0,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                description TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT NOW(),
+                updated_at TEXT NOT NULL DEFAULT NOW()
             );
+            -- Migrate old-format rules: add new columns if missing
+            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'system';
+            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS source_model TEXT NOT NULL DEFAULT '*';
+            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS target_model TEXT NOT NULL DEFAULT '';
+            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS upstream_model TEXT NOT NULL DEFAULT '';
+            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS enabled INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS created_at TEXT NOT NULL DEFAULT NOW();
+            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT NOW();
+            -- Remove NOT NULL from channel_id for system rules that only do model rewrite
+            -- (pg doesn't support ALTER COLUMN DROP NOT NULL for this, already nullable via empty default)
 
             CREATE TABLE IF NOT EXISTS usage_logs (
                 id BIGSERIAL PRIMARY KEY,
@@ -1587,29 +1608,58 @@ impl DbBackend for PgBackend {
 
     async fn list_rules(&self) -> Result<Vec<RoutingRule>, DbError> {
         let rows = query(
-            "SELECT name, user_id, model_pattern, channel_id FROM routing_rules ORDER BY name",
+            "SELECT id, name, scope, user_id, source_model, target_model, \
+             channel_id, upstream_model, priority, enabled, description, \
+             created_at, updated_at \
+             FROM routing_rules ORDER BY priority, name",
         )
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
             .iter()
             .map(|r| RoutingRule {
-                name: r.get(0),
-                user_id: r.get(1),
-                model_pattern: r.get(2),
-                channel_id: r.get(3),
+                id: r.get(0),
+                name: r.get(1),
+                scope: r.get(2),
+                user_id: r.get(3),
+                source_model: r.get(4),
+                target_model: r.get(5),
+                channel_id: r.get(6),
+                upstream_model: r.get(7),
+                priority: r.get(8),
+                enabled: r.get(9),
+                description: r.get(10),
+                created_at: r.get(11),
+                updated_at: r.get(12),
             })
             .collect())
     }
 
     async fn create_rule(&self, r: &RoutingRule) -> Result<(), DbError> {
+        let id = if r.id.is_empty() {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            r.id.clone()
+        };
         query(
-            "INSERT INTO routing_rules (name, user_id, model_pattern, channel_id) VALUES ($1, $2, $3, $4)",
+            "INSERT INTO routing_rules \
+             (id, name, scope, user_id, source_model, target_model, channel_id, \
+              upstream_model, priority, enabled, description, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         )
+        .bind(&id)
         .bind(&r.name)
+        .bind(&r.scope)
         .bind(&r.user_id)
-        .bind(&r.model_pattern)
+        .bind(&r.source_model)
+        .bind(&r.target_model)
         .bind(&r.channel_id)
+        .bind(&r.upstream_model)
+        .bind(r.priority)
+        .bind(r.enabled)
+        .bind(&r.description)
+        .bind(&r.created_at)
+        .bind(&r.updated_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1617,23 +1667,64 @@ impl DbBackend for PgBackend {
 
     async fn update_rule(&self, r: &RoutingRule) -> Result<(), DbError> {
         query(
-            "UPDATE routing_rules SET user_id = $1, model_pattern = $2, channel_id = $3 WHERE name = $4",
+            "UPDATE routing_rules SET name=$1, scope=$2, user_id=$3, source_model=$4, \
+             target_model=$5, channel_id=$6, upstream_model=$7, priority=$8, enabled=$9, \
+             description=$10, updated_at=$11 WHERE id=$12",
         )
-        .bind(&r.user_id)
-        .bind(&r.model_pattern)
-        .bind(&r.channel_id)
         .bind(&r.name)
+        .bind(&r.scope)
+        .bind(&r.user_id)
+        .bind(&r.source_model)
+        .bind(&r.target_model)
+        .bind(&r.channel_id)
+        .bind(&r.upstream_model)
+        .bind(r.priority)
+        .bind(r.enabled)
+        .bind(&r.description)
+        .bind(&r.updated_at)
+        .bind(&r.id)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
-    async fn delete_rule(&self, name: &str) -> Result<(), DbError> {
-        query("DELETE FROM routing_rules WHERE name = $1")
-            .bind(name)
+    async fn delete_rule(&self, id: &str) -> Result<(), DbError> {
+        query("DELETE FROM routing_rules WHERE id = $1")
+            .bind(id)
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    async fn list_user_rules(&self, user_id: &str) -> Result<Vec<RoutingRule>, DbError> {
+        let rows = query(
+            "SELECT id, name, scope, user_id, source_model, target_model, \
+             channel_id, upstream_model, priority, enabled, description, \
+             created_at, updated_at \
+             FROM routing_rules WHERE scope='user' AND user_id=$1 \
+             ORDER BY priority, name",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| RoutingRule {
+                id: r.get(0),
+                name: r.get(1),
+                scope: r.get(2),
+                user_id: r.get(3),
+                source_model: r.get(4),
+                target_model: r.get(5),
+                channel_id: r.get(6),
+                upstream_model: r.get(7),
+                priority: r.get(8),
+                enabled: r.get(9),
+                description: r.get(10),
+                created_at: r.get(11),
+                updated_at: r.get(12),
+            })
+            .collect())
     }
 
     // ── Usage Logs ───────────────────────────────────────────────────────

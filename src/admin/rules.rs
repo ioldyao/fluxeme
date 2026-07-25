@@ -10,7 +10,7 @@ use crate::server::AppState;
 
 use super::*;
 
-// ── Routing Rule CRUD ─────────────────────────────────────────────
+// ── System Routing Rule CRUD (admin:rules) ─────────────────────────
 
 pub(crate) async fn list_rules(
     State(state): State<Arc<AppState>>,
@@ -25,7 +25,7 @@ pub(crate) async fn list_rules(
 pub(crate) async fn create_rule(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(rule): Json<RoutingRule>,
+    Json(mut rule): Json<RoutingRule>,
 ) -> Result<Json<RoutingRule>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:rules").await?;
@@ -33,6 +33,13 @@ pub(crate) async fn create_rule(
     if rule.name.is_empty() {
         return Err(AdminError::bad_request("Rule name is required"));
     }
+    if rule.id.is_empty() {
+        rule.id = uuid::Uuid::new_v4().to_string();
+    }
+    rule.scope = "system".to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    rule.created_at = now.clone();
+    rule.updated_at = now;
 
     state.db.create_rule(&rule).await.map_err(db_err)?;
     state.routing.reload().await.map_err(AdminError::internal)?;
@@ -49,35 +56,37 @@ pub(crate) async fn create_rule(
 pub(crate) async fn update_rule(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Path(name): Path<String>,
-    Json(mut rule): Json<RoutingRule>,
-) -> Result<Json<RoutingRule>, AdminError> {
+    Path(id): Path<String>,
+    Json(rule): Json<RoutingRule>,
+) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:rules").await?;
 
-    rule.name = name;
-    state.db.update_rule(&rule).await.map_err(db_err)?;
+    let mut updated = rule;
+    updated.id = id;
+    updated.updated_at = chrono::Utc::now().to_rfc3339();
+    state.db.update_rule(&updated).await.map_err(db_err)?;
     state.routing.reload().await.map_err(AdminError::internal)?;
 
-    Ok(Json(rule))
+    Ok(Json(serde_json::json!({ "updated": true })))
 }
 
 pub(crate) async fn delete_rule(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:rules").await?;
 
-    state.db.delete_rule(&name).await.map_err(db_err)?;
+    state.db.delete_rule(&id).await.map_err(db_err)?;
     state.routing.reload().await.map_err(AdminError::internal)?;
 
     tracing::info!(
         "admin={} action=delete_rule target={}",
         session.user_id,
-        name
+        id
     );
 
-    Ok(Json(serde_json::json!({ "deleted": name })))
+    Ok(Json(serde_json::json!({ "deleted": id })))
 }

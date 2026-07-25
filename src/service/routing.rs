@@ -218,7 +218,6 @@ impl RoutingService {
                     "max_tokens": m.context_length.unwrap_or(0),
                     "capabilities": {},
                     "upstream_id": m.id,
-                    "model_pattern": m.model_pattern,
                     "category": m.category,
                 })
             })
@@ -230,41 +229,121 @@ impl RoutingService {
         user_id: &str,
         model: &str,
     ) -> Result<(String, Option<String>), RouteError> {
-        // 1. Try model-based routing.
-        // Collect ALL channels from ALL same-named (or pattern-matching)
-        // model entries, then round-robin across them.
+        let mut model_name = model.to_string();
+        let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
+        let rules = self.rules.read().unwrap_or_else(|e| e.into_inner());
+
+        // Step 1: User-level rules — model name rewrite (self-service)
+        // Exact match on source_model, rewrite to target_model if set.
+        for rule in rules.iter() {
+            if rule.scope != "user" || rule.user_id != user_id || !rule.enabled {
+                continue;
+            }
+            if !rule.target_model.is_empty() && model_name == rule.source_model {
+                model_name = rule.target_model.clone();
+                tracing::info!(
+                    user_id,
+                    original = model,
+                    rewritten = &model_name,
+                    rule = rule.name,
+                    "User routing rule applied"
+                );
+                break; // first matching user rule wins
+            }
+        }
+
+        // Step 2: System-level rules — admin-configured routing overrides
+        // Match by user_id + source_model (glob), can set channel + upstream.
+        {
+            let mut matched: Vec<(i32, &RoutingRule)> = Vec::new();
+
+            for rule in rules.iter() {
+                if rule.scope != "system" || !rule.enabled {
+                    continue;
+                }
+                let user_match = rule.user_id == "*" || rule.user_id == user_id;
+                if !user_match {
+                    continue;
+                }
+                let model_match = if rule.source_model.is_empty() || rule.source_model == "*" {
+                    true
+                } else {
+                    match_pattern(&model_name, &rule.source_model)
+                };
+                if !model_match {
+                    continue;
+                }
+                matched.push((rule.priority, rule));
+            }
+
+            // Sort by priority (lower = higher priority)
+            matched.sort_by_key(|(p, _)| *p);
+
+            for (_priority, rule) in &matched {
+                if !rule.channel_id.is_empty() {
+                    if let Some(ch) = chs.get(&rule.channel_id) {
+                        if ch.enabled {
+                            let upstream = if !rule.upstream_model.is_empty() {
+                                Some(rule.upstream_model.clone())
+                            } else {
+                                None
+                            };
+                            tracing::info!(
+                                user_id,
+                                model = &model_name,
+                                rule = rule.name,
+                                channel = &rule.channel_id,
+                                "System routing rule matched"
+                            );
+                            return Ok((rule.channel_id.clone(), upstream));
+                        }
+                    }
+                }
+            }
+
+            // System rules with no channel_id: apply target_model rewrite only
+            for (_priority, rule) in &matched {
+                if rule.channel_id.is_empty() && !rule.target_model.is_empty() {
+                    model_name = rule.target_model.clone();
+                    tracing::info!(
+                        user_id,
+                        original = &model_name,
+                        rule = rule.name,
+                        "System rule rewrote model name"
+                    );
+                    break;
+                }
+            }
+        }
+
+        // Step 3: Model console — exact name match only (no glob matching)
         {
             let models = self.models.read().unwrap_or_else(|e| e.into_inner());
-            let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
-
-            // Gather candiates: (priority, channel_id, model_id)
             let mut candidates: Vec<(i32, String, String)> = Vec::new();
+
             for model_cfg in models.iter() {
-                if match_pattern(model, &model_cfg.model_pattern)
-                    || (!model_cfg.name.is_empty() && model == model_cfg.name)
-                {
-                    for binding in &model_cfg.channels {
-                        if let Some(ch) = chs.get(&binding.channel_id) {
-                            if ch.enabled {
-                                let upstream = binding
-                                    .upstream_model
-                                    .clone()
-                                    .unwrap_or(model_cfg.name.clone());
-                                candidates.push((
-                                    binding.priority,
-                                    binding.channel_id.clone(),
-                                    upstream,
-                                ));
-                            }
+                if model_cfg.name != model_name {
+                    continue;
+                }
+                for binding in &model_cfg.channels {
+                    if let Some(ch) = chs.get(&binding.channel_id) {
+                        if ch.enabled {
+                            let upstream = binding
+                                .upstream_model
+                                .clone()
+                                .unwrap_or(model_cfg.name.clone());
+                            candidates.push((
+                                binding.priority,
+                                binding.channel_id.clone(),
+                                upstream,
+                            ));
                         }
                     }
                 }
             }
 
             if !candidates.is_empty() {
-                // Stable sort by priority (lower is higher priority)
                 candidates.sort_by_key(|(p, _, _)| *p);
-                // Group by priority level, round-robin within each level
                 let best_priority = candidates[0].0;
                 let same: Vec<&(i32, String, String)> = candidates
                     .iter()
@@ -276,37 +355,10 @@ impl RoutingService {
             }
         }
 
-        // 2. Fall back to routing_rules
-        {
-            let rules = self.rules.read().unwrap_or_else(|e| e.into_inner());
-            let mut matched: Vec<(i32, String)> = Vec::new();
-
-            for rule in rules.iter() {
-                let user_match = rule.user_id == "*" || rule.user_id == user_id;
-                let model_match = match_pattern(model, &rule.model_pattern);
-
-                if user_match && model_match {
-                    if let Some(ch) = self
-                        .channels
-                        .read()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .get(&rule.channel_id)
-                    {
-                        if ch.enabled {
-                            matched.push((ch.priority, ch.id.clone()));
-                        }
-                    }
-                }
-            }
-
-            matched.sort_by_key(|(p, _)| *p);
-
-            if let Some((_, id)) = matched.first() {
-                return Ok((id.clone(), None));
-            }
-        }
-
-        Err(RouteError(format!("No route found for model '{}'", model)))
+        Err(RouteError(format!(
+            "No route found for model '{}'",
+            model_name
+        )))
     }
 }
 

@@ -106,7 +106,7 @@ export default function Models() {
       let av: any, bv: any;
       switch (sortKey) {
         case 'name': av = a.name; bv = b.name; break;
-        case 'match': av = a.model_pattern; bv = b.model_pattern; break;
+        case 'match': av = a.name; bv = b.name; break;
         case 'channel': {
           const aCh = a.channels[0]?.channel_id; const bCh = b.channels[0]?.channel_id;
           const aProbe = aCh ? aggregateChannelProbe(a.id, aCh) : null;
@@ -183,7 +183,6 @@ export default function Models() {
           body: {
             id: mid,
             name: mid,
-            model_pattern: mid,
             pricing: { prompt_price: 0, completion_price: 0 },
             channels: [{ channel_id: syncChannelId, priority: 0, upstream_model: mid }],
             context_length: up?.max_model_len ?? null,
@@ -202,7 +201,7 @@ export default function Models() {
   const renderRow = (m: Model) => (
     <tr key={m.id} className="border-b last:border-0 hover:bg-muted/50 transition-colors">
       <td className="px-4 py-3"><span className="font-semibold text-foreground">{m.name}</span></td>
-      <td className="px-4 py-3"><span className="font-mono text-xs text-muted-foreground">{m.model_pattern}</span></td>
+      <td className="px-4 py-3"><span className="font-mono text-xs text-muted-foreground">{m.name}</span></td>
       <td className="px-4 py-3">
         {m.channels.length > 0 ? (
           <div className="flex items-center gap-1.5">{m.channels.map((b) => {

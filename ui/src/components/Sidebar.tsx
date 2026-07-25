@@ -10,7 +10,7 @@ const NAV_GROUPS: { label: string; items: string[] }[] = [
   { label: 'nav.group.models', items: ['nav.modelMarketplace', 'nav.models', 'nav.modelPricing'] },
   { label: 'nav.group.channels', items: ['nav.channels'] },
   { label: 'nav.group.security', items: ['nav.rules', 'nav.moderation', 'nav.users'] },
-  { label: 'nav.group.developer', items: ['nav.apiKeys', 'nav.usage'] },
+  { label: 'nav.group.developer', items: ['nav.apiKeys', 'nav.myRules', 'nav.usage'] },
 ];
 
 export function Sidebar() {

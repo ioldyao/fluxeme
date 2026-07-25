@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import type { RoutingRule } from '@/types';
 
 interface Props {
@@ -20,24 +21,52 @@ export function RuleForm({ rule, open, onOpenChange, onSubmit, isPending }: Prop
   const { t } = useTranslation();
   const { data: channels } = useChannels();
   const [name, setName] = useState('');
-  const [userId, setUserId] = useState('');
-  const [modelPattern, setModelPattern] = useState('');
+  const [sourceModel, setSourceModel] = useState('');
+  const [targetModel, setTargetModel] = useState('');
   const [channelId, setChannelId] = useState('');
+  const [upstreamModel, setUpstreamModel] = useState('');
+  const [userId, setUserId] = useState('');
+  const [priority, setPriority] = useState('0');
+  const [enabled, setEnabled] = useState(true);
+  const [description, setDescription] = useState('');
 
   useEffect(() => {
     if (rule) {
       setName(rule.name);
-      setUserId(rule.user_id);
-      setModelPattern(rule.model_pattern);
+      setSourceModel(rule.source_model);
+      setTargetModel(rule.target_model);
       setChannelId(rule.channel_id);
+      setUpstreamModel(rule.upstream_model);
+      setUserId(rule.user_id);
+      setPriority(String(rule.priority));
+      setEnabled(rule.enabled);
+      setDescription(rule.description);
     } else {
-      setName(''); setUserId('*'); setModelPattern('*'); setChannelId('');
+      setName('');
+      setSourceModel('*');
+      setTargetModel('');
+      setChannelId('');
+      setUpstreamModel('');
+      setUserId('*');
+      setPriority('0');
+      setEnabled(true);
+      setDescription('');
     }
   }, [rule, open]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const data = { name, user_id: userId, model_pattern: modelPattern, channel_id: channelId };
+    const data = {
+      name,
+      source_model: sourceModel,
+      target_model: targetModel,
+      channel_id: channelId,
+      upstream_model: upstreamModel,
+      user_id: userId,
+      priority: Number(priority),
+      enabled,
+      description,
+    };
     onSubmit(data);
   };
 
@@ -54,27 +83,62 @@ export function RuleForm({ rule, open, onOpenChange, onSubmit, isPending }: Prop
               <Input value={name} onChange={(e) => setName(e.target.value)} required />
             </div>
           )}
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">{t('form.userIdLabel')}</Label>
-            <Input value={userId} onChange={(e) => setUserId(e.target.value)} />
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">{t('form.sourceModel')} *</Label>
+              <Input value={sourceModel} onChange={(e) => setSourceModel(e.target.value)} placeholder="*" />
+              <p className="text-xs text-muted-foreground">支持 * 通配符，如 claude-*</p>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">{t('form.targetModel')}</Label>
+              <Input value={targetModel} onChange={(e) => setTargetModel(e.target.value)} placeholder="留空则不改写" />
+              <p className="text-xs text-muted-foreground">改写后的模型名</p>
+            </div>
           </div>
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">{t('form.modelPattern')}</Label>
-            <Input value={modelPattern} onChange={(e) => setModelPattern(e.target.value)} placeholder="*" />
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">{t('form.channel')}</Label>
+              <Select value={channelId} onValueChange={(v) => setChannelId(v ?? '')}>
+                <SelectTrigger className="h-10">
+                  <SelectValue placeholder={t('form.selectChannel')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">由模型控制台决定</SelectItem>
+                  {channels?.map((ch) => (
+                    <SelectItem key={ch.id} value={ch.id}>{ch.id} ({ch.provider})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">{t('form.upstreamModel')}</Label>
+              <Input value={upstreamModel} onChange={(e) => setUpstreamModel(e.target.value)} placeholder="留空则用模型名" />
+            </div>
           </div>
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">{t('form.channel')}</Label>
-            <Select value={channelId} onValueChange={(v) => setChannelId(v ?? '')} required>
-              <SelectTrigger className="h-10">
-                <SelectValue placeholder={t('form.selectChannel')} />
-              </SelectTrigger>
-              <SelectContent>
-                {channels?.map((ch) => (
-                  <SelectItem key={ch.id} value={ch.id}>{ch.id} ({ch.provider})</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">{t('table.userId')}</Label>
+              <Input value={userId} onChange={(e) => setUserId(e.target.value)} placeholder="*" />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">{t('form.priority')}</Label>
+              <Input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} />
+            </div>
           </div>
+
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">{t('form.description')}</Label>
+            <Input value={description} onChange={(e) => setDescription(e.target.value)} />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <Label className="text-sm font-medium">{t('form.enabled')}</Label>
+            <Switch checked={enabled} onCheckedChange={setEnabled} />
+          </div>
+
           <div className="flex justify-end gap-3 pt-2">
             <Button type="button" variant="outline" size="lg" onClick={() => onOpenChange(false)}>{t('common.cancel')}</Button>
             <Button type="submit" size="lg" disabled={isPending}>{t('common.save')}</Button>

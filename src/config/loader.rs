@@ -224,10 +224,25 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
     #[derive(Deserialize)]
     struct OldRoutingRule {
         name: String,
-        tenant_id: String,
-        model_pattern: String,
+        #[serde(default)]
+        user_id: String,
+        #[serde(default)]
+        source_model: String,
+        #[serde(default)]
+        target_model: String,
+        #[serde(default)]
         channel_id: String,
+        #[serde(default)]
+        upstream_model: String,
+        #[serde(default)]
+        priority: i32,
+        #[serde(default = "default_enabled_bool")]
+        enabled: bool,
+        #[serde(default)]
+        description: String,
     }
+
+    fn default_enabled_bool() -> bool { true }
 
     #[derive(Deserialize)]
     struct SeedPayload {
@@ -378,11 +393,21 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
 
     if let Some(rules) = &seed.routing_rules {
         for r in rules {
+            let now = chrono::Utc::now().to_rfc3339();
             let rule = RoutingRule {
+                id: uuid::Uuid::new_v4().to_string(),
                 name: r.name.clone(),
-                user_id: r.tenant_id.clone(),
-                model_pattern: r.model_pattern.clone(),
+                scope: "system".to_string(),
+                user_id: r.user_id.clone(),
+                source_model: r.source_model.clone(),
+                target_model: r.target_model.clone(),
                 channel_id: r.channel_id.clone(),
+                upstream_model: r.upstream_model.clone(),
+                priority: r.priority,
+                enabled: r.enabled,
+                description: r.description.clone(),
+                created_at: now.clone(),
+                updated_at: now,
             };
             if let Err(e) = db.create_rule(&rule).await {
                 tracing::warn!("Seed rule {}: {}", r.name, e);

@@ -37,6 +37,7 @@ export const publicRoutes: RouteConfig[] = [
 export const authRoutes: RouteConfig[] = [
   { index: true, path: '/', Component: lazy(() => import('@/pages/Dashboard')), guard: 'auth', label: 'nav.dashboard', icon: LayoutDashboard, nav: true, end: true },
   { path: '/models/marketplace', Component: lazy(() => import('@/pages/ModelsMarketplace')), guard: 'auth', label: 'nav.modelMarketplace', icon: Braces, nav: true },
+  { path: '/models/routes', Component: lazy(() => import('@/pages/MyRules')), guard: 'auth', label: 'nav.myRules', icon: Route, nav: true },
   { path: '/api-keys', Component: lazy(() => import('@/pages/ApiKeys')), guard: 'auth', label: 'nav.apiKeys', icon: Key, nav: true },
   { path: '/usage', Component: lazy(() => import('@/pages/Usage')), guard: 'auth', label: 'nav.usage', icon: ScrollText, nav: true },
   { path: '/wallet', Component: lazy(() => import('@/pages/Wallet')), guard: 'auth', label: 'nav.wallet', icon: Wallet, nav: true },

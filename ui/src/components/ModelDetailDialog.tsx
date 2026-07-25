@@ -39,7 +39,7 @@ type ApiFormat = 'openai' | 'anthropic';
 type Lang = 'curl' | 'python' | 'typescript' | 'javascript';
 
 function buildCode(model: Model, format: ApiFormat, lang: Lang): string {
-  const pattern = model.model_pattern;
+  const pattern = model.name;
   const keyVar = '$API_KEY';
   const apiKey = keyVar.replace('$', '');
 
@@ -234,7 +234,7 @@ export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props
                 )}
                 <span>{model.name}</span>
               </div>
-              <p className="text-xs font-mono text-muted-foreground">{model.model_pattern}</p>
+              <p className="text-xs font-mono text-muted-foreground">{model.name}</p>
             </div>
           </DialogTitle>
         </DialogHeader>
