@@ -320,6 +320,9 @@ export default function Usage() {
                     {total > 0 && `${(page - 1) * limit + 1}–${Math.min(page * limit, total)} / ${total}`}
                   </span>
                   <div className="flex items-center gap-1">
+                    <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setOffset(0)} title="第一页">
+                      ⟪
+                    </Button>
                     <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setOffset(offset - limit)}>
                       {t('common.prev')}
                     </Button>
@@ -334,6 +337,9 @@ export default function Usage() {
                     })}
                     <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setOffset(offset + limit)}>
                       {t('common.next')}
+                    </Button>
+                    <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setOffset((totalPages - 1) * limit)} title="最后一页">
+                      ⟫
                     </Button>
                   </div>
                 </div>
