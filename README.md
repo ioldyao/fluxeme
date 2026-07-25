@@ -13,8 +13,8 @@ A reverse proxy gateway for LLM APIs. Compatible with OpenAI and Anthropic proto
 | Docker & Docker Compose | Deployment |
 | PostgreSQL 16 | Started by docker compose |
 | Redis 7 | Started by docker compose |
-
-Optional: ClickHouse (observability), Jaeger (distributed tracing).
+| ClickHouse | Observability data store, decoupled from PostgreSQL (docker compose) |
+| Jaeger | Distributed tracing (docker compose) |
 
 ---
 
