@@ -215,6 +215,18 @@ impl RedisCache {
 
     /// Push a billing record to the Redis Stream backlog.
     /// Called when the in-memory billing channel is full.
+    ///
+    /// # Design boundary
+    /// When this function returns `Err`, the billing record is permanently
+    /// lost. This is an **accepted** trade-off, not a bug:
+    ///
+    /// - Trigger condition: billing channel full (PG worker capacity exhausted)
+    ///   AND Redis simultaneously unavailable (compound failure).
+    /// - In practice this window is near-zero: the billing backlog is only
+    ///   exercised when billing workers are saturated, and Redis runs in the
+    ///   same deployment. AOF persistence ensures data survives Redis restart.
+    /// - To fully eliminate the loss window, add a local persistence fallback
+    ///   (e.g. sled) before the Redis XADD call.
     pub async fn backlog_billing_record(&self, record: UsageRecord) -> Result<(), String> {
         let mut con = match self.con.clone() {
             Some(c) => c,
