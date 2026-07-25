@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
 
 use crate::domain::usage::UsageRecord;
@@ -41,8 +43,8 @@ impl GateStatus {
 }
 
 /// Compute gate status from a wallet balance and frozen amount.
-pub fn compute_gate_status(balance: f64, frozen: f64) -> GateStatus {
-    if balance - frozen < 0.0001 {
+pub fn compute_gate_status(balance: Decimal, frozen: Decimal) -> GateStatus {
+    if balance - frozen <= Decimal::ZERO {
         GateStatus::Blocked
     } else {
         GateStatus::Ok
@@ -176,7 +178,7 @@ impl RedisCache {
     /// Write the current balance to Redis for fast read by the inspection
     /// task (persistent, no TTL).
     #[allow(dead_code)]
-    pub async fn set_balance(&self, user_id: &str, balance: f64) -> Result<(), String> {
+    pub async fn set_balance(&self, user_id: &str, balance: Decimal) -> Result<(), String> {
         let mut con = match self.con.clone() {
             Some(c) => c,
             None => return Ok(()),
@@ -193,7 +195,7 @@ impl RedisCache {
         &self,
         user_id: &str,
         status: GateStatus,
-        balance: f64,
+        balance: Decimal,
     ) -> Result<(), String> {
         let mut con = match self.con.clone() {
             Some(c) => c,
@@ -515,9 +517,11 @@ pub async fn start_obs_consumer(
             let ts = chrono::DateTime::parse_from_rfc3339(&r.timestamp)
                 .map(|dt| dt.timestamp() as u32)
                 .unwrap_or_else(|_| chrono::Utc::now().timestamp() as u32);
-            let cost_amount = r.prompt_tokens as f64 / 1_000_000.0 * r.prompt_price
-                + r.completion_tokens as f64 / 1_000_000.0 * r.completion_price
-                + r.cache_hit_input_tokens as f64 / 1_000_000.0 * r.cache_read_price;
+            let cost_amount = (Decimal::from(r.prompt_tokens) / Decimal::from(1000000) * r.prompt_price
+                + Decimal::from(r.completion_tokens) / Decimal::from(1000000) * r.completion_price
+                + Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000) * r.cache_read_price)
+                .to_f64()
+                .unwrap_or(0.0);
             events.push(crate::ch_backend::UsageEvent {
                 timestamp: ts,
                 request_id: r.request_id.clone(),

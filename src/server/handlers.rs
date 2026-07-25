@@ -20,6 +20,7 @@ use uuid::Uuid;
 use crate::balancer::LoadBalancer;
 use crate::cache::GateStatus;
 use crate::config::types::EndpointConfig;
+use rust_decimal::Decimal;
 use crate::domain::usage::UsageRecord;
 use crate::observability::event::RouteDecided;
 use crate::provider::{is_retryable_error, ErrorKind};
@@ -219,7 +220,7 @@ async fn check_wallet_balance(state: &AppState, user_id: &str) -> Result<(), Gat
         .get_wallet_balance(user_id)
         .await
         .map_err(|e| GatewayError::Internal(e.0))?;
-    if balance - frozen < 0.0001 {
+    if balance - frozen <= Decimal::ZERO {
         return Err(GatewayError::PaymentRequired("Insufficient balance".into()));
     }
     Ok(())
@@ -709,9 +710,9 @@ impl<S> UsageTrackingStream<S> {
                     })
                 },
                 stream: true,
-                prompt_price: 0.0,
-                completion_price: 0.0,
-                cache_read_price: 0.0,
+                prompt_price: Decimal::ZERO,
+                completion_price: Decimal::ZERO,
+                cache_read_price: Decimal::ZERO,
                 client_ip: Some(self.client_ip.clone()),
             },
             self.endpoint_id,
@@ -882,9 +883,9 @@ async fn handle_streaming(
                 api_key_name: Some(api_key_name),
                 api_format: "openai".to_string(),
                 stream: true,
-                prompt_price: 0.0,
-                completion_price: 0.0,
-                cache_read_price: 0.0,
+                prompt_price: Decimal::ZERO,
+                completion_price: Decimal::ZERO,
+                cache_read_price: Decimal::ZERO,
                 client_ip: Some(client_ip),
             });
             Err(GatewayError::Upstream(e.0))
@@ -981,9 +982,9 @@ async fn handle_messages_streaming(
                 api_key_name: Some(api_key_name),
                 api_format: "anthropic".to_string(),
                 stream: true,
-                prompt_price: 0.0,
-                completion_price: 0.0,
-                cache_read_price: 0.0,
+                prompt_price: Decimal::ZERO,
+                completion_price: Decimal::ZERO,
+                cache_read_price: Decimal::ZERO,
                 client_ip: Some(client_ip),
             });
             Err(GatewayError::Upstream(e.0))
@@ -1063,9 +1064,9 @@ async fn handle_non_streaming(
                         api_key_name: Some(api_key_name),
                         api_format: "openai".to_string(),
                         stream: false,
-                        prompt_price: 0.0,
-                        completion_price: 0.0,
-                        cache_read_price: 0.0,
+                        prompt_price: Decimal::ZERO,
+                        completion_price: Decimal::ZERO,
+                        cache_read_price: Decimal::ZERO,
                         client_ip: Some(client_ip.clone()),
                     },
                     route.endpoint.id,
@@ -1126,9 +1127,9 @@ async fn handle_non_streaming(
                     api_key_name: None,
                     api_format: "openai".to_string(),
                     stream: false,
-                    prompt_price: 0.0,
-                    completion_price: 0.0,
-                    cache_read_price: 0.0,
+                    prompt_price: Decimal::ZERO,
+                    completion_price: Decimal::ZERO,
+                    cache_read_price: Decimal::ZERO,
                     client_ip: Some(client_ip.clone()),
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Upstream request failed");
@@ -1160,9 +1161,9 @@ async fn handle_non_streaming(
         api_key_name: None,
         api_format: "openai".to_string(),
         stream: false,
-        prompt_price: 0.0,
-        completion_price: 0.0,
-        cache_read_price: 0.0,
+        prompt_price: Decimal::ZERO,
+        completion_price: Decimal::ZERO,
+        cache_read_price: Decimal::ZERO,
         client_ip: Some(client_ip),
     });
     Err(GatewayError::Upstream(err_msg))
@@ -1242,9 +1243,9 @@ async fn handle_messages_non_streaming(
                     api_key_name: Some(api_key_name),
                     api_format: "anthropic".to_string(),
                     stream: false,
-                    prompt_price: 0.0,
-                    completion_price: 0.0,
-                    cache_read_price: 0.0,
+                    prompt_price: Decimal::ZERO,
+                    completion_price: Decimal::ZERO,
+                    cache_read_price: Decimal::ZERO,
                     client_ip: Some(client_ip.clone()),
                 });
 
@@ -1288,9 +1289,9 @@ async fn handle_messages_non_streaming(
                     api_key_name: None,
                     api_format: "anthropic".to_string(),
                     stream: false,
-                    prompt_price: 0.0,
-                    completion_price: 0.0,
-                    cache_read_price: 0.0,
+                    prompt_price: Decimal::ZERO,
+                    completion_price: Decimal::ZERO,
+                    cache_read_price: Decimal::ZERO,
                     client_ip: Some(client_ip.clone()),
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Messages upstream request failed");
@@ -1321,9 +1322,9 @@ async fn handle_messages_non_streaming(
         api_key_name: None,
         api_format: "anthropic".to_string(),
         stream: false,
-        prompt_price: 0.0,
-        completion_price: 0.0,
-        cache_read_price: 0.0,
+        prompt_price: Decimal::ZERO,
+        completion_price: Decimal::ZERO,
+        cache_read_price: Decimal::ZERO,
         client_ip: Some(client_ip),
     });
     Err(GatewayError::Upstream(err_msg))
@@ -1817,9 +1818,9 @@ async fn relay_to_upstream(
                     api_key_name: Some(user.api_key_name.clone()),
                     api_format: "relay".to_string(),
                     stream: false,
-                    prompt_price: 0.0,
-                    completion_price: 0.0,
-                    cache_read_price: 0.0,
+                    prompt_price: Decimal::ZERO,
+                    completion_price: Decimal::ZERO,
+                    cache_read_price: Decimal::ZERO,
                     client_ip: Some(client_ip.clone()),
                 });
 
@@ -1863,9 +1864,9 @@ async fn relay_to_upstream(
                     api_key_name: Some(user.api_key_name.clone()),
                     api_format: "relay".to_string(),
                     stream: false,
-                    prompt_price: 0.0,
-                    completion_price: 0.0,
-                    cache_read_price: 0.0,
+                    prompt_price: Decimal::ZERO,
+                    completion_price: Decimal::ZERO,
+                    cache_read_price: Decimal::ZERO,
                     client_ip: Some(client_ip.clone()),
                 });
                 return Err(GatewayError::from(e));
@@ -1895,9 +1896,9 @@ async fn relay_to_upstream(
         api_key_name: Some(user.api_key_name),
         api_format: "relay".to_string(),
         stream: false,
-        prompt_price: 0.0,
-        completion_price: 0.0,
-        cache_read_price: 0.0,
+        prompt_price: Decimal::ZERO,
+        completion_price: Decimal::ZERO,
+        cache_read_price: Decimal::ZERO,
         client_ip: Some(client_ip),
     });
     Err(GatewayError::Upstream(err_msg))

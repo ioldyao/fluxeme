@@ -1,6 +1,8 @@
 pub mod backend;
 pub mod pg_backend;
 
+use rust_decimal::Decimal;
+
 use crate::config::types::GatewayRuntimeConfig;
 use crate::db::backend::DbBackend;
 use crate::domain::channel::{Channel, Endpoint};
@@ -47,9 +49,9 @@ pub struct WalletTransactionRow {
     #[allow(dead_code)]
     pub user_id: String,
     pub tx_type: String,
-    pub amount: f64,
-    pub balance_before: f64,
-    pub balance_after: f64,
+    pub amount: Decimal,
+    pub balance_before: Decimal,
+    pub balance_after: Decimal,
     pub method: String,
     pub status: String,
     pub note: String,
@@ -59,7 +61,8 @@ pub struct WalletTransactionRow {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RechargeKeyRow {
     pub key: String,
-    pub amount: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub amount: Decimal,
     pub used_by: Option<String>,
     pub used_at: Option<String>,
     pub created_by: String,
@@ -353,13 +356,12 @@ impl Database {
         self.backend.funnel_stats(since, user_id).await
     }
 
-    // ── Billing / Period ─────────────────────────────────────────────────
     pub async fn period_summary(
         &self,
         year: i32,
         month: u32,
         user_id: Option<&str>,
-    ) -> Result<(f64, u64, u64), DbError> {
+    ) -> Result<(Decimal, u64, u64), DbError> {
         self.backend.period_summary(year, month, user_id).await
     }
     pub async fn period_model_breakdown(
@@ -367,7 +369,7 @@ impl Database {
         year: i32,
         month: u32,
         user_id: Option<&str>,
-    ) -> Result<Vec<(String, f64)>, DbError> {
+    ) -> Result<Vec<(String, Decimal)>, DbError> {
         self.backend
             .period_model_breakdown(year, month, user_id)
             .await
@@ -377,7 +379,7 @@ impl Database {
         year: i32,
         month: u32,
         user_id: Option<&str>,
-    ) -> Result<Vec<(String, String, f64)>, DbError> {
+    ) -> Result<Vec<(String, String, Decimal)>, DbError> {
         self.backend
             .period_channel_breakdown(year, month, user_id)
             .await
@@ -387,7 +389,7 @@ impl Database {
         year: i32,
         month: u32,
         user_id: Option<&str>,
-    ) -> Result<Vec<(String, f64, u64)>, DbError> {
+    ) -> Result<Vec<(String, Decimal, u64)>, DbError> {
         self.backend.daily_deductions(year, month, user_id).await
     }
     pub async fn count_daily_deductions(
@@ -407,7 +409,7 @@ impl Database {
         user_id: Option<&str>,
         limit: usize,
         offset: usize,
-    ) -> Result<Vec<(String, f64, u64)>, DbError> {
+    ) -> Result<Vec<(String, Decimal, u64)>, DbError> {
         self.backend
             .daily_deductions_paginated(year, month, user_id, limit, offset)
             .await
@@ -418,24 +420,24 @@ impl Database {
     pub async fn billing_months_for_user(&self, user_id: &str) -> Result<Vec<String>, DbError> {
         self.backend.billing_months_for_user(user_id).await
     }
-    pub async fn period_summary_all(&self) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
+    pub async fn period_summary_all(&self) -> Result<Vec<(String, Decimal, u64, u64)>, DbError> {
         self.backend.period_summary_all().await
     }
     pub async fn period_summary_for_user(
         &self,
         user_id: &str,
-    ) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
+    ) -> Result<Vec<(String, Decimal, u64, u64)>, DbError> {
         self.backend.period_summary_for_user(user_id).await
     }
-    pub async fn lookup_model_pricing(&self, model_name: &str) -> Result<(f64, f64), DbError> {
+    pub async fn lookup_model_pricing(&self, model_name: &str) -> Result<(Decimal, Decimal), DbError> {
         self.backend.lookup_model_pricing(model_name).await
     }
 
     // ── Wallet ───────────────────────────────────────────────────────────
-    pub async fn get_wallet_balance(&self, user_id: &str) -> Result<(f64, f64), DbError> {
+    pub async fn get_wallet_balance(&self, user_id: &str) -> Result<(Decimal, Decimal), DbError> {
         self.backend.get_wallet_balance(user_id).await
     }
-    pub async fn update_wallet_balance(&self, user_id: &str, balance: f64) -> Result<(), DbError> {
+    pub async fn update_wallet_balance(&self, user_id: &str, balance: Decimal) -> Result<(), DbError> {
         self.backend.update_wallet_balance(user_id, balance).await
     }
     #[allow(clippy::too_many_arguments)]
@@ -444,9 +446,9 @@ impl Database {
         id: &str,
         user_id: &str,
         tx_type: &str,
-        amount: f64,
-        balance_before: f64,
-        balance_after: f64,
+        amount: Decimal,
+        balance_before: Decimal,
+        balance_after: Decimal,
         method: &str,
         status: &str,
         note: &str,
@@ -491,13 +493,13 @@ impl Database {
             .list_wallet_tx_by_dates(user_id, page, size, since, until, tx_type)
             .await
     }
-    pub async fn get_total_consumed(&self, user_id: &str) -> Result<f64, DbError> {
+    pub async fn get_total_consumed(&self, user_id: &str) -> Result<Decimal, DbError> {
         self.backend.get_total_consumed(user_id).await
     }
-    pub async fn get_total_recharged(&self, user_id: &str) -> Result<f64, DbError> {
+    pub async fn get_total_recharged(&self, user_id: &str) -> Result<Decimal, DbError> {
         self.backend.get_total_recharged(user_id).await
     }
-    pub async fn get_wallet_estimated_days(&self, user_id: &str) -> Result<Option<f64>, DbError> {
+    pub async fn get_wallet_estimated_days(&self, user_id: &str) -> Result<Option<Decimal>, DbError> {
         self.backend.get_wallet_estimated_days(user_id).await
     }
 
@@ -505,7 +507,7 @@ impl Database {
     pub async fn create_recharge_key(
         &self,
         key: &str,
-        amount: f64,
+        amount: Decimal,
         created_by: &str,
         expires_at: Option<&str>,
     ) -> Result<(), DbError> {
@@ -513,7 +515,7 @@ impl Database {
             .create_recharge_key(key, amount, created_by, expires_at)
             .await
     }
-    pub async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<f64, DbError> {
+    pub async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<Decimal, DbError> {
         self.backend.redeem_recharge_key(key, user_id).await
     }
     pub async fn revoke_recharge_key(&self, key: &str) -> Result<(), DbError> {
@@ -571,7 +573,7 @@ impl Database {
         &self,
         limit: usize,
         offset: usize,
-    ) -> Result<Vec<(String, f64, f64)>, DbError> {
+    ) -> Result<Vec<(String, Decimal, Decimal)>, DbError> {
         self.backend.get_balances_page(limit, offset).await
     }
 
@@ -655,7 +657,7 @@ impl Database {
         &self,
         batch: &[UsageRecord],
         billing_enabled: bool,
-    ) -> Result<Vec<(String, f64, f64)>, DbError> {
+    ) -> Result<Vec<(String, Decimal, Decimal)>, DbError> {
         self.backend
             .batch_insert_usage_with_billing(batch, billing_enabled)
             .await

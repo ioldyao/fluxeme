@@ -1,3 +1,4 @@
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,32 +21,32 @@ pub struct Model {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Pricing {
-    #[serde(default)]
-    pub prompt_price: f64,
-    #[serde(default)]
-    pub completion_price: f64,
-    #[serde(default)]
-    pub cache_read_price: f64,
-    #[serde(default)]
-    pub cache_write_price: f64,
-    #[serde(default)]
-    pub image_input_price: f64,
-    #[serde(default)]
-    pub audio_input_price: f64,
-    #[serde(default)]
-    pub audio_output_price: f64,
+    #[serde(default, with = "rust_decimal::serde::float")]
+    pub prompt_price: Decimal,
+    #[serde(default, with = "rust_decimal::serde::float")]
+    pub completion_price: Decimal,
+    #[serde(default, with = "rust_decimal::serde::float")]
+    pub cache_read_price: Decimal,
+    #[serde(default, with = "rust_decimal::serde::float")]
+    pub cache_write_price: Decimal,
+    #[serde(default, with = "rust_decimal::serde::float")]
+    pub image_input_price: Decimal,
+    #[serde(default, with = "rust_decimal::serde::float")]
+    pub audio_input_price: Decimal,
+    #[serde(default, with = "rust_decimal::serde::float")]
+    pub audio_output_price: Decimal,
 }
 
 impl Default for Pricing {
     fn default() -> Self {
         Self {
-            prompt_price: 0.0,
-            completion_price: 0.0,
-            cache_read_price: 0.0,
-            cache_write_price: 0.0,
-            image_input_price: 0.0,
-            audio_input_price: 0.0,
-            audio_output_price: 0.0,
+            prompt_price: Decimal::ZERO,
+            completion_price: Decimal::ZERO,
+            cache_read_price: Decimal::ZERO,
+            cache_write_price: Decimal::ZERO,
+            image_input_price: Decimal::ZERO,
+            audio_input_price: Decimal::ZERO,
+            audio_output_price: Decimal::ZERO,
         }
     }
 }

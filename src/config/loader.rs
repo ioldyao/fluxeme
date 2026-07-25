@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use rust_decimal::Decimal;
 use serde::Deserialize;
 
 use crate::config::types::AppConfig;
@@ -193,20 +194,20 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
 
     #[derive(Default, Deserialize)]
     struct OldPricing {
-        #[serde(default)]
-        prompt_price: f64,
-        #[serde(default)]
-        completion_price: f64,
-        #[serde(default)]
-        cache_read_price: f64,
-        #[serde(default)]
-        cache_write_price: f64,
-        #[serde(default)]
-        image_input_price: f64,
-        #[serde(default)]
-        audio_input_price: f64,
-        #[serde(default)]
-        audio_output_price: f64,
+        #[serde(default, with = "rust_decimal::serde::float")]
+        prompt_price: Decimal,
+        #[serde(default, with = "rust_decimal::serde::float")]
+        completion_price: Decimal,
+        #[serde(default, with = "rust_decimal::serde::float")]
+        cache_read_price: Decimal,
+        #[serde(default, with = "rust_decimal::serde::float")]
+        cache_write_price: Decimal,
+        #[serde(default, with = "rust_decimal::serde::float")]
+        image_input_price: Decimal,
+        #[serde(default, with = "rust_decimal::serde::float")]
+        audio_input_price: Decimal,
+        #[serde(default, with = "rust_decimal::serde::float")]
+        audio_output_price: Decimal,
     }
 
     #[derive(Deserialize)]
