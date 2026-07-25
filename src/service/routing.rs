@@ -239,7 +239,9 @@ impl RoutingService {
             if rule.scope != "user" || rule.user_id != user_id || !rule.enabled {
                 continue;
             }
-            if !rule.target_model.is_empty() && model_name == rule.source_model {
+            if !rule.target_model.is_empty()
+                && match_pattern(&model_name, &rule.source_model)
+            {
                 model_name = rule.target_model.clone();
                 tracing::info!(
                     user_id,

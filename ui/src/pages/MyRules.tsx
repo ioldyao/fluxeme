@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMyRules, useCreateMyRule, useDeleteMyRule } from '@/api/rules';
+import { usePublicModels } from '@/api/models';
 import { PageHeader } from '@/components/PageHeader';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Trash2, Plus, RefreshCw, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
@@ -14,6 +16,7 @@ import { toast } from 'sonner';
 export default function MyRules() {
   const { t } = useTranslation();
   const { data: rules, isLoading, isError, refetch } = useMyRules();
+  const { data: models } = usePublicModels();
   const createRule = useCreateMyRule();
   const deleteRule = useDeleteMyRule();
   const [showAdd, setShowAdd] = useState(false);
@@ -107,18 +110,23 @@ export default function MyRules() {
               <Input
                 value={sourceModel}
                 onChange={(e) => setSourceModel(e.target.value)}
-                placeholder="gpt-4"
+                placeholder="gpt-4*"
               />
-              <p className="text-xs text-muted-foreground">你发出的模型名（精确匹配）</p>
+              <p className="text-xs text-muted-foreground">你发出的模型名，支持 * 通配符（如 gpt-4*）</p>
             </div>
             <div className="space-y-2">
               <Label>目标模型</Label>
-              <Input
-                value={targetModel}
-                onChange={(e) => setTargetModel(e.target.value)}
-                placeholder="claude-sonnet-4"
-              />
-              <p className="text-xs text-muted-foreground">实际转发到的模型名</p>
+              <Select value={targetModel} onValueChange={(v) => setTargetModel(v ?? '')} required>
+                <SelectTrigger className="h-10">
+                  <SelectValue placeholder="从模型广场选择" />
+                </SelectTrigger>
+                <SelectContent>
+                  {models?.map((m) => (
+                    <SelectItem key={m.id} value={m.name}>{m.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">实际转发到的模型（从模型广场选择）</p>
             </div>
             <Button onClick={handleCreate} className="w-full" disabled={createRule.isPending}>
               {createRule.isPending ? '创建中...' : '创建'}
