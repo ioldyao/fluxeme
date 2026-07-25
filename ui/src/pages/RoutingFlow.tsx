@@ -500,7 +500,7 @@ export default function RoutingFlow() {
       let maxV = 0;
       for (const [, v] of entries) if (v > maxV) maxV = v;
       if (maxV > 0) {
-        const scale = (cnt: number) => Math.max(1.5, Math.min(20, 1.5 + (cnt / maxV) * 18.5));
+        const scale = (cnt: number) => Math.max(1.5, Math.min(30, 1.5 + (cnt / maxV) * 28.5));
         for (const [k, v] of entries) map[k] = scale(v);
       }
     } else {
@@ -520,7 +520,7 @@ export default function RoutingFlow() {
         });
       });
       if (maxCnt > 0) {
-        const scale = (cnt: number) => Math.max(1.5, Math.min(20, 1.5 + (cnt / maxCnt) * 18.5));
+        const scale = (cnt: number) => Math.max(1.5, Math.min(30, 1.5 + (cnt / maxCnt) * 28.5));
         for (const [k, v] of Object.entries(acc)) map[k] = scale(v);
       }
     }
