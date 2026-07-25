@@ -435,29 +435,8 @@ export default function RoutingFlow() {
 
   const { svgRef, paths } = useConnectors(containerRef, connectorPairs);
 
-  // ── Path width proportional to cumulative counts ──────────────────
-  const pathWidthMap = useMemo(() => {
-    const map: Record<string, number> = {};
-    const acc: Record<string, number> = {};
-    let maxCnt = 0;
-    topology.forEach((m) => {
-      m.channels.forEach((c) => {
-        const cnt = counts[keyFor(m.model, c.id)] || 0;
-        const k = `m2c:${m.model}>${c.id}`;
-        acc[k] = cnt; if (cnt > maxCnt) maxCnt = cnt;
-        c.endpoints.forEach((e) => {
-          const cnt2 = counts[keyFor(m.model, c.id, e.key)] || 0;
-          const k2 = `c2e:${c.id}>${e.key}`;
-          acc[k2] = cnt2; if (cnt2 > maxCnt) maxCnt = cnt2;
-        });
-      });
-    });
-    if (maxCnt > 0) {
-      const scale = (cnt: number) => Math.max(1.5, Math.min(40, 1.5 + (cnt / maxCnt) * 38.5));
-      for (const [k, v] of Object.entries(acc)) map[k] = scale(v);
-    }
-    return map;
-  }, [counts, topology]);
+  // ── Fixed thin connector lines ────────────────────────────────────
+  const pathWidthMap: Record<string, number> = useMemo(() => ({}), []);
 
   // ── Pulse / ping state ──
   const [pulses, setPulses] = useState<{ id: string; pathD: string }[]>([]);
