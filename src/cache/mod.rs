@@ -1,4 +1,8 @@
+use std::time::Duration;
+
 use sha2::{Digest, Sha256};
+
+use crate::domain::usage::UsageRecord;
 
 /// Gate status for a user — used by the billing system to decide whether
 /// to accept or reject a request *before* it hits the upstream provider.
@@ -203,6 +207,150 @@ impl RedisCache {
             .query_async::<()>(&mut con)
             .await
             .map_err(|e| format!("Redis pipeline SET error: {}", e))
+    }
+
+    // ── Billing backlog (Phase 5: Redis Stream overflow) ──────────────
+
+    const BILLING_BACKLOG_KEY: &'static str = "billing:backlog";
+
+    /// Push a billing record to the Redis Stream backlog.
+    /// Called when the in-memory billing channel is full.
+    pub async fn backlog_billing_record(&self, record: UsageRecord) -> Result<(), String> {
+        let mut con = match self.con.clone() {
+            Some(c) => c,
+            None => return Err("Redis cache disabled".into()),
+        };
+        let json = serde_json::to_string(&record)
+            .map_err(|e| format!("Backlog serialize: {e}"))?;
+        redis::cmd("XADD")
+            .arg(Self::BILLING_BACKLOG_KEY)
+            .arg("MAXLEN")
+            .arg("100000")
+            .arg("*")
+            .arg("record")
+            .arg(&json)
+            .query_async::<String>(&mut con)
+            .await
+            .map_err(|e| format!("Redis XADD error: {e}"))?;
+        Ok(())
+    }
+
+    /// Read pending billing records from the backlog (non-blocking, up to `count`).
+    /// Returns `(entry_id, UsageRecord)` pairs.
+    pub async fn read_billing_backlog(
+        &self,
+        count: usize,
+    ) -> Result<Vec<(String, UsageRecord)>, String> {
+        let mut con = match self.con.clone() {
+            Some(c) => c,
+            None => return Ok(Vec::new()),
+        };
+        let raw: redis::Value = redis::cmd("XREAD")
+            .arg("COUNT")
+            .arg(count)
+            .arg("STREAMS")
+            .arg(Self::BILLING_BACKLOG_KEY)
+            .arg("0")
+            .query_async(&mut con)
+            .await
+            .map_err(|e| format!("Redis XREAD error: {e}"))?;
+
+        fn as_str_bytes(v: &redis::Value) -> Option<String> {
+            match v {
+                redis::Value::BulkString(b) => Some(String::from_utf8_lossy(b).into()),
+                _ => None,
+            }
+        }
+
+        let mut records = Vec::new();
+        if let redis::Value::Array(streams) = &raw {
+            for s in streams {
+                if let redis::Value::Array(entries) = s {
+                    for entry in entries.iter().skip(1) {
+                        if let redis::Value::Array(parts) = entry {
+                            if parts.len() >= 2 {
+                                let entry_id = as_str_bytes(&parts[0]).unwrap_or_default();
+                                if let redis::Value::Array(field_pairs) = &parts[1] {
+                                    for ch in field_pairs.chunks(2) {
+                                        if ch.len() == 2
+                                            && as_str_bytes(&ch[0]).as_deref() == Some("record")
+                                        {
+                                            if let Some(json) = as_str_bytes(&ch[1]) {
+                                                if let Ok(r) =
+                                                    serde_json::from_str::<UsageRecord>(&json)
+                                                {
+                                                    records.push((entry_id.clone(), r));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(records)
+    }
+
+    /// Acknowledge and remove processed billing records from the backlog.
+    pub async fn ack_billing_backlog(&self, entry_ids: &[String]) -> Result<(), String> {
+        let mut con = match self.con.clone() {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        for id in entry_ids {
+            redis::cmd("XDEL")
+                .arg(Self::BILLING_BACKLOG_KEY)
+                .arg(id)
+                .query_async::<()>(&mut con)
+                .await
+                .map_err(|e| format!("Redis XDEL error: {e}"))?;
+        }
+        Ok(())
+    }
+}
+
+/// Background task: drains the billing backlog Redis Stream and retries
+/// billing via PG. Runs every 5 seconds.
+pub async fn start_billing_backlog_drain(
+    cache: std::sync::Arc<RedisCache>,
+    db: std::sync::Arc<crate::db::Database>,
+) {
+    tracing::info!("Billing backlog drain started");
+    let mut interval = tokio::time::interval(Duration::from_secs(5));
+    loop {
+        interval.tick().await;
+        let Ok(records) = cache.read_billing_backlog(100).await else { continue };
+        if records.is_empty() {
+            continue;
+        }
+        let mut processed = Vec::new();
+        for (entry_id, record) in &records {
+            // Re-read billing_enabled (the drain runs independently)
+            let billing_enabled = db
+                .get_gateway_config()
+                .await
+                .map(|c| c.billing_enabled)
+                .unwrap_or(false);
+            match db
+                .batch_insert_usage_with_billing(&[record.clone()], billing_enabled)
+                .await
+            {
+                Ok(_) => processed.push(entry_id.clone()),
+                Err(e) => {
+                    tracing::warn!(
+                        request_id = record.request_id,
+                        error = %e.0,
+                        "Backlog drain retry failed — will retry next cycle"
+                    );
+                }
+            }
+        }
+        if !processed.is_empty() {
+            let _ = cache.ack_billing_backlog(&processed).await;
+        }
     }
 }
 

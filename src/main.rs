@@ -2,6 +2,7 @@ mod admin;
 mod authz;
 mod balancer;
 mod cache;
+mod ch_backend;
 mod config;
 mod crypto;
 mod db;
@@ -20,6 +21,7 @@ use std::time::Duration;
 use tokio::sync::RwLock as AsyncRwLock;
 
 use crate::cache::GateStatus;
+use crate::ch_backend::ClickHouseBackend;
 
 use crate::admin::AdminModule;
 use crate::authz::AuthzModule;
@@ -258,7 +260,37 @@ async fn main() {
     let event_bus = observability::event_bus::EventBus::new(8192);
 
     // Initialize usage service (background writer for usage logs + billing deductions)
-    let (usage, usage_handle) = UsageService::new(db.clone(), cache.clone(), event_bus.clone());
+    let (usage, usage_handles) = UsageService::new(db.clone(), cache.clone(), event_bus.clone());
+
+    // Billing backlog drain — reads from Redis Stream and retries billing
+    {
+        let cache = cache.clone();
+        let db = db.clone();
+        tokio::spawn(crate::cache::start_billing_backlog_drain(cache, db));
+    }
+
+    // ClickHouse backend (optional — gracefully disabled when not configured)
+    let ch = ClickHouseBackend::new(&config.read().unwrap().database.clickhouse)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("ClickHouse init failed: {e}");
+            None
+        });
+    if let Some(ref ch) = ch {
+        let retention = config.read().unwrap().database.retention_days;
+        if let Err(e) = ch.migrate(retention as u32).await {
+            tracing::warn!("ClickHouse migration: {e}");
+        }
+    }
+
+    // Compensation task — scans usage_billing for unwritten records
+    {
+        let ch = ch.clone();
+        let db = db.clone();
+        tokio::spawn(crate::service::compensation::start_compensation_loop(
+            ch, db,
+        ));
+    }
 
     // In-memory gate cache (populated by inspection, read by handler when Redis is down)
     let gate_cache: Arc<AsyncRwLock<HashMap<String, GateStatus>>> =
@@ -374,5 +406,5 @@ async fn main() {
     .await
     .expect("Server error");
 
-    usage_handle.abort();
+    for h in usage_handles { h.abort(); }
 }

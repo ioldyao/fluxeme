@@ -11,6 +11,12 @@ admin:
 database:
   pg_url: ""
   retention_days: 90
+  clickhouse:
+    host: ${CLICKHOUSE_HOST:-localhost}
+    port: ${CLICKHOUSE_PORT:-9000}
+    user: ${CLICKHOUSE_USER:-default}
+    password: ${CLICKHOUSE_PASSWORD:-}
+    db: ${CLICKHOUSE_DB:-aigateway}
 jwt_secret: ${GATEWAY_JWT_SECRET}
 encryption_key: ${GATEWAY_ENCRYPTION_KEY}
 previous_encryption_key: ${GATEWAY_PREVIOUS_ENCRYPTION_KEY}
