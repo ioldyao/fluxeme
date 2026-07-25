@@ -269,10 +269,7 @@ export default function FlowControlTower() {
       }
     }
     // provider pulse
-    const ci = allChannelReqs.findIndex(ch => {
-      const found = topology.find(t => t.model === model);
-      return found?.channels.some(ch => ch.id === channel);
-    });
+    const ci = allChannelReqs.findIndex(ch => ch.id === channel);
     if (ci >= 0) {
       const bandKey = `ch-${channel}`;
       const last = pulseCooldown.current[bandKey] || 0;
