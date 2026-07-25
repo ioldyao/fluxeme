@@ -20,11 +20,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
         </DialogHeader>
 
         {isLoading ? (
-          <div className="space-y-3 p-4">
-            <Skeleton className="h-4 w-3/4" />
-            <Skeleton className="h-4 w-1/2" />
-            <Skeleton className="h-20 w-full" />
-          </div>
+          <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>
         ) : record ? (
           <div className="space-y-5 min-w-0">
 
