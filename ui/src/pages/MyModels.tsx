@@ -1,11 +1,10 @@
-import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSubscriptions, useUnsubscribeModel, useTestModelConnection } from '@/api/models';
+import { useSubscriptions, useUnsubscribeModel } from '@/api/models';
 import { PageHeader } from '@/components/PageHeader';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { RefreshCw, Trash2, Loader2, Link2 } from 'lucide-react';
+import { RefreshCw, Trash2, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { CURRENCY_SYMBOL, usePricingCurrency, useCurrency } from '@/store/currency';
 
@@ -20,8 +19,6 @@ export default function MyModels() {
   const { t } = useTranslation();
   const { data: models, isLoading, isError, refetch } = useSubscriptions();
   const unsubscribe = useUnsubscribeModel();
-  const testConnection = useTestModelConnection();
-  const [testingIds, setTestingIds] = useState<Record<string, boolean>>({});
   const { currency } = useCurrency();
   const { effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
 
@@ -36,24 +33,6 @@ export default function MyModels() {
     unsubscribe.mutate(modelId, {
       onSuccess: () => { toast.success('已取消订阅'); refetch(); },
       onError: (err) => toast.error(err.message),
-    });
-  };
-
-  const handleTestConnection = (modelId: string) => {
-    setTestingIds((prev) => ({ ...prev, [modelId]: true }));
-    testConnection.mutate(modelId, {
-      onSuccess: (res) => {
-        setTestingIds((prev) => ({ ...prev, [modelId]: false }));
-        if (res.success) {
-          toast.success(`连接成功 (${res.latency_ms}ms)`);
-        } else {
-          toast.error(res.error || '连接失败');
-        }
-      },
-      onError: (err) => {
-        setTestingIds((prev) => ({ ...prev, [modelId]: false }));
-        toast.error(err.message);
-      },
     });
   };
 
@@ -133,19 +112,6 @@ export default function MyModels() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleTestConnection(model.id)}
-                      disabled={testingIds[model.id]}
-                      title="测试连接"
-                    >
-                      {testingIds[model.id] ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Link2 className="size-4" />
-                      )}
-                    </Button>
                     <Button
                       variant="ghost"
                       size="sm"
