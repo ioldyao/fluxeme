@@ -385,7 +385,7 @@ impl DbBackend for PgBackend {
                 channel_id TEXT NOT NULL DEFAULT '',
                 upstream_model TEXT NOT NULL DEFAULT '',
                 priority INTEGER NOT NULL DEFAULT 0,
-                enabled INTEGER NOT NULL DEFAULT 1,
+                enabled BOOLEAN NOT NULL DEFAULT true,
                 description TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT NOW(),
                 updated_at TEXT NOT NULL DEFAULT NOW()
@@ -399,7 +399,14 @@ impl DbBackend for PgBackend {
             ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS target_model TEXT NOT NULL DEFAULT '';
             ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS upstream_model TEXT NOT NULL DEFAULT '';
             ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0;
-            ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS enabled INTEGER NOT NULL DEFAULT 1;
+            -- enabled may already exist as INTEGER — convert to BOOLEAN
+            DO $$ BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='routing_rules' AND column_name='enabled'
+                    AND data_type='integer') THEN
+                    ALTER TABLE routing_rules ALTER COLUMN enabled TYPE BOOLEAN USING (enabled::int::boolean);
+                END IF;
+            END $$;
             ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
             ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS created_at TEXT NOT NULL DEFAULT NOW();
             ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT NOW();
