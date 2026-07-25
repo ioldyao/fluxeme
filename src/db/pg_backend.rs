@@ -1856,7 +1856,7 @@ impl DbBackend for PgBackend {
             builder.push_bind(ed);
         }
 
-        builder.push(" ORDER BY id DESC LIMIT ");
+        builder.push(" ORDER BY timestamp DESC LIMIT ");
         builder.push_bind(limit as i64);
         builder.push(" OFFSET ");
         builder.push_bind(offset as i64);
@@ -1940,7 +1940,7 @@ impl DbBackend for PgBackend {
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
                  cache_read_price, client_ip \
-                 FROM usage_billing WHERE user_id = $1 AND timestamp >= $2 ORDER BY id ASC",
+                 FROM usage_billing WHERE user_id = $1 AND timestamp >= $2 ORDER BY timestamp ASC",
             )
             .bind(uid)
             .bind(since)
@@ -1952,7 +1952,7 @@ impl DbBackend for PgBackend {
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
                  cache_read_price, client_ip \
-                 FROM usage_billing WHERE timestamp >= $1 ORDER BY id ASC",
+                 FROM usage_billing WHERE timestamp >= $1 ORDER BY timestamp ASC",
             )
             .bind(since)
             .fetch_all(&self.pool)
@@ -1978,7 +1978,7 @@ impl DbBackend for PgBackend {
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
                  cache_read_price \
-                 FROM usage_billing WHERE user_id = $1 AND timestamp >= $2 ORDER BY id ASC",
+                 FROM usage_billing WHERE user_id = $1 AND timestamp >= $2 ORDER BY timestamp ASC",
             )
             .bind(uid)
             .bind(since)
@@ -1990,7 +1990,7 @@ impl DbBackend for PgBackend {
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
                  cache_read_price \
-                 FROM usage_billing WHERE timestamp >= $1 ORDER BY id ASC",
+                 FROM usage_billing WHERE timestamp >= $1 ORDER BY timestamp ASC",
             )
             .bind(since)
             .fetch_all(&self.pool)
@@ -3285,7 +3285,7 @@ impl DbBackend for PgBackend {
         limit: usize,
     ) -> Result<Vec<(String, String, String, Option<i64>, u64, bool)>, DbError> {
         let rows = query_as::<_, (String, String, String, Option<i64>, i64, bool)>(
-            "SELECT timestamp, model, channel_id, endpoint_id, latency_ms, success FROM usage_billing ORDER BY id DESC LIMIT $1"
+            "SELECT timestamp, model, channel_id, endpoint_id, latency_ms, success FROM usage_billing ORDER BY timestamp DESC LIMIT $1"
         )
         .bind(limit as i64)
         .fetch_all(&self.pool)
