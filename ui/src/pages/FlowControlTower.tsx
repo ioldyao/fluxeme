@@ -52,9 +52,8 @@ interface SpillRow {
 }
 
 // ── River SVG component ─────────────────────────────────────────
-function RiverFlowSVG({ modelShare, funnel }: {
+function RiverFlowSVG({ modelShare }: {
   modelShare: { model: string; count: number; percentage: number }[];
-  funnel: { total: number; successCount: number; rateLimitCount: number; upstreamErrCount: number; otherErrCount: number };
 }) {
   if (!modelShare.length) return null;
 
@@ -301,7 +300,7 @@ export default function FlowControlTower() {
           </div>
 
           <div style={{ position: 'relative', width: '100%' }}>
-            <RiverFlowSVG modelShare={modelShare} funnel={funnelSafe} />
+            <RiverFlowSVG modelShare={modelShare} />
 
             {/* labels overlay */}
             <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
