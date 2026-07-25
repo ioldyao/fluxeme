@@ -215,6 +215,8 @@ impl PgBackend {
         *idx += 1;
         let client_ip: Option<String> = row.get(*idx);
         *idx += 1;
+        let original_model: String = if *idx < row.len() { row.get(*idx) } else { String::new() };
+        *idx += 1;
         UsageRecord {
             timestamp,
             request_id,
@@ -239,6 +241,7 @@ impl PgBackend {
             completion_price: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
             cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
             client_ip,
+            original_model,
         }
     }
 
@@ -289,6 +292,8 @@ impl PgBackend {
         *idx += 1;
         let client_ip: Option<String> = row.get(*idx);
         *idx += 1;
+        let original_model: String = if *idx < row.len() { row.get(*idx) } else { String::new() };
+        *idx += 1;
         UsageRecord {
             timestamp,
             request_id,
@@ -313,6 +318,7 @@ impl PgBackend {
             completion_price: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
             cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
             client_ip,
+            original_model,
         }
     }
 }
@@ -736,6 +742,7 @@ impl DbBackend for PgBackend {
                 client_ip TEXT,\
                 endpoint_id BIGINT,\
                 timestamp TEXT NOT NULL,\
+                original_model TEXT NOT NULL DEFAULT '',\
                 created_at TIMESTAMP NOT NULL DEFAULT NOW()\
             )",
         )
@@ -755,6 +762,7 @@ impl DbBackend for PgBackend {
         add_col!("ALTER TABLE usage_billing ADD COLUMN IF NOT EXISTS request_body TEXT");
         add_col!("ALTER TABLE usage_billing ADD COLUMN IF NOT EXISTS response_body TEXT");
         add_col!("ALTER TABLE usage_billing ADD COLUMN IF NOT EXISTS reasoning_body TEXT");
+        add_col!("ALTER TABLE usage_billing ADD COLUMN IF NOT EXISTS original_model TEXT NOT NULL DEFAULT ''");
 
         tracing::info!("usage_billing table ready");
 
@@ -1843,7 +1851,7 @@ impl DbBackend for PgBackend {
             "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
-             cache_read_price, client_ip \
+             cache_read_price, client_ip, original_model \
              FROM usage_billing WHERE 1=1",
         );
 
@@ -1892,7 +1900,8 @@ impl DbBackend for PgBackend {
             "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              request_body, response_body, reasoning_body, api_key_name, api_format, stream, \
-             cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip \
+             cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip, \
+             original_model \
              FROM usage_billing WHERE request_id = $1",
         )
         .bind(request_id)
@@ -1993,7 +2002,7 @@ impl DbBackend for PgBackend {
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
-                 cache_read_price \
+                 cache_read_price, client_ip, original_model \
                  FROM usage_billing WHERE user_id = $1 AND timestamp >= $2 ORDER BY timestamp ASC",
             )
             .bind(uid)
@@ -2005,7 +2014,7 @@ impl DbBackend for PgBackend {
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
-                 cache_read_price \
+                 cache_read_price, client_ip, original_model \
                  FROM usage_billing WHERE timestamp >= $1 ORDER BY timestamp ASC",
             )
             .bind(since)
@@ -2077,6 +2086,7 @@ impl DbBackend for PgBackend {
                     completion_price: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
                     cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
                     client_ip: None,
+                    original_model: String::new(),
                 }
             })
             .collect())
@@ -3528,10 +3538,10 @@ impl DbBackend for PgBackend {
                  status_code, success, cache_hit_input_tokens, \
                  prompt_price, completion_price, cache_read_price, cost_amount, \
                  api_key_name, api_format, stream, client_ip, \
-                 request_body, response_body, reasoning_body) \
+                 request_body, response_body, reasoning_body, original_model) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, \
                  $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, \
-                 $22, $23, $24)",
+                 $22, $23, $24, $25)",
             )
             .bind(&record.timestamp)
             .bind(&record.request_id)
@@ -3557,6 +3567,7 @@ impl DbBackend for PgBackend {
             .bind(&record.request_body)
             .bind(&record.response_body)
             .bind(&record.reasoning_body)
+            .bind(&record.original_model)
             .execute(&mut *tx)
             .await?;
 
