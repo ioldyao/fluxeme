@@ -224,11 +224,12 @@ impl RoutingService {
             .collect()
     }
 
+    /// Returns (channel_id, resolved_model_name, upstream_model_override).
     pub async fn route(
         &self,
         user_id: &str,
         model: &str,
-    ) -> Result<(String, Option<String>), RouteError> {
+    ) -> Result<(String, String, Option<String>), RouteError> {
         let mut model_name = model.to_string();
         let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
         let rules = self.rules.read().unwrap_or_else(|e| e.into_inner());
@@ -297,7 +298,7 @@ impl RoutingService {
                                 channel = &rule.channel_id,
                                 "System routing rule matched"
                             );
-                            return Ok((rule.channel_id.clone(), upstream));
+                            return Ok((rule.channel_id.clone(), model_name.clone(), upstream));
                         }
                     }
                 }
@@ -353,7 +354,7 @@ impl RoutingService {
                     .collect();
                 let idx = (self.zone_counter.fetch_add(1, Ordering::Relaxed) as usize) % same.len();
                 let (_, ch_id, m_id) = &same[idx];
-                return Ok((ch_id.clone(), Some(m_id.clone())));
+                return Ok((ch_id.clone(), model_name.clone(), Some(m_id.clone())));
             }
         }
 
