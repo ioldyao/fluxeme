@@ -138,7 +138,13 @@ pub(crate) async fn recent_request_paths(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:dashboard").await?;
 
-    let records = state.db.recent_request_paths(15).await.map_err(db_err)?;
+    let records = if let Some(ref ch) = state.ch {
+        ch.query_recent_request_paths(15)
+            .await
+            .map_err(|e| AdminError::internal(e))?
+    } else {
+        state.db.recent_request_paths(15).await.map_err(db_err)?
+    };
 
     let paths: Vec<serde_json::Value> = records
         .into_iter()

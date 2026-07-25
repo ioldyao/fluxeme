@@ -128,18 +128,25 @@ pub(crate) async fn daily_usage(
         Some(&session.user_id)
     };
 
-    let records = state
-        .usage
-        .daily_counts(&since, user_filter, offset)
-        .await
-        .map_err(AdminError::internal)?;
-
-    Ok(Json(
-        records
+    let records: Vec<DailyUsage> = if let Some(ref ch) = state.ch {
+        ch.query_daily_usage_counts(&since, user_filter)
+            .await
+            .map_err(|e| AdminError::internal(e))?
             .into_iter()
-            .map(|(date, count)| DailyUsage { date, count })
-            .collect(),
-    ))
+            .map(|(date, count)| DailyUsage { date, count: count as i64 })
+            .collect()
+    } else {
+        state
+            .usage
+            .daily_counts(&since, user_filter, offset)
+            .await
+            .map_err(AdminError::internal)?
+            .into_iter()
+            .map(|(date, count)| DailyUsage { date, count: count as i64 })
+            .collect()
+    };
+
+    Ok(Json(records))
 }
 
 // ── Usage Aggregation ─────────────────────────────────────────────
@@ -185,16 +192,12 @@ pub(crate) async fn usage_aggregate(
         Some(&session.user_id)
     };
 
-    let records = state
-        .usage
-        .daily_stats(&since, user_filter, offset)
-        .await
-        .map_err(AdminError::internal)?;
-
-    Ok(Json(
-        records
+    let records: Vec<DailyAggregate> = if let Some(ref ch) = state.ch {
+        ch.query_daily_usage_stats(&since, user_filter)
+            .await
+            .map_err(|e| AdminError::internal(e))?
             .into_iter()
-            .map(|(date, count, pt, ct, tt, sc, lat, ch)| DailyAggregate {
+            .map(|(date, count, pt, ct, tt, sc, lat, ch_tok)| DailyAggregate {
                 date,
                 count,
                 prompt_tokens: pt,
@@ -202,10 +205,30 @@ pub(crate) async fn usage_aggregate(
                 total_tokens: tt,
                 success_count: sc,
                 latency_ms: lat,
-                cache_hit_tokens: ch,
+                cache_hit_tokens: ch_tok,
             })
-            .collect(),
-    ))
+            .collect()
+    } else {
+        state
+            .usage
+            .daily_stats(&since, user_filter, offset)
+            .await
+            .map_err(AdminError::internal)?
+            .into_iter()
+            .map(|(date, count, pt, ct, tt, sc, lat, ch_tok)| DailyAggregate {
+                date,
+                count,
+                prompt_tokens: pt,
+                completion_tokens: ct,
+                total_tokens: tt,
+                success_count: sc,
+                latency_ms: lat,
+                cache_hit_tokens: ch_tok,
+            })
+            .collect()
+    };
+
+    Ok(Json(records))
 }
 
 // ── Model Activity ────────────────────────────────────────────────
@@ -241,25 +264,41 @@ pub(crate) async fn model_activity(
     } else {
         Some(&session.user_id)
     };
-    let records = state
-        .db
-        .model_activity(&since, user_filter)
-        .await
-        .map_err(|e| AdminError::internal(e.to_string()))?;
-    Ok(Json(
-        records
+    let records: Vec<ModelActivity> = if let Some(ref ch) = state.ch {
+        ch.query_model_activity(&since, user_filter)
+            .await
+            .map_err(|e| AdminError::internal(e))?
             .into_iter()
-            .map(|(model, total, pt, ct, sc, fc, ch)| ModelActivity {
+            .map(|(model, total, pt, ct, sc, fc, ch_tok)| ModelActivity {
                 model,
                 total_requests: total,
                 prompt_tokens: pt,
                 completion_tokens: ct,
-                cache_hit_tokens: ch,
+                cache_hit_tokens: ch_tok,
                 success_count: sc,
                 failure_count: fc,
             })
-            .collect(),
-    ))
+            .collect()
+    } else {
+        state
+            .db
+            .model_activity(&since, user_filter)
+            .await
+            .map_err(|e| AdminError::internal(e.to_string()))?
+            .into_iter()
+            .map(|(model, total, pt, ct, sc, fc, ch_tok)| ModelActivity {
+                model,
+                total_requests: total,
+                prompt_tokens: pt,
+                completion_tokens: ct,
+                cache_hit_tokens: ch_tok,
+                success_count: sc,
+                failure_count: fc,
+            })
+            .collect()
+    };
+
+    Ok(Json(records))
 }
 
 #[derive(Serialize)]
@@ -298,11 +337,17 @@ pub(crate) async fn usage_funnel(
     } else {
         Some(&session.user_id)
     };
-    let stats = state
-        .usage
-        .funnel_stats(&since, user_filter)
-        .await
-        .map_err(AdminError::internal)?;
+    let stats = if let Some(ref ch) = state.ch {
+        ch.query_funnel_stats(&since)
+            .await
+            .map_err(|e| AdminError::internal(e))?
+    } else {
+        state
+            .usage
+            .funnel_stats(&since, user_filter)
+            .await
+            .map_err(AdminError::internal)?
+    };
     Ok(Json(FunnelResponse {
         total: stats.total,
         success_count: stats.success_count,

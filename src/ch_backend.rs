@@ -305,6 +305,247 @@ impl ClickHouseBackend {
             .collect())
     }
 
+    /// Recent request paths: (timestamp, model, channel_id, endpoint_id, latency_ms, success).
+    pub async fn query_recent_request_paths(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(String, String, String, Option<i64>, u64, bool)>, String> {
+        #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
+        struct PathRow {
+            timestamp: String,
+            model: String,
+            channel_id: String,
+            endpoint_id: Option<i64>,
+            latency_ms: u64,
+            success: u8,
+        }
+        let rows = self
+            .client
+            .query(
+                "SELECT toString(timestamp) AS timestamp, model, channel_id, \
+                 endpoint_id, latency_ms, success \
+                 FROM usage_events \
+                 ORDER BY timestamp DESC \
+                 LIMIT {l:UInt64}",
+            )
+            .bind(limit as u64)
+            .fetch_all::<PathRow>()
+            .await
+            .map_err(|e| format!("CH recent_request_paths: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.timestamp, r.model, r.channel_id, r.endpoint_id, r.latency_ms,
+                    r.success != 0,
+                )
+            })
+            .collect())
+    }
+
+    /// Funnel stats: per-status-count breakdown + latency percentiles.
+    pub async fn query_funnel_stats(
+        &self,
+        since: &str,
+    ) -> Result<crate::db::FunnelStats, String> {
+        #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
+        struct FunnelRow {
+            total: u64,
+            success_count: u64,
+            auth_fail_count: u64,
+            rate_limit_count: u64,
+            bad_request_count: u64,
+            upstream_error_count: u64,
+            timeout_count: u64,
+            other_error_count: u64,
+            p50_latency: f64,
+            p95_latency: f64,
+            p99_latency: f64,
+            avg_latency: f64,
+        }
+        let row = self
+            .client
+            .query(
+                "SELECT \
+                 count()::UInt64 AS total, \
+                 countIf(success = 1)::UInt64 AS success_count, \
+                 countIf(success = 0 AND status_code IN (401, 403))::UInt64 AS auth_fail_count, \
+                 countIf(success = 0 AND status_code = 429)::UInt64 AS rate_limit_count, \
+                 countIf(success = 0 AND status_code = 400)::UInt64 AS bad_request_count, \
+                 countIf(success = 0 AND status_code IN (502, 503))::UInt64 AS upstream_error_count, \
+                 countIf(success = 0 AND status_code = 504)::UInt64 AS timeout_count, \
+                 countIf(success = 0 AND status_code NOT IN (400, 401, 403, 429, 502, 503, 504))::UInt64 AS other_error_count, \
+                 quantileExact(0.50)(latency_ms)::Float64 AS p50_latency, \
+                 quantileExact(0.95)(latency_ms)::Float64 AS p95_latency, \
+                 quantileExact(0.99)(latency_ms)::Float64 AS p99_latency, \
+                 avg(latency_ms)::Float64 AS avg_latency \
+                 FROM usage_events \
+                 WHERE timestamp >= {s:String}",
+            )
+            .bind(since)
+            .fetch_one::<FunnelRow>()
+            .await
+            .map_err(|e| format!("CH funnel_stats: {e}"))?;
+        Ok(crate::db::FunnelStats {
+            total: row.total,
+            success_count: row.success_count,
+            auth_fail_count: row.auth_fail_count,
+            rate_limit_count: row.rate_limit_count,
+            bad_request_count: row.bad_request_count,
+            upstream_error_count: row.upstream_error_count,
+            timeout_count: row.timeout_count,
+            other_error_count: row.other_error_count,
+            p50_latency: row.p50_latency,
+            p95_latency: row.p95_latency,
+            p99_latency: row.p99_latency,
+            avg_latency: row.avg_latency,
+        })
+    }
+
+    /// Daily usage counts: (date, count).
+    pub async fn query_daily_usage_counts(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, u64)>, String> {
+        #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
+        struct CountRow {
+            date: String,
+            count: u64,
+        }
+        let rows = if let Some(uid) = user_id {
+            self.client
+                .query(
+                    "SELECT toDate(timestamp)::String AS date, count()::UInt64 AS count \
+                     FROM usage_events \
+                     WHERE timestamp >= {s:String} AND user_id = {u:String} \
+                     GROUP BY date ORDER BY date ASC",
+                )
+                .bind(since)
+                .bind(uid)
+                .fetch_all::<CountRow>()
+                .await
+                .map_err(|e| format!("CH daily_usage_counts: {e}"))?
+        } else {
+            self.client
+                .query(
+                    "SELECT toDate(timestamp)::String AS date, count()::UInt64 AS count \
+                     FROM usage_events \
+                     WHERE timestamp >= {s:String} \
+                     GROUP BY date ORDER BY date ASC",
+                )
+                .bind(since)
+                .fetch_all::<CountRow>()
+                .await
+                .map_err(|e| format!("CH daily_usage_counts: {e}"))?
+        };
+        Ok(rows.into_iter().map(|r| (r.date, r.count)).collect())
+    }
+
+    /// Daily usage stats: (date, count, prompt_tokens, completion_tokens, total_tokens, success_count, latency_ms, cache_hit_tokens).
+    pub async fn query_daily_usage_stats(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64, u64)>, String> {
+        #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
+        struct StatRow {
+            date: String,
+            count: u64,
+            prompt_tokens: u64,
+            completion_tokens: u64,
+            total_tokens: u64,
+            success_count: u64,
+            latency_ms: u64,
+            cache_hit_tokens: u64,
+        }
+        let sql = "SELECT toDate(timestamp)::String AS date, \
+                   count()::UInt64 AS count, \
+                   sum(prompt_tokens)::UInt64 AS prompt_tokens, \
+                   sum(completion_tokens)::UInt64 AS completion_tokens, \
+                   sum(total_tokens)::UInt64 AS total_tokens, \
+                   countIf(success = 1)::UInt64 AS success_count, \
+                   sum(latency_ms)::UInt64 AS latency_ms, \
+                   sum(cache_hit_input_tokens)::UInt64 AS cache_hit_tokens \
+                   FROM usage_events WHERE timestamp >= {s:String}";
+        let rows = if let Some(uid) = user_id {
+            self.client
+                .query(&format!("{} AND user_id = {{u:String}} GROUP BY date ORDER BY date ASC", sql))
+                .bind(since)
+                .bind(uid)
+                .fetch_all::<StatRow>()
+                .await
+                .map_err(|e| format!("CH daily_usage_stats: {e}"))?
+        } else {
+            self.client
+                .query(&format!("{} GROUP BY date ORDER BY date ASC", sql))
+                .bind(since)
+                .fetch_all::<StatRow>()
+                .await
+                .map_err(|e| format!("CH daily_usage_stats: {e}"))?
+        };
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.date, r.count, r.prompt_tokens, r.completion_tokens, r.total_tokens,
+                    r.success_count, r.latency_ms, r.cache_hit_tokens,
+                )
+            })
+            .collect())
+    }
+
+    /// Model activity: (model, total_requests, prompt_tokens, completion_tokens, success_count, failure_count, cache_hit_tokens).
+    pub async fn query_model_activity(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, String> {
+        #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
+        struct ActRow {
+            model: String,
+            total_requests: u64,
+            prompt_tokens: u64,
+            completion_tokens: u64,
+            success_count: u64,
+            failure_count: u64,
+            cache_hit_tokens: u64,
+        }
+        let sql = "SELECT model, \
+                   count()::UInt64 AS total_requests, \
+                   sum(prompt_tokens)::UInt64 AS prompt_tokens, \
+                   sum(completion_tokens)::UInt64 AS completion_tokens, \
+                   countIf(success = 1)::UInt64 AS success_count, \
+                   countIf(success = 0)::UInt64 AS failure_count, \
+                   sum(cache_hit_input_tokens)::UInt64 AS cache_hit_tokens \
+                   FROM usage_events WHERE timestamp >= {s:String}";
+        let rows = if let Some(uid) = user_id {
+            self.client
+                .query(&format!("{} AND user_id = {{u:String}} GROUP BY model ORDER BY total_requests DESC", sql))
+                .bind(since)
+                .bind(uid)
+                .fetch_all::<ActRow>()
+                .await
+                .map_err(|e| format!("CH model_activity: {e}"))?
+        } else {
+            self.client
+                .query(&format!("{} GROUP BY model ORDER BY total_requests DESC", sql))
+                .bind(since)
+                .fetch_all::<ActRow>()
+                .await
+                .map_err(|e| format!("CH model_activity: {e}"))?
+        };
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.model, r.total_requests, r.prompt_tokens, r.completion_tokens,
+                    r.success_count, r.failure_count, r.cache_hit_tokens,
+                )
+            })
+            .collect())
+    }
+
     /// Routing history endpoint stats: (channel_id, endpoint_id, requests, successes, avg_latency, p95).
     pub async fn query_routing_history_stats(
         &self,

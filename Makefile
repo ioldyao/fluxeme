@@ -22,7 +22,7 @@ down:
 	-docker compose -f docker-compose.yml down 2>/dev/null
 
 logs:
-	docker compose -f docker-compose.yml logs -f
+	docker compose -f docker-compose.yml -f compose.psql.yml -f compose.clickhouse.yml logs -f
 
 restart: down up
 
