@@ -464,19 +464,22 @@ export default function RoutingFlow() {
   const [rateTick, setRateTick] = useState(0);
   useEffect(() => { const id = setInterval(() => setRateTick(v => v + 1), 5000); return () => clearInterval(id); }, []);
 
-  // Hybrid path width: cumulative snapshot (initial) → sliding-window rate (after WS warms up)
+  // Hybrid path width: cumulative snapshot (initial) → sliding-window rate (after enough data warms up)
   const pathWidthMap = useMemo(() => {
     const map: Record<string, number> = {};
     const now = performance.now();
     const cutoff = now - WINDOW_MS;
 
-    // Check if event log has recent data
+    // Only switch to rate mode when ≥3 distinct paths or ≥10 events in window
+    const pathsWithEvents = new Set<string>();
     let recentTotal = 0;
-    for (const timestamps of eventLogRef.current.values()) {
-      for (const ts of timestamps) { if (ts >= cutoff) recentTotal++; }
+    for (const [key, timestamps] of eventLogRef.current.entries()) {
+      for (const ts of timestamps) {
+        if (ts >= cutoff) { recentTotal++; pathsWithEvents.add(key); break; }
+      }
     }
 
-    if (recentTotal > 0) {
+    if (recentTotal >= 10 || pathsWithEvents.size >= 3) {
       // ── Rate-based from 60s sliding window ──
       const acc: Record<string, number> = {};
       let maxC = 0;
@@ -621,7 +624,7 @@ export default function RoutingFlow() {
                 {paths.map((p) => {
                   const w = pathWidthMap[p.key] ?? 1.5;
                   const gradient = p.key.startsWith('m2c:') ? 'url(#gl-m2c)' : 'url(#gl-c2e)';
-                  return <path key={p.key} d={p.d} fill="none" stroke={gradient} strokeWidth={w} strokeLinecap="round" />;
+                  return <path key={p.key} d={p.d} fill="none" stroke={gradient} strokeWidth={w} strokeLinecap="round" style={{ transition: 'stroke-width 600ms ease-out' }} />;
                 })}
                 {pulses.map((pulse) => <CometPulse key={pulse.id} pathD={pulse.pathD} onDone={() => removePulse(pulse.id)} />)}
               </svg>
