@@ -1,8 +1,8 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo } from 'react';
 import { useDashboard, useDashboardAggregations } from '@/api/dashboard';
 import { useRoutingHistory } from '@/api/routing';
-import { useUsageFunnel, useUsageAggregate, useUsage, useModelActivity } from '@/api/usage';
-import { useWalletOverview, useEstimatedDays } from '@/api/wallet';
+import { useUsageFunnel, useUsageAggregate, useModelActivity } from '@/api/usage';
+// import { useWalletOverview, useEstimatedDays } from '@/api/wallet';
 
 // ── helpers ─────────────────────────────────────────────────────
 function fmtLat(ms: number) {
@@ -37,7 +37,7 @@ function RiverFlowSVG({
   // fill remaining slots with placeholders so we always have 5 bands
   const bands = topN.length >= 5 ? topN : [
     ...topN,
-    ...Array.from({ length: 5 - topN.length }, (_, i) => ({
+    ...Array.from({ length: 5 - topN.length }, () => ({
       model: `—`,
       count: 0,
       percentage: 0,
@@ -103,15 +103,6 @@ function TimelineScrub({ aggregates }: {
   const maxCount = Math.max(...aggregates.map(d => d.count), 1);
   const factor = 0.55 + 0.45 * Math.sin((pos / 24) * Math.PI);
 
-  const points = useMemo(() => {
-    if (!aggregates.length) return '';
-    return aggregates.map((d, i) => {
-      const x = (i / Math.max(1, aggregates.length - 1)) * 100;
-      const y = 100 - (d.count / maxCount) * 85;
-      return `${(x / 100) * 1200},${y}`;
-    }).join(' ');
-  }, [aggregates, maxCount]);
-
   const timeLabel = pos === 24 ? '现在' : `${String(pos).padStart(2, '0')}:00 · 历史回放`;
   const peakTps = aggregates.length > 0
     ? Math.max(...aggregates.map(d =>
@@ -157,8 +148,8 @@ export default function FlowControlTower() {
   const { data: ua } = useUsageAggregate(days);
   const { data: ma } = useModelActivity(days);
   const { data: rh } = useRoutingHistory(1, { enabled: true });
-  const { data: wo } = useWalletOverview();
-  const { data: ed } = useEstimatedDays();
+  // const { data: wo } = useWalletOverview();
+  // const { data: ed } = useEstimatedDays();
 
   // ── derived ───────────────────────────────────────────────────
   const availability = agg?.success_rate_24h ?? 0;
@@ -209,7 +200,6 @@ export default function FlowControlTower() {
   }, [rh]);
 
   const funnelTotal = funnelSafe.total;
-  const errorRate = funnelTotal > 0 ? ((funnelTotal - funnelSafe.successCount) / funnelTotal) * 100 : 0;
   const blocked = funnelSafe.authCount + funnelSafe.rateLimitCount;
   const upstreamErrTotal = funnelSafe.upstreamErrCount + funnelSafe.timeoutCount;
   const p99 = funnel?.p99_latency ?? avgLat;
@@ -300,7 +290,7 @@ export default function FlowControlTower() {
             <h2 className="text-lg font-semibold my-1">流量闸门</h2>
             <div className="grid grid-cols-2 gap-1 w-[142px]">
               <div className="py-2 px-1.5 border-t text-center">
-                <b className="text-lg tabular-nums">{upstreamErrTotal + otherErrCount}</b>
+                <b className="text-lg tabular-nums">{upstreamErrTotal + (funnel?.other_error_count ?? 0)}</b>
                 <span className="block text-[10px] text-muted-foreground">异常拦截</span>
               </div>
               <div className="py-2 px-1.5 border-t text-center">
