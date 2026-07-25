@@ -38,8 +38,8 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                 <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">{t('table.model')}</div>
                 {record.original_model ? (
                   <div className="space-y-0.5">
-                    <div className="text-sm font-medium truncate">{record.model}</div>
-                    <div className="text-xs text-muted-foreground/60 truncate">← {record.original_model}</div>
+                    <div className="text-sm font-medium truncate">{record.original_model}</div>
+                    <div className="text-xs text-muted-foreground/60 truncate">→ {record.model}</div>
                   </div>
                 ) : (
                   <div className="text-sm font-medium truncate">{record.model}</div>
