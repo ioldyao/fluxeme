@@ -13,6 +13,9 @@ use crate::server::AppState;
 use super::*;
 
 fn validate_year_month(year: i32, month: u32) -> Result<(), AdminError> {
+    if year == 0 && month == 0 {
+        return Ok(()); // unset/placeholder — return empty results
+    }
     if year < 2020 || year > 2100 {
         return Err(AdminError::bad_request("Year out of range (2020-2100)"));
     }
