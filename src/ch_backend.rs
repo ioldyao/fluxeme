@@ -103,7 +103,7 @@ impl ClickHouseBackend {
         ) ENGINE = MergeTree()\
         PARTITION BY toYYYYMM(timestamp)\
         ORDER BY (model, channel_id, timestamp)\
-        TTL toDateTime(timestamp) + INTERVAL 90 DAY\
+        TTL toDateTime(timestamp) + INTERVAL 90 DAY \
         SETTINGS index_granularity = 8192\
     ";
 
