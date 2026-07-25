@@ -708,6 +708,11 @@ impl DbBackend for PgBackend {
         .execute(&self.pool)
         .await;
 
+        // Backfill body columns on usage_billing (for usage detail page)
+        add_col!("ALTER TABLE usage_billing ADD COLUMN IF NOT EXISTS request_body TEXT");
+        add_col!("ALTER TABLE usage_billing ADD COLUMN IF NOT EXISTS response_body TEXT");
+        add_col!("ALTER TABLE usage_billing ADD COLUMN IF NOT EXISTS reasoning_body TEXT");
+
         tracing::info!("usage_billing table ready");
 
         Ok(())
@@ -1875,8 +1880,8 @@ impl DbBackend for PgBackend {
         let rows = query(
             "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-             api_key_name, api_format, stream, cache_hit_input_tokens, \
-             prompt_price, completion_price, cache_read_price, client_ip \
+             request_body, response_body, reasoning_body, api_key_name, api_format, stream, \
+             cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip \
              FROM usage_billing WHERE request_id = $1",
         )
         .bind(request_id)
@@ -1884,7 +1889,7 @@ impl DbBackend for PgBackend {
         .await?;
         Ok(rows.first().map(|r| {
             let mut idx = 0usize;
-            Self::map_usage_record(r, &mut idx)
+            Self::map_usage_with_bodies(r, &mut idx)
         }))
     }
 
@@ -3511,9 +3516,11 @@ impl DbBackend for PgBackend {
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, \
                  status_code, success, cache_hit_input_tokens, \
                  prompt_price, completion_price, cache_read_price, cost_amount, \
-                 api_key_name, api_format, stream, client_ip) \
+                 api_key_name, api_format, stream, client_ip, \
+                 request_body, response_body, reasoning_body) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, \
-                 $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)",
+                 $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, \
+                 $22, $23, $24)",
             )
             .bind(&record.timestamp)
             .bind(&record.request_id)
@@ -3536,6 +3543,9 @@ impl DbBackend for PgBackend {
             .bind(&record.api_format)
             .bind(record.stream)
             .bind(&record.client_ip)
+            .bind(&record.request_body)
+            .bind(&record.response_body)
+            .bind(&record.reasoning_body)
             .execute(&mut *tx)
             .await?;
 
