@@ -385,6 +385,7 @@ const en: Record<string, string> = {
   'theme.system': 'System',
   'nav.modelMarketplace': 'Model Marketplace',
   'nav.myModels': 'My Models',
+  'nav.myRules': 'My Routes',
   'common.add': 'Add',
   'common.count': '{{count}} req',
   'confirm.deleteUser': 'Delete user "',

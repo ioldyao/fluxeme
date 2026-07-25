@@ -385,6 +385,7 @@ const zh: Record<string, string> = {
   'theme.system': '跟随系统',
   'nav.modelMarketplace': '模型广场',
   'nav.myModels': '我的模型',
+  'nav.myRules': '我的路由',
   'common.add': '添加',
   'common.count': '{{count}} 次',
   'confirm.deleteUser': '确定删除用户 "',
