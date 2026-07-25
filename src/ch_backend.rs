@@ -11,7 +11,7 @@ use crate::config::types::ClickHouseConfig;
 /// Billing price snapshots remain in PG's usage_billing table.
 #[derive(Debug, Clone, Serialize, Row)]
 pub struct UsageEvent {
-    pub timestamp: String,
+    pub timestamp: u32,
     pub request_id: String,
     pub user_id: String,
     pub user_name: String,
@@ -246,7 +246,7 @@ impl ClickHouseBackend {
             .query(
                 "SELECT model, channel_id, endpoint_id, count()::UInt64 AS cnt \
                  FROM usage_events \
-                 WHERE timestamp >= now() - INTERVAL {h:UInt32} HOUR \
+                 WHERE timestamp >= now() - INTERVAL ? HOUR \
                  GROUP BY model, channel_id, endpoint_id",
             )
             .bind(hours)
@@ -283,7 +283,7 @@ impl ClickHouseBackend {
                  countIf(success = 1)::UInt64 AS successes, \
                  avg(latency_ms)::Float64 AS avg_latency \
                  FROM usage_events \
-                 WHERE timestamp >= {s:String} AND timestamp <= {e:String} \
+                 WHERE timestamp >= ? AND timestamp <= ? \
                  GROUP BY bucket, channel_id, endpoint_id \
                  ORDER BY bucket ASC",
             )
@@ -326,7 +326,7 @@ impl ClickHouseBackend {
                  endpoint_id, latency_ms, success \
                  FROM usage_events \
                  ORDER BY timestamp DESC \
-                 LIMIT {l:UInt64}",
+                 LIMIT ?",
             )
             .bind(limit as u64)
             .fetch_all::<PathRow>()
@@ -380,7 +380,7 @@ impl ClickHouseBackend {
                  quantileExact(0.99)(latency_ms)::Float64 AS p99_latency, \
                  avg(latency_ms)::Float64 AS avg_latency \
                  FROM usage_events \
-                 WHERE timestamp >= {s:String}",
+                 WHERE timestamp >= ?",
             )
             .bind(since)
             .fetch_one::<FunnelRow>()
@@ -418,7 +418,7 @@ impl ClickHouseBackend {
                 .query(
                     "SELECT toDate(timestamp)::String AS date, count()::UInt64 AS count \
                      FROM usage_events \
-                     WHERE timestamp >= {s:String} AND user_id = {u:String} \
+                     WHERE timestamp >= ? AND user_id = ? \
                      GROUP BY date ORDER BY date ASC",
                 )
                 .bind(since)
@@ -431,7 +431,7 @@ impl ClickHouseBackend {
                 .query(
                     "SELECT toDate(timestamp)::String AS date, count()::UInt64 AS count \
                      FROM usage_events \
-                     WHERE timestamp >= {s:String} \
+                     WHERE timestamp >= ? \
                      GROUP BY date ORDER BY date ASC",
                 )
                 .bind(since)
@@ -467,10 +467,10 @@ impl ClickHouseBackend {
                    countIf(success = 1)::UInt64 AS success_count, \
                    sum(latency_ms)::UInt64 AS latency_ms, \
                    sum(cache_hit_input_tokens)::UInt64 AS cache_hit_tokens \
-                   FROM usage_events WHERE timestamp >= {s:String}";
+                   FROM usage_events WHERE timestamp >= ?";
         let rows = if let Some(uid) = user_id {
             self.client
-                .query(&format!("{} AND user_id = {{u:String}} GROUP BY date ORDER BY date ASC", sql))
+                .query(&format!("{} AND user_id = ? GROUP BY date ORDER BY date ASC", sql))
                 .bind(since)
                 .bind(uid)
                 .fetch_all::<StatRow>()
@@ -518,10 +518,10 @@ impl ClickHouseBackend {
                    countIf(success = 1)::UInt64 AS success_count, \
                    countIf(success = 0)::UInt64 AS failure_count, \
                    sum(cache_hit_input_tokens)::UInt64 AS cache_hit_tokens \
-                   FROM usage_events WHERE timestamp >= {s:String}";
+                   FROM usage_events WHERE timestamp >= ?";
         let rows = if let Some(uid) = user_id {
             self.client
-                .query(&format!("{} AND user_id = {{u:String}} GROUP BY model ORDER BY total_requests DESC", sql))
+                .query(&format!("{} AND user_id = ? GROUP BY model ORDER BY total_requests DESC", sql))
                 .bind(since)
                 .bind(uid)
                 .fetch_all::<ActRow>()
@@ -570,7 +570,7 @@ impl ClickHouseBackend {
                  avg(latency_ms)::Float64 AS avg_latency, \
                  quantileExact(0.95)(latency_ms)::Float64 AS p95_latency \
                  FROM usage_events \
-                 WHERE timestamp >= {s:String} AND timestamp <= {e:String} \
+                 WHERE timestamp >= ? AND timestamp <= ? \
                  GROUP BY channel_id, endpoint_id",
             )
             .bind(start)

@@ -3,6 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::Duration;
 
+
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
 
@@ -306,12 +307,15 @@ fn usage_record_to_event(r: &UsageRecord) -> UsageEvent {
     } else {
         r.prompt_tokens + r.completion_tokens
     };
+    let ts = chrono::DateTime::parse_from_rfc3339(&r.timestamp)
+        .map(|dt| dt.timestamp() as u32)
+        .unwrap_or_else(|_| chrono::Utc::now().timestamp() as u32);
     // cost_amount is already computed and stored in usage_billing; for the CH
     // UsageEvent we just set it to 0 — the compensation task reads real cost
     // from usage_billing. Direct write from worker doesn't persist cost_amount
     // because pricing lookup happened inside the PG transaction, not in Rust.
     UsageEvent {
-        timestamp: r.timestamp.clone(),
+        timestamp: ts,
         request_id: r.request_id.clone(),
         user_id: r.user_id.clone(),
         user_name: r.user_name.clone(),
