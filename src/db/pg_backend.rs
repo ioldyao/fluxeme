@@ -404,7 +404,9 @@ impl DbBackend for PgBackend {
                 IF EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='routing_rules' AND column_name='enabled'
                     AND data_type='integer') THEN
+                    ALTER TABLE routing_rules ALTER COLUMN enabled DROP DEFAULT;
                     ALTER TABLE routing_rules ALTER COLUMN enabled TYPE BOOLEAN USING (enabled::int::boolean);
+                    ALTER TABLE routing_rules ALTER COLUMN enabled SET DEFAULT true;
                 END IF;
             END $$;
             ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
