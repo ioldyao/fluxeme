@@ -3499,14 +3499,21 @@ impl DbBackend for PgBackend {
                 }
             };
 
-            // Insert usage record with pricing snapshot
+            // Compute cost_amount (always — used for observability even when billing is off)
+            let cost_amount = record.prompt_tokens as f64 / 1000000.0 * prompt_price
+                + record.completion_tokens as f64 / 1000000.0 * completion_price
+                + record.cache_hit_input_tokens as f64 / 1000000.0 * cache_read_price;
+
+            // Insert into usage_billing (billing snapshot, not observability)
             query(
-                "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, \
-                 model, prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, \
-                 success, request_body, response_body, reasoning_body, api_key_name, api_format, \
-                 stream, cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, \
-                 $16, $17, $18, $19, $20, $21, $22, $23)",
+                "INSERT INTO usage_billing (\
+                 timestamp, request_id, user_id, user_name, channel_id, model, \
+                 prompt_tokens, completion_tokens, total_tokens, latency_ms, \
+                 status_code, success, cache_hit_input_tokens, \
+                 prompt_price, completion_price, cache_read_price, cost_amount, \
+                 api_key_name, api_format, stream, client_ip) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, \
+                 $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)",
             )
             .bind(&record.timestamp)
             .bind(&record.request_id)
@@ -3520,26 +3527,20 @@ impl DbBackend for PgBackend {
             .bind(record.latency_ms as i64)
             .bind(record.status_code as i32)
             .bind(record.success)
-            .bind(&record.request_body)
-            .bind(&record.response_body)
-            .bind(&record.reasoning_body)
-            .bind(&record.api_key_name)
-            .bind(&record.api_format)
-            .bind(record.stream)
             .bind(record.cache_hit_input_tokens as i64)
             .bind(prompt_price)
             .bind(completion_price)
             .bind(cache_read_price)
+            .bind(cost_amount)
+            .bind(&record.api_key_name)
+            .bind(&record.api_format)
+            .bind(record.stream)
             .bind(&record.client_ip)
             .execute(&mut *tx)
             .await?;
 
             if billing_enabled {
-                let cost = record.prompt_tokens as f64 / 1000000.0 * prompt_price
-                    + record.completion_tokens as f64 / 1000000.0 * completion_price
-                    + record.cache_hit_input_tokens as f64 / 1000000.0 * cache_read_price;
-
-                if cost > 0.0 {
+                if cost_amount > 0.0 {
                     let (balance, frozen): (f64, f64) =
                         query_as("SELECT balance, frozen FROM users WHERE id = $1")
                             .bind(&record.user_id)
@@ -3547,7 +3548,7 @@ impl DbBackend for PgBackend {
                             .await
                             .unwrap_or((0.0, 0.0));
 
-                    let new_balance = balance - cost;
+                    let new_balance = balance - cost_amount;
                     query("UPDATE users SET balance = $1 WHERE id = $2")
                         .bind(new_balance)
                         .bind(&record.user_id)
@@ -3563,7 +3564,7 @@ impl DbBackend for PgBackend {
                     .bind(uuid::Uuid::new_v4().to_string())
                     .bind(&record.user_id)
                     .bind("deduction")
-                    .bind(-cost)
+                    .bind(-cost_amount)
                     .bind(balance)
                     .bind(new_balance)
                     .bind("usage")
