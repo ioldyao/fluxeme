@@ -40,7 +40,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub cors: CorsConfig,
     #[serde(default)]
-    pub cache: CacheConfig,
+    pub redis: RedisConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -125,30 +125,30 @@ fn default_allowed_origins() -> Vec<String> {
     ]
 }
 
-// ── Cache Config ────────────────────────────────────────────
+// ── Redis Config ────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct CacheConfig {
-    #[serde(default = "default_cache_enabled")]
+pub struct RedisConfig {
+    #[serde(default = "default_redis_enabled")]
     pub enabled: bool,
-    #[serde(default = "default_cache_redis_url")]
-    pub redis_url: String,
+    #[serde(default = "default_redis_url")]
+    pub url: String,
 }
 
-impl Default for CacheConfig {
+impl Default for RedisConfig {
     fn default() -> Self {
         Self {
-            enabled: default_cache_enabled(),
-            redis_url: default_cache_redis_url(),
+            enabled: default_redis_enabled(),
+            url: default_redis_url(),
         }
     }
 }
 
-fn default_cache_enabled() -> bool {
+fn default_redis_enabled() -> bool {
     true
 }
 
-fn default_cache_redis_url() -> String {
+fn default_redis_url() -> String {
     "redis://127.0.0.1:16379".to_string()
 }
 

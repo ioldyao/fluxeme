@@ -238,11 +238,11 @@ async fn main() {
         db.get_gateway_config().await.unwrap_or_default(),
     ));
 
-    // Initialize Redis cache (noop when disabled)
-    let cache_config = config.read().unwrap().cache.clone();
+    // Initialize Redis (noop when disabled)
+    let redis_config = config.read().unwrap().redis.clone();
     let cache_ttl = gateway_config.read().unwrap().cache_ttl_secs;
-    let cache = Arc::new(if cache_config.enabled {
-        match RedisCache::new(&cache_config.redis_url, cache_ttl).await {
+    let cache = Arc::new(if redis_config.enabled {
+        match RedisCache::new(&redis_config.url, cache_ttl).await {
             Ok(c) => {
                 tracing::info!("Redis cache enabled");
                 c
