@@ -278,10 +278,10 @@ fn db_err(e: crate::db::DbError) -> AdminError {
     AdminError::internal("Internal server error")
 }
 
-/// Wrap a DB error from a bad-request operation: log and return a generic message.
+/// Wrap a DB error from a bad-request operation: pass through the error message.
 fn db_err_bad_request(e: crate::db::DbError) -> AdminError {
     tracing::error!("[admin] DB bad-request error: {}", e.0);
-    AdminError::bad_request("Bad request")
+    AdminError::bad_request(e.0)
 }
 
 /// Parse IANA timezone name (e.g. "Asia/Shanghai") and return the current
