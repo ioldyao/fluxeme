@@ -52,6 +52,7 @@ export const authRoutes: RouteConfig[] = [
 export const adminRoutes: RouteConfig[] = [
   { path: '/routing-flow', Component: lazy(() => import('@/pages/RoutingFlow')), guard: 'admin', label: 'nav.routingFlow', icon: Network, nav: true },
   { path: '/routing-history', Component: lazy(() => import('@/pages/RoutingHistory')), guard: 'admin', label: 'nav.routingHistory', icon: BarChart3, nav: true },
+  { path: '/flow-control', Component: lazy(() => import('@/pages/FlowControlTower')), guard: 'admin', label: 'nav.flowControl', icon: Radio, nav: true },
   { path: '/users', Component: lazy(() => import('@/pages/Users')), guard: 'admin', label: 'nav.users', icon: Users, nav: true },
   { path: '/channels', Component: lazy(() => import('@/pages/Channels')), guard: 'admin', label: 'nav.channels', icon: Radio, nav: true },
   { path: '/models', Component: lazy(() => import('@/pages/Models')), guard: 'admin', label: 'nav.models', icon: Cpu, nav: true, end: true },

@@ -6,7 +6,7 @@ import { navRoutes } from '@/routes/config';
 
 const NAV_GROUPS: { label: string; items: string[] }[] = [
   { label: 'nav.group.overview', items: ['nav.dashboard'] },
-  { label: 'nav.group.observability', items: ['nav.routingFlow', 'nav.routingHistory'] },
+  { label: 'nav.group.observability', items: ['nav.routingFlow', 'nav.routingHistory', 'nav.flowControl'] },
   { label: 'nav.group.models', items: ['nav.modelMarketplace', 'nav.myModels', 'nav.models', 'nav.modelPricing'] },
   { label: 'nav.group.channels', items: ['nav.channels'] },
   { label: 'nav.group.security', items: ['nav.rules', 'nav.moderation', 'nav.users'] },
