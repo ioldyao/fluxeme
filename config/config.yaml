@@ -5,15 +5,12 @@
 server:
   host: 0.0.0.0
   port: 8080
-admin:
-  username: admin
-  password: admin123
 database:
   pg_url: ""
   retention_days: 90
   clickhouse:
     host: ${CLICKHOUSE_HOST:-localhost}
-    port: ${CLICKHOUSE_PORT:-9000}
+    port: ${CLICKHOUSE_PORT:-8123}
     user: ${CLICKHOUSE_USER:-default}
     password: ${CLICKHOUSE_PASSWORD:-}
     db: ${CLICKHOUSE_DB:-aigateway}
