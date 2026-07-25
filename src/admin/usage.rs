@@ -338,7 +338,7 @@ pub(crate) async fn usage_funnel(
         Some(&session.user_id)
     };
     let stats = if let Some(ref ch) = state.ch {
-        ch.query_funnel_stats(&since)
+        ch.query_funnel_stats(&since, user_filter)
             .await
             .map_err(|e| AdminError::internal(e))?
     } else {

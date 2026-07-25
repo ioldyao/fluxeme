@@ -344,9 +344,11 @@ impl ClickHouseBackend {
     }
 
     /// Funnel stats: per-status-count breakdown + latency percentiles.
+    /// When `user_id` is `Some`, only counts events for that user.
     pub async fn query_funnel_stats(
         &self,
         since: &str,
+        user_id: Option<&str>,
     ) -> Result<crate::db::FunnelStats, String> {
         #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
         struct FunnelRow {
@@ -363,28 +365,44 @@ impl ClickHouseBackend {
             p99_latency: f64,
             avg_latency: f64,
         }
-        let row = self
-            .client
-            .query(
-                "SELECT \
-                 count()::UInt64 AS total, \
-                 countIf(success = 1)::UInt64 AS success_count, \
-                 countIf(success = 0 AND status_code IN (401, 403))::UInt64 AS auth_fail_count, \
-                 countIf(success = 0 AND status_code = 429)::UInt64 AS rate_limit_count, \
-                 countIf(success = 0 AND status_code = 400)::UInt64 AS bad_request_count, \
-                 countIf(success = 0 AND status_code IN (502, 503))::UInt64 AS upstream_error_count, \
-                 countIf(success = 0 AND status_code = 504)::UInt64 AS timeout_count, \
-                 countIf(success = 0 AND status_code NOT IN (400, 401, 403, 429, 502, 503, 504))::UInt64 AS other_error_count, \
-                 quantileExact(0.50)(latency_ms)::Float64 AS p50_latency, \
-                 quantileExact(0.95)(latency_ms)::Float64 AS p95_latency, \
-                 quantileExact(0.99)(latency_ms)::Float64 AS p99_latency, \
-                 avg(latency_ms)::Float64 AS avg_latency \
-                 FROM usage_events \
-                 WHERE timestamp >= ?",
-            )
-            .bind(since)
-            .fetch_one::<FunnelRow>()
-            .await
+        let sql = if user_id.is_some() {
+            "SELECT \
+             count()::UInt64 AS total, \
+             countIf(success = 1)::UInt64 AS success_count, \
+             countIf(success = 0 AND status_code IN (401, 403))::UInt64 AS auth_fail_count, \
+             countIf(success = 0 AND status_code = 429)::UInt64 AS rate_limit_count, \
+             countIf(success = 0 AND status_code = 400)::UInt64 AS bad_request_count, \
+             countIf(success = 0 AND status_code IN (502, 503))::UInt64 AS upstream_error_count, \
+             countIf(success = 0 AND status_code = 504)::UInt64 AS timeout_count, \
+             countIf(success = 0 AND status_code NOT IN (400, 401, 403, 429, 502, 503, 504))::UInt64 AS other_error_count, \
+             quantileExact(0.50)(latency_ms)::Float64 AS p50_latency, \
+             quantileExact(0.95)(latency_ms)::Float64 AS p95_latency, \
+             quantileExact(0.99)(latency_ms)::Float64 AS p99_latency, \
+             avg(latency_ms)::Float64 AS avg_latency \
+             FROM usage_events \
+             WHERE timestamp >= ? AND user_id = ?"
+        } else {
+            "SELECT \
+             count()::UInt64 AS total, \
+             countIf(success = 1)::UInt64 AS success_count, \
+             countIf(success = 0 AND status_code IN (401, 403))::UInt64 AS auth_fail_count, \
+             countIf(success = 0 AND status_code = 429)::UInt64 AS rate_limit_count, \
+             countIf(success = 0 AND status_code = 400)::UInt64 AS bad_request_count, \
+             countIf(success = 0 AND status_code IN (502, 503))::UInt64 AS upstream_error_count, \
+             countIf(success = 0 AND status_code = 504)::UInt64 AS timeout_count, \
+             countIf(success = 0 AND status_code NOT IN (400, 401, 403, 429, 502, 503, 504))::UInt64 AS other_error_count, \
+             quantileExact(0.50)(latency_ms)::Float64 AS p50_latency, \
+             quantileExact(0.95)(latency_ms)::Float64 AS p95_latency, \
+             quantileExact(0.99)(latency_ms)::Float64 AS p99_latency, \
+             avg(latency_ms)::Float64 AS avg_latency \
+             FROM usage_events \
+             WHERE timestamp >= ?"
+        };
+        let mut query = self.client.query(sql).bind(since);
+        if let Some(uid) = user_id {
+            query = query.bind(uid);
+        }
+        let row = query.fetch_one::<FunnelRow>().await
             .map_err(|e| format!("CH funnel_stats: {e}"))?;
         Ok(crate::db::FunnelStats {
             total: row.total,
