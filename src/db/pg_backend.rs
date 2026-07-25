@@ -1770,14 +1770,14 @@ impl DbBackend for PgBackend {
     }
 
     async fn count_usage(&self) -> Result<usize, DbError> {
-        let (count,): (i64,) = query_as("SELECT COUNT(*) FROM usage_logs")
+        let (count,): (i64,) = query_as("SELECT COUNT(*) FROM usage_billing")
             .fetch_one(&self.pool)
             .await?;
         Ok(count as usize)
     }
 
     async fn count_usage_by_user(&self, user_id: &str) -> Result<usize, DbError> {
-        let (count,): (i64,) = query_as("SELECT COUNT(*) FROM usage_logs WHERE user_id = $1")
+        let (count,): (i64,) = query_as("SELECT COUNT(*) FROM usage_billing WHERE user_id = $1")
             .bind(user_id)
             .fetch_one(&self.pool)
             .await?;
@@ -1786,7 +1786,7 @@ impl DbBackend for PgBackend {
 
     async fn count_usage_filtered(&self, filter: &UsageFilter) -> Result<usize, DbError> {
         let mut builder: QueryBuilder<'_, Postgres> =
-            QueryBuilder::new("SELECT COUNT(*) FROM usage_logs WHERE 1=1");
+            QueryBuilder::new("SELECT COUNT(*) FROM usage_billing WHERE 1=1");
 
         if let Some(ref uid) = filter.user_id {
             builder.push(" AND user_id = ");
@@ -1828,7 +1828,7 @@ impl DbBackend for PgBackend {
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
              cache_read_price, client_ip \
-             FROM usage_logs WHERE 1=1",
+             FROM usage_billing WHERE 1=1",
         );
 
         if let Some(ref uid) = filter.user_id {
@@ -1875,21 +1875,21 @@ impl DbBackend for PgBackend {
         let rows = query(
             "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-             request_body, response_body, reasoning_body, api_key_name, api_format, stream, \
-             cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip \
-             FROM usage_logs WHERE request_id = $1",
+             api_key_name, api_format, stream, cache_hit_input_tokens, \
+             prompt_price, completion_price, cache_read_price, client_ip \
+             FROM usage_billing WHERE request_id = $1",
         )
         .bind(request_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.first().map(|r| {
             let mut idx = 0usize;
-            Self::map_usage_with_bodies(r, &mut idx)
+            Self::map_usage_record(r, &mut idx)
         }))
     }
 
     async fn purge_usage_logs(&self, cutoff: &str) -> Result<usize, DbError> {
-        let result = query("DELETE FROM usage_logs WHERE timestamp < $1")
+        let result = query("DELETE FROM usage_billing WHERE timestamp < $1")
             .bind(cutoff)
             .execute(&self.pool)
             .await?;
@@ -1907,7 +1907,7 @@ impl DbBackend for PgBackend {
                  COALESCE(SUM(CASE WHEN success = true THEN 1 ELSE 0 END),0), \
                  COALESCE(SUM(latency_ms)::bigint,0), \
                  COALESCE(SUM(total_tokens)::bigint,0) \
-                 FROM usage_logs WHERE user_id = $1 AND timestamp >= $2",
+                 FROM usage_billing WHERE user_id = $1 AND timestamp >= $2",
             )
             .bind(uid)
             .bind(since)
@@ -1920,7 +1920,7 @@ impl DbBackend for PgBackend {
                  COALESCE(SUM(CASE WHEN success = true THEN 1 ELSE 0 END),0), \
                  COALESCE(SUM(latency_ms)::bigint,0), \
                  COALESCE(SUM(total_tokens)::bigint,0) \
-                 FROM usage_logs WHERE timestamp >= $1",
+                 FROM usage_billing WHERE timestamp >= $1",
             )
             .bind(since)
             .fetch_one(&self.pool)
@@ -1940,7 +1940,7 @@ impl DbBackend for PgBackend {
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
                  cache_read_price, client_ip \
-                 FROM usage_logs WHERE user_id = $1 AND timestamp >= $2 ORDER BY id ASC",
+                 FROM usage_billing WHERE user_id = $1 AND timestamp >= $2 ORDER BY id ASC",
             )
             .bind(uid)
             .bind(since)
@@ -1952,7 +1952,7 @@ impl DbBackend for PgBackend {
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
                  cache_read_price, client_ip \
-                 FROM usage_logs WHERE timestamp >= $1 ORDER BY id ASC",
+                 FROM usage_billing WHERE timestamp >= $1 ORDER BY id ASC",
             )
             .bind(since)
             .fetch_all(&self.pool)
@@ -1978,7 +1978,7 @@ impl DbBackend for PgBackend {
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
                  cache_read_price \
-                 FROM usage_logs WHERE user_id = $1 AND timestamp >= $2 ORDER BY id ASC",
+                 FROM usage_billing WHERE user_id = $1 AND timestamp >= $2 ORDER BY id ASC",
             )
             .bind(uid)
             .bind(since)
@@ -1990,7 +1990,7 @@ impl DbBackend for PgBackend {
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
                  cache_read_price \
-                 FROM usage_logs WHERE timestamp >= $1 ORDER BY id ASC",
+                 FROM usage_billing WHERE timestamp >= $1 ORDER BY id ASC",
             )
             .bind(since)
             .fetch_all(&self.pool)
@@ -2075,7 +2075,7 @@ impl DbBackend for PgBackend {
         let day_expr = Self::day_expr(tz_offset_seconds);
         if let Some(uid) = user_id {
             let sql = format!(
-                "SELECT {}, COUNT(*) FROM usage_logs WHERE user_id = $1 AND timestamp >= $2 \
+                "SELECT {}, COUNT(*) FROM usage_billing WHERE user_id = $1 AND timestamp >= $2 \
                  GROUP BY day ORDER BY day ASC",
                 day_expr
             );
@@ -2087,7 +2087,7 @@ impl DbBackend for PgBackend {
             Ok(rows)
         } else {
             let sql = format!(
-                "SELECT {}, COUNT(*) FROM usage_logs WHERE timestamp >= $1 GROUP BY day ORDER BY day ASC",
+                "SELECT {}, COUNT(*) FROM usage_billing WHERE timestamp >= $1 GROUP BY day ORDER BY day ASC",
                 day_expr
             );
             let rows = query_as::<_, (String, i64)>(&sql)
@@ -2112,7 +2112,7 @@ impl DbBackend for PgBackend {
                  COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
                  COALESCE(SUM(latency_ms),0)::bigint, \
                  COALESCE(SUM(cache_hit_input_tokens),0)::bigint \
-                 FROM usage_logs WHERE user_id = $1 AND timestamp >= $2 \
+                 FROM usage_billing WHERE user_id = $1 AND timestamp >= $2 \
                  GROUP BY day ORDER BY day ASC",
                 day_expr
             );
@@ -2137,7 +2137,7 @@ impl DbBackend for PgBackend {
                  COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
                  COALESCE(SUM(latency_ms),0)::bigint, \
                  COALESCE(SUM(cache_hit_input_tokens),0)::bigint \
-                 FROM usage_logs WHERE timestamp >= $1 \
+                 FROM usage_billing WHERE timestamp >= $1 \
                  GROUP BY day ORDER BY day ASC",
                 day_expr
             );
@@ -2169,7 +2169,7 @@ impl DbBackend for PgBackend {
                  COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
                  COALESCE(SUM(CASE WHEN success=false THEN 1 ELSE 0 END),0)::bigint, \
                  COALESCE(SUM(cache_hit_input_tokens)::bigint,0) \
-                 FROM usage_logs WHERE timestamp >= $1 AND user_id = $2 \
+                 FROM usage_billing WHERE timestamp >= $1 AND user_id = $2 \
                  GROUP BY model ORDER BY COUNT(*) DESC",
             )
             .bind(since)
@@ -2183,7 +2183,7 @@ impl DbBackend for PgBackend {
                  COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
                  COALESCE(SUM(CASE WHEN success=false THEN 1 ELSE 0 END),0)::bigint, \
                  COALESCE(SUM(cache_hit_input_tokens)::bigint,0) \
-                 FROM usage_logs WHERE timestamp >= $1 \
+                 FROM usage_billing WHERE timestamp >= $1 \
                  GROUP BY model ORDER BY COUNT(*) DESC",
             )
             .bind(since)
@@ -2219,7 +2219,7 @@ impl DbBackend for PgBackend {
               percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms), \
               percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms), \
               COALESCE(AVG(latency_ms)::double precision,0) \
-            FROM usage_logs WHERE timestamp >= $1";
+            FROM usage_billing WHERE timestamp >= $1";
         let row: (
             i64,
             i64,
@@ -2277,7 +2277,7 @@ impl DbBackend for PgBackend {
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
-                 FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3",
+                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3",
             )
             .bind(&start)
             .bind(&end)
@@ -2290,7 +2290,7 @@ impl DbBackend for PgBackend {
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
-                 FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2",
+                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2",
             )
             .bind(&start)
             .bind(&end)
@@ -2317,7 +2317,7 @@ impl DbBackend for PgBackend {
                 "SELECT model, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
-                 FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
+                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY model ORDER BY 2 DESC",
             )
             .bind(&start)
@@ -2330,7 +2330,7 @@ impl DbBackend for PgBackend {
                 "SELECT model, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
-                 FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 \
+                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY model ORDER BY 2 DESC",
             )
             .bind(&start)
@@ -2358,7 +2358,7 @@ impl DbBackend for PgBackend {
                 "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(ul.prompt_tokens / 1000000.0 * ul.prompt_price + \
                  ul.completion_tokens / 1000000.0 * ul.completion_price + \
                  ul.cache_hit_input_tokens / 1000000.0 * ul.cache_read_price), 0) \
-                 FROM usage_logs ul LEFT JOIN channels c ON c.id = ul.channel_id \
+                 FROM usage_billing ul LEFT JOIN channels c ON c.id = ul.channel_id \
                  WHERE ul.timestamp >= $1 AND ul.timestamp < $2 AND ul.user_id = $3 \
                  GROUP BY ul.channel_id, c.name ORDER BY 3 DESC",
             )
@@ -2372,7 +2372,7 @@ impl DbBackend for PgBackend {
                 "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(ul.prompt_tokens / 1000000.0 * ul.prompt_price + \
                  ul.completion_tokens / 1000000.0 * ul.completion_price + \
                  ul.cache_hit_input_tokens / 1000000.0 * ul.cache_read_price), 0) \
-                 FROM usage_logs ul LEFT JOIN channels c ON c.id = ul.channel_id \
+                 FROM usage_billing ul LEFT JOIN channels c ON c.id = ul.channel_id \
                  WHERE ul.timestamp >= $1 AND ul.timestamp < $2 \
                  GROUP BY ul.channel_id, c.name ORDER BY 3 DESC",
             )
@@ -2403,7 +2403,7 @@ impl DbBackend for PgBackend {
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint \
-                 FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
+                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY day ORDER BY day DESC",
             )
             .bind(&start)
@@ -2418,7 +2418,7 @@ impl DbBackend for PgBackend {
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint \
-                 FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 \
+                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY day ORDER BY day DESC",
             )
             .bind(&start)
@@ -2444,7 +2444,7 @@ impl DbBackend for PgBackend {
         let (count,): (i64,) = if let Some(uid) = user_id {
             query_as(
                 "SELECT COUNT(DISTINCT LEFT(timestamp::text, 10)) \
-                 FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3",
+                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3",
             )
             .bind(&start)
             .bind(&end)
@@ -2454,7 +2454,7 @@ impl DbBackend for PgBackend {
         } else {
             query_as(
                 "SELECT COUNT(DISTINCT LEFT(timestamp::text, 10)) \
-                 FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2",
+                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2",
             )
             .bind(&start)
             .bind(&end)
@@ -2485,7 +2485,7 @@ impl DbBackend for PgBackend {
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint \
-                 FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
+                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY day ORDER BY day DESC LIMIT $4 OFFSET $5",
             )
             .bind(&start)
@@ -2502,7 +2502,7 @@ impl DbBackend for PgBackend {
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint \
-                 FROM usage_logs WHERE timestamp >= $1 AND timestamp < $2 \
+                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY day ORDER BY day DESC LIMIT $3 OFFSET $4",
             )
             .bind(&start)
@@ -2517,7 +2517,7 @@ impl DbBackend for PgBackend {
 
     async fn billing_months(&self) -> Result<Vec<String>, DbError> {
         let rows: Vec<(String,)> = query_as(
-            "SELECT DISTINCT LEFT(timestamp::text, 7) AS month FROM usage_logs ORDER BY month DESC",
+            "SELECT DISTINCT LEFT(timestamp::text, 7) AS month FROM usage_billing ORDER BY month DESC",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -2526,7 +2526,7 @@ impl DbBackend for PgBackend {
 
     async fn billing_months_for_user(&self, user_id: &str) -> Result<Vec<String>, DbError> {
         let rows: Vec<(String,)> = query_as(
-            "SELECT DISTINCT LEFT(timestamp::text, 7) AS month FROM usage_logs WHERE user_id = $1 ORDER BY month DESC",
+            "SELECT DISTINCT LEFT(timestamp::text, 7) AS month FROM usage_billing WHERE user_id = $1 ORDER BY month DESC",
         )
         .bind(user_id)
         .fetch_all(&self.pool)
@@ -2541,7 +2541,7 @@ impl DbBackend for PgBackend {
              completion_tokens / 1000000.0 * completion_price + \
              cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
              COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
-             FROM usage_logs GROUP BY month ORDER BY month DESC",
+             FROM usage_billing GROUP BY month ORDER BY month DESC",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -2561,7 +2561,7 @@ impl DbBackend for PgBackend {
              completion_tokens / 1000000.0 * completion_price + \
              cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
              COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
-             FROM usage_logs WHERE user_id = $1 GROUP BY month ORDER BY month DESC",
+             FROM usage_billing WHERE user_id = $1 GROUP BY month ORDER BY month DESC",
         )
         .bind(user_id)
         .fetch_all(&self.pool)
@@ -2778,7 +2778,7 @@ impl DbBackend for PgBackend {
             "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
              completion_tokens / 1000000.0 * completion_price + \
              cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
-             FROM usage_logs WHERE user_id = $1",
+             FROM usage_billing WHERE user_id = $1",
         )
         .bind(user_id)
         .fetch_one(&self.pool)
@@ -2803,7 +2803,7 @@ impl DbBackend for PgBackend {
             "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
              completion_tokens / 1000000.0 * completion_price + \
              cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
-             FROM usage_logs WHERE user_id = $1 AND timestamp >= $2",
+             FROM usage_billing WHERE user_id = $1 AND timestamp >= $2",
         )
         .bind(user_id)
         .bind(&thirty_days_ago)
@@ -3266,7 +3266,7 @@ impl DbBackend for PgBackend {
     ) -> Result<Vec<(String, String, u64, u64, f64, f64)>, DbError> {
         let rows = query_as::<_, (String, String, i64, i64, f64, f64)>(
             "SELECT channel_id, model, COUNT(*)::bigint, SUM(CASE WHEN success THEN 1 ELSE 0 END)::bigint, COALESCE(AVG(latency_ms)::float8, 0), COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)::float8, 0)
-             FROM usage_logs
+             FROM usage_billing
              WHERE timestamp::timestamptz >= NOW() - INTERVAL '1 day'
              GROUP BY channel_id, model ORDER BY COUNT(*) DESC"
         )
@@ -3285,7 +3285,7 @@ impl DbBackend for PgBackend {
         limit: usize,
     ) -> Result<Vec<(String, String, String, Option<i64>, u64, bool)>, DbError> {
         let rows = query_as::<_, (String, String, String, Option<i64>, i64, bool)>(
-            "SELECT timestamp, model, channel_id, endpoint_id, latency_ms, success FROM usage_logs ORDER BY id DESC LIMIT $1"
+            "SELECT timestamp, model, channel_id, endpoint_id, latency_ms, success FROM usage_billing ORDER BY id DESC LIMIT $1"
         )
         .bind(limit as i64)
         .fetch_all(&self.pool)
@@ -3306,7 +3306,7 @@ impl DbBackend for PgBackend {
         let since = (chrono::Utc::now() - chrono::Duration::hours(hours as i64))
             .format("%Y-%m-%dT%H:%M:%S")
             .to_string();
-        let rows = query("SELECT model, channel_id, endpoint_id, COUNT(*)::bigint FROM usage_logs WHERE \"timestamp\"::timestamp >= $1::timestamp GROUP BY model, channel_id, endpoint_id")
+        let rows = query("SELECT model, channel_id, endpoint_id, COUNT(*)::bigint FROM usage_billing WHERE \"timestamp\"::timestamp >= $1::timestamp GROUP BY model, channel_id, endpoint_id")
             .bind(&since).fetch_all(&self.pool).await.map_err(|e| DbError(format!("routing_flow_snapshot: {}", e)))?;
         Ok(rows
             .iter()
@@ -3338,7 +3338,7 @@ impl DbBackend for PgBackend {
                 COUNT(*)::bigint AS requests,
                 SUM(CASE WHEN success THEN 1 ELSE 0 END)::bigint AS successes,
                 AVG(latency_ms)::float8 AS avg_latency
-             FROM usage_logs
+             FROM usage_billing
              WHERE \"timestamp\"::timestamp >= $1::timestamp
                AND \"timestamp\"::timestamp <= $2::timestamp
                AND ($3::text IS NULL OR model = $3)
@@ -3377,7 +3377,7 @@ impl DbBackend for PgBackend {
                     SUM(CASE WHEN success THEN 1 ELSE 0 END)::bigint AS successes,
                     AVG(latency_ms)::float8 AS avg_latency,
                     COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms), 0)::float8 AS p95_latency
-             FROM usage_logs
+             FROM usage_billing
              WHERE \"timestamp\"::timestamp >= $1::timestamp
                AND \"timestamp\"::timestamp <= $2::timestamp
                AND ($3::text IS NULL OR model = $3)
@@ -3412,7 +3412,7 @@ impl DbBackend for PgBackend {
                     COUNT(*)::bigint, SUM(CASE WHEN ul.success THEN 1 ELSE 0 END)::bigint,
                     AVG(ul.latency_ms)::float8,
                     COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY ul.latency_ms),0)::float8
-             FROM usage_logs ul LEFT JOIN endpoints e ON e.id=ul.endpoint_id
+             FROM usage_billing ul LEFT JOIN endpoints e ON e.id=ul.endpoint_id
              WHERE \"ul\".\"timestamp\"::timestamp>=$1::timestamp AND \"ul\".\"timestamp\"::timestamp<=$2::timestamp
                AND ($3::text IS NULL OR ul.model=$3)
              GROUP BY ul.channel_id, ul.endpoint_id, e.url ORDER BY ul.channel_id, COUNT(*) DESC",
