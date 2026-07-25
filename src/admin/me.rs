@@ -4,6 +4,7 @@ use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::Json;
 use chrono_tz::Tz;
+use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -182,8 +183,8 @@ pub(crate) struct CreateMyKeyReq {
     name: Option<String>,
     enabled: Option<bool>,
     expires_at: Option<String>,
-    #[serde(default)]
-    spend_limit: Option<f64>,
+    #[serde(default, with = "rust_decimal::serde::float_option")]
+    spend_limit: Option<Decimal>,
     #[serde(default)]
     allowed_models: Option<Vec<String>>,
 }
@@ -222,8 +223,8 @@ pub(crate) struct UpdateMyKeyReq {
     name: Option<String>,
     enabled: Option<bool>,
     expires_at: Option<String>,
-    #[serde(default)]
-    spend_limit: Option<f64>,
+    #[serde(default, with = "rust_decimal::serde::float_option")]
+    spend_limit: Option<Decimal>,
     #[serde(default)]
     allowed_models: Option<Vec<String>>,
 }

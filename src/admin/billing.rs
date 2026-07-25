@@ -4,6 +4,8 @@ use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
 use chrono::Datelike;
+use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::server::AppState;
@@ -23,8 +25,10 @@ fn validate_year_month(year: i32, month: u32) -> Result<(), AdminError> {
 #[derive(Serialize)]
 pub(crate) struct BillingSummary {
     total_requests: u64,
-    total_cost: f64,
-    balance: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    total_cost: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    balance: Decimal,
 }
 
 pub(crate) async fn billing_summary(
@@ -43,24 +47,23 @@ pub(crate) async fn billing_summary(
         .cost_rows_since("1970-01-01T00:00:00", user_filter)
         .await
         .map_err(AdminError::internal)?;
-    let total_cost: f64 = records
+    let total_cost = records
         .iter()
-        .map(|r| {
-            let pp = if r.prompt_price > 0.0 {
+        .fold(Decimal::ZERO, |acc, r| {
+            let pp = if r.prompt_price > Decimal::ZERO {
                 r.prompt_price
             } else {
-                0.0
+                Decimal::ZERO
             };
-            let cp = if r.completion_price > 0.0 {
+            let cp = if r.completion_price > Decimal::ZERO {
                 r.completion_price
             } else {
-                0.0
+                Decimal::ZERO
             };
-            (r.prompt_tokens as f64 / 1000000.0 * pp)
-                + (r.completion_tokens as f64 / 1000000.0 * cp)
-                + (r.cache_hit_input_tokens as f64 / 1000000.0 * r.cache_read_price)
-        })
-        .sum();
+            acc + (Decimal::from(r.prompt_tokens) / Decimal::from(1000000) * pp)
+                + (Decimal::from(r.completion_tokens) / Decimal::from(1000000) * cp)
+                + (Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000) * r.cache_read_price)
+        });
     let total_requests = records.len() as u64;
     let (balance, _) = state
         .db
@@ -69,7 +72,7 @@ pub(crate) async fn billing_summary(
         .map_err(db_err)?;
     Ok(Json(BillingSummary {
         total_requests,
-        total_cost: (total_cost * 100.0).round() / 100.0,
+        total_cost,
         balance,
     }))
 }
@@ -84,7 +87,8 @@ pub(crate) struct PeriodQuery {
 pub(crate) struct PeriodSummary {
     year: i32,
     month: u32,
-    total_cost: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    total_cost: Decimal,
     total_requests: u64,
     total_tokens: u64,
     by_model: Vec<ModelCostShare>,
@@ -94,7 +98,8 @@ pub(crate) struct PeriodSummary {
 #[derive(Serialize)]
 pub(crate) struct ModelCostShare {
     model: String,
-    cost: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    cost: Decimal,
     percentage: f64,
 }
 
@@ -102,7 +107,8 @@ pub(crate) struct ModelCostShare {
 pub(crate) struct ChannelCostShare {
     channel: String,
     name: String,
-    cost: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    cost: Decimal,
     percentage: f64,
 }
 
@@ -136,15 +142,18 @@ pub(crate) async fn billing_period_summary(
         .map_err(db_err)?
         .into_iter()
         .map(|(model, cost)| {
-            let pct = if total_cost > 0.0 {
-                (cost / total_cost * 100.0 * 10.0).round() / 10.0
+            let pct = if total_cost > Decimal::ZERO {
+                let ratio = cost / total_cost;
+                let hundred = Decimal::from(100);
+                let ten = Decimal::from(10);
+                (ratio * hundred * ten).round() / ten
             } else {
-                0.0
+                Decimal::ZERO
             };
             ModelCostShare {
                 model,
-                cost: (cost * 100.0).round() / 100.0,
-                percentage: pct,
+                cost,
+                percentage: pct.to_f64().unwrap_or(0.0),
             }
         })
         .collect();
@@ -156,16 +165,19 @@ pub(crate) async fn billing_period_summary(
         .map_err(db_err)?
         .into_iter()
         .map(|(channel, name, cost)| {
-            let pct = if total_cost > 0.0 {
-                (cost / total_cost * 100.0 * 10.0).round() / 10.0
+            let pct = if total_cost > Decimal::ZERO {
+                let ratio = cost / total_cost;
+                let hundred = Decimal::from(100);
+                let ten = Decimal::from(10);
+                (ratio * hundred * ten).round() / ten
             } else {
-                0.0
+                Decimal::ZERO
             };
             ChannelCostShare {
                 channel,
                 name,
-                cost: (cost * 100.0).round() / 100.0,
-                percentage: pct,
+                cost,
+                percentage: pct.to_f64().unwrap_or(0.0),
             }
         })
         .collect();
@@ -173,7 +185,7 @@ pub(crate) async fn billing_period_summary(
     Ok(Json(PeriodSummary {
         year,
         month,
-        total_cost: (total_cost * 100.0).round() / 100.0,
+        total_cost,
         total_requests,
         total_tokens,
         by_model,
@@ -184,7 +196,8 @@ pub(crate) async fn billing_period_summary(
 #[derive(Serialize)]
 pub(crate) struct DeductionRecord {
     time: String,
-    amount: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    amount: Decimal,
     method: String,
 }
 
@@ -230,7 +243,7 @@ pub(crate) async fn billing_deductions(
         .into_iter()
         .map(|(day, amount, _count)| DeductionRecord {
             time: format!("{}T00:00:00", day),
-            amount: -((amount * 100.0).round() / 100.0),
+            amount: -amount,
             method: "按量计费".to_string(),
         })
         .collect();
@@ -275,7 +288,8 @@ pub(crate) async fn billing_months(
 #[derive(Serialize)]
 pub(crate) struct MonthSummary {
     month: String,
-    total_cost: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    total_cost: Decimal,
     total_requests: u64,
     total_tokens: u64,
 }
@@ -300,7 +314,7 @@ pub(crate) async fn billing_period_summary_all(
             .into_iter()
             .map(|(month, cost, req, tok)| MonthSummary {
                 month,
-                total_cost: (cost * 100.0).round() / 100.0,
+                total_cost: cost,
                 total_requests: req,
                 total_tokens: tok,
             })

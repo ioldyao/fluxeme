@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
+use rust_decimal::Decimal;
 use serde::Serialize;
 
 use crate::server::AppState;
@@ -81,9 +82,11 @@ pub(crate) struct TopModel {
 #[derive(Serialize)]
 pub(crate) struct DashboardAggregations {
     total_requests: u64,
-    total_cost: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    total_cost: Decimal,
     requests_24h: u64,
-    cost_24h: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    cost_24h: Decimal,
     success_rate_24h: f64,
     avg_latency_ms_24h: f64,
     total_tokens_24h: u64,
@@ -111,7 +114,7 @@ pub(crate) async fn dashboard_aggregations(
 
     // Load model pricing map once
     let models = state.db.list_models().await.unwrap_or_default();
-    let mut pricing: std::collections::HashMap<String, (f64, f64, f64)> =
+    let mut pricing: std::collections::HashMap<String, (Decimal, Decimal, Decimal)> =
         std::collections::HashMap::new();
     for m in &models {
         pricing.insert(
@@ -133,7 +136,7 @@ pub(crate) async fn dashboard_aggregations(
     }
 
     // Build sorted prefix list for glob pattern matching (O(log n) per lookup)
-    let mut prefix_prices: Vec<(&str, (f64, f64, f64))> = pricing
+    let mut prefix_prices: Vec<(&str, (Decimal, Decimal, Decimal))> = pricing
         .iter()
         .filter_map(|(k, v)| k.strip_suffix('*').map(|p| (p, *v)))
         .collect();
@@ -141,9 +144,9 @@ pub(crate) async fn dashboard_aggregations(
 
     fn lookup_price<'a>(
         model_name: &str,
-        pricing: &'a std::collections::HashMap<String, (f64, f64, f64)>,
-        prefix_prices: &'a [(&str, (f64, f64, f64))],
-    ) -> (f64, f64, f64) {
+        pricing: &'a std::collections::HashMap<String, (Decimal, Decimal, Decimal)>,
+        prefix_prices: &'a [(&str, (Decimal, Decimal, Decimal))],
+    ) -> (Decimal, Decimal, Decimal) {
         if let Some(price) = pricing.get(model_name) {
             return *price;
         }
@@ -152,7 +155,7 @@ pub(crate) async fn dashboard_aggregations(
                 return *price;
             }
         }
-        (0.0, 0.0, 0.0)
+        (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO)
     }
 
     // All-time totals: use COUNT SQL aggregate instead of loading all rows
@@ -171,9 +174,9 @@ pub(crate) async fn dashboard_aggregations(
     if requests_24h == 0 {
         return Ok(Json(DashboardAggregations {
             total_requests,
-            total_cost: 0.0,
+            total_cost: Decimal::ZERO,
             requests_24h: 0,
-            cost_24h: 0.0,
+            cost_24h: Decimal::ZERO,
             success_rate_24h: 0.0,
             avg_latency_ms_24h: 0.0,
             total_tokens_24h: 0,
@@ -187,17 +190,17 @@ pub(crate) async fn dashboard_aggregations(
         .cost_rows_since(&since_24h, user_filter)
         .await
         .map_err(AdminError::internal)?;
-    let mut total_cost_24h = 0.0_f64;
+    let mut total_cost_24h = Decimal::ZERO;
     let mut model_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for r in &records {
-        let (pp, cp, crp) = if r.prompt_price > 0.0 || r.completion_price > 0.0 {
+        let (pp, cp, crp) = if r.prompt_price > Decimal::ZERO || r.completion_price > Decimal::ZERO {
             (r.prompt_price, r.completion_price, r.cache_read_price)
         } else {
             lookup_price(&r.model, &pricing, &prefix_prices)
         };
-        let cost = (r.prompt_tokens as f64 / 1000000.0 * pp)
-            + (r.completion_tokens as f64 / 1000000.0 * cp)
-            + (r.cache_hit_input_tokens as f64 / 1000000.0 * crp);
+        let cost = (Decimal::from(r.prompt_tokens) / Decimal::from(1000000) * pp)
+            + (Decimal::from(r.completion_tokens) / Decimal::from(1000000) * cp)
+            + (Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000) * crp);
         total_cost_24h += cost;
         *model_counts.entry(r.model.clone()).or_default() += 1;
     }
@@ -208,19 +211,18 @@ pub(crate) async fn dashboard_aggregations(
         .cost_rows_since("1970-01-01T00:00:00", user_filter)
         .await
         .map_err(AdminError::internal)?;
-    let total_cost: f64 = all_records
+    let total_cost = all_records
         .iter()
-        .map(|r| {
-            let (pp, cp, crp) = if r.prompt_price > 0.0 || r.completion_price > 0.0 {
+        .fold(Decimal::ZERO, |acc, r| {
+            let (pp, cp, crp) = if r.prompt_price > Decimal::ZERO || r.completion_price > Decimal::ZERO {
                 (r.prompt_price, r.completion_price, r.cache_read_price)
             } else {
                 lookup_price(&r.model, &pricing, &prefix_prices)
             };
-            (r.prompt_tokens as f64 / 1000000.0 * pp)
-                + (r.completion_tokens as f64 / 1000000.0 * cp)
-                + (r.cache_hit_input_tokens as f64 / 1000000.0 * crp)
-        })
-        .sum();
+            acc + (Decimal::from(r.prompt_tokens) / Decimal::from(1000000) * pp)
+                + (Decimal::from(r.completion_tokens) / Decimal::from(1000000) * cp)
+                + (Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000) * crp)
+        });
 
     let success_rate = if requests_24h > 0 {
         success_count as f64 / requests_24h as f64 * 100.0
@@ -246,9 +248,9 @@ pub(crate) async fn dashboard_aggregations(
 
     Ok(Json(DashboardAggregations {
         total_requests,
-        total_cost: (total_cost * 100.0).round() / 100.0,
+        total_cost,
         requests_24h,
-        cost_24h: (total_cost_24h * 100.0).round() / 100.0,
+        cost_24h: total_cost_24h,
         success_rate_24h: (success_rate * 100.0).round() / 100.0,
         avg_latency_ms_24h: (avg_latency * 100.0).round() / 100.0,
         total_tokens_24h,

@@ -1,3 +1,4 @@
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,8 +45,8 @@ pub struct ApiKey {
     pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub spend_limit: Option<f64>,
+    #[serde(default, with = "rust_decimal::serde::float_option")]
+    pub spend_limit: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_models: Option<Vec<String>>,
 }

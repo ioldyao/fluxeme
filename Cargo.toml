@@ -41,3 +41,4 @@ base64 = "0.22"
 dotenvy = "0.15"
 clickhouse = "0.12"
 sled = "0.34"
+rust_decimal = { version = "1.36", features = ["serde-with-float", "db-tokio-postgres"] }

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use rust_decimal::Decimal;
 
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, Pricing};
@@ -134,25 +135,25 @@ pub trait DbBackend: Send + Sync {
         year: i32,
         month: u32,
         user_id: Option<&str>,
-    ) -> Result<(f64, u64, u64), DbError>;
+    ) -> Result<(Decimal, u64, u64), DbError>;
     async fn period_model_breakdown(
         &self,
         year: i32,
         month: u32,
         user_id: Option<&str>,
-    ) -> Result<Vec<(String, f64)>, DbError>;
+    ) -> Result<Vec<(String, Decimal)>, DbError>;
     async fn period_channel_breakdown(
         &self,
         year: i32,
         month: u32,
         user_id: Option<&str>,
-    ) -> Result<Vec<(String, String, f64)>, DbError>;
+    ) -> Result<Vec<(String, String, Decimal)>, DbError>;
     async fn daily_deductions(
         &self,
         year: i32,
         month: u32,
         user_id: Option<&str>,
-    ) -> Result<Vec<(String, f64, u64)>, DbError>;
+    ) -> Result<Vec<(String, Decimal, u64)>, DbError>;
     async fn count_daily_deductions(
         &self,
         year: i32,
@@ -166,27 +167,27 @@ pub trait DbBackend: Send + Sync {
         user_id: Option<&str>,
         limit: usize,
         offset: usize,
-    ) -> Result<Vec<(String, f64, u64)>, DbError>;
+    ) -> Result<Vec<(String, Decimal, u64)>, DbError>;
     async fn billing_months(&self) -> Result<Vec<String>, DbError>;
     async fn billing_months_for_user(&self, user_id: &str) -> Result<Vec<String>, DbError>;
-    async fn period_summary_all(&self) -> Result<Vec<(String, f64, u64, u64)>, DbError>;
+    async fn period_summary_all(&self) -> Result<Vec<(String, Decimal, u64, u64)>, DbError>;
     async fn period_summary_for_user(
         &self,
         user_id: &str,
-    ) -> Result<Vec<(String, f64, u64, u64)>, DbError>;
-    async fn lookup_model_pricing(&self, model_name: &str) -> Result<(f64, f64), DbError>;
+    ) -> Result<Vec<(String, Decimal, u64, u64)>, DbError>;
+    async fn lookup_model_pricing(&self, model_name: &str) -> Result<(Decimal, Decimal), DbError>;
 
     // ── Wallet ───────────────────────────────────────────────────────────
-    async fn get_wallet_balance(&self, user_id: &str) -> Result<(f64, f64), DbError>;
-    async fn update_wallet_balance(&self, user_id: &str, balance: f64) -> Result<(), DbError>;
+    async fn get_wallet_balance(&self, user_id: &str) -> Result<(Decimal, Decimal), DbError>;
+    async fn update_wallet_balance(&self, user_id: &str, balance: Decimal) -> Result<(), DbError>;
     async fn add_wallet_transaction(
         &self,
         id: &str,
         user_id: &str,
         tx_type: &str,
-        amount: f64,
-        balance_before: f64,
-        balance_after: f64,
+        amount: Decimal,
+        balance_before: Decimal,
+        balance_after: Decimal,
         method: &str,
         status: &str,
         note: &str,
@@ -207,19 +208,19 @@ pub trait DbBackend: Send + Sync {
         until: Option<&str>,
         tx_type: Option<&str>,
     ) -> Result<(Vec<WalletTransactionRow>, usize), DbError>;
-    async fn get_total_consumed(&self, user_id: &str) -> Result<f64, DbError>;
-    async fn get_total_recharged(&self, user_id: &str) -> Result<f64, DbError>;
-    async fn get_wallet_estimated_days(&self, user_id: &str) -> Result<Option<f64>, DbError>;
+    async fn get_total_consumed(&self, user_id: &str) -> Result<Decimal, DbError>;
+    async fn get_total_recharged(&self, user_id: &str) -> Result<Decimal, DbError>;
+    async fn get_wallet_estimated_days(&self, user_id: &str) -> Result<Option<Decimal>, DbError>;
 
     // ── Recharge Keys ────────────────────────────────────────────────────
     async fn create_recharge_key(
         &self,
         key: &str,
-        amount: f64,
+        amount: Decimal,
         created_by: &str,
         expires_at: Option<&str>,
     ) -> Result<(), DbError>;
-    async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<f64, DbError>;
+    async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<Decimal, DbError>;
     async fn revoke_recharge_key(&self, key: &str) -> Result<(), DbError>;
     async fn list_recharge_keys(&self) -> Result<Vec<RechargeKeyRow>, DbError>;
     async fn list_recharge_keys_paginated(
@@ -256,7 +257,7 @@ pub trait DbBackend: Send + Sync {
         &self,
         limit: usize,
         offset: usize,
-    ) -> Result<Vec<(String, f64, f64)>, DbError>;
+    ) -> Result<Vec<(String, Decimal, Decimal)>, DbError>;
 
     // ── Content Filter Rules ──────────────────────────────────────────────
     async fn list_filter_rules(&self) -> Result<Vec<ContentFilterRule>, DbError>;
@@ -323,5 +324,5 @@ pub trait DbBackend: Send + Sync {
         &self,
         batch: &[UsageRecord],
         billing_enabled: bool,
-    ) -> Result<Vec<(String, f64, f64)>, DbError>;
+    ) -> Result<Vec<(String, Decimal, Decimal)>, DbError>;
 }

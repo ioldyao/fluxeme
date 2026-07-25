@@ -1,4 +1,6 @@
 use async_trait::async_trait;
+use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use sqlx_core::{
     query::query, query_as::query_as, query_builder::QueryBuilder, query_scalar::query_scalar,
     raw_sql::raw_sql, row::Row,
@@ -30,7 +32,7 @@ impl PgBackend {
     // ── Private helpers ──────────────────────────────────────────────────────────
 
     #[allow(dead_code)]
-    async fn pricing_lookup(&self, model_name: &str) -> (f64, f64) {
+    async fn pricing_lookup(&self, model_name: &str) -> (Decimal, Decimal) {
         let result = query_as::<_, (f64, f64)>(
             "SELECT prompt_price, completion_price FROM models WHERE name = $1",
         )
@@ -39,7 +41,10 @@ impl PgBackend {
         .await;
 
         match result {
-            Ok(Some(p)) => p,
+            Ok(Some((p, c))) => (
+                Decimal::try_from(p).unwrap_or(Decimal::ZERO),
+                Decimal::try_from(c).unwrap_or(Decimal::ZERO),
+            ),
             _ => {
                 // Fall back to pattern matching
                 let rows = query_as::<_, (f64, f64, String)>(
@@ -53,15 +58,21 @@ impl PgBackend {
                         if pattern.ends_with('*') {
                             let prefix = &pattern[..pattern.len() - 1];
                             if model_name.starts_with(prefix) {
-                                return (p, c);
+                                return (
+                                    Decimal::try_from(p).unwrap_or(Decimal::ZERO),
+                                    Decimal::try_from(c).unwrap_or(Decimal::ZERO),
+                                );
                             }
                         }
                         if pattern == model_name {
-                            return (p, c);
+                            return (
+                                Decimal::try_from(p).unwrap_or(Decimal::ZERO),
+                                Decimal::try_from(c).unwrap_or(Decimal::ZERO),
+                            );
                         }
                     }
                 }
-                (0.0, 0.0)
+                (Decimal::ZERO, Decimal::ZERO)
             }
         }
     }
@@ -224,9 +235,9 @@ impl PgBackend {
             api_format,
             stream,
             cache_hit_input_tokens: cache_hit_input_tokens as u64,
-            prompt_price,
-            completion_price,
-            cache_read_price,
+            prompt_price: Decimal::try_from(prompt_price).unwrap_or(Decimal::ZERO),
+            completion_price: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
+            cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
             client_ip,
         }
     }
@@ -298,9 +309,9 @@ impl PgBackend {
             api_format,
             stream,
             cache_hit_input_tokens: cache_hit_input_tokens as u64,
-            prompt_price,
-            completion_price,
-            cache_read_price,
+            prompt_price: Decimal::try_from(prompt_price).unwrap_or(Decimal::ZERO),
+            completion_price: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
+            cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
             client_ip,
         }
     }
@@ -903,7 +914,7 @@ impl DbBackend for PgBackend {
                     name: r.get(2),
                     enabled: r.get(3),
                     expires_at: r.get(4),
-                    spend_limit: r.get(5),
+                    spend_limit: r.get::<Option<f64>, _>(5).map(|v| Decimal::try_from(v).unwrap_or(Decimal::ZERO)),
                     allowed_models: allowed_models_str
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
@@ -922,7 +933,7 @@ impl DbBackend for PgBackend {
         .bind(&key.name)
         .bind(key.enabled)
         .bind(&key.expires_at)
-        .bind(key.spend_limit)
+        .bind(key.spend_limit.map(|v| v.to_f64().unwrap_or(0.0)))
         .bind(allowed)
         .execute(&self.pool)
         .await?;
@@ -945,7 +956,7 @@ impl DbBackend for PgBackend {
         .bind(&key.name)
         .bind(key.enabled)
         .bind(&key.expires_at)
-        .bind(key.spend_limit)
+        .bind(key.spend_limit.map(|v| v.to_f64().unwrap_or(0.0)))
         .bind(allowed)
         .bind(&key.key)
         .execute(&self.pool)
@@ -970,7 +981,7 @@ impl DbBackend for PgBackend {
                 name: r.get(11),
                 enabled: r.get(12),
                 expires_at: r.get(13),
-                spend_limit: r.get(14),
+                spend_limit: r.get::<Option<f64>, _>(14).map(|v| Decimal::try_from(v).unwrap_or(Decimal::ZERO)),
                 allowed_models: allowed_models_str
                     .filter(|s| !s.is_empty())
                     .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
@@ -1020,7 +1031,7 @@ impl DbBackend for PgBackend {
                     name: r.get(11),
                     enabled: r.get(12),
                     expires_at: r.get(13),
-                    spend_limit: r.get(14),
+                    spend_limit: r.get::<Option<f64>, _>(14).map(|v| Decimal::try_from(v).unwrap_or(Decimal::ZERO)),
                     allowed_models: allowed_models_str
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
@@ -1293,13 +1304,13 @@ impl DbBackend for PgBackend {
                 name: r.get(1),
                 model_pattern: r.get(2),
                 pricing: Pricing {
-                    prompt_price: r.get(3),
-                    completion_price: r.get(4),
-                    cache_read_price: r.get(5),
-                    cache_write_price: r.get(6),
-                    image_input_price: r.get(7),
-                    audio_input_price: r.get(8),
-                    audio_output_price: r.get(9),
+                    prompt_price: Decimal::try_from(r.get::<f64, _>(3)).unwrap_or(Decimal::ZERO),
+                    completion_price: Decimal::try_from(r.get::<f64, _>(4)).unwrap_or(Decimal::ZERO),
+                    cache_read_price: Decimal::try_from(r.get::<f64, _>(5)).unwrap_or(Decimal::ZERO),
+                    cache_write_price: Decimal::try_from(r.get::<f64, _>(6)).unwrap_or(Decimal::ZERO),
+                    image_input_price: Decimal::try_from(r.get::<f64, _>(7)).unwrap_or(Decimal::ZERO),
+                    audio_input_price: Decimal::try_from(r.get::<f64, _>(8)).unwrap_or(Decimal::ZERO),
+                    audio_output_price: Decimal::try_from(r.get::<f64, _>(9)).unwrap_or(Decimal::ZERO),
                 },
                 channels: Vec::new(),
                 published: r.get::<bool, _>(10),
@@ -1344,13 +1355,13 @@ impl DbBackend for PgBackend {
                 name: r.get(1),
                 model_pattern: r.get(2),
                 pricing: Pricing {
-                    prompt_price: r.get(3),
-                    completion_price: r.get(4),
-                    cache_read_price: r.get(5),
-                    cache_write_price: r.get(6),
-                    image_input_price: r.get(7),
-                    audio_input_price: r.get(8),
-                    audio_output_price: r.get(9),
+                    prompt_price: Decimal::try_from(r.get::<f64, _>(3)).unwrap_or(Decimal::ZERO),
+                    completion_price: Decimal::try_from(r.get::<f64, _>(4)).unwrap_or(Decimal::ZERO),
+                    cache_read_price: Decimal::try_from(r.get::<f64, _>(5)).unwrap_or(Decimal::ZERO),
+                    cache_write_price: Decimal::try_from(r.get::<f64, _>(6)).unwrap_or(Decimal::ZERO),
+                    image_input_price: Decimal::try_from(r.get::<f64, _>(7)).unwrap_or(Decimal::ZERO),
+                    audio_input_price: Decimal::try_from(r.get::<f64, _>(8)).unwrap_or(Decimal::ZERO),
+                    audio_output_price: Decimal::try_from(r.get::<f64, _>(9)).unwrap_or(Decimal::ZERO),
                 },
                 channels: Vec::new(),
                 published: r.get::<bool, _>(10),
@@ -1392,13 +1403,13 @@ impl DbBackend for PgBackend {
         .bind(&m.id)
         .bind(&m.name)
         .bind(&m.model_pattern)
-        .bind(m.pricing.prompt_price)
-        .bind(m.pricing.completion_price)
-        .bind(m.pricing.cache_read_price)
-        .bind(m.pricing.cache_write_price)
-        .bind(m.pricing.image_input_price)
-        .bind(m.pricing.audio_input_price)
-        .bind(m.pricing.audio_output_price)
+        .bind(m.pricing.prompt_price.to_f64().unwrap_or(0.0))
+        .bind(m.pricing.completion_price.to_f64().unwrap_or(0.0))
+        .bind(m.pricing.cache_read_price.to_f64().unwrap_or(0.0))
+        .bind(m.pricing.cache_write_price.to_f64().unwrap_or(0.0))
+        .bind(m.pricing.image_input_price.to_f64().unwrap_or(0.0))
+        .bind(m.pricing.audio_input_price.to_f64().unwrap_or(0.0))
+        .bind(m.pricing.audio_output_price.to_f64().unwrap_or(0.0))
         .bind(m.published)
         .bind(m.context_length)
         .bind(&m.category)
@@ -1433,13 +1444,13 @@ impl DbBackend for PgBackend {
         )
         .bind(&m.name)
         .bind(&m.model_pattern)
-        .bind(m.pricing.prompt_price)
-        .bind(m.pricing.completion_price)
-        .bind(m.pricing.cache_read_price)
-        .bind(m.pricing.cache_write_price)
-        .bind(m.pricing.image_input_price)
-        .bind(m.pricing.audio_input_price)
-        .bind(m.pricing.audio_output_price)
+        .bind(m.pricing.prompt_price.to_f64().unwrap_or(0.0))
+        .bind(m.pricing.completion_price.to_f64().unwrap_or(0.0))
+        .bind(m.pricing.cache_read_price.to_f64().unwrap_or(0.0))
+        .bind(m.pricing.cache_write_price.to_f64().unwrap_or(0.0))
+        .bind(m.pricing.image_input_price.to_f64().unwrap_or(0.0))
+        .bind(m.pricing.audio_input_price.to_f64().unwrap_or(0.0))
+        .bind(m.pricing.audio_output_price.to_f64().unwrap_or(0.0))
         .bind(m.published)
         .bind(m.context_length)
         .bind(&m.category)
@@ -1499,13 +1510,13 @@ impl DbBackend for PgBackend {
                 name: r.get(1),
                 model_pattern: r.get(2),
                 pricing: Pricing {
-                    prompt_price: r.get(3),
-                    completion_price: r.get(4),
-                    cache_read_price: r.get(5),
-                    cache_write_price: r.get(6),
-                    image_input_price: r.get(7),
-                    audio_input_price: r.get(8),
-                    audio_output_price: r.get(9),
+                    prompt_price: Decimal::try_from(r.get::<f64, _>(3)).unwrap_or(Decimal::ZERO),
+                    completion_price: Decimal::try_from(r.get::<f64, _>(4)).unwrap_or(Decimal::ZERO),
+                    cache_read_price: Decimal::try_from(r.get::<f64, _>(5)).unwrap_or(Decimal::ZERO),
+                    cache_write_price: Decimal::try_from(r.get::<f64, _>(6)).unwrap_or(Decimal::ZERO),
+                    image_input_price: Decimal::try_from(r.get::<f64, _>(7)).unwrap_or(Decimal::ZERO),
+                    audio_input_price: Decimal::try_from(r.get::<f64, _>(8)).unwrap_or(Decimal::ZERO),
+                    audio_output_price: Decimal::try_from(r.get::<f64, _>(9)).unwrap_or(Decimal::ZERO),
                 },
                 channels: Vec::new(),
                 published: true,
@@ -1549,13 +1560,13 @@ impl DbBackend for PgBackend {
              cache_write_price=$4, image_input_price=$5, audio_input_price=$6, \
              audio_output_price=$7 WHERE id=$8",
         )
-        .bind(pricing.prompt_price)
-        .bind(pricing.completion_price)
-        .bind(pricing.cache_read_price)
-        .bind(pricing.cache_write_price)
-        .bind(pricing.image_input_price)
-        .bind(pricing.audio_input_price)
-        .bind(pricing.audio_output_price)
+        .bind(pricing.prompt_price.to_f64().unwrap_or(0.0))
+        .bind(pricing.completion_price.to_f64().unwrap_or(0.0))
+        .bind(pricing.cache_read_price.to_f64().unwrap_or(0.0))
+        .bind(pricing.cache_write_price.to_f64().unwrap_or(0.0))
+        .bind(pricing.image_input_price.to_f64().unwrap_or(0.0))
+        .bind(pricing.audio_input_price.to_f64().unwrap_or(0.0))
+        .bind(pricing.audio_output_price.to_f64().unwrap_or(0.0))
         .bind(id)
         .execute(&self.pool)
         .await?;
@@ -1631,13 +1642,13 @@ impl DbBackend for PgBackend {
                 name: r.get(1),
                 model_pattern: r.get(2),
                 pricing: Pricing {
-                    prompt_price: r.get(3),
-                    completion_price: r.get(4),
-                    cache_read_price: r.get(5),
-                    cache_write_price: r.get(6),
-                    image_input_price: r.get(7),
-                    audio_input_price: r.get(8),
-                    audio_output_price: r.get(9),
+                    prompt_price: Decimal::try_from(r.get::<f64, _>(3)).unwrap_or(Decimal::ZERO),
+                    completion_price: Decimal::try_from(r.get::<f64, _>(4)).unwrap_or(Decimal::ZERO),
+                    cache_read_price: Decimal::try_from(r.get::<f64, _>(5)).unwrap_or(Decimal::ZERO),
+                    cache_write_price: Decimal::try_from(r.get::<f64, _>(6)).unwrap_or(Decimal::ZERO),
+                    image_input_price: Decimal::try_from(r.get::<f64, _>(7)).unwrap_or(Decimal::ZERO),
+                    audio_input_price: Decimal::try_from(r.get::<f64, _>(8)).unwrap_or(Decimal::ZERO),
+                    audio_output_price: Decimal::try_from(r.get::<f64, _>(9)).unwrap_or(Decimal::ZERO),
                 },
                 channels: Vec::new(),
                 published: r.get::<bool, _>(10),
@@ -1756,9 +1767,9 @@ impl DbBackend for PgBackend {
         .bind(&record.api_format)
         .bind(record.stream)
         .bind(record.cache_hit_input_tokens as i64)
-        .bind(record.prompt_price)
-        .bind(record.completion_price)
-        .bind(record.cache_read_price)
+        .bind(record.prompt_price.to_f64().unwrap_or(0.0))
+        .bind(record.completion_price.to_f64().unwrap_or(0.0))
+        .bind(record.cache_read_price.to_f64().unwrap_or(0.0))
         .bind(&record.client_ip)
         .execute(&self.pool)
         .await?;
@@ -2053,9 +2064,9 @@ impl DbBackend for PgBackend {
                     api_format,
                     stream,
                     cache_hit_input_tokens: cache_hit_input_tokens as u64,
-                    prompt_price,
-                    completion_price,
-                    cache_read_price,
+                    prompt_price: Decimal::try_from(prompt_price).unwrap_or(Decimal::ZERO),
+                    completion_price: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
+                    cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
                     client_ip: None,
                 }
             })
@@ -2260,7 +2271,7 @@ impl DbBackend for PgBackend {
         year: i32,
         month: u32,
         user_id: Option<&str>,
-    ) -> Result<(f64, u64, u64), DbError> {
+    ) -> Result<(Decimal, u64, u64), DbError> {
         let start = format!("{}-{:02}-01T00:00:00", year, month);
         let end = if month == 12 {
             format!("{}-01-01T00:00:00", year + 1)
@@ -2293,7 +2304,7 @@ impl DbBackend for PgBackend {
             .fetch_one(&self.pool)
             .await?
         };
-        Ok((cost, count as u64, tokens as u64))
+        Ok((Decimal::try_from(cost).unwrap_or(Decimal::ZERO), count as u64, tokens as u64))
     }
 
     async fn period_model_breakdown(
@@ -2301,14 +2312,14 @@ impl DbBackend for PgBackend {
         year: i32,
         month: u32,
         user_id: Option<&str>,
-    ) -> Result<Vec<(String, f64)>, DbError> {
+    ) -> Result<Vec<(String, Decimal)>, DbError> {
         let start = format!("{}-{:02}-01T00:00:00", year, month);
         let end = if month == 12 {
             format!("{}-01-01T00:00:00", year + 1)
         } else {
             format!("{}-{:02}-01T00:00:00", year, month + 1)
         };
-        let rows = if let Some(uid) = user_id {
+        let rows: Vec<(String, f64)> = if let Some(uid) = user_id {
             query_as::<_, (String, f64)>(
                 "SELECT model, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
                  completion_tokens / 1000000.0 * completion_price + \
@@ -2334,7 +2345,7 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         };
-        Ok(rows)
+        Ok(rows.into_iter().map(|(m, c)| (m, Decimal::try_from(c).unwrap_or(Decimal::ZERO))).collect())
     }
 
     async fn period_channel_breakdown(
@@ -2342,14 +2353,14 @@ impl DbBackend for PgBackend {
         year: i32,
         month: u32,
         user_id: Option<&str>,
-    ) -> Result<Vec<(String, String, f64)>, DbError> {
+    ) -> Result<Vec<(String, String, Decimal)>, DbError> {
         let start = format!("{}-{:02}-01T00:00:00", year, month);
         let end = if month == 12 {
             format!("{}-01-01T00:00:00", year + 1)
         } else {
             format!("{}-{:02}-01T00:00:00", year, month + 1)
         };
-        let rows = if let Some(uid) = user_id {
+        let rows: Vec<(String, String, f64)> = if let Some(uid) = user_id {
             query_as::<_, (String, String, f64)>(
                 "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(ul.prompt_tokens / 1000000.0 * ul.prompt_price + \
                  ul.completion_tokens / 1000000.0 * ul.completion_price + \
@@ -2377,7 +2388,7 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         };
-        Ok(rows)
+        Ok(rows.into_iter().map(|(ch, n, c)| (ch, n, Decimal::try_from(c).unwrap_or(Decimal::ZERO))).collect())
     }
 
     async fn daily_deductions(
@@ -2385,7 +2396,7 @@ impl DbBackend for PgBackend {
         year: i32,
         month: u32,
         user_id: Option<&str>,
-    ) -> Result<Vec<(String, f64, u64)>, DbError> {
+    ) -> Result<Vec<(String, Decimal, u64)>, DbError> {
         let start = format!("{}-{:02}-01T00:00:00", year, month);
         let end = if month == 12 {
             format!("{}-01-01T00:00:00", year + 1)
@@ -2422,7 +2433,7 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         };
-        Ok(rows.into_iter().map(|(d, c, n)| (d, c, n as u64)).collect())
+        Ok(rows.into_iter().map(|(d, c, n)| (d, Decimal::try_from(c).unwrap_or(Decimal::ZERO), n as u64)).collect())
     }
 
     async fn count_daily_deductions(
@@ -2467,7 +2478,7 @@ impl DbBackend for PgBackend {
         user_id: Option<&str>,
         limit: usize,
         offset: usize,
-    ) -> Result<Vec<(String, f64, u64)>, DbError> {
+    ) -> Result<Vec<(String, Decimal, u64)>, DbError> {
         let start = format!("{}-{:02}-01T00:00:00", year, month);
         let end = if month == 12 {
             format!("{}-01-01T00:00:00", year + 1)
@@ -2508,7 +2519,7 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         };
-        Ok(rows.into_iter().map(|(d, c, n)| (d, c, n as u64)).collect())
+        Ok(rows.into_iter().map(|(d, c, n)| (d, Decimal::try_from(c).unwrap_or(Decimal::ZERO), n as u64)).collect())
     }
 
     async fn billing_months(&self) -> Result<Vec<String>, DbError> {
@@ -2530,7 +2541,7 @@ impl DbBackend for PgBackend {
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 
-    async fn period_summary_all(&self) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
+    async fn period_summary_all(&self) -> Result<Vec<(String, Decimal, u64, u64)>, DbError> {
         let rows = query_as::<_, (String, f64, i64, i64)>(
             "SELECT LEFT(timestamp::text, 7) AS month, \
              COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
@@ -2543,14 +2554,14 @@ impl DbBackend for PgBackend {
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(m, c, n, t)| (m, c, n as u64, t as u64))
+            .map(|(m, c, n, t)| (m, Decimal::try_from(c).unwrap_or(Decimal::ZERO), n as u64, t as u64))
             .collect())
     }
 
     async fn period_summary_for_user(
         &self,
         user_id: &str,
-    ) -> Result<Vec<(String, f64, u64, u64)>, DbError> {
+    ) -> Result<Vec<(String, Decimal, u64, u64)>, DbError> {
         let rows = query_as::<_, (String, f64, i64, i64)>(
             "SELECT LEFT(timestamp::text, 7) AS month, \
              COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
@@ -2564,27 +2575,27 @@ impl DbBackend for PgBackend {
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(m, c, n, t)| (m, c, n as u64, t as u64))
+            .map(|(m, c, n, t)| (m, Decimal::try_from(c).unwrap_or(Decimal::ZERO), n as u64, t as u64))
             .collect())
     }
 
-    async fn lookup_model_pricing(&self, model_name: &str) -> Result<(f64, f64), DbError> {
+    async fn lookup_model_pricing(&self, model_name: &str) -> Result<(Decimal, Decimal), DbError> {
         Ok(self.pricing_lookup(model_name).await)
     }
 
     // ── Wallet ───────────────────────────────────────────────────────────
 
-    async fn get_wallet_balance(&self, user_id: &str) -> Result<(f64, f64), DbError> {
+    async fn get_wallet_balance(&self, user_id: &str) -> Result<(Decimal, Decimal), DbError> {
         let row: (f64, f64) = query_as("SELECT balance, frozen FROM users WHERE id = $1")
             .bind(user_id)
             .fetch_one(&self.pool)
             .await?;
-        Ok(row)
+        Ok((Decimal::try_from(row.0).unwrap_or(Decimal::ZERO), Decimal::try_from(row.1).unwrap_or(Decimal::ZERO)))
     }
 
-    async fn update_wallet_balance(&self, user_id: &str, balance: f64) -> Result<(), DbError> {
+    async fn update_wallet_balance(&self, user_id: &str, balance: Decimal) -> Result<(), DbError> {
         query("UPDATE users SET balance = $1 WHERE id = $2")
-            .bind(balance)
+            .bind(balance.to_f64().unwrap_or(0.0))
             .bind(user_id)
             .execute(&self.pool)
             .await?;
@@ -2596,9 +2607,9 @@ impl DbBackend for PgBackend {
         id: &str,
         user_id: &str,
         tx_type: &str,
-        amount: f64,
-        balance_before: f64,
-        balance_after: f64,
+        amount: Decimal,
+        balance_before: Decimal,
+        balance_after: Decimal,
         method: &str,
         status: &str,
         note: &str,
@@ -2611,9 +2622,9 @@ impl DbBackend for PgBackend {
         .bind(id)
         .bind(user_id)
         .bind(tx_type)
-        .bind(amount)
-        .bind(balance_before)
-        .bind(balance_after)
+        .bind(amount.to_f64().unwrap_or(0.0))
+        .bind(balance_before.to_f64().unwrap_or(0.0))
+        .bind(balance_after.to_f64().unwrap_or(0.0))
         .bind(method)
         .bind(status)
         .bind(note)
@@ -2645,9 +2656,9 @@ impl DbBackend for PgBackend {
                 id: r.get(0),
                 user_id: r.get(1),
                 tx_type: r.get(2),
-                amount: r.get(3),
-                balance_before: r.get(4),
-                balance_after: r.get(5),
+                amount: Decimal::try_from(r.get::<f64, _>(3)).unwrap_or(Decimal::ZERO),
+                balance_before: Decimal::try_from(r.get::<f64, _>(4)).unwrap_or(Decimal::ZERO),
+                balance_after: Decimal::try_from(r.get::<f64, _>(5)).unwrap_or(Decimal::ZERO),
                 method: r.get(6),
                 status: r.get(7),
                 note: r.get(8),
@@ -2756,9 +2767,9 @@ impl DbBackend for PgBackend {
                 id: r.get(0),
                 user_id: r.get(1),
                 tx_type: r.get(2),
-                amount: r.get(3),
-                balance_before: r.get(4),
-                balance_after: r.get(5),
+                amount: Decimal::try_from(r.get::<f64, _>(3)).unwrap_or(Decimal::ZERO),
+                balance_before: Decimal::try_from(r.get::<f64, _>(4)).unwrap_or(Decimal::ZERO),
+                balance_after: Decimal::try_from(r.get::<f64, _>(5)).unwrap_or(Decimal::ZERO),
                 method: r.get(6),
                 status: r.get(7),
                 note: r.get(8),
@@ -2769,7 +2780,7 @@ impl DbBackend for PgBackend {
         Ok((transactions, total_dates))
     }
 
-    async fn get_total_consumed(&self, user_id: &str) -> Result<f64, DbError> {
+    async fn get_total_consumed(&self, user_id: &str) -> Result<Decimal, DbError> {
         let (amount,): (f64,) = query_as(
             "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
              completion_tokens / 1000000.0 * completion_price + \
@@ -2779,10 +2790,10 @@ impl DbBackend for PgBackend {
         .bind(user_id)
         .fetch_one(&self.pool)
         .await?;
-        Ok(amount)
+        Ok(Decimal::try_from(amount).unwrap_or(Decimal::ZERO))
     }
 
-    async fn get_total_recharged(&self, user_id: &str) -> Result<f64, DbError> {
+    async fn get_total_recharged(&self, user_id: &str) -> Result<Decimal, DbError> {
         let (amount,): (f64,) = query_as(
             "SELECT COALESCE(SUM(amount), 0) FROM wallet_transactions \
              WHERE user_id = $1 AND type = 'recharge' AND status = 'completed'",
@@ -2790,10 +2801,10 @@ impl DbBackend for PgBackend {
         .bind(user_id)
         .fetch_one(&self.pool)
         .await?;
-        Ok(amount)
+        Ok(Decimal::try_from(amount).unwrap_or(Decimal::ZERO))
     }
 
-    async fn get_wallet_estimated_days(&self, user_id: &str) -> Result<Option<f64>, DbError> {
+    async fn get_wallet_estimated_days(&self, user_id: &str) -> Result<Option<Decimal>, DbError> {
         let thirty_days_ago = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
         let (total_cost,): (f64,) = query_as(
             "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
@@ -2811,11 +2822,12 @@ impl DbBackend for PgBackend {
             .fetch_one(&self.pool)
             .await?;
 
-        let daily_avg = total_cost / 30.0;
-        if daily_avg <= 0.0 {
+        let daily_avg = Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO) / Decimal::from(30);
+        if daily_avg <= Decimal::ZERO {
             return Ok(None);
         }
-        Ok(Some(balance / daily_avg))
+        let bal = Decimal::try_from(balance).unwrap_or(Decimal::ZERO);
+        Ok(Some(bal / daily_avg))
     }
 
     // ── Recharge Keys ────────────────────────────────────────────────────
@@ -2823,7 +2835,7 @@ impl DbBackend for PgBackend {
     async fn create_recharge_key(
         &self,
         key: &str,
-        amount: f64,
+        amount: Decimal,
         created_by: &str,
         expires_at: Option<&str>,
     ) -> Result<(), DbError> {
@@ -2833,7 +2845,7 @@ impl DbBackend for PgBackend {
              VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(key)
-        .bind(amount)
+        .bind(amount.to_f64().unwrap_or(0.0))
         .bind(created_by)
         .bind(&now)
         .bind(expires_at)
@@ -2842,7 +2854,7 @@ impl DbBackend for PgBackend {
         Ok(())
     }
 
-    async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<f64, DbError> {
+    async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<Decimal, DbError> {
         let now = chrono::Utc::now().to_rfc3339();
         let mut tx = self.pool.begin().await?;
 
@@ -2935,7 +2947,7 @@ impl DbBackend for PgBackend {
         .await?;
 
         tx.commit().await?;
-        Ok(amount)
+        Ok(Decimal::try_from(amount).unwrap_or(Decimal::ZERO))
     }
 
     async fn revoke_recharge_key(&self, key: &str) -> Result<(), DbError> {
@@ -2963,7 +2975,7 @@ impl DbBackend for PgBackend {
             .iter()
             .map(|r| RechargeKeyRow {
                 key: r.get(0),
-                amount: r.get(1),
+                amount: Decimal::try_from(r.get::<f64, _>(1)).unwrap_or(Decimal::ZERO),
                 used_by: r.get(2),
                 used_at: r.get(3),
                 created_by: r.get(4),
@@ -2991,7 +3003,7 @@ impl DbBackend for PgBackend {
             .iter()
             .map(|r| RechargeKeyRow {
                 key: r.get(0),
-                amount: r.get(1),
+                amount: Decimal::try_from(r.get::<f64, _>(1)).unwrap_or(Decimal::ZERO),
                 used_by: r.get(2),
                 used_at: r.get(3),
                 created_by: r.get(4),
@@ -3044,7 +3056,7 @@ impl DbBackend for PgBackend {
             .iter()
             .map(|r| RechargeKeyRow {
                 key: r.get(0),
-                amount: r.get(1),
+                amount: Decimal::try_from(r.get::<f64, _>(1)).unwrap_or(Decimal::ZERO),
                 used_by: r.get(2),
                 used_at: r.get(3),
                 created_by: r.get(4),
@@ -3433,7 +3445,7 @@ impl DbBackend for PgBackend {
         &self,
         limit: usize,
         offset: usize,
-    ) -> Result<Vec<(String, f64, f64)>, DbError> {
+    ) -> Result<Vec<(String, Decimal, Decimal)>, DbError> {
         let rows = query_as::<_, (String, f64, f64)>(
             "SELECT id, balance, frozen FROM users LIMIT $1 OFFSET $2",
         )
@@ -3441,7 +3453,7 @@ impl DbBackend for PgBackend {
         .bind(offset as i64)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows)
+        Ok(rows.into_iter().map(|(id, b, f)| (id, Decimal::try_from(b).unwrap_or(Decimal::ZERO), Decimal::try_from(f).unwrap_or(Decimal::ZERO))).collect())
     }
 
     // ── Batch Operations ────────────────────────────────────────────────
@@ -3450,9 +3462,9 @@ impl DbBackend for PgBackend {
         &self,
         batch: &[UsageRecord],
         billing_enabled: bool,
-    ) -> Result<Vec<(String, f64, f64)>, DbError> {
+    ) -> Result<Vec<(String, Decimal, Decimal)>, DbError> {
         let mut tx = self.pool.begin().await?;
-        let mut deductions: Vec<(String, f64, f64)> = Vec::new();
+        let mut deductions: Vec<(String, Decimal, Decimal)> = Vec::new();
 
         for record in batch {
             let (prompt_price, completion_price, cache_read_price) = {
@@ -3583,7 +3595,11 @@ impl DbBackend for PgBackend {
                     .execute(&mut *tx)
                     .await?;
 
-                    deductions.push((record.user_id.clone(), new_balance, frozen));
+                    deductions.push((
+                        record.user_id.clone(),
+                        Decimal::try_from(new_balance).unwrap_or(Decimal::ZERO),
+                        Decimal::try_from(frozen).unwrap_or(Decimal::ZERO),
+                    ));
                 }
             }
         }

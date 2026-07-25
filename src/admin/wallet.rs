@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::cache::compute_gate_status;
@@ -10,9 +11,9 @@ use crate::server::AppState;
 
 use super::*;
 
-fn validate_finite_positive(v: f64) -> Result<(), AdminError> {
-    if !v.is_finite() || v <= 0.0 {
-        return Err(AdminError::bad_request("Amount must be a finite positive number"));
+fn validate_finite_positive(v: Decimal) -> Result<(), AdminError> {
+    if v <= Decimal::ZERO {
+        return Err(AdminError::bad_request("Amount must be a positive number"));
     }
     Ok(())
 }
@@ -21,10 +22,14 @@ fn validate_finite_positive(v: f64) -> Result<(), AdminError> {
 
 #[derive(Serialize)]
 pub(crate) struct WalletOverview {
-    balance: f64,
-    frozen: f64,
-    total_consumed: f64,
-    total_recharged: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    balance: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    frozen: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    total_consumed: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    total_recharged: Decimal,
 }
 
 pub(crate) async fn wallet_overview(
@@ -51,26 +56,31 @@ pub(crate) async fn wallet_overview(
 #[allow(dead_code)]
 #[derive(Deserialize)]
 pub(crate) struct RechargeReq {
-    amount: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    amount: Decimal,
 }
 
 #[derive(Serialize)]
 pub(crate) struct RechargeResp {
     transaction_id: String,
-    amount: f64,
-    balance: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    amount: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    balance: Decimal,
 }
 
 #[derive(Deserialize)]
 pub(crate) struct WalletCreateKeyReq {
-    amount: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    amount: Decimal,
     expires_at: Option<String>,
 }
 
 #[derive(Serialize)]
 pub(crate) struct CreateKeyResp {
     key: String,
-    amount: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    amount: Decimal,
     expires_at: Option<String>,
 }
 
@@ -81,8 +91,10 @@ pub(crate) struct RedeemKeyReq {
 
 #[derive(Serialize)]
 pub(crate) struct RedeemKeyResp {
-    amount: f64,
-    balance: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    amount: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    balance: Decimal,
 }
 
 pub(crate) async fn wallet_recharge(
@@ -241,9 +253,12 @@ pub(crate) struct WalletTxResp {
 pub(crate) struct WalletTxItem {
     id: String,
     tx_type: String,
-    amount: f64,
-    balance_before: f64,
-    balance_after: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    amount: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    balance_before: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    balance_after: Decimal,
     method: String,
     status: String,
     note: String,
@@ -295,8 +310,11 @@ pub(crate) async fn wallet_transactions(
 
 #[derive(Serialize)]
 pub(crate) struct EstimatedDaysResp {
-    days: Option<f64>,
+    #[serde(with = "rust_decimal::serde::float_option")]
+    days: Option<Decimal>,
 }
+
+
 
 pub(crate) async fn wallet_estimated_days(
     State(state): State<Arc<AppState>>,

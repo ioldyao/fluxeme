@@ -1,3 +1,4 @@
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone)]
@@ -31,8 +32,11 @@ pub struct UsageRecord {
     pub api_format: String,
     pub stream: bool,
     pub cache_hit_input_tokens: u64,
-    pub prompt_price: f64,
-    pub completion_price: f64,
-    pub cache_read_price: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub prompt_price: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub completion_price: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub cache_read_price: Decimal,
     pub client_ip: Option<String>,
 }
