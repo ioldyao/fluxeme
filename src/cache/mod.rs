@@ -329,6 +329,107 @@ impl RedisCache {
         }
         Ok(())
     }
+
+    // ── Observability event stream (decoupled from PG) ───────────────
+
+    const OBS_EVENTS_KEY: &'static str = "obs:events";
+
+    /// Push an observability event to the Redis Stream.
+    /// Called after every request completion — fire-and-forget via spawn.
+    pub async fn push_obs_event(&self, record: UsageRecord) -> Result<(), String> {
+        let mut con = match self.con.clone() {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        let json = serde_json::to_string(&record)
+            .map_err(|e| format!("Obs event serialize: {e}"))?;
+        redis::cmd("XADD")
+            .arg(Self::OBS_EVENTS_KEY)
+            .arg("MAXLEN")
+            .arg("100000")
+            .arg("*")
+            .arg("record")
+            .arg(&json)
+            .query_async::<String>(&mut con)
+            .await
+            .map_err(|e| format!("Redis XADD obs: {e}"))?;
+        Ok(())
+    }
+
+    /// Read pending observability events from the stream (up to `count`).
+    pub async fn read_obs_events(
+        &self,
+        count: usize,
+    ) -> Result<Vec<(String, UsageRecord)>, String> {
+        let mut con = match self.con.clone() {
+            Some(c) => c,
+            None => return Ok(Vec::new()),
+        };
+        let raw: redis::Value = redis::cmd("XREAD")
+            .arg("COUNT")
+            .arg(count)
+            .arg("STREAMS")
+            .arg(Self::OBS_EVENTS_KEY)
+            .arg("0")
+            .query_async(&mut con)
+            .await
+            .map_err(|e| format!("Redis XREAD obs: {e}"))?;
+
+        fn as_str_bytes(v: &redis::Value) -> Option<String> {
+            match v {
+                redis::Value::BulkString(b) => Some(String::from_utf8_lossy(b).into()),
+                _ => None,
+            }
+        }
+
+        let mut records = Vec::new();
+        if let redis::Value::Array(streams) = &raw {
+            for s in streams {
+                if let redis::Value::Array(entries) = s {
+                    for entry in entries.iter().skip(1) {
+                        if let redis::Value::Array(parts) = entry {
+                            if parts.len() >= 2 {
+                                let entry_id = as_str_bytes(&parts[0]).unwrap_or_default();
+                                if let redis::Value::Array(field_pairs) = &parts[1] {
+                                    for ch in field_pairs.chunks(2) {
+                                        if ch.len() == 2
+                                            && as_str_bytes(&ch[0]).as_deref() == Some("record")
+                                        {
+                                            if let Some(json) = as_str_bytes(&ch[1]) {
+                                                if let Ok(r) =
+                                                    serde_json::from_str::<UsageRecord>(&json)
+                                                {
+                                                    records.push((entry_id.clone(), r));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(records)
+    }
+
+    /// Acknowledge (delete) processed obs events from the stream.
+    pub async fn ack_obs_events(&self, entry_ids: &[String]) -> Result<(), String> {
+        let mut con = match self.con.clone() {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        for id in entry_ids {
+            redis::cmd("XDEL")
+                .arg(Self::OBS_EVENTS_KEY)
+                .arg(id)
+                .query_async::<()>(&mut con)
+                .await
+                .map_err(|e| format!("Redis XDEL obs: {e}"))?;
+        }
+        Ok(())
+    }
 }
 
 /// Background task: drains the billing backlog Redis Stream and retries
@@ -347,7 +448,6 @@ pub async fn start_billing_backlog_drain(
         }
         let mut processed = Vec::new();
         for (entry_id, record) in &records {
-            // Re-read billing_enabled (the drain runs independently)
             let billing_enabled = db
                 .get_gateway_config()
                 .await
@@ -369,6 +469,90 @@ pub async fn start_billing_backlog_drain(
         }
         if !processed.is_empty() {
             let _ = cache.ack_billing_backlog(&processed).await;
+        }
+    }
+}
+
+/// Background task: consumes the observability event stream (obs:events)
+/// and writes to ClickHouse. Decouples CH availability from the gateway.
+pub async fn start_obs_consumer(
+    ch: Option<std::sync::Arc<crate::ch_backend::ClickHouseBackend>>,
+    cache: std::sync::Arc<RedisCache>,
+    db: std::sync::Arc<crate::db::Database>,
+) {
+    let ch = match ch {
+        Some(c) => c,
+        None => {
+            tracing::info!("ClickHouse disabled — obs consumer skipped");
+            return;
+        }
+    };
+
+    tracing::info!("Obs consumer started (every 5s)");
+    let mut interval = tokio::time::interval(Duration::from_secs(5));
+    loop {
+        interval.tick().await;
+
+        let records = match cache.read_obs_events(500).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("Obs consumer: XREAD failed: {e}");
+                continue;
+            }
+        };
+
+        if records.is_empty() {
+            continue;
+        }
+
+        let mut events = Vec::with_capacity(records.len());
+        let mut entry_ids = Vec::with_capacity(records.len());
+        for (eid, r) in &records {
+            let total_tokens = if r.total_tokens > 0 {
+                r.total_tokens
+            } else {
+                r.prompt_tokens + r.completion_tokens
+            };
+            let ts = chrono::DateTime::parse_from_rfc3339(&r.timestamp)
+                .map(|dt| dt.timestamp() as u32)
+                .unwrap_or_else(|_| chrono::Utc::now().timestamp() as u32);
+            events.push(crate::ch_backend::UsageEvent {
+                timestamp: ts,
+                request_id: r.request_id.clone(),
+                user_id: r.user_id.clone(),
+                user_name: r.user_name.clone(),
+                channel_id: r.channel_id.clone(),
+                model: r.model.clone(),
+                prompt_tokens: r.prompt_tokens,
+                completion_tokens: r.completion_tokens,
+                total_tokens,
+                latency_ms: r.latency_ms,
+                status_code: r.status_code,
+                success: if r.success { 1 } else { 0 },
+                api_key_name: r.api_key_name.clone(),
+                api_format: r.api_format.clone(),
+                stream: if r.stream { 1 } else { 0 },
+                cache_hit_input_tokens: r.cache_hit_input_tokens,
+                cost_amount: 0.0,
+                client_ip: r.client_ip.clone(),
+                endpoint_id: None,
+            });
+            entry_ids.push(eid.clone());
+        }
+
+        match ch.insert_usage_events(&events).await {
+            Ok(()) => {
+                if let Err(e) = cache.ack_obs_events(&entry_ids).await {
+                    tracing::warn!("Obs consumer: XDEL failed: {e}");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    count = events.len(),
+                    error = e,
+                    "Obs consumer: CH write failed — data stays in Redis"
+                );
+            }
         }
     }
 }
