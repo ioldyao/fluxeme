@@ -2,6 +2,7 @@ const en: Record<string, string> = {
   'nav.dashboard': 'Dashboard',
   'nav.routingFlow': 'Routing Flow',
   'nav.routingHistory': 'History',
+  'nav.flowControl': 'Flow Control',
   'routingFlow.title': 'Realtime Routing Flow',
   'routingFlow.subtitle': 'Model → Channel (LB) → Endpoint (LB); color shows relative load: ',
   'routingFlow.legendLow': 'Blue=Low',

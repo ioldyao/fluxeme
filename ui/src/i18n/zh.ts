@@ -2,6 +2,7 @@ const zh: Record<string, string> = {
   'nav.dashboard': '仪表盘',
   'nav.routingFlow': '路由流量',
   'nav.routingHistory': '历史查询',
+  'nav.flowControl': '流控台',
   'routingFlow.title': '实时路由流量面板',
   'routingFlow.subtitle': '模型 → 路由渠道（负载均衡）→ 渠道端点（负载均衡），颜色表示相对负载：',
   'routingFlow.legendLow': '蓝=低',
