@@ -18,11 +18,11 @@ export function useCreateRule() {
   });
 }
 
-export function useUpdateRule(name: string) {
+export function useUpdateRule(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: Partial<RoutingRule>) =>
-      api<RoutingRule>(`/rules/${encodeURIComponent(name)}`, { method: 'PUT', body: data }),
+      api<RoutingRule>(`/rules/${encodeURIComponent(id)}`, { method: 'PUT', body: data }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['rules'] }),
   });
 }
@@ -30,8 +30,35 @@ export function useUpdateRule(name: string) {
 export function useDeleteRule() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (name: string) =>
-      api<void>(`/rules/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+    mutationFn: (id: string) =>
+      api<void>(`/rules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['rules'] }),
+  });
+}
+
+// ── User-level rules (self-service) ──────────────────────────
+
+export function useMyRules() {
+  return useQuery({
+    queryKey: ['me', 'rules'],
+    queryFn: () => api<RoutingRule[]>('/me/rules'),
+  });
+}
+
+export function useCreateMyRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { source_model: string; target_model: string }) =>
+      api<RoutingRule>('/me/rules', { method: 'POST', body: data }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me', 'rules'] }),
+  });
+}
+
+export function useDeleteMyRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api<void>(`/me/rules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me', 'rules'] }),
   });
 }

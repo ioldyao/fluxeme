@@ -7,6 +7,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Pencil, Trash2, Plus, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import type { RoutingRule } from '@/types';
@@ -17,13 +18,13 @@ export default function Rules() {
   const createRule = useCreateRule();
   const deleteRule = useDeleteRule();
   const [editRule, setEditRule] = useState<RoutingRule | null>(null);
-  const updateRule = useUpdateRule(editRule?.name ?? '');
+  const updateRule = useUpdateRule(editRule?.id ?? '');
   const [showAdd, setShowAdd] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<RoutingRule | null>(null);
 
   const handleDelete = () => {
     if (!deleteTarget) return;
-    deleteRule.mutate(deleteTarget.name, {
+    deleteRule.mutate(deleteTarget.id, {
       onSuccess: () => { toast.success(t('toast.deleted')); setDeleteTarget(null); refetch(); },
       onError: (err) => toast.error(err.message),
     });
@@ -63,18 +64,28 @@ export default function Rules() {
                   <tr className="border-b text-muted-foreground">
                     <th className="text-left py-3 px-4">{t('table.name')}</th>
                     <th className="text-left py-3 px-4">{t('table.userId')}</th>
-                    <th className="text-left py-3 px-4">{t('table.modelPattern')}</th>
+                    <th className="text-left py-3 px-4">{t('form.sourceModel')}</th>
+                    <th className="text-left py-3 px-4">{t('form.targetModel')}</th>
                     <th className="text-left py-3 px-4">{t('table.channel')}</th>
+                    <th className="text-left py-3 px-4">{t('form.upstreamModel')}</th>
+                    <th className="text-left py-3 px-4">{t('form.priority')}</th>
+                    <th className="text-left py-3 px-4">{t('form.enabled')}</th>
                     <th className="text-right py-3 px-4">{t('table.actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rules.map((rule) => (
-                    <tr key={rule.name} className="border-b last:border-0 hover:bg-muted/50">
+                    <tr key={rule.id} className="border-b last:border-0 hover:bg-muted/50">
                       <td className="py-3 px-4 font-mono text-xs">{rule.name}</td>
                       <td className="py-3 px-4">{rule.user_id}</td>
-                      <td className="py-3 px-4 text-xs font-mono text-muted-foreground">{rule.model_pattern}</td>
-                      <td className="py-3 px-4">{rule.channel_id}</td>
+                      <td className="py-3 px-4 text-xs font-mono text-muted-foreground">{rule.source_model}</td>
+                      <td className="py-3 px-4 text-xs font-mono text-muted-foreground">{rule.target_model || '-'}</td>
+                      <td className="py-3 px-4 text-xs">{rule.channel_id || '-'}</td>
+                      <td className="py-3 px-4 text-xs">{rule.upstream_model || '-'}</td>
+                      <td className="py-3 px-4">{rule.priority}</td>
+                      <td className="py-3 px-4">
+                        {rule.enabled ? <Badge variant="default" className="text-xs">ON</Badge> : <Badge variant="secondary" className="text-xs">OFF</Badge>}
+                      </td>
                       <td className="py-3 px-4 text-right">
                         <Button variant="ghost" size="sm" onClick={() => setEditRule(rule)}>
                           <Pencil className="size-3.5" />

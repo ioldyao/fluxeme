@@ -25,7 +25,6 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
   const { data: channels } = useChannels();
   const [id, setId] = useState('');
   const [name, setName] = useState('');
-  const [modelPattern, setModelPattern] = useState('');
   const [contextLength, setContextLength] = useState('');
   const [bindings, setBindings] = useState<{ channel_id: string; priority: number; upstream_model: string }[]>([]);
   const [category, setCategory] = useState<string[]>([]);
@@ -34,12 +33,11 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
     if (model) {
       setId(model.id);
       setName(model.name);
-      setModelPattern(model.model_pattern);
       setContextLength(model.context_length ? String(model.context_length) : '');
       setBindings(model.channels?.map((c) => ({ ...c, upstream_model: c.upstream_model || '' })) || []);
       setCategory(model.category ? model.category.split(',').filter(Boolean) : []);
     } else {
-      setId(''); setName(''); setModelPattern('');
+      setId(''); setName('');
       setContextLength(''); setBindings([]); setCategory([]); setSelectedAddChannel('');
     }
   }, [model, open]);
@@ -59,7 +57,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const data = {
-      id: id || name || modelPattern, name, model_pattern: modelPattern,
+      id: id || name, name,
       pricing: model?.pricing ?? { prompt_price: 0, completion_price: 0, cache_read_price: 0, cache_write_price: 0, image_input_price: 0, audio_input_price: 0, audio_output_price: 0 },
       context_length: contextLength ? Number(contextLength) : null,
       published: model?.published ?? false,
@@ -89,16 +87,6 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                   onChange={(e) => setName(e.target.value)}
                   placeholder={t('form.namePlaceholder')}
                   required
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium">{t('form.modelPattern')}</Label>
-                <Input
-                  className="h-9 bg-background"
-                  value={modelPattern}
-                  onChange={(e) => setModelPattern(e.target.value)}
-                  placeholder="gpt-4*, claude-*"
                 />
               </div>
 

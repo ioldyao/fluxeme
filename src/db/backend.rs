@@ -69,7 +69,9 @@ pub trait DbBackend: Send + Sync {
     async fn list_rules(&self) -> Result<Vec<RoutingRule>, DbError>;
     async fn create_rule(&self, r: &RoutingRule) -> Result<(), DbError>;
     async fn update_rule(&self, r: &RoutingRule) -> Result<(), DbError>;
-    async fn delete_rule(&self, name: &str) -> Result<(), DbError>;
+    async fn delete_rule(&self, id: &str) -> Result<(), DbError>;
+    /// List user-level routing rules for a specific user.
+    async fn list_user_rules(&self, user_id: &str) -> Result<Vec<RoutingRule>, DbError>;
 
     // ── Usage Logs ───────────────────────────────────────────────────────
     async fn insert_usage(&self, record: &UsageRecord) -> Result<(), DbError>;

@@ -95,7 +95,7 @@ export function ModelHealthCheckDialog({ model, open, onOpenChange, channelName,
           <div className="space-y-1.5">
             <div className="text-sm font-medium">测试模型</div>
             <div className="h-9 rounded-md border bg-muted/30 px-3 flex items-center text-sm">
-              {model?.model_pattern}
+              {model?.name}
             </div>
           </div>
           <div className="space-y-1.5">

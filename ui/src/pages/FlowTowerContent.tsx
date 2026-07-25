@@ -32,7 +32,7 @@ function buildTopology(models: Model[], channels: Channel[]): TopoModel[] {
   for (const m of models) {
     const key = m.name;
     let entry = merged.get(key);
-    if (!entry) { entry = { model: m.name, pattern: m.model_pattern, channels: [] }; merged.set(key, entry); }
+    if (!entry) { entry = { model: m.name, pattern: m.name, channels: [] }; merged.set(key, entry); }
     for (const mc of m.channels) {
       const ch = channelMap.get(mc.channel_id);
       if (!ch || entry.channels.some(ec => ec.id === ch.id)) continue;

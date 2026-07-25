@@ -83,7 +83,7 @@ export default function ModelPricingPage() {
   const filteredModels = useMemo(
     () => uniqueModels.filter((m) =>
       m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.model_pattern.toLowerCase().includes(searchQuery.toLowerCase())
+      m.name.toLowerCase().includes(searchQuery.toLowerCase())
     ),
     [uniqueModels, searchQuery],
   );
