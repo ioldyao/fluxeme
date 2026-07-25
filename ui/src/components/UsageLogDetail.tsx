@@ -23,11 +23,21 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
           <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>
         ) : record ? (
           <div className="space-y-5 min-w-0">
+
+            {/* Meta info row */}
             <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
-              <div className="rounded-lg border bg-card p-3">
-                <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">{t('table.user')}</div>
-                <div className="text-sm font-medium truncate">{record.user_name}</div>
-              </div>
+              {[
+                { label: t('table.user'), value: record.user_name },
+                { label: t('usage.apiKey'), value: record.api_key_name ?? '—' },
+                { label: t('usage.apiFormat'), value: record.api_format ?? '—' },
+                { label: t('usage.channel'), value: record.channel_id },
+                { label: 'Client IP', value: record.client_ip ?? '—' },
+              ].map(m => (
+                <div key={m.label} className="rounded-lg border bg-card p-3">
+                  <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">{m.label}</div>
+                  <div className="text-sm font-medium truncate">{m.value}</div>
+                </div>
+              ))}
               <div className="rounded-lg border bg-card p-3">
                 <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">{t('table.model')}</div>
                 {record.original_model && record.original_model !== record.model ? (
@@ -38,22 +48,6 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                 ) : (
                   <div className="text-sm font-medium truncate">{record.model}</div>
                 )}
-              </div>
-              <div className="rounded-lg border bg-card p-3">
-                <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">{t('usage.apiKey')}</div>
-                <div className="text-sm font-medium truncate">{record.api_key_name ?? '—'}</div>
-              </div>
-              <div className="rounded-lg border bg-card p-3">
-                <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">{t('usage.apiFormat')}</div>
-                <div className="text-sm font-medium truncate">{record.api_format ?? '—'}</div>
-              </div>
-              <div className="rounded-lg border bg-card p-3">
-                <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">{t('usage.channel')}</div>
-                <div className="text-sm font-medium truncate">{record.channel_id}</div>
-              </div>
-              <div className="rounded-lg border bg-card p-3">
-                <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">Client IP</div>
-                <div className="text-sm font-medium truncate">{record.client_ip ?? '—'}</div>
               </div>
             </div>
 
