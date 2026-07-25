@@ -13,8 +13,8 @@
 | Docker & Docker Compose | 部署方式 |
 | PostgreSQL 16 | 主数据库（docker compose 自动启动）|
 | Redis 7 | 缓存和消息队列（docker compose 自动启动）|
-
-可选：ClickHouse（观测查询加速）、Jaeger（分布式追踪）。
+| ClickHouse | 观测数据存储，与 PostgreSQL 解耦（docker compose 自动启动）|
+| Jaeger | 分布式追踪（docker compose 自动启动）|
 
 ---
 
