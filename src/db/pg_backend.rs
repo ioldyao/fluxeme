@@ -414,6 +414,8 @@ impl DbBackend for PgBackend {
             ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT NOW();
             -- Drop model_pattern column (no longer used — models match by exact name)
             ALTER TABLE routing_rules DROP COLUMN IF EXISTS model_pattern;
+            -- Drop foreign key constraint on channel_id (can now be empty for user-level rules)
+            ALTER TABLE routing_rules DROP CONSTRAINT IF EXISTS routing_rules_channel_id_fkey;
             -- Remove NOT NULL from channel_id for system rules that only do model rewrite
             -- (pg doesn't support ALTER COLUMN DROP NOT NULL for this, already nullable via empty default)
 
