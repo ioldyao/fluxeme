@@ -100,7 +100,6 @@ function TimelineScrub({ aggregates }: {
   aggregates: { date: string; count: number; total_tokens: number; success_count: number }[];
 }) {
   const [pos, setPos] = useState(24);
-  const maxCount = Math.max(...aggregates.map(d => d.count), 1);
   const factor = 0.55 + 0.45 * Math.sin((pos / 24) * Math.PI);
 
   const timeLabel = pos === 24 ? '现在' : `${String(pos).padStart(2, '0')}:00 · 历史回放`;
@@ -252,7 +251,7 @@ export default function FlowControlTower() {
 
           {/* model list (left) */}
           <div className="absolute inset-y-[42px] left-0 flex flex-col justify-around z-[3]">
-            {modelShare.slice(0, 5).map((m, i) => (
+            {modelShare.slice(0, 5).map(m => (
               <div key={m.model} className="min-w-[150px]">
                 <b className="text-sm leading-tight">
                   {m.model.length > 14 ? `${m.model.slice(0, 12)}..` : m.model}
