@@ -1384,7 +1384,7 @@ pub async fn chat_completions(
         check_wallet_balance(&state, &user.user_id).await?;
     }
 
-    let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model).await?;
+    let (channel_id, resolved_model, upstream_model) = state.routing.route(&user.user_id, &model).await?;
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
@@ -1401,7 +1401,7 @@ pub async fn chat_completions(
     state.event_bus.route_decided(RouteDecided {
         timestamp: Utc::now().to_rfc3339(),
         request_id: request_id.clone(),
-        model: model.clone(),
+        model: resolved_model.clone(),
         channel_id: channel_id.clone(),
         endpoint_id: route.endpoint.id,
         user_id: user.user_id.clone(),
@@ -1560,7 +1560,7 @@ pub async fn messages(
         check_wallet_balance(&state, &user.user_id).await?;
     }
 
-    let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model).await?;
+    let (channel_id, resolved_model, upstream_model) = state.routing.route(&user.user_id, &model).await?;
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
@@ -1575,7 +1575,7 @@ pub async fn messages(
     state.event_bus.route_decided(RouteDecided {
         timestamp: Utc::now().to_rfc3339(),
         request_id: request_id.clone(),
-        model: model.clone(),
+        model: resolved_model.clone(),
         channel_id: channel_id.clone(),
         endpoint_id: route.endpoint.id,
         user_id: user.user_id.clone(),
@@ -1727,7 +1727,7 @@ async fn relay_to_upstream(
         check_wallet_balance(state, &user.user_id).await?;
     }
 
-    let (channel_id, upstream_model) = state.routing.route(&user.user_id, &model).await?;
+    let (channel_id, resolved_model, upstream_model) = state.routing.route(&user.user_id, &model).await?;
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
@@ -1738,7 +1738,7 @@ async fn relay_to_upstream(
     state.event_bus.route_decided(RouteDecided {
         timestamp: Utc::now().to_rfc3339(),
         request_id: request_id.clone(),
-        model: model.clone(),
+        model: resolved_model.clone(),
         channel_id: channel_id.clone(),
         endpoint_id: route.endpoint.id,
         user_id: user.user_id.clone(),
