@@ -378,6 +378,7 @@ async fn main() {
         content_filter,
         health_probe,
         event_bus: event_bus.clone(),
+        ch,
     });
 
     let app = build_router(state);

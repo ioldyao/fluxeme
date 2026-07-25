@@ -19,7 +19,13 @@ pub(crate) async fn routing_health(
     check_perm(&state.authz, &session, "admin:dashboard").await?;
 
     let models = state.db.list_models().await.map_err(db_err)?;
-    let usage = state.db.channel_usage_24h().await.map_err(db_err)?;
+    let usage = if let Some(ref ch) = state.ch {
+        ch.query_channel_usage_24h()
+            .await
+            .map_err(|e| AdminError::internal(e))?
+    } else {
+        state.db.channel_usage_24h().await.map_err(db_err)?
+    };
 
     let mut usage_map: std::collections::HashMap<(String, String), (u64, u64, f64, f64)> =
         std::collections::HashMap::new();
@@ -200,12 +206,19 @@ pub(crate) async fn routing_flow_snapshot_handler(
 ) -> Result<Json<Vec<(String, String, Option<i64>, u64)>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:dashboard").await?;
-    state
-        .db
-        .routing_flow_snapshot(24)
-        .await
-        .map(Json)
-        .map_err(|e| AdminError::internal(e.to_string()))
+    if let Some(ref ch) = state.ch {
+        ch.query_routing_flow_snapshot(24)
+            .await
+            .map(Json)
+            .map_err(|e| AdminError::internal(e))
+    } else {
+        state
+            .db
+            .routing_flow_snapshot(24)
+            .await
+            .map(Json)
+            .map_err(|e| AdminError::internal(e.to_string()))
+    }
 }
 
 pub(crate) async fn routing_history(
@@ -220,24 +233,50 @@ pub(crate) async fn routing_history(
 
     tracing::info!(start = %q.start, end = %q.end, model = ?model_filter, "routing_history query");
 
-    let buckets = state
-        .db
-        .routing_history_buckets(&q.start, &q.end, model_filter)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e.0, start = %q.start, end = %q.end, "routing_history_buckets query failed");
-            AdminError::internal(e.to_string())
-        })?;
+    let use_ch = state.ch.is_some() && model_filter.is_none();
+    let ch = &state.ch;
 
-    let stats = state
-        .db
-        .routing_history_endpoint_stats(&q.start, &q.end, model_filter)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e.0, start = %q.start, end = %q.end, "routing_history_endpoint_stats query failed");
-            AdminError::internal(e.to_string())
-        })?;
+    let buckets = if use_ch {
+        ch.as_ref()
+            .unwrap()
+            .query_routing_history_buckets(&q.start, &q.end)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = e, "routing_history_buckets (CH) failed");
+                AdminError::internal(e)
+            })?
+    } else {
+        state
+            .db
+            .routing_history_buckets(&q.start, &q.end, model_filter)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e.0, start = %q.start, end = %q.end, "routing_history_buckets query failed");
+                AdminError::internal(e.to_string())
+            })?
+    };
 
+    let stats = if use_ch {
+        ch.as_ref()
+            .unwrap()
+            .query_routing_history_stats(&q.start, &q.end)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = e, "routing_history_stats (CH) failed");
+                AdminError::internal(e)
+            })?
+    } else {
+        state
+            .db
+            .routing_history_endpoint_stats(&q.start, &q.end, model_filter)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e.0, start = %q.start, end = %q.end, "routing_history_endpoint_stats query failed");
+                AdminError::internal(e.to_string())
+            })?
+    };
+
+    // Endpoint details needs a JOIN with PG endpoints table — keep on PG
     let details = state
         .db
         .routing_history_endpoint_details(&q.start, &q.end, model_filter)
