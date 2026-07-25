@@ -7,6 +7,7 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
 
 use crate::cache::{compute_gate_status, RedisCache};
+use crate::ch_backend::{ClickHouseBackend, UsageEvent};
 use crate::db::Database;
 use crate::domain::usage::UsageFilter;
 use crate::domain::usage::UsageRecord;
@@ -37,6 +38,7 @@ impl UsageService {
         db: Arc<Database>,
         cache: Arc<RedisCache>,
         event_bus: EventBus,
+        ch: Option<Arc<ClickHouseBackend>>,
     ) -> (Self, Vec<JoinHandle<()>>) {
         let mut senders = Vec::with_capacity(N_BILLING_WORKERS);
         let mut handles = Vec::with_capacity(N_BILLING_WORKERS);
@@ -44,7 +46,7 @@ impl UsageService {
         for i in 0..N_BILLING_WORKERS {
             let (tx, rx) = mpsc::channel::<UsageRecord>(BILLING_CHANNEL_CAP);
             senders.push(tx);
-            let h = tokio::spawn(billing_worker(i, db.clone(), cache.clone(), rx));
+            let h = tokio::spawn(billing_worker(i, db.clone(), cache.clone(), ch.clone(), rx));
             handles.push(h);
         }
 
@@ -210,6 +212,7 @@ async fn billing_worker(
     id: usize,
     db: Arc<Database>,
     cache: Arc<RedisCache>,
+    ch: Option<Arc<ClickHouseBackend>>,
     mut rx: Receiver<UsageRecord>,
 ) {
     tracing::info!("Billing worker {id} started");
@@ -245,7 +248,7 @@ async fn billing_worker(
                 false
             });
 
-        // Write batch to DB and collect deduction results (atomic transaction)
+        // Write batch to PG and collect deduction results (atomic transaction)
         match db
             .batch_insert_usage_with_billing(&batch, billing_enabled)
             .await
@@ -261,6 +264,29 @@ async fn billing_worker(
                         tracing::warn!(worker = id, user_id, "Redis gate update: {e}");
                     }
                 }
+
+                // Write observability data to ClickHouse (best-effort)
+                if let Some(ref ch) = ch {
+                    let events: Vec<UsageEvent> = batch.iter().map(usage_record_to_event).collect();
+                    let request_ids: Vec<String> =
+                        batch.iter().map(|r| r.request_id.clone()).collect();
+                    match ch.insert_usage_events(&events).await {
+                        Ok(()) => {
+                            if let Err(e) = db.mark_usage_billing_written(&request_ids).await {
+                                tracing::warn!(
+                                    worker = id, count = events.len(), error = %e.0,
+                                    "CH write ok but mark_written failed — compensation will retry"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                worker = id, count = events.len(), error = e,
+                                "CH write failed — compensation task will catch up"
+                            );
+                        }
+                    }
+                }
             }
             Err(e) => {
                 tracing::error!(
@@ -272,4 +298,37 @@ async fn billing_worker(
     }
 
     tracing::warn!("Billing worker {id} exiting (channel closed)");
+}
+
+fn usage_record_to_event(r: &UsageRecord) -> UsageEvent {
+    let total_tokens = if r.total_tokens > 0 {
+        r.total_tokens
+    } else {
+        r.prompt_tokens + r.completion_tokens
+    };
+    // cost_amount is already computed and stored in usage_billing; for the CH
+    // UsageEvent we just set it to 0 — the compensation task reads real cost
+    // from usage_billing. Direct write from worker doesn't persist cost_amount
+    // because pricing lookup happened inside the PG transaction, not in Rust.
+    UsageEvent {
+        timestamp: r.timestamp.clone(),
+        request_id: r.request_id.clone(),
+        user_id: r.user_id.clone(),
+        user_name: r.user_name.clone(),
+        channel_id: r.channel_id.clone(),
+        model: r.model.clone(),
+        prompt_tokens: r.prompt_tokens,
+        completion_tokens: r.completion_tokens,
+        total_tokens,
+        latency_ms: r.latency_ms,
+        status_code: r.status_code,
+        success: if r.success { 1 } else { 0 },
+        api_key_name: r.api_key_name.clone(),
+        api_format: r.api_format.clone(),
+        stream: if r.stream { 1 } else { 0 },
+        cache_hit_input_tokens: r.cache_hit_input_tokens,
+        cost_amount: 0.0, // real cost set by compensation task
+        client_ip: r.client_ip.clone(),
+        endpoint_id: None, // not available on UsageRecord
+    }
 }

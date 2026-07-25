@@ -259,16 +259,6 @@ async fn main() {
     // Event bus for real-time observability (WebSocket push to admin UI)
     let event_bus = observability::event_bus::EventBus::new(8192);
 
-    // Initialize usage service (background writer for usage logs + billing deductions)
-    let (usage, usage_handles) = UsageService::new(db.clone(), cache.clone(), event_bus.clone());
-
-    // Billing backlog drain — reads from Redis Stream and retries billing
-    {
-        let cache = cache.clone();
-        let db = db.clone();
-        tokio::spawn(crate::cache::start_billing_backlog_drain(cache, db));
-    }
-
     // ClickHouse backend (optional — gracefully disabled when not configured)
     let ch = ClickHouseBackend::new(&config.read().unwrap().database.clickhouse)
         .await
@@ -281,6 +271,16 @@ async fn main() {
         if let Err(e) = ch.migrate(retention as u32).await {
             tracing::warn!("ClickHouse migration: {e}");
         }
+    }
+
+    // Initialize usage service with billing workers + optional ClickHouse backend
+    let (usage, usage_handles) = UsageService::new(db.clone(), cache.clone(), event_bus.clone(), ch.clone());
+
+    // Billing backlog drain — reads from Redis Stream and retries billing
+    {
+        let cache = cache.clone();
+        let db = db.clone();
+        tokio::spawn(crate::cache::start_billing_backlog_drain(cache, db));
     }
 
     // Compensation task — scans usage_billing for unwritten records
