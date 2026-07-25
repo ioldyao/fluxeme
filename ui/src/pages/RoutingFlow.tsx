@@ -75,7 +75,7 @@ function buildTopology(models: Model[], channels: Channel[]): TopoModel[] {
         id: ch.id, name: ch.name || ch.id,
         endpoints: ch.endpoints.map((e, i) => ({
           key: e.id != null ? `id:${e.id}` : `${ch.id}#${i}`,
-          matchId: e.id ?? null, label: `端点 ${i + 1}`, url: e.url,
+          matchId: e.id ?? null, label: `${i + 1}`, url: e.url,
         })),
       });
     }
@@ -546,11 +546,11 @@ export default function RoutingFlow() {
           <div style={{ borderRadius: 10, border: `1px solid ${C.border}`, background: C.cardBg, padding: '20px 24px' }}>
             {/* Column header */}
             <div style={{ ...colLabelStyle, display: 'grid', gridTemplateColumns: '200px 1fr 200px 1fr 200px', marginBottom: 14, alignItems: 'center' }}>
-              <div>模型</div>
+              <div>{t('routingFlow.colModel')}</div>
               <div />
-              <div style={{ textAlign: 'center' }}>路由渠道（负载均衡）</div>
+              <div style={{ textAlign: 'center' }}>{t('routingFlow.colChannel')}</div>
               <div />
-              <div style={{ textAlign: 'right' }}>渠道端点（负载均衡）</div>
+              <div style={{ textAlign: 'right' }}>{t('routingFlow.colEndpoint')}</div>
             </div>
 
             {/* Grid with connectors */}
@@ -614,7 +614,7 @@ export default function RoutingFlow() {
                       const cls = loadClass(cnt, epSiblings);
                       return (
                         <div key={ek} ref={endpointRefs.current[ek]!}>
-                          <FlowNode title={e.label} subtitle={`${e.url} · ${c.name}`} count={cnt} loadCls={cls} pinged={pinged[`e:${ek}`]} barPct={Math.round((cnt / (epSiblings.reduce((a, b) => a + b, 0) || 1)) * 100)} />
+                          <FlowNode title={`${t('routingFlow.endpointLabel')} ${e.label}`} subtitle={`${e.url} · ${c.name}`} count={cnt} loadCls={cls} pinged={pinged[`e:${ek}`]} barPct={Math.round((cnt / (epSiblings.reduce((a, b) => a + b, 0) || 1)) * 100)} />
                         </div>
                       );
                     });
