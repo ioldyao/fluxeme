@@ -435,6 +435,33 @@ export default function RoutingFlow() {
 
   const { svgRef, paths } = useConnectors(containerRef, connectorPairs);
 
+  // ── Path width proportional to traffic ──
+  const pathWidthMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    let maxCnt = 0;
+    const acc: Record<string, number> = {};
+
+    topology.forEach((m) => {
+      m.channels.forEach((c) => {
+        const cnt = counts[keyFor(m.model, c.id)] || 0;
+        const k = `m2c:${m.model}>${c.id}`;
+        acc[k] = cnt;
+        if (cnt > maxCnt) maxCnt = cnt;
+
+        c.endpoints.forEach((e) => {
+          const cnt2 = counts[keyFor(m.model, c.id, e.key)] || 0;
+          const k2 = `c2e:${c.id}>${e.key}`;
+          acc[k2] = cnt2;
+          if (cnt2 > maxCnt) maxCnt = cnt2;
+        });
+      });
+    });
+
+    const scale = (cnt: number) => Math.max(1.5, Math.min(10, 1.5 + (cnt / Math.max(maxCnt, 1)) * 8.5));
+    Object.entries(acc).forEach(([k, v]) => { map[k] = scale(v); });
+    return map;
+  }, [topology, counts]);
+
   // ── Pulse / ping state ──
   const [pulses, setPulses] = useState<{ id: string; pathD: string }[]>([]);
   const [pinged, setPinged] = useState<Record<string, boolean>>({});
@@ -529,7 +556,21 @@ export default function RoutingFlow() {
             {/* Grid with connectors */}
             <div ref={containerRef} style={{ position: 'relative', display: 'grid', gridTemplateColumns: '200px 1fr 200px 1fr 200px', alignItems: 'start', minHeight: 60 }}>
               <svg ref={svgRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'none' }}>
-                {paths.map((p) => <path key={p.key} d={p.d} fill="none" stroke={C.line} strokeWidth="1.5" />)}
+                <defs>
+                  <linearGradient id="gl-m2c" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stopColor="#4a7fc9" stopOpacity="0.65" />
+                    <stop offset="100%" stopColor="#6a4ec9" stopOpacity="0.3" />
+                  </linearGradient>
+                  <linearGradient id="gl-c2e" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stopColor="#3ca07a" stopOpacity="0.65" />
+                    <stop offset="100%" stopColor="#267b7b" stopOpacity="0.3" />
+                  </linearGradient>
+                </defs>
+                {paths.map((p) => {
+                  const w = pathWidthMap[p.key] ?? 1.5;
+                  const gradient = p.key.startsWith('m2c:') ? 'url(#gl-m2c)' : 'url(#gl-c2e)';
+                  return <path key={p.key} d={p.d} fill="none" stroke={gradient} strokeWidth={w} strokeLinecap="round" />;
+                })}
                 {pulses.map((pulse) => <CometPulse key={pulse.id} pathD={pulse.pathD} onDone={() => removePulse(pulse.id)} />)}
               </svg>
 
