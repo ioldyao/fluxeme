@@ -244,147 +244,6 @@ function FlowNode({
   );
 }
 
-// ── ModelPanel ──────────────────────────────────────────────────────
-function ModelPanel({
-  model, counts, lastEvent,
-}: {
-  model: TopoModel; counts: Record<string, number>;
-  lastEvent: HopEvent | null;
-}) {
-  const { t } = useTranslation();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const modelNodeRef = useRef<HTMLDivElement>(null);
-  const channelNodeRefs = useRef<Record<string, React.RefObject<HTMLDivElement | null>>>({});
-  const endpointNodeRefs = useRef<Record<string, React.RefObject<HTMLDivElement | null>>>({});
-  const [pulses, setPulses] = useState<{ id: string; pathD: string }[]>([]);
-  const [pinged, setPinged] = useState<Record<string, boolean>>({});
-
-  model.channels.forEach((c) => {
-    if (!channelNodeRefs.current[c.id]) channelNodeRefs.current[c.id] = { current: null };
-    c.endpoints.forEach((e) => {
-      if (!endpointNodeRefs.current[e.key]) endpointNodeRefs.current[e.key] = { current: null };
-    });
-  });
-
-  const connectorPairs = useMemo(() => {
-    const pairs: Pair[] = [];
-    model.channels.forEach((c) => {
-      pairs.push({ key: keyFor(model.model, c.id), fromRef: modelNodeRef, toRef: channelNodeRefs.current[c.id] });
-      c.endpoints.forEach((e) => {
-        pairs.push({ key: keyFor(model.model, c.id, e.key), fromRef: channelNodeRefs.current[c.id], toRef: endpointNodeRefs.current[e.key] });
-      });
-    });
-    return pairs;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [model]);
-
-  const { svgRef, paths } = useConnectors(containerRef, connectorPairs);
-
-  // ── Hop-by-hop pulse animation ──────────────────────────────────
-  // Each HopEvent fires exactly ONE pulse leg:
-  //   endpoint == null  →  Hop 1: model → channel
-  //   endpoint != null  →  Hop 2: channel → endpoint
-  // The caller (useRoutingStream) emits the two hops with 500ms stagger.
-  const prevTsRef = useRef(lastEvent?.ts);
-  useEffect(() => {
-    if (!lastEvent || lastEvent.model !== model.model) return;
-    // Skip duplicate events (the useEffect may be called re-entrantly).
-    if (lastEvent.ts === prevTsRef.current) return;
-    prevTsRef.current = lastEvent.ts;
-    const { channel, endpoint, ts } = lastEvent;
-
-    if (endpoint) {
-      // ── Hop 2: channel → endpoint ────────────────────────────
-      const epPath = paths.find((p) => p.key === keyFor(model.model, channel, endpoint));
-      if (epPath) setPulses((prev) => [...prev, { id: `${ts}-ep`, pathD: epPath.d }]);
-      // Ping channel immediately, endpoint when pulse arrives (~400ms)
-      const ck = keyFor(model.model, channel);
-      const ek = keyFor(model.model, channel, endpoint);
-      setPinged((prev) => ({ ...prev, [ck]: true }));
-      setTimeout(() => setPinged((prev) => ({ ...prev, [ck]: false })), 300);
-      setTimeout(() => {
-        setPinged((prev) => ({ ...prev, [ek]: true }));
-        setTimeout(() => setPinged((prev) => ({ ...prev, [ek]: false })), 300);
-      }, 400);
-    } else {
-      // ── Hop 1: model → channel ───────────────────────────────
-      const chPath = paths.find((p) => p.key === keyFor(model.model, channel));
-      if (chPath) setPulses((prev) => [...prev, { id: `${ts}-ch`, pathD: chPath.d }]);
-      // Ping model immediately, channel when pulse arrives (~400ms)
-      const mk = keyFor(model.model);
-      const ck = keyFor(model.model, channel);
-      setPinged((prev) => ({ ...prev, [mk]: true }));
-      setTimeout(() => setPinged((prev) => ({ ...prev, [mk]: false })), 300);
-      setTimeout(() => {
-        setPinged((prev) => ({ ...prev, [ck]: true }));
-        setTimeout(() => setPinged((prev) => ({ ...prev, [ck]: false })), 300);
-      }, 400);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastEvent]);
-
-  const removePulse = useCallback((id: string) => {
-    setPulses((prev) => prev.filter((p) => p.id !== id));
-  }, []);
-
-  const modelCount = counts[keyFor(model.model)] || 0;
-  const channelCounts = model.channels.map((c) => counts[keyFor(model.model, c.id)] || 0);
-  const colLabelStyle: React.CSSProperties = {
-    fontSize: 10.5, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.04em',
-  };
-
-  return (
-    <div style={{ marginBottom: 16, borderRadius: 10, border: `1px solid ${C.border}`, background: C.cardBg, padding: '20px 24px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, fontSize: 14, fontWeight: 600 }}>
-        <span>{model.model}</span>
-        <span style={{ fontSize: 11, fontWeight: 400, color: C.textMuted, background: '#f0efe9', padding: '1px 8px', borderRadius: 4, fontFamily: 'SF Mono, Consolas, monospace' }}>{model.pattern}</span>
-        <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 400, color: C.textSecondary }}>
-          {t('routingFlow.reqCountPrefix')} <b style={{ color: C.textPrimary, fontWeight: 600 }}><AnimatedNumber value={modelCount} /></b>{' '}{t('routingFlow.reqCountSuffix')}
-        </span>
-      </div>
-
-      <div ref={containerRef} style={{ position: 'relative', display: 'grid', gridTemplateColumns: '200px 1fr 200px 1fr 200px', alignItems: 'center', minHeight: 60 }}>
-        <svg ref={svgRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'none' }}>
-          {paths.map((p) => <path key={p.key} d={p.d} fill="none" stroke={C.line} strokeWidth="1.5" />)}
-          {pulses.map((pulse) => <CometPulse key={pulse.id} pathD={pulse.pathD} onDone={() => removePulse(pulse.id)} />)}
-        </svg>
-
-        <div style={{ zIndex: 1, gridColumn: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={colLabelStyle}>{t('routingFlow.colModel')}</div>
-          <FlowNode nodeRef={modelNodeRef} title={model.model} count={modelCount} pinged={pinged[keyFor(model.model)]} showBar={false} />
-        </div>
-        <div />
-
-        <div style={{ zIndex: 1, gridColumn: 3, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={colLabelStyle}>{t('routingFlow.colChannel')}</div>
-          {model.channels.map((c) => {
-            const cnt = counts[keyFor(model.model, c.id)] || 0;
-            const cls = loadClass(cnt, channelCounts);
-            const sum = channelCounts.reduce((a, b) => a + b, 0) || 1;
-            const k = keyFor(model.model, c.id);
-            return <FlowNode key={c.id} nodeRef={channelNodeRefs.current[c.id]} title={c.name} count={cnt} loadCls={cls} barPct={Math.round((cnt / sum) * 100)} pinged={pinged[k]} />;
-          })}
-        </div>
-        <div />
-
-        <div style={{ zIndex: 1, gridColumn: 5, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={colLabelStyle}>{t('routingFlow.colEndpoint')}</div>
-          {model.channels.flatMap((c) => {
-            const epCounts = c.endpoints.map((e) => counts[keyFor(model.model, c.id, e.key)] || 0);
-            const esum = epCounts.reduce((a, b) => a + b, 0) || 1;
-            return c.endpoints.map((e) => {
-              const cnt = counts[keyFor(model.model, c.id, e.key)] || 0;
-              const cls = loadClass(cnt, epCounts);
-              const k = keyFor(model.model, c.id, e.key);
-              return <FlowNode key={e.key} nodeRef={endpointNodeRefs.current[e.key]} title={e.label} subtitle={`${e.url} · ${c.name}`} count={cnt} loadCls={cls} barPct={Math.round((cnt / esum) * 100)} pinged={pinged[k]} />;
-            });
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── Skeleton panel (loading state) ──────────────────────────────────
 function SkeletonPanel() {
   return (
@@ -549,6 +408,79 @@ export default function RoutingFlow() {
   const { counts, totalCount, lastEvent, connected, reconnectIn } = useRoutingStream(topology);
   const loading = mLoading || cLoading;
 
+  // ── Refs for all nodes ──
+  const containerRef = useRef<HTMLDivElement>(null);
+  const modelRefs = useRef<Record<string, React.RefObject<HTMLDivElement | null>>>({});
+  const channelRefs = useRef<Record<string, React.RefObject<HTMLDivElement | null>>>({});
+  const endpointRefs = useRef<Record<string, React.RefObject<HTMLDivElement | null>>>({});
+
+  // ── Connector pairs (also initialises refs) ──
+  const connectorPairs = useMemo(() => {
+    const pairs: Pair[] = [];
+    topology.forEach((m) => {
+      if (!modelRefs.current[m.model]) modelRefs.current[m.model] = { current: null };
+      m.channels.forEach((c) => {
+        const ck = `${m.model}:${c.id}`;
+        if (!channelRefs.current[ck]) channelRefs.current[ck] = { current: null };
+        pairs.push({ key: `m2c:${m.model}>${c.id}`, fromRef: modelRefs.current[m.model]!, toRef: channelRefs.current[ck]! });
+        c.endpoints.forEach((e) => {
+          const ek = `${m.model}:${c.id}:${e.key}`;
+          if (!endpointRefs.current[ek]) endpointRefs.current[ek] = { current: null };
+          pairs.push({ key: `c2e:${c.id}>${e.key}`, fromRef: channelRefs.current[ck]!, toRef: endpointRefs.current[ek]! });
+        });
+      });
+    });
+    return pairs;
+  }, [topology]);
+
+  const { svgRef, paths } = useConnectors(containerRef, connectorPairs);
+
+  // ── Pulse / ping state ──
+  const [pulses, setPulses] = useState<{ id: string; pathD: string }[]>([]);
+  const [pinged, setPinged] = useState<Record<string, boolean>>({});
+  const prevTsRef = useRef(0);
+
+  useEffect(() => {
+    if (!lastEvent) return;
+    if (lastEvent.ts === prevTsRef.current) return;
+    prevTsRef.current = lastEvent.ts;
+    const { model, channel, endpoint } = lastEvent;
+
+    if (endpoint) {
+      // Hop 2: channel → endpoint
+      const epPath = paths.find((p) => p.key === `c2e:${channel}>${endpoint}`);
+      if (epPath) setPulses((prev) => [...prev, { id: `${lastEvent.ts}-ep`, pathD: epPath.d }]);
+      const ck = `c:${model}:${channel}`;
+      const ek = `e:${model}:${channel}:${endpoint}`;
+      setPinged((prev) => ({ ...prev, [ck]: true }));
+      setTimeout(() => setPinged((prev) => ({ ...prev, [ck]: false })), 300);
+      setTimeout(() => {
+        setPinged((prev) => ({ ...prev, [ek]: true }));
+        setTimeout(() => setPinged((prev) => ({ ...prev, [ek]: false })), 300);
+      }, 400);
+    } else {
+      // Hop 1: model → channel
+      const chPath = paths.find((p) => p.key === `m2c:${model}>${channel}`);
+      if (chPath) setPulses((prev) => [...prev, { id: `${lastEvent.ts}-ch`, pathD: chPath.d }]);
+      const mk = `m:${model}`;
+      const ck = `c:${model}:${channel}`;
+      setPinged((prev) => ({ ...prev, [mk]: true }));
+      setTimeout(() => setPinged((prev) => ({ ...prev, [mk]: false })), 300);
+      setTimeout(() => {
+        setPinged((prev) => ({ ...prev, [ck]: true }));
+        setTimeout(() => setPinged((prev) => ({ ...prev, [ck]: false })), 300);
+      }, 400);
+    }
+  }, [lastEvent, paths]);
+
+  const removePulse = useCallback((id: string) => {
+    setPulses((prev) => prev.filter((p) => p.id !== id));
+  }, []);
+
+  const colLabelStyle: React.CSSProperties = {
+    fontSize: 10.5, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.04em',
+  };
+
   return (
     <div style={{ fontFamily: FONT_FAMILY, color: C.textPrimary }}>
       <h1 style={{ fontSize: 20, fontWeight: 600, margin: '0 0 4px' }}>{t('routingFlow.title')}</h1>
@@ -575,13 +507,82 @@ export default function RoutingFlow() {
         </div>
       </div>
 
-      {/* 6. WS disconnect overlay */}
+      {/* Main content */}
       <div style={{ position: 'relative' }}>
-        {loading ? <><SkeletonPanel /><SkeletonPanel /></> : topology.length === 0 ? (
+        {loading ? (
+          <><SkeletonPanel /><SkeletonPanel /></>
+        ) : topology.length === 0 ? (
           <div style={{ borderRadius: 10, border: `1px dashed ${C.border}`, background: C.cardBg, padding: '40px 24px', textAlign: 'center', fontSize: 13, color: C.textSecondary }}>
             {t('routingFlow.empty')}
           </div>
-        ) : topology.map((m) => <ModelPanel key={m.model} model={m} counts={counts} lastEvent={lastEvent} />)}
+        ) : (
+          <div style={{ borderRadius: 10, border: `1px solid ${C.border}`, background: C.cardBg, padding: '20px 24px' }}>
+            {/* Column header */}
+            <div style={{ ...colLabelStyle, display: 'grid', gridTemplateColumns: '200px 1fr 200px 1fr 200px', marginBottom: 14, alignItems: 'center' }}>
+              <div>模型</div>
+              <div />
+              <div style={{ textAlign: 'center' }}>路由渠道（负载均衡）</div>
+              <div />
+              <div style={{ textAlign: 'right' }}>渠道端点（负载均衡）</div>
+            </div>
+
+            {/* Grid with connectors */}
+            <div ref={containerRef} style={{ position: 'relative', display: 'grid', gridTemplateColumns: '200px 1fr 200px 1fr 200px', alignItems: 'start', minHeight: 60 }}>
+              <svg ref={svgRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'none' }}>
+                {paths.map((p) => <path key={p.key} d={p.d} fill="none" stroke={C.line} strokeWidth="1.5" />)}
+                {pulses.map((pulse) => <CometPulse key={pulse.id} pathD={pulse.pathD} onDone={() => removePulse(pulse.id)} />)}
+              </svg>
+
+              {/* Col 1: Models */}
+              <div style={{ zIndex: 1, gridColumn: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {topology.map((m) => {
+                  const cnt = counts[keyFor(m.model)] || 0;
+                  return (
+                    <div key={m.model} ref={modelRefs.current[m.model]!}>
+                      <FlowNode title={m.model} subtitle={m.pattern} count={cnt} pinged={pinged[`m:${m.model}`]} showBar={false} />
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Col 3: Channels */}
+              <div style={{ zIndex: 1, gridColumn: 3, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {topology.flatMap((m) => {
+                  const siblingCounts = m.channels.map((c2) => counts[keyFor(m.model, c2.id)] || 0);
+                  return m.channels.map((c) => {
+                    const cnt = counts[keyFor(m.model, c.id)] || 0;
+                    const ck = `${m.model}:${c.id}`;
+                    const cls = loadClass(cnt, siblingCounts);
+                    return (
+                      <div key={ck} ref={channelRefs.current[ck]!}>
+                        <FlowNode title={c.name} count={cnt} loadCls={cls} pinged={pinged[`c:${ck}`]} barPct={Math.round((cnt / (siblingCounts.reduce((a, b) => a + b, 0) || 1)) * 100)} />
+                      </div>
+                    );
+                  });
+                })}
+              </div>
+
+              {/* Col 5: Endpoints */}
+              <div style={{ zIndex: 1, gridColumn: 5, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {topology.flatMap((m) =>
+                  m.channels.flatMap((c) => {
+                    const epSiblings = c.endpoints.map((e2) => counts[keyFor(m.model, c.id, e2.key)] || 0);
+                    return c.endpoints.map((e) => {
+                      const cnt = counts[keyFor(m.model, c.id, e.key)] || 0;
+                      const ek = `${m.model}:${c.id}:${e.key}`;
+                      const cls = loadClass(cnt, epSiblings);
+                      return (
+                        <div key={ek} ref={endpointRefs.current[ek]!}>
+                          <FlowNode title={e.label} subtitle={`${e.url} · ${c.name}`} count={cnt} loadCls={cls} pinged={pinged[`e:${ek}`]} barPct={Math.round((cnt / (epSiblings.reduce((a, b) => a + b, 0) || 1)) * 100)} />
+                        </div>
+                      );
+                    });
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {!loading && !connected && topology.length > 0 && (
           <div style={{ position: 'absolute', inset: 0, borderRadius: 10, background: 'rgba(255,255,255,0.55)', backdropFilter: 'blur(1px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}>
@@ -593,15 +594,8 @@ export default function RoutingFlow() {
       </div>
 
       <style>{`
-        @keyframes rfl-pulse {
-          0% { box-shadow: 0 0 0 0 rgba(26,138,61,0.5); }
-          70% { box-shadow: 0 0 0 6px rgba(26,138,61,0); }
-          100% { box-shadow: 0 0 0 0 rgba(26,138,61,0); }
-        }
-        @keyframes sk-shimmer {
-          0% { background-position: 200% 0; }
-          100% { background-position: -200% 0; }
-        }
+        @keyframes rfl-pulse { 0% { box-shadow: 0 0 0 0 rgba(26,138,61,0.5); } 70% { box-shadow: 0 0 0 6px rgba(26,138,61,0); } 100% { box-shadow: 0 0 0 0 rgba(26,138,61,0); } }
+        @keyframes sk-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
       `}</style>
     </div>
   );
