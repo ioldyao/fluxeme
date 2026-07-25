@@ -288,8 +288,7 @@ async fn main() {
     {
         let ch = ch.clone();
         let cache = cache.clone();
-        let db = db.clone();
-        tokio::spawn(crate::cache::start_obs_consumer(ch, cache, db));
+        tokio::spawn(crate::cache::start_obs_consumer(ch, cache));
     }
 
     // In-memory gate cache (populated by inspection, read by handler when Redis is down)

@@ -103,33 +103,6 @@ pub struct RoutingEndpointStat {
     pub p95_latency: f64,
 }
 
-/// Row from the usage_billing table (billing-only, no observability fields).
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct UsageBillingRecord {
-    pub request_id: String,
-    pub user_id: String,
-    pub user_name: String,
-    pub model: String,
-    pub channel_id: String,
-    pub prompt_tokens: i64,
-    pub completion_tokens: i64,
-    pub total_tokens: i64,
-    pub latency_ms: i64,
-    pub status_code: i32,
-    pub success: bool,
-    pub cache_hit_input_tokens: i64,
-    pub prompt_price: f64,
-    pub completion_price: f64,
-    pub cache_read_price: f64,
-    pub cost_amount: f64,
-    pub api_key_name: Option<String>,
-    pub api_format: String,
-    pub stream: bool,
-    pub client_ip: Option<String>,
-    pub endpoint_id: Option<i64>,
-    pub timestamp: String,
-}
-
 pub struct Database {
     pub backend: Box<dyn DbBackend>,
 }
@@ -686,20 +659,5 @@ impl Database {
         self.backend
             .batch_insert_usage_with_billing(batch, billing_enabled)
             .await
-    }
-
-    // ── usage_billing ─────────────────────────────────────────────────
-    pub async fn find_pending_usage_billing(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<UsageBillingRecord>, DbError> {
-        self.backend.find_pending_usage_billing(limit).await
-    }
-
-    pub async fn mark_usage_billing_written(
-        &self,
-        request_ids: &[String],
-    ) -> Result<u64, DbError> {
-        self.backend.mark_usage_billing_written(request_ids).await
     }
 }

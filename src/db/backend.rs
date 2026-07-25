@@ -9,7 +9,7 @@ use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
 
 use super::{
-    DbError, FunnelStats, ProbeResultRow, RechargeKeyRow, UsageBillingRecord, WalletTransactionRow,
+    DbError, FunnelStats, ProbeResultRow, RechargeKeyRow, WalletTransactionRow,
 };
 
 /// PostgreSQL persistence contract used by application services.
@@ -324,15 +324,4 @@ pub trait DbBackend: Send + Sync {
         batch: &[UsageRecord],
         billing_enabled: bool,
     ) -> Result<Vec<(String, f64, f64)>, DbError>;
-
-    // ── usage_billing (compensation & user-facing queries) ────────────
-
-    /// Find usage_billing records not yet written to ClickHouse.
-    async fn find_pending_usage_billing(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<UsageBillingRecord>, DbError>;
-
-    /// Mark multiple usage_billing records as successfully written to ClickHouse.
-    async fn mark_usage_billing_written(&self, request_ids: &[String]) -> Result<u64, DbError>;
 }

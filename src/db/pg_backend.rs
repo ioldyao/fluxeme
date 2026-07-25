@@ -684,21 +684,12 @@ impl DbBackend for PgBackend {
                 client_ip TEXT,\
                 endpoint_id BIGINT,\
                 timestamp TEXT NOT NULL,\
-                written_to_ch BOOLEAN NOT NULL DEFAULT false,\
                 created_at TIMESTAMP NOT NULL DEFAULT NOW()\
             )",
         )
         .execute(&self.pool)
         .await
         .map_err(|e| DbError(format!("Migration create usage_billing: {e}")))?;
-
-        // Index for the compensation task — only rows not yet written to CH
-        let _ = raw_sql(
-            "CREATE INDEX IF NOT EXISTS idx_usage_billing_pending \
-             ON usage_billing(written_to_ch) WHERE written_to_ch = false",
-        )
-        .execute(&self.pool)
-        .await;
 
         // Index for user-facing usage query
         let _ = raw_sql(
@@ -2779,7 +2770,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn get_total_consumed(&self, user_id: &str) -> Result<f64, DbError> {
-        let result: Result<(f64,), _> = query_as(
+        let (amount,): (f64,) = query_as(
             "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
              completion_tokens / 1000000.0 * completion_price + \
              cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
@@ -2787,8 +2778,8 @@ impl DbBackend for PgBackend {
         )
         .bind(user_id)
         .fetch_one(&self.pool)
-        .await;
-        Ok(result.unwrap_or((0.0,)).0)
+        .await?;
+        Ok(amount)
     }
 
     async fn get_total_recharged(&self, user_id: &str) -> Result<f64, DbError> {
@@ -2804,7 +2795,7 @@ impl DbBackend for PgBackend {
 
     async fn get_wallet_estimated_days(&self, user_id: &str) -> Result<Option<f64>, DbError> {
         let thirty_days_ago = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
-        let total_cost: f64 = query_as::<_, (f64,)>(
+        let (total_cost,): (f64,) = query_as(
             "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
              completion_tokens / 1000000.0 * completion_price + \
              cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
@@ -2813,16 +2804,12 @@ impl DbBackend for PgBackend {
         .bind(user_id)
         .bind(&thirty_days_ago)
         .fetch_one(&self.pool)
-        .await
-        .map(|r| r.0)
-        .unwrap_or(0.0);
+        .await?;
 
-        let balance: f64 = query_as::<_, (f64,)>("SELECT balance FROM users WHERE id = $1")
+        let (balance,): (f64,) = query_as("SELECT balance FROM users WHERE id = $1")
             .bind(user_id)
             .fetch_one(&self.pool)
-            .await
-            .map(|r| r.0)
-            .unwrap_or(0.0);
+            .await?;
 
         let daily_avg = total_cost / 30.0;
         if daily_avg <= 0.0 {
@@ -2859,14 +2846,17 @@ impl DbBackend for PgBackend {
         let now = chrono::Utc::now().to_rfc3339();
         let mut tx = self.pool.begin().await?;
 
-        // Atomically mark as used — only if not already used/revoked
+        // Atomically mark as used — only if not already used/revoked/expired
         let updated = query(
             "UPDATE recharge_keys SET used_by = $1, used_at = $2 \
-             WHERE key = $3 AND used_by IS NULL AND (revoked IS NULL OR revoked = false)",
+             WHERE key = $3 AND used_by IS NULL \
+             AND (revoked IS NULL OR revoked = false) \
+             AND (expires_at IS NULL OR expires_at > $4)",
         )
         .bind(user_id)
         .bind(&now)
         .bind(key)
+        .bind(&now)
         .execute(&mut *tx)
         .await?;
 
@@ -3552,11 +3542,20 @@ impl DbBackend for PgBackend {
             if billing_enabled {
                 if cost_amount > 0.0 {
                     let (balance, frozen): (f64, f64) =
-                        query_as("SELECT balance, frozen FROM users WHERE id = $1")
+                        query_as("SELECT balance, frozen FROM users WHERE id = $1 FOR UPDATE")
                             .bind(&record.user_id)
                             .fetch_one(&mut *tx)
-                            .await
-                            .unwrap_or((0.0, 0.0));
+                            .await?;
+
+                    let spendable = balance - frozen;
+                    if spendable < cost_amount {
+                        tracing::warn!(
+                            user_id = &record.user_id,
+                            balance, frozen, cost_amount,
+                            "Insufficient balance — skipping deduction"
+                        );
+                        continue;
+                    }
 
                     let new_balance = balance - cost_amount;
                     query("UPDATE users SET balance = $1 WHERE id = $2")
@@ -3593,65 +3592,6 @@ impl DbBackend for PgBackend {
         Ok(deductions)
     }
 
-    // ── usage_billing ─────────────────────────────────────────────────
-
-    async fn find_pending_usage_billing(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<super::UsageBillingRecord>, DbError> {
-        use Row;
-        let rows = query(
-            "SELECT request_id, user_id, user_name, model, channel_id, \
-             prompt_tokens, completion_tokens, total_tokens, latency_ms, \
-             status_code, success, cache_hit_input_tokens, prompt_price, \
-             completion_price, cache_read_price, cost_amount, api_key_name, \
-             api_format, stream, client_ip, endpoint_id, timestamp \
-             FROM usage_billing WHERE written_to_ch = false LIMIT $1",
-        )
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows
-            .iter()
-            .map(|r| super::UsageBillingRecord {
-                request_id: r.try_get(0).unwrap_or_default(),
-                user_id: r.try_get(1).unwrap_or_default(),
-                user_name: r.try_get(2).unwrap_or_default(),
-                model: r.try_get(3).unwrap_or_default(),
-                channel_id: r.try_get(4).unwrap_or_default(),
-                prompt_tokens: r.try_get(5).unwrap_or_default(),
-                completion_tokens: r.try_get(6).unwrap_or_default(),
-                total_tokens: r.try_get(7).unwrap_or_default(),
-                latency_ms: r.try_get(8).unwrap_or_default(),
-                status_code: r.try_get(9).unwrap_or_default(),
-                success: r.try_get(10).unwrap_or_default(),
-                cache_hit_input_tokens: r.try_get(11).unwrap_or_default(),
-                prompt_price: r.try_get(12).unwrap_or_default(),
-                completion_price: r.try_get(13).unwrap_or_default(),
-                cache_read_price: r.try_get(14).unwrap_or_default(),
-                cost_amount: r.try_get(15).unwrap_or_default(),
-                api_key_name: r.try_get(16).unwrap_or_default(),
-                api_format: r.try_get(17).unwrap_or_default(),
-                stream: r.try_get(18).unwrap_or_default(),
-                client_ip: r.try_get(19).unwrap_or_default(),
-                endpoint_id: r.try_get(20).unwrap_or_default(),
-                timestamp: r.try_get(21).unwrap_or_default(),
-            })
-            .collect())
-    }
-
-    async fn mark_usage_billing_written(&self, request_ids: &[String]) -> Result<u64, DbError> {
-        if request_ids.is_empty() {
-            return Ok(0);
-        }
-        let ids = request_ids.join("','");
-        let sql = format!(
-            "UPDATE usage_billing SET written_to_ch = true WHERE request_id IN ('{}')",
-            ids
-        );
-        let result = raw_sql(&sql).execute(&self.pool).await?;
-        Ok(result.rows_affected() as u64)
-    }
 }
 
 impl PgBackend {
