@@ -181,10 +181,172 @@ impl ClickHouseBackend {
             .map_err(|e| format!("CH insert batch end: {e}"))
     }
 
-    // ── Raw query access (used by Phase 8 query migration) ───────────
+    // ── Raw query access ─────────────────────────────────────────────
 
     /// Returns a reference to the underlying ClickHouse client for ad-hoc queries.
     pub fn client(&self) -> &Client {
         &self.client
+    }
+
+    // ── Observability queries (Phase 8, routed from admin handlers) ──
+
+    /// 24h channel usage: (channel_id, model, requests, successes, avg_latency, p95).
+    pub async fn query_channel_usage_24h(
+        &self,
+    ) -> Result<Vec<(String, String, u64, u64, f64, f64)>, String> {
+        #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
+        struct ChUsageRow {
+            channel_id: String,
+            model: String,
+            requests: u64,
+            successes: u64,
+            avg_latency: f64,
+            p95_latency: f64,
+        }
+        let rows = self
+            .client
+            .query(
+                "SELECT channel_id, model, \
+                 count()::UInt64 AS requests, \
+                 countIf(success = 1)::UInt64 AS successes, \
+                 avg(latency_ms)::Float64 AS avg_latency, \
+                 quantileExact(0.95)(latency_ms)::Float64 AS p95_latency \
+                 FROM usage_events \
+                 WHERE timestamp >= now() - INTERVAL 24 HOUR \
+                 GROUP BY channel_id, model \
+                 ORDER BY requests DESC",
+            )
+            .fetch_all::<ChUsageRow>()
+            .await
+            .map_err(|e| format!("CH channel_usage_24h: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.channel_id, r.model, r.requests, r.successes, r.avg_latency, r.p95_latency,
+                )
+            })
+            .collect())
+    }
+
+    /// 24h routing flow snapshot: (model, channel_id, endpoint_id, count).
+    pub async fn query_routing_flow_snapshot(
+        &self,
+        hours: u32,
+    ) -> Result<Vec<(String, String, Option<i64>, u64)>, String> {
+        #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
+        struct SnapRow {
+            model: String,
+            channel_id: String,
+            endpoint_id: Option<i64>,
+            cnt: u64,
+        }
+        let rows = self
+            .client
+            .query(
+                "SELECT model, channel_id, endpoint_id, count()::UInt64 AS cnt \
+                 FROM usage_events \
+                 WHERE timestamp >= now() - INTERVAL {h:UInt32} HOUR \
+                 GROUP BY model, channel_id, endpoint_id",
+            )
+            .bind(hours)
+            .fetch_all::<SnapRow>()
+            .await
+            .map_err(|e| format!("CH routing_flow_snapshot: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.model, r.channel_id, r.endpoint_id, r.cnt))
+            .collect())
+    }
+
+    /// Routing history buckets: (bucket, channel_id, endpoint_id, requests, successes, avg_latency).
+    pub async fn query_routing_history_buckets(
+        &self,
+        start: &str,
+        end: &str,
+    ) -> Result<Vec<super::db::RoutingHistoryBucket>, String> {
+        #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
+        struct BktRow {
+            bucket: String,
+            channel_id: String,
+            endpoint_id: Option<i64>,
+            requests: u64,
+            successes: u64,
+            avg_latency: f64,
+        }
+        let rows = self
+            .client
+            .query(
+                "SELECT toStartOfHour(timestamp)::String AS bucket, \
+                 channel_id, endpoint_id, \
+                 count()::UInt64 AS requests, \
+                 countIf(success = 1)::UInt64 AS successes, \
+                 avg(latency_ms)::Float64 AS avg_latency \
+                 FROM usage_events \
+                 WHERE timestamp >= {s:String} AND timestamp <= {e:String} \
+                 GROUP BY bucket, channel_id, endpoint_id \
+                 ORDER BY bucket ASC",
+            )
+            .bind(start)
+            .bind(end)
+            .fetch_all::<BktRow>()
+            .await
+            .map_err(|e| format!("CH routing_history_buckets: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| super::db::RoutingHistoryBucket {
+                bucket: r.bucket,
+                channel_id: r.channel_id,
+                endpoint_id: r.endpoint_id,
+                requests: r.requests,
+                successes: r.successes,
+                avg_latency: r.avg_latency,
+            })
+            .collect())
+    }
+
+    /// Routing history endpoint stats: (channel_id, endpoint_id, requests, successes, avg_latency, p95).
+    pub async fn query_routing_history_stats(
+        &self,
+        start: &str,
+        end: &str,
+    ) -> Result<Vec<super::db::RoutingEndpointStat>, String> {
+        #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
+        struct StatRow {
+            channel_id: String,
+            endpoint_id: Option<i64>,
+            requests: u64,
+            successes: u64,
+            avg_latency: f64,
+            p95_latency: f64,
+        }
+        let rows = self
+            .client
+            .query(
+                "SELECT channel_id, endpoint_id, \
+                 count()::UInt64 AS requests, \
+                 countIf(success = 1)::UInt64 AS successes, \
+                 avg(latency_ms)::Float64 AS avg_latency, \
+                 quantileExact(0.95)(latency_ms)::Float64 AS p95_latency \
+                 FROM usage_events \
+                 WHERE timestamp >= {s:String} AND timestamp <= {e:String} \
+                 GROUP BY channel_id, endpoint_id",
+            )
+            .bind(start)
+            .bind(end)
+            .fetch_all::<StatRow>()
+            .await
+            .map_err(|e| format!("CH routing_history_stats: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| super::db::RoutingEndpointStat {
+                channel_id: r.channel_id,
+                endpoint_id: r.endpoint_id,
+                requests: r.requests,
+                successes: r.successes,
+                avg_latency: r.avg_latency,
+                p95_latency: r.p95_latency,
+            })
+            .collect())
     }
 }

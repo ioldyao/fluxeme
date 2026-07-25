@@ -15,6 +15,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::authz::AuthzModule;
 use crate::cache::{GateStatus, RedisCache};
+use crate::ch_backend::ClickHouseBackend;
 use crate::config::types::{AppConfig, GatewayRuntimeConfig};
 use crate::provider::ProviderRegistry;
 use crate::ratelimit::RateLimiter;
@@ -51,6 +52,9 @@ pub struct AppState {
     pub health_probe: Arc<HealthProbeService>,
     /// Event bus for real-time request path events (WebSocket push).
     pub event_bus: crate::observability::event_bus::EventBus,
+    /// ClickHouse backend for observability queries (optional).
+    /// When `None`, observability queries fall back to PostgreSQL.
+    pub ch: Option<Arc<ClickHouseBackend>>,
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
