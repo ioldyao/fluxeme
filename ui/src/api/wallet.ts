@@ -69,6 +69,7 @@ export function useRechargeKeys(
   page?: number,
   size?: number,
   filters?: { search?: string; status?: string; used_by?: string },
+  options?: { enabled?: boolean },
 ) {
   const params = new URLSearchParams();
   if (page != null && size != null) {
@@ -82,6 +83,7 @@ export function useRechargeKeys(
     queryKey: ['wallet', 'keys', page, size, filters],
     queryFn: () => api<RechargeKeyResponse>(`/wallet/keys?${params}`),
     staleTime: 10_000,
+    enabled: options?.enabled ?? true,
   });
 }
 
