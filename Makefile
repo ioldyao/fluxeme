@@ -4,16 +4,21 @@ export
 .PHONY: up down logs restart build
 
 up:
+	@echo "Starting with PostgreSQL ($(DB_DEPLOYMENT)) + ClickHouse ($(CLICKHOUSE_DEPLOYMENT))..."
 ifeq ($(DB_DEPLOYMENT),remote)
-	@echo "Starting with remote PostgreSQL..."
-	docker compose -f docker-compose.yml up -d
+	$(eval PSQL_FRAG := )
 else
-	@echo "Starting with local PostgreSQL..."
-	docker compose -f docker-compose.yml -f compose.psql.yml up -d
+	$(eval PSQL_FRAG := -f compose.psql.yml)
 endif
+ifeq ($(CLICKHOUSE_DEPLOYMENT),local)
+	$(eval CH_FRAG := -f compose.clickhouse.yml)
+else
+	$(eval CH_FRAG := )
+endif
+	docker compose -f docker-compose.yml $(PSQL_FRAG) $(CH_FRAG) up -d
 
 down:
-	-docker compose -f docker-compose.yml -f compose.psql.yml down 2>/dev/null
+	-docker compose -f docker-compose.yml -f compose.psql.yml -f compose.clickhouse.yml down 2>/dev/null
 	-docker compose -f docker-compose.yml down 2>/dev/null
 
 logs:

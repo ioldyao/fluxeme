@@ -10,8 +10,8 @@ use crate::domain::model::{Model, ModelChannel, Pricing};
 use crate::domain::routing::RoutingRule;
 use crate::domain::user::{ApiKey, RateLimit, User};
 
-/// Replace `${VAR}` patterns in a string with their environment variable values.
-/// If the env var is not set, the placeholder is left as-is.
+/// Replace `${VAR}` and `${VAR:-default}` patterns with environment variable values.
+/// When a `:-default` suffix is present, the default is used if the env var is unset.
 fn expand_env_vars(content: &str) -> String {
     let mut result = String::new();
     let mut rest = content;
@@ -19,13 +19,19 @@ fn expand_env_vars(content: &str) -> String {
         result.push_str(&rest[..start]);
         let after = &rest[start + 2..];
         if let Some(end) = after.find('}') {
-            let var_name = &after[..end];
+            let placeholder = &after[..end];
+            let (var_name, default) = match placeholder.split_once(":-") {
+                Some((v, d)) => (v, Some(d)),
+                None => (placeholder, None),
+            };
             match std::env::var(var_name) {
                 Ok(val) => result.push_str(&val),
-                Err(_) => {
-                    // Leave placeholder as-is so callers can detect unset vars
-                    result.push_str(&format!("${{{}}}", var_name));
-                }
+                Err(_) => match default {
+                    Some(d) => result.push_str(d),
+                    None => {
+                        result.push_str(&format!("${{{}}}", var_name));
+                    }
+                },
             }
             rest = &after[end + 1..];
         } else {
