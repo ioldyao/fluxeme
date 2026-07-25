@@ -51,6 +51,7 @@ export interface Channel {
 export interface Pricing {
   prompt_price: number;
   completion_price: number;
+  original_model?: string;
   cache_read_price: number;
   cache_write_price: number;
   image_input_price: number;
@@ -113,6 +114,7 @@ export interface UsageRecord {
   cache_hit_input_tokens: number;
   prompt_price: number;
   completion_price: number;
+  original_model?: string;
   client_ip?: string | null;
 }
 

@@ -86,7 +86,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
             <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
               {[
                 { label: t('table.user'), value: record.user_name },
-                { label: t('table.model'), value: record.model },
+                { label: t('table.model'), value: record.original_model ? `${record.original_model} → ${record.model}` : record.model },
                 { label: t('usage.apiKey'), value: record.api_key_name ?? '—' },
                 { label: t('usage.apiFormat'), value: record.api_format ?? '—' },
                 { label: t('usage.channel'), value: record.channel_id },
