@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod compensation;
 pub mod health;
 pub mod health_probe;
 pub mod moderation;

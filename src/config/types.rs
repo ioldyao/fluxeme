@@ -55,6 +55,8 @@ pub struct DatabaseConfig {
     pub pg_url: String,
     #[serde(default = "default_retention_days")]
     pub retention_days: u64,
+    #[serde(default)]
+    pub clickhouse: ClickHouseConfig,
 }
 
 impl Default for DatabaseConfig {
@@ -62,9 +64,41 @@ impl Default for DatabaseConfig {
         Self {
             pg_url: default_pg_url(),
             retention_days: default_retention_days(),
+            clickhouse: ClickHouseConfig::default(),
         }
     }
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ClickHouseConfig {
+    #[serde(default = "default_ch_host")]
+    pub host: String,
+    #[serde(default = "default_ch_port")]
+    pub port: u16,
+    #[serde(default = "default_ch_user")]
+    pub user: String,
+    #[serde(default)]
+    pub password: String,
+    #[serde(default = "default_ch_db")]
+    pub db: String,
+}
+
+impl Default for ClickHouseConfig {
+    fn default() -> Self {
+        Self {
+            host: default_ch_host(),
+            port: default_ch_port(),
+            user: default_ch_user(),
+            password: String::new(),
+            db: default_ch_db(),
+        }
+    }
+}
+
+fn default_ch_host() -> String { "localhost".to_string() }
+fn default_ch_port() -> u16 { 9000 }
+fn default_ch_user() -> String { "default".to_string() }
+fn default_ch_db() -> String { "aigateway".to_string() }
 
 fn default_pg_url() -> String {
     String::new()
