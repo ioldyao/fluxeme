@@ -217,16 +217,23 @@ impl RedisCache {
     /// Called when the in-memory billing channel is full.
     ///
     /// # Design boundary
-    /// When this function returns `Err`, the billing record is permanently
-    /// lost. This is an **accepted** trade-off, not a bug:
+    /// When this function returns `Err`, the billing record never enters the
+    /// PG billing worker and therefore never generates a wallet deduction.
+    /// This is **revenue loss** (not charged), never an incorrect charge:
     ///
-    /// - Trigger condition: billing channel full (PG worker capacity exhausted)
-    ///   AND Redis simultaneously unavailable (compound failure).
-    /// - In practice this window is near-zero: the billing backlog is only
-    ///   exercised when billing workers are saturated, and Redis runs in the
-    ///   same deployment. AOF persistence ensures data survives Redis restart.
-    /// - To fully eliminate the loss window, add a local persistence fallback
-    ///   (e.g. sled) before the Redis XADD call.
+    /// - The user already received their API response (200 OK) before this
+    ///   code runs — they are unaware of the lost billing record.
+    /// - Bills, wallet balances, and usage history remain correct because
+    ///   they all read from PG, which never received this record either.
+    /// - The only observable effect is that dashboard / routing panel
+    ///   aggregate counts may slightly under-report (1-N missing events).
+    ///
+    /// Trigger: billing channel full (PG workers saturated) AND Redis
+    /// unavailable simultaneously — a compound failure with near-zero
+    /// probability in practice (AOF persistence protects against restart).
+    ///
+    /// To eliminate this loss window entirely, add a local persistence
+    /// fallback (e.g. sled) before the Redis XADD call.
     pub async fn backlog_billing_record(&self, record: UsageRecord) -> Result<(), String> {
         let mut con = match self.con.clone() {
             Some(c) => c,
