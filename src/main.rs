@@ -273,8 +273,8 @@ async fn main() {
         }
     }
 
-    // Initialize usage service with billing workers + optional ClickHouse backend
-    let (usage, usage_handles) = UsageService::new(db.clone(), cache.clone(), event_bus.clone(), ch.clone());
+    // Initialize usage service with billing workers (ClickHouse is now decoupled via Redis Stream)
+    let (usage, usage_handles) = UsageService::new(db.clone(), cache.clone(), event_bus.clone());
 
     // Billing backlog drain — reads from Redis Stream and retries billing
     {
@@ -283,13 +283,13 @@ async fn main() {
         tokio::spawn(crate::cache::start_billing_backlog_drain(cache, db));
     }
 
-    // Compensation task — scans usage_billing for unwritten records
+    // Obs consumer — reads Redis Stream obs:events → batch writes ClickHouse
+    // Decouples CH availability from the gateway and PG.
     {
         let ch = ch.clone();
+        let cache = cache.clone();
         let db = db.clone();
-        tokio::spawn(crate::service::compensation::start_compensation_loop(
-            ch, db,
-        ));
+        tokio::spawn(crate::cache::start_obs_consumer(ch, cache, db));
     }
 
     // In-memory gate cache (populated by inspection, read by handler when Redis is down)

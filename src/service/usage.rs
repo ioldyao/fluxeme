@@ -8,7 +8,6 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
 
 use crate::cache::{compute_gate_status, RedisCache};
-use crate::ch_backend::{ClickHouseBackend, UsageEvent};
 use crate::db::Database;
 use crate::domain::usage::UsageFilter;
 use crate::domain::usage::UsageRecord;
@@ -39,7 +38,6 @@ impl UsageService {
         db: Arc<Database>,
         cache: Arc<RedisCache>,
         event_bus: EventBus,
-        ch: Option<Arc<ClickHouseBackend>>,
     ) -> (Self, Vec<JoinHandle<()>>) {
         let mut senders = Vec::with_capacity(N_BILLING_WORKERS);
         let mut handles = Vec::with_capacity(N_BILLING_WORKERS);
@@ -47,7 +45,7 @@ impl UsageService {
         for i in 0..N_BILLING_WORKERS {
             let (tx, rx) = mpsc::channel::<UsageRecord>(BILLING_CHANNEL_CAP);
             senders.push(tx);
-            let h = tokio::spawn(billing_worker(i, db.clone(), cache.clone(), ch.clone(), rx));
+            let h = tokio::spawn(billing_worker(i, db.clone(), cache.clone(), rx));
             handles.push(h);
         }
 
@@ -71,8 +69,8 @@ impl UsageService {
     ///
     /// 1. Broadcasts a `RequestCompleted` event on the event bus (real-time WS push).
     /// 2. Routes the `UsageRecord` to the appropriate billing worker via shard.
-    ///    If the channel is full, the record is dropped with a CRITICAL log.
-    ///    Phase 5 will replace this drop with a local WAL fallback.
+    ///    If the channel is full, falls back to Redis Stream billing backlog.
+    /// 3. Pushes an observability event to Redis Stream (decoupled from PG/CH).
     pub fn record_with_endpoint(&self, record: UsageRecord, endpoint_id: Option<i64>) {
         // 1. Broadcast real-time event (always succeeds, non-blocking)
         let event = RequestCompleted {
@@ -88,23 +86,32 @@ impl UsageService {
         };
         self.event_bus.request_completed(event);
 
-        // 2. Route billing to sharded worker
+        // 2. Clone record for observability before moving into billing channel
+        let obs_record = record.clone();
+
+        // 3. Route billing to sharded worker
         let idx = billing_shard(&record);
         if let Err(e) = self.billing_senders[idx].try_send(record) {
-            let record = e.into_inner();
+            let dropped = e.into_inner();
             tracing::warn!(
-                worker = idx, request_id = record.request_id,
+                worker = idx, request_id = dropped.request_id,
                 "Billing channel full — falling back to Redis Stream backlog"
             );
-            // Fallback to Redis Stream — fired-and-forget via spawn so the
-            // synchronous poll_next caller returns immediately.
             let cache = self.cache.clone();
             tokio::spawn(async move {
-                if let Err(e) = cache.backlog_billing_record(record).await {
+                if let Err(e) = cache.backlog_billing_record(dropped).await {
                     tracing::error!("Redis backlog XADD failed: {e}");
                 }
             });
         }
+
+        // 4. Push observability event to Redis Stream (fire-and-forget)
+        let cache = self.cache.clone();
+        tokio::spawn(async move {
+            if let Err(e) = cache.push_obs_event(obs_record).await {
+                tracing::warn!("Obs event XADD failed: {e}");
+            }
+        });
     }
 
     // ── Read-through query methods (unchanged, still hit PG) ──────────
@@ -213,7 +220,6 @@ async fn billing_worker(
     id: usize,
     db: Arc<Database>,
     cache: Arc<RedisCache>,
-    ch: Option<Arc<ClickHouseBackend>>,
     mut rx: Receiver<UsageRecord>,
 ) {
     tracing::info!("Billing worker {id} started");
@@ -265,29 +271,6 @@ async fn billing_worker(
                         tracing::warn!(worker = id, user_id, "Redis gate update: {e}");
                     }
                 }
-
-                // Write observability data to ClickHouse (best-effort)
-                if let Some(ref ch) = ch {
-                    let events: Vec<UsageEvent> = batch.iter().map(usage_record_to_event).collect();
-                    let request_ids: Vec<String> =
-                        batch.iter().map(|r| r.request_id.clone()).collect();
-                    match ch.insert_usage_events(&events).await {
-                        Ok(()) => {
-                            if let Err(e) = db.mark_usage_billing_written(&request_ids).await {
-                                tracing::warn!(
-                                    worker = id, count = events.len(), error = %e.0,
-                                    "CH write ok but mark_written failed — compensation will retry"
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                worker = id, count = events.len(), error = e,
-                                "CH write failed — compensation task will catch up"
-                            );
-                        }
-                    }
-                }
             }
             Err(e) => {
                 tracing::error!(
@@ -301,38 +284,3 @@ async fn billing_worker(
     tracing::warn!("Billing worker {id} exiting (channel closed)");
 }
 
-fn usage_record_to_event(r: &UsageRecord) -> UsageEvent {
-    let total_tokens = if r.total_tokens > 0 {
-        r.total_tokens
-    } else {
-        r.prompt_tokens + r.completion_tokens
-    };
-    let ts = chrono::DateTime::parse_from_rfc3339(&r.timestamp)
-        .map(|dt| dt.timestamp() as u32)
-        .unwrap_or_else(|_| chrono::Utc::now().timestamp() as u32);
-    // cost_amount is already computed and stored in usage_billing; for the CH
-    // UsageEvent we just set it to 0 — the compensation task reads real cost
-    // from usage_billing. Direct write from worker doesn't persist cost_amount
-    // because pricing lookup happened inside the PG transaction, not in Rust.
-    UsageEvent {
-        timestamp: ts,
-        request_id: r.request_id.clone(),
-        user_id: r.user_id.clone(),
-        user_name: r.user_name.clone(),
-        channel_id: r.channel_id.clone(),
-        model: r.model.clone(),
-        prompt_tokens: r.prompt_tokens,
-        completion_tokens: r.completion_tokens,
-        total_tokens,
-        latency_ms: r.latency_ms,
-        status_code: r.status_code,
-        success: if r.success { 1 } else { 0 },
-        api_key_name: r.api_key_name.clone(),
-        api_format: r.api_format.clone(),
-        stream: if r.stream { 1 } else { 0 },
-        cache_hit_input_tokens: r.cache_hit_input_tokens,
-        cost_amount: 0.0, // real cost set by compensation task
-        client_ip: r.client_ip.clone(),
-        endpoint_id: None, // not available on UsageRecord
-    }
-}
