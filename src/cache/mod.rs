@@ -478,7 +478,6 @@ pub async fn start_billing_backlog_drain(
 pub async fn start_obs_consumer(
     ch: Option<std::sync::Arc<crate::ch_backend::ClickHouseBackend>>,
     cache: std::sync::Arc<RedisCache>,
-    db: std::sync::Arc<crate::db::Database>,
 ) {
     let ch = match ch {
         Some(c) => c,
@@ -516,6 +515,9 @@ pub async fn start_obs_consumer(
             let ts = chrono::DateTime::parse_from_rfc3339(&r.timestamp)
                 .map(|dt| dt.timestamp() as u32)
                 .unwrap_or_else(|_| chrono::Utc::now().timestamp() as u32);
+            let cost_amount = r.prompt_tokens as f64 / 1_000_000.0 * r.prompt_price
+                + r.completion_tokens as f64 / 1_000_000.0 * r.completion_price
+                + r.cache_hit_input_tokens as f64 / 1_000_000.0 * r.cache_read_price;
             events.push(crate::ch_backend::UsageEvent {
                 timestamp: ts,
                 request_id: r.request_id.clone(),
@@ -533,7 +535,7 @@ pub async fn start_obs_consumer(
                 api_format: r.api_format.clone(),
                 stream: if r.stream { 1 } else { 0 },
                 cache_hit_input_tokens: r.cache_hit_input_tokens,
-                cost_amount: 0.0,
+                cost_amount,
                 client_ip: r.client_ip.clone(),
                 endpoint_id: None,
             });

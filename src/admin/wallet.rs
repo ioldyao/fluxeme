@@ -10,6 +10,13 @@ use crate::server::AppState;
 
 use super::*;
 
+fn validate_finite_positive(v: f64) -> Result<(), AdminError> {
+    if !v.is_finite() || v <= 0.0 {
+        return Err(AdminError::bad_request("Amount must be a finite positive number"));
+    }
+    Ok(())
+}
+
 // ── Wallet ──────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -93,8 +100,12 @@ pub(crate) async fn wallet_create_key(
 ) -> Result<Json<CreateKeyResp>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:recharge-keys").await?;
-    if req.amount <= 0.0 {
-        return Err(AdminError::bad_request("Amount must be positive"));
+    validate_finite_positive(req.amount)?;
+    // Validate expires_at format if provided
+    if let Some(ref exp) = req.expires_at {
+        chrono::DateTime::parse_from_rfc3339(exp).map_err(|_| {
+            AdminError::bad_request("expires_at must be a valid RFC3339 timestamp")
+        })?;
     }
     let key = uuid::Uuid::new_v4().to_string();
     state
@@ -170,13 +181,7 @@ pub(crate) async fn wallet_list_keys(
     Query(q): Query<KeyListQuery>,
 ) -> Result<Json<serde_json::Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    if !state
-        .authz
-        .enforce(&session.role, "admin:recharge-keys")
-        .await
-    {
-        return Ok(Json(serde_json::json!({ "items": [], "total": 0 })));
-    }
+    check_perm(&state.authz, &session, "admin:recharge-keys").await?;
     let limit = q.limit.unwrap_or(DEFAULT_KEY_PAGE_SIZE);
     let offset = q.offset.unwrap_or(0);
     let total = state

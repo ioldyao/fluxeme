@@ -10,6 +10,16 @@ use crate::server::AppState;
 
 use super::*;
 
+fn validate_year_month(year: i32, month: u32) -> Result<(), AdminError> {
+    if year < 2020 || year > 2100 {
+        return Err(AdminError::bad_request("Year out of range (2020-2100)"));
+    }
+    if month < 1 || month > 12 {
+        return Err(AdminError::bad_request("Month must be between 1 and 12"));
+    }
+    Ok(())
+}
+
 #[derive(Serialize)]
 pub(crate) struct BillingSummary {
     total_requests: u64,
@@ -52,10 +62,15 @@ pub(crate) async fn billing_summary(
         })
         .sum();
     let total_requests = records.len() as u64;
+    let (balance, _) = state
+        .db
+        .get_wallet_balance(&session.user_id)
+        .await
+        .map_err(db_err)?;
     Ok(Json(BillingSummary {
         total_requests,
         total_cost: (total_cost * 100.0).round() / 100.0,
-        balance: 0.0,
+        balance,
     }))
 }
 
@@ -100,6 +115,7 @@ pub(crate) async fn billing_period_summary(
     let now = chrono::Utc::now();
     let year = q.year.unwrap_or_else(|| now.year());
     let month = q.month.unwrap_or_else(|| now.month());
+    validate_year_month(year, month)?;
     let can_view_all = state.authz.enforce(&session.role, "admin:bills").await;
     let user_filter: Option<&str> = if can_view_all {
         None
