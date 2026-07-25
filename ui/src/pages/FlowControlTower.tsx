@@ -25,28 +25,6 @@ function fmtTokens(n: number) {
   return String(n);
 }
 
-// ── Animated counter ───────────────────────────────────────────────
-function AnimatedNumber({ value, style }: { value: number; style?: React.CSSProperties }) {
-  const prevRef = useRef(value);
-  const [display, setDisplay] = useState(value);
-  useEffect(() => {
-    if (value === prevRef.current) return;
-    const start = prevRef.current;
-    const duration = 300;
-    const t0 = performance.now();
-    let raf = 0;
-    function tick(now: number) {
-      const p = Math.min(1, (now - t0) / duration);
-      setDisplay(Math.round(start + (value - start) * (1 - Math.pow(1 - p, 3))));
-      if (p < 1) raf = requestAnimationFrame(tick);
-    }
-    raf = requestAnimationFrame(tick);
-    prevRef.current = value;
-    return () => cancelAnimationFrame(raf);
-  }, [value]);
-  return <span style={{ ...style, fontVariantNumeric: 'tabular-nums' }}>{display.toLocaleString()}</span>;
-}
-
 // ── Build topology ────────────────────────────────────────────────
 interface TopoChannel { id: string; name: string }
 interface TopoModel { model: string; pattern: string; channels: TopoChannel[] }
@@ -232,17 +210,6 @@ export default function FlowControlTower() {
     return m;
   }, [topology, counts]);
 
-  const chReqMap = useMemo(() => {
-    const m: Record<string, number> = {};
-    topology.forEach(t => {
-      t.channels.forEach(c => {
-        const k = keyFor(t.model, c.id);
-        m[k] = counts[k] || 0;
-      });
-    });
-    return m;
-  }, [topology, counts]);
-
   const maxModelCount = Math.max(...Object.values(modelChCounts), 1);
   const sortedModels = useMemo(() =>
     topology.slice().sort((a, b) => (counts[keyFor(b.model)] || 0) - (counts[keyFor(a.model)] || 0)),
@@ -302,7 +269,7 @@ export default function FlowControlTower() {
       }
     }
     // provider pulse
-    const ci = allChannelReqs.findIndex(c => {
+    const ci = allChannelReqs.findIndex(ch => {
       const found = topology.find(t => t.model === model);
       return found?.channels.some(ch => ch.id === channel);
     });
