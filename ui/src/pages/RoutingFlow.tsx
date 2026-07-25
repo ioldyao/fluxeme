@@ -435,32 +435,55 @@ export default function RoutingFlow() {
 
   const { svgRef, paths } = useConnectors(containerRef, connectorPairs);
 
-  // ── Path width proportional to traffic ──
+  // ── Traffic-rate-based path width (sliding 60s window) ──
+  const eventLogRef = useRef<Map<string, number[]>>(new Map());
+  const WINDOW_MS = 60000;
+
+  // Log each pulse event for rate tracking
+  useEffect(() => {
+    if (!lastEvent) return;
+    const now = lastEvent.ts;
+    const { model, channel, endpoint } = lastEvent;
+    const push = (key: string) => {
+      if (!eventLogRef.current.has(key)) eventLogRef.current.set(key, []);
+      eventLogRef.current.get(key)!.push(now);
+    };
+    push(`m2c:${model}>${channel}`);
+    if (endpoint) push(`c2e:${channel}>${endpoint}`);
+
+    // Prune when buffer exceeds 1000 entries
+    let total = 0;
+    for (const t of eventLogRef.current.values()) total += t.length;
+    if (total > 1000) {
+      const cutoff = now - WINDOW_MS;
+      for (const t of eventLogRef.current.values()) { while (t.length > 0 && t[0] < cutoff) t.shift(); }
+    }
+  }, [lastEvent]);
+
+  // Tick every 5s to recompute widths from recent event rate
+  const [rateTick, setRateTick] = useState(0);
+  useEffect(() => { const id = setInterval(() => setRateTick(v => v + 1), 5000); return () => clearInterval(id); }, []);
+
+  // Path width from event count in the 60s window (not cumulative total)
   const pathWidthMap = useMemo(() => {
     const map: Record<string, number> = {};
-    let maxCnt = 0;
+    const now = performance.now();
+    const cutoff = now - WINDOW_MS;
     const acc: Record<string, number> = {};
+    let maxC = 0;
 
-    topology.forEach((m) => {
-      m.channels.forEach((c) => {
-        const cnt = counts[keyFor(m.model, c.id)] || 0;
-        const k = `m2c:${m.model}>${c.id}`;
-        acc[k] = cnt;
-        if (cnt > maxCnt) maxCnt = cnt;
+    for (const [key, timestamps] of eventLogRef.current.entries()) {
+      let c = 0;
+      for (const ts of timestamps) { if (ts >= cutoff) c++; }
+      if (c > 0) { acc[key] = c; if (c > maxC) maxC = c; }
+    }
 
-        c.endpoints.forEach((e) => {
-          const cnt2 = counts[keyFor(m.model, c.id, e.key)] || 0;
-          const k2 = `c2e:${c.id}>${e.key}`;
-          acc[k2] = cnt2;
-          if (cnt2 > maxCnt) maxCnt = cnt2;
-        });
-      });
-    });
-
-    const scale = (cnt: number) => Math.max(1.5, Math.min(10, 1.5 + (cnt / Math.max(maxCnt, 1)) * 8.5));
-    Object.entries(acc).forEach(([k, v]) => { map[k] = scale(v); });
+    if (maxC === 0) return map;
+    const scale = (cnt: number) => Math.max(1.5, Math.min(10, 1.5 + (cnt / maxC) * 8.5));
+    for (const [key, c] of Object.entries(acc)) map[key] = scale(c);
     return map;
-  }, [topology, counts]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rateTick, topology]);
 
   // ── Pulse / ping state ──
   const [pulses, setPulses] = useState<{ id: string; pathD: string }[]>([]);
