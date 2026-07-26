@@ -56,8 +56,14 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const normalizedName = name.trim();
+    if (!normalizedName) {
+      return;
+    }
     const data = {
-      id: id || name, name,
+      id: (id || normalizedName).trim(),
+      name: normalizedName,
+      model_pattern: model?.model_pattern || normalizedName,
       pricing: model?.pricing ?? { prompt_price: 0, completion_price: 0, cache_read_price: 0, cache_write_price: 0, image_input_price: 0, audio_input_price: 0, audio_output_price: 0 },
       context_length: contextLength ? Number(contextLength) : null,
       published: model?.published ?? false,

@@ -68,6 +68,7 @@ export interface ModelChannel {
 export interface Model {
   id: string;
   name: string;
+  model_pattern: string;
   pricing: Pricing;
   channels: ModelChannel[];
   published?: boolean;
