@@ -493,9 +493,6 @@ impl DbBackend for PgBackend {
         .execute(&self.pool)
         .await
         .map_err(|e| DbError(format!("Migration error: {}", e)))?;
-        let _ = raw_sql("ALTER TABLE probe_results ADD COLUMN IF NOT EXISTS endpoint_url TEXT")
-            .execute(&self.pool)
-            .await;
 
         // Backward-compat columns — inline helper to avoid async closure issues
         macro_rules! add_col {
@@ -588,12 +585,16 @@ impl DbBackend for PgBackend {
                 success BOOLEAN NOT NULL,
                 latency_ms BIGINT NOT NULL,
                 error TEXT,
-                probed_at TEXT NOT NULL
+                probed_at TEXT NOT NULL,
+                endpoint_url TEXT
             )",
         )
         .execute(&self.pool)
         .await
         .map_err(|e| DbError(format!("Migration error: {}", e)))?;
+        let _ = raw_sql("ALTER TABLE probe_results ADD COLUMN IF NOT EXISTS endpoint_url TEXT")
+            .execute(&self.pool)
+            .await;
         let _ =
             raw_sql("CREATE INDEX IF NOT EXISTS idx_probe_channel ON probe_results(channel_id)")
                 .execute(&self.pool)
