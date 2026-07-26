@@ -21,3 +21,4 @@ data/
 .code-review-graph/
 outputs/
 test/
+# web/assets/
