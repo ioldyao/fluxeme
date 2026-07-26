@@ -276,43 +276,7 @@ impl RedisCache {
             .await
             .map_err(|e| format!("Redis XREAD error: {e}"))?;
 
-        fn as_str_bytes(v: &redis::Value) -> Option<String> {
-            match v {
-                redis::Value::BulkString(b) => Some(String::from_utf8_lossy(b).into()),
-                _ => None,
-            }
-        }
-
-        let mut records = Vec::new();
-        if let redis::Value::Array(streams) = &raw {
-            for s in streams {
-                if let redis::Value::Array(entries) = s {
-                    for entry in entries.iter().skip(1) {
-                        if let redis::Value::Array(parts) = entry {
-                            if parts.len() >= 2 {
-                                let entry_id = as_str_bytes(&parts[0]).unwrap_or_default();
-                                if let redis::Value::Array(field_pairs) = &parts[1] {
-                                    for ch in field_pairs.chunks(2) {
-                                        if ch.len() == 2
-                                            && as_str_bytes(&ch[0]).as_deref() == Some("record")
-                                        {
-                                            if let Some(json) = as_str_bytes(&ch[1]) {
-                                                if let Ok(r) =
-                                                    serde_json::from_str::<UsageRecord>(&json)
-                                                {
-                                                    records.push((entry_id.clone(), r));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Ok(records)
+        Ok(parse_usage_stream_records(&raw, "billing:backlog"))
     }
 
     /// Acknowledge and remove processed billing records from the backlog.
@@ -377,43 +341,7 @@ impl RedisCache {
             .await
             .map_err(|e| format!("Redis XREAD obs: {e}"))?;
 
-        fn as_str_bytes(v: &redis::Value) -> Option<String> {
-            match v {
-                redis::Value::BulkString(b) => Some(String::from_utf8_lossy(b).into()),
-                _ => None,
-            }
-        }
-
-        let mut records = Vec::new();
-        if let redis::Value::Array(streams) = &raw {
-            for s in streams {
-                if let redis::Value::Array(entries) = s {
-                    for entry in entries.iter().skip(1) {
-                        if let redis::Value::Array(parts) = entry {
-                            if parts.len() >= 2 {
-                                let entry_id = as_str_bytes(&parts[0]).unwrap_or_default();
-                                if let redis::Value::Array(field_pairs) = &parts[1] {
-                                    for ch in field_pairs.chunks(2) {
-                                        if ch.len() == 2
-                                            && as_str_bytes(&ch[0]).as_deref() == Some("record")
-                                        {
-                                            if let Some(json) = as_str_bytes(&ch[1]) {
-                                                if let Ok(r) =
-                                                    serde_json::from_str::<UsageRecord>(&json)
-                                                {
-                                                    records.push((entry_id.clone(), r));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Ok(records)
+        Ok(parse_usage_stream_records(&raw, "obs:events"))
     }
 
     /// Acknowledge (delete) processed obs events from the stream.
@@ -561,6 +489,91 @@ pub async fn start_obs_consumer(
             }
         }
     }
+}
+
+fn parse_usage_stream_records(raw: &redis::Value, stream_name: &str) -> Vec<(String, UsageRecord)> {
+    fn as_str_bytes(v: &redis::Value) -> Option<String> {
+        match v {
+            redis::Value::BulkString(b) => Some(String::from_utf8_lossy(b).into()),
+            _ => None,
+        }
+    }
+
+    let mut records = Vec::new();
+    match raw {
+        redis::Value::Nil => return records,
+        redis::Value::Array(_) => {}
+        _ => {
+            tracing::warn!(stream = stream_name, "Redis stream payload is not an array");
+            return records;
+        }
+    }
+    let redis::Value::Array(streams) = raw else {
+        return records;
+    };
+
+    for stream in streams {
+        let redis::Value::Array(stream_parts) = stream else {
+            tracing::warn!(stream = stream_name, "Redis stream entry wrapper is not an array");
+            continue;
+        };
+        if stream_parts.len() < 2 {
+            tracing::warn!(stream = stream_name, parts = stream_parts.len(), "Redis stream wrapper is too short");
+            continue;
+        }
+
+        let actual_stream_name = as_str_bytes(&stream_parts[0]).unwrap_or_else(|| stream_name.to_string());
+        let redis::Value::Array(entries) = &stream_parts[1] else {
+            tracing::warn!(stream = actual_stream_name, "Redis stream entries payload is not an array");
+            continue;
+        };
+
+        for entry in entries {
+            let redis::Value::Array(parts) = entry else {
+                tracing::warn!(stream = actual_stream_name, "Redis stream item is not an array");
+                continue;
+            };
+            if parts.len() < 2 {
+                tracing::warn!(stream = actual_stream_name, parts = parts.len(), "Redis stream item is too short");
+                continue;
+            }
+
+            let Some(entry_id) = as_str_bytes(&parts[0]) else {
+                tracing::warn!(stream = actual_stream_name, "Redis stream item is missing entry id");
+                continue;
+            };
+            let redis::Value::Array(field_pairs) = &parts[1] else {
+                tracing::warn!(stream = actual_stream_name, entry_id, "Redis stream fields are not an array");
+                continue;
+            };
+
+            let mut found_record = false;
+            for pair in field_pairs.chunks(2) {
+                if pair.len() != 2 {
+                    tracing::warn!(stream = actual_stream_name, entry_id, "Redis stream field pair is incomplete");
+                    continue;
+                }
+                if as_str_bytes(&pair[0]).as_deref() != Some("record") {
+                    continue;
+                }
+                found_record = true;
+                let Some(json) = as_str_bytes(&pair[1]) else {
+                    tracing::warn!(stream = actual_stream_name, entry_id, "Redis stream record payload is not a string");
+                    continue;
+                };
+                match serde_json::from_str::<UsageRecord>(&json) {
+                    Ok(record) => records.push((entry_id.clone(), record)),
+                    Err(error) => tracing::warn!(stream = actual_stream_name, entry_id, error = %error, "Redis stream record JSON could not be parsed as UsageRecord"),
+                }
+            }
+
+            if !found_record {
+                tracing::warn!(stream = actual_stream_name, entry_id, "Redis stream item did not contain a record field");
+            }
+        }
+    }
+
+    records
 }
 
 /// Build a tenant-isolated Redis key.
