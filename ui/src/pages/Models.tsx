@@ -184,6 +184,7 @@ export default function Models() {
           body: {
             id: mid,
             name: mid,
+            model_pattern: mid,
             pricing: { prompt_price: 0, completion_price: 0 },
             channels: [{ channel_id: syncChannelId, priority: 0, upstream_model: mid }],
             context_length: up?.max_model_len ?? null,
