@@ -460,15 +460,7 @@ pub async fn start_obs_consumer(
                 Some((r.prompt_price, r.completion_price, r.cache_read_price))
             } else {
                 match db.lookup_model_pricing(&r.model).await {
-                    Ok((pp, cp, crp))
-                        if pp > Decimal::ZERO || cp > Decimal::ZERO || crp > Decimal::ZERO =>
-                    {
-                        Some((pp, cp, crp))
-                    }
-                    Ok(_) => {
-                        tracing::warn!(request_id = r.request_id, model = r.model, "Obs consumer: pricing lookup returned zero prices — leaving record pending");
-                        None
-                    }
+                    Ok((pp, cp, crp)) => Some((pp, cp, crp)),
                     Err(error) => {
                         tracing::warn!(request_id = r.request_id, model = r.model, error = %error.0, "Obs consumer: pricing lookup failed — leaving record pending");
                         None

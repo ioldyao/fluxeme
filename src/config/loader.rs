@@ -242,7 +242,9 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
         description: String,
     }
 
-    fn default_enabled_bool() -> bool { true }
+    fn default_enabled_bool() -> bool {
+        true
+    }
 
     #[derive(Deserialize)]
     struct SeedPayload {

@@ -8,8 +8,8 @@ use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::domain::user::{ApiKey, User};
 use crate::domain::routing::RoutingRule;
+use crate::domain::user::{ApiKey, User};
 use crate::server::AppState;
 
 use super::*;
