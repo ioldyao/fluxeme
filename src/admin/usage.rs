@@ -30,6 +30,11 @@ pub(crate) struct UsageResponse {
     total: usize,
 }
 
+// Importers/callers: shared by ui/src/pages/Usage.tsx via /api/usage and the
+// new self-only dashboard routes below via /api/me/usage. Affected API/data
+// schema: UsageResponse { records, total } and query params limit, offset,
+// user_id, model, api_key, api_format, start_date, end_date. User instruction:
+// "`网关运行总览` 这个前端页面中，哪些还有计算全部用户的，统一修改只看当前个人用户的数据,admin登陆也只看自己的数据".
 pub(crate) async fn get_usage(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -81,6 +86,55 @@ pub(crate) async fn get_usage(
             .await
             .map_err(|e| {
                 tracing::error!("Usage query failed: {}", e);
+                AdminError::internal("Internal server error")
+            })?
+    };
+
+    Ok(Json(UsageResponse { records, total }))
+}
+
+pub(crate) async fn get_my_usage(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<UsageQuery>,
+) -> Result<Json<UsageResponse>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+
+    let limit = q.limit.unwrap_or(50);
+    let offset = q.offset.unwrap_or(0);
+    let filter = UsageFilter {
+        user_id: Some(session.user_id.clone()),
+        model: q.model,
+        api_key_name: q.api_key,
+        api_format: q.api_format,
+        start_date: q.start_date,
+        end_date: q.end_date,
+    };
+
+    let total = if let Some(ref ch) = state.ch {
+        ch.count_usage(&filter).await.map_err(|e| {
+            tracing::error!("CH self usage count failed: {}", e);
+            AdminError::internal("Internal server error")
+        })?
+    } else {
+        state.usage.count_filtered(&filter).await.map_err(|e| {
+            tracing::error!("Self usage count failed: {}", e);
+            AdminError::internal("Internal server error")
+        })?
+    };
+
+    let records = if let Some(ref ch) = state.ch {
+        ch.query_usage(limit, offset, &filter).await.map_err(|e| {
+            tracing::error!("CH self usage query failed: {}", e);
+            AdminError::internal("Internal server error")
+        })?
+    } else {
+        state
+            .usage
+            .query(limit, offset, &filter)
+            .await
+            .map_err(|e| {
+                tracing::error!("Self usage query failed: {}", e);
                 AdminError::internal("Internal server error")
             })?
     };
@@ -255,6 +309,66 @@ pub(crate) async fn usage_aggregate(
     Ok(Json(records))
 }
 
+pub(crate) async fn my_usage_aggregate(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<UsageAggregateQuery>,
+) -> Result<Json<Vec<DailyAggregate>>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+
+    let days = q.days.unwrap_or(14);
+    let tz = state
+        .db
+        .get_user_timezone(&session.user_id)
+        .await
+        .map_err(db_err)?;
+    let offset = tz_offset_seconds(Some(&tz));
+    let since = since_local_days_ago(days, offset);
+    let user_filter: Option<&str> = Some(&session.user_id);
+
+    let records: Vec<DailyAggregate> = if let Some(ref ch) = state.ch {
+        ch.query_daily_usage_stats(&since, user_filter, offset)
+            .await
+            .map_err(AdminError::internal)?
+            .into_iter()
+            .map(
+                |(date, count, pt, ct, tt, sc, lat, ch_tok)| DailyAggregate {
+                    date,
+                    count,
+                    prompt_tokens: pt,
+                    completion_tokens: ct,
+                    total_tokens: tt,
+                    success_count: sc,
+                    latency_ms: lat,
+                    cache_hit_tokens: ch_tok,
+                },
+            )
+            .collect()
+    } else {
+        state
+            .usage
+            .daily_stats(&since, user_filter, offset)
+            .await
+            .map_err(AdminError::internal)?
+            .into_iter()
+            .map(
+                |(date, count, pt, ct, tt, sc, lat, ch_tok)| DailyAggregate {
+                    date,
+                    count,
+                    prompt_tokens: pt,
+                    completion_tokens: ct,
+                    total_tokens: tt,
+                    success_count: sc,
+                    latency_ms: lat,
+                    cache_hit_tokens: ch_tok,
+                },
+            )
+            .collect()
+    };
+
+    Ok(Json(records))
+}
+
 // ── Model Activity ────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -288,6 +402,58 @@ pub(crate) async fn model_activity(
     } else {
         Some(&session.user_id)
     };
+    let records: Vec<ModelActivity> = if let Some(ref ch) = state.ch {
+        ch.query_model_activity(&since, user_filter)
+            .await
+            .map_err(AdminError::internal)?
+            .into_iter()
+            .map(|(model, total, pt, ct, sc, fc, ch_tok)| ModelActivity {
+                model,
+                total_requests: total,
+                prompt_tokens: pt,
+                completion_tokens: ct,
+                cache_hit_tokens: ch_tok,
+                success_count: sc,
+                failure_count: fc,
+            })
+            .collect()
+    } else {
+        state
+            .db
+            .model_activity(&since, user_filter)
+            .await
+            .map_err(|e| AdminError::internal(e.to_string()))?
+            .into_iter()
+            .map(|(model, total, pt, ct, sc, fc, ch_tok)| ModelActivity {
+                model,
+                total_requests: total,
+                prompt_tokens: pt,
+                completion_tokens: ct,
+                cache_hit_tokens: ch_tok,
+                success_count: sc,
+                failure_count: fc,
+            })
+            .collect()
+    };
+
+    Ok(Json(records))
+}
+
+pub(crate) async fn my_model_activity(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<UsageAggregateQuery>,
+) -> Result<Json<Vec<ModelActivity>>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    let days = q.days.unwrap_or(7);
+    let tz = state
+        .db
+        .get_user_timezone(&session.user_id)
+        .await
+        .map_err(db_err)?;
+    let offset = tz_offset_seconds(Some(&tz));
+    let since = since_local_days_ago(days, offset);
+    let user_filter: Option<&str> = Some(&session.user_id);
     let records: Vec<ModelActivity> = if let Some(ref ch) = state.ch {
         ch.query_model_activity(&since, user_filter)
             .await
@@ -361,6 +527,48 @@ pub(crate) async fn usage_funnel(
     } else {
         Some(&session.user_id)
     };
+    let stats = if let Some(ref ch) = state.ch {
+        ch.query_funnel_stats(&since, user_filter)
+            .await
+            .map_err(AdminError::internal)?
+    } else {
+        state
+            .usage
+            .funnel_stats(&since, user_filter)
+            .await
+            .map_err(AdminError::internal)?
+    };
+    Ok(Json(FunnelResponse {
+        total: stats.total,
+        success_count: stats.success_count,
+        auth_fail_count: stats.auth_fail_count,
+        rate_limit_count: stats.rate_limit_count,
+        bad_request_count: stats.bad_request_count,
+        upstream_error_count: stats.upstream_error_count,
+        timeout_count: stats.timeout_count,
+        other_error_count: stats.other_error_count,
+        p50_latency: stats.p50_latency,
+        p95_latency: stats.p95_latency,
+        p99_latency: stats.p99_latency,
+        avg_latency: stats.avg_latency,
+    }))
+}
+
+pub(crate) async fn my_usage_funnel(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<UsageAggregateQuery>,
+) -> Result<Json<FunnelResponse>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    let days = q.days.unwrap_or(7);
+    let tz = state
+        .db
+        .get_user_timezone(&session.user_id)
+        .await
+        .map_err(db_err)?;
+    let offset = tz_offset_seconds(Some(&tz));
+    let since = since_local_days_ago(days, offset);
+    let user_filter: Option<&str> = Some(&session.user_id);
     let stats = if let Some(ref ch) = state.ch {
         ch.query_funnel_stats(&since, user_filter)
             .await

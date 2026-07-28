@@ -346,6 +346,19 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             "/api/dashboard/aggregations",
             axum::routing::get(dashboard::dashboard_aggregations),
         )
+        // Importers/callers: these routes are consumed by ui/src/api/dashboard.ts
+        // from ui/src/pages/Dashboard.tsx. Affected APIs: GET /api/dashboard/self
+        // and GET /api/dashboard/self/aggregations. Data schemas: SelfDashboardResp
+        // { api_keys, total_requests } and DashboardAggregations. User instruction:
+        // "`网关运行总览` 这个前端页面中，哪些还有计算全部用户的，统一修改只看当前个人用户的数据,admin登陆也只看自己的数据".
+        .route(
+            "/api/dashboard/self",
+            axum::routing::get(dashboard::self_dashboard),
+        )
+        .route(
+            "/api/dashboard/self/aggregations",
+            axum::routing::get(dashboard::self_dashboard_aggregations),
+        )
         // Current user
         .route(
             "/api/me/password",
@@ -479,6 +492,19 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             axum::routing::get(usage::model_activity),
         )
         .route("/api/usage/funnel", axum::routing::get(usage::usage_funnel))
+        .route("/api/me/usage", axum::routing::get(usage::get_my_usage))
+        .route(
+            "/api/me/usage/aggregate",
+            axum::routing::get(usage::my_usage_aggregate),
+        )
+        .route(
+            "/api/me/usage/model-activity",
+            axum::routing::get(usage::my_model_activity),
+        )
+        .route(
+            "/api/me/usage/funnel",
+            axum::routing::get(usage::my_usage_funnel),
+        )
         .route(
             "/api/routing/snapshot",
             axum::routing::get(routing::routing_flow_snapshot_handler),

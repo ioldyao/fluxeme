@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '@/store/auth';
 import { api } from './client';
 import type { UsageRecord, DailyAggregate, ModelActivity } from '@/types';
 
@@ -18,7 +19,7 @@ interface UsageResponse {
   total: number;
 }
 
-export function useUsage(params: UsageParams = {}) {
+function buildUsageSearchParams(params: UsageParams = {}) {
   const searchParams = new URLSearchParams();
   if (params.limit) searchParams.set('limit', String(params.limit));
   if (params.offset) searchParams.set('offset', String(params.offset));
@@ -28,14 +29,30 @@ export function useUsage(params: UsageParams = {}) {
   if (params.api_format) searchParams.set('api_format', params.api_format);
   if (params.start_date) searchParams.set('start_date', params.start_date);
   if (params.end_date) searchParams.set('end_date', params.end_date);
-  const qs = searchParams.toString();
+  return searchParams;
+}
+
+export function useUsage(params: UsageParams = {}) {
+  const qs = buildUsageSearchParams(params).toString();
 
   // Serialize to prevent object-reference instability causing infinite refetch
   const stableKey = JSON.stringify(params);
 
   return useQuery({
-    queryKey: ['usage', stableKey],
+    queryKey: ['usage', 'all', stableKey],
     queryFn: () => api<UsageResponse>(`/usage${qs ? `?${qs}` : ''}`),
+    refetchInterval: 60_000,
+  });
+}
+
+export function useMyUsage(params: Omit<UsageParams, 'user_id'> = {}) {
+  const userId = useAuth(state => state.userId);
+  const qs = buildUsageSearchParams(params).toString();
+  const stableKey = JSON.stringify(params);
+
+  return useQuery({
+    queryKey: ['usage', 'self', userId, stableKey],
+    queryFn: () => api<UsageResponse>(`/me/usage${qs ? `?${qs}` : ''}`),
     refetchInterval: 60_000,
   });
 }
@@ -48,10 +65,29 @@ export function useUsageDetail(requestId: string | null) {
   });
 }
 
+// Importers/callers: used by ui/src/pages/Dashboard.tsx and ui/src/pages/Usage.tsx
+// to load usage trend data. Affected APIs: GET /usage/aggregate with optional
+// query param user_id for shared admin views, and GET /me/usage/aggregate for the
+// self-only dashboard. Data schema: DailyAggregate[] where each row is { date,
+// count, prompt_tokens, completion_tokens, total_tokens, success_count,
+// latency_ms, cache_hit_tokens }. User instruction: "`网关运行总览` 这个前端页面中，哪些还有计算全部用户的，统一修改只看当前个人用户的数据,admin登陆也只看自己的数据".
 export function useUsageAggregate(days: number = 14) {
+  const searchParams = new URLSearchParams({ days: String(days) });
+
   return useQuery({
-    queryKey: ['usage', 'aggregate', days],
-    queryFn: () => api<DailyAggregate[]>(`/usage/aggregate?days=${days}`),
+    queryKey: ['usage', 'aggregate', 'all', days],
+    queryFn: () => api<DailyAggregate[]>(`/usage/aggregate?${searchParams.toString()}`),
+    refetchInterval: 60_000,
+  });
+}
+
+export function useMyUsageAggregate(days: number = 14) {
+  const userId = useAuth(state => state.userId);
+  const searchParams = new URLSearchParams({ days: String(days) });
+
+  return useQuery({
+    queryKey: ['usage', 'aggregate', 'self', userId, days],
+    queryFn: () => api<DailyAggregate[]>(`/me/usage/aggregate?${searchParams.toString()}`),
     refetchInterval: 60_000,
   });
 }
@@ -71,18 +107,57 @@ export interface FunnelStats {
   avg_latency: number;
 }
 
+// Importers/callers: used by ui/src/pages/Dashboard.tsx to load request-funnel
+// metrics and may be reused by other analytics views. Affected APIs: GET
+// /usage/funnel for shared views and GET /me/usage/funnel for the self-only
+// dashboard. Data schema: FunnelStats { total, success_count, auth_fail_count,
+// rate_limit_count, bad_request_count, upstream_error_count, timeout_count,
+// other_error_count, p50_latency, p95_latency, p99_latency, avg_latency }.
+// User instruction: "`网关运行总览` 这个前端页面中，哪些还有计算全部用户的，统一修改只看当前个人用户的数据,admin登陆也只看自己的数据".
 export function useUsageFunnel(days: number) {
+  const searchParams = new URLSearchParams({ days: String(days) });
+
   return useQuery({
-    queryKey: ['usage', 'funnel', days],
-    queryFn: () => api<FunnelStats>(`/usage/funnel?days=${days}`),
+    queryKey: ['usage', 'funnel', 'all', days],
+    queryFn: () => api<FunnelStats>(`/usage/funnel?${searchParams.toString()}`),
     refetchInterval: 60_000,
   });
 }
 
-export function useModelActivity(days: number = 7) {
+export function useMyUsageFunnel(days: number) {
+  const userId = useAuth(state => state.userId);
+  const searchParams = new URLSearchParams({ days: String(days) });
+
   return useQuery({
-    queryKey: ['usage', 'model-activity', days],
-    queryFn: () => api<ModelActivity[]>(`/usage/model-activity?days=${days}`),
+    queryKey: ['usage', 'funnel', 'self', userId, days],
+    queryFn: () => api<FunnelStats>(`/me/usage/funnel?${searchParams.toString()}`),
+    refetchInterval: 60_000,
+  });
+}
+
+// Importers/callers: used by ui/src/pages/Dashboard.tsx and ui/src/pages/Usage.tsx
+// to load per-model usage summaries. Affected APIs: GET /usage/model-activity
+// for shared views and GET /me/usage/model-activity for the self-only dashboard.
+// Data schema: ModelActivity[] where each row is { model, total_requests,
+// prompt_tokens, completion_tokens, cache_hit_tokens, success_count,
+// failure_count }. User instruction: "`网关运行总览` 这个前端页面中，哪些还有计算全部用户的，统一修改只看当前个人用户的数据,admin登陆也只看自己的数据".
+export function useModelActivity(days: number = 7) {
+  const searchParams = new URLSearchParams({ days: String(days) });
+
+  return useQuery({
+    queryKey: ['usage', 'model-activity', 'all', days],
+    queryFn: () => api<ModelActivity[]>(`/usage/model-activity?${searchParams.toString()}`),
+    refetchInterval: 60_000,
+  });
+}
+
+export function useMyModelActivity(days: number = 7) {
+  const userId = useAuth(state => state.userId);
+  const searchParams = new URLSearchParams({ days: String(days) });
+
+  return useQuery({
+    queryKey: ['usage', 'model-activity', 'self', userId, days],
+    queryFn: () => api<ModelActivity[]>(`/me/usage/model-activity?${searchParams.toString()}`),
     refetchInterval: 60_000,
   });
 }
