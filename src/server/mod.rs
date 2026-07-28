@@ -108,6 +108,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             axum::routing::post(handlers::chat_completions),
         )
         .route("/v1/messages", axum::routing::post(handlers::messages))
+        // Importers/callers: this router is the public HTTP entrypoint for gateway APIs.
+        // Affected API: adds POST /v1/messages/count_tokens. Data schema: Anthropic
+        // request body and response shape {"input_tokens": number}. User instruction:
+        // "要，添加`/v1/messages/count_tokens`的端点支持".
+        .route(
+            "/v1/messages/count_tokens",
+            axum::routing::post(handlers::messages_count_tokens),
+        )
         .route(
             "/v1/completions",
             axum::routing::post(handlers::completions),

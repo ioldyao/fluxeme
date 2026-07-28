@@ -19,6 +19,31 @@ pub struct GenericAdapter {
     pub anthropic_path: &'static str,
 }
 
+fn count_tokens_path(anthropic_path: &str) -> String {
+    format!("{}/count_tokens", anthropic_path.trim_end_matches('/'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::count_tokens_path;
+
+    #[test]
+    fn appends_count_tokens_to_standard_messages_path() {
+        assert_eq!(
+            count_tokens_path("/v1/messages"),
+            "/v1/messages/count_tokens"
+        );
+    }
+
+    #[test]
+    fn appends_count_tokens_to_prefixed_messages_path() {
+        assert_eq!(
+            count_tokens_path("/anthropic/v1/messages"),
+            "/anthropic/v1/messages/count_tokens"
+        );
+    }
+}
+
 impl GenericAdapter {
     pub fn deepseek() -> Self {
         Self {
@@ -66,6 +91,96 @@ impl ProviderAdapter for GenericAdapter {
         body: Value,
     ) -> Result<Value, ProviderError> {
         super::relay_request(endpoint, path, body, self.name).await
+    }
+
+    // Importers/callers: used by server handlers through ProviderAdapter after routing,
+    // including the new /v1/messages/count_tokens handler. Affected API: POST
+    // /v1/messages/count_tokens. Data schema: Anthropic request body and response shape
+    // {"input_tokens": number}. User instruction: "要，添加`/v1/messages/count_tokens`的端点支持".
+    async fn count_tokens(
+        &self,
+        endpoint: &EndpointConfig,
+        body: Value,
+    ) -> Result<Value, ProviderError> {
+        super::validate_endpoint_url(&endpoint.url).await?;
+        let client = shared_client();
+
+        let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
+        let path = count_tokens_path(self.anthropic_path);
+        let url = format!("{}{}", base, path);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-api-key",
+            HeaderValue::from_str(&endpoint.api_key).map_err(|e| {
+                ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other)
+            })?,
+        );
+        headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+        let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
+        let timeout = request_timeout(
+            &RequestKind::Unary { body_size },
+            endpoint,
+            &default_config(),
+        );
+        tracing::info!(
+            endpoint = %endpoint.url,
+            body_size = %body_size,
+            timeout_ms = timeout.as_millis(),
+            path = %path,
+            "Sending count_tokens request to upstream ({}, anthropic format)", self.name
+        );
+
+        let resp_start = Instant::now();
+        let req = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .timeout(timeout);
+        let resp = req.send().await.map_err(|e| {
+            let kind = classify_reqwest_error(&e);
+            tracing::error!(
+                endpoint = %endpoint.url,
+                error = %e,
+                error_kind = ?kind,
+                elapsed_ms = resp_start.elapsed().as_millis(),
+                "{} count_tokens upstream HTTP request failed", self.display_name
+            );
+            ProviderError::new(format!("Request failed: {}", e), kind)
+        })?;
+
+        let status = resp.status();
+        let body_resp = resp.bytes().await.map_err(|e| {
+            ProviderError::new(
+                format!("Failed to read response body: {}", e),
+                ErrorKind::Parse,
+            )
+        })?;
+
+        if !status.is_success() {
+            let resp_text = String::from_utf8_lossy(&body_resp);
+            let upstream_msg = serde_json::from_str::<serde_json::Value>(&resp_text)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().map(String::from))
+                .unwrap_or(resp_text.trim().to_string());
+            let kind = classify_status(status.as_u16());
+            tracing::error!(%status, body = %resp_text, "{} count_tokens request failed", self.name);
+            return Err(ProviderError::new(
+                format!(
+                    "Upstream request failed with status {}: {}",
+                    status.as_u16(),
+                    upstream_msg
+                ),
+                kind,
+            ));
+        }
+
+        let resp_body: Value = serde_json::from_slice(&body_resp).map_err(|e| {
+            ProviderError::new(format!("Failed to parse response: {}", e), ErrorKind::Parse)
+        })?;
+        Ok(resp_body)
     }
 
     async fn chat_complete(

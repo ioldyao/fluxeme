@@ -223,6 +223,20 @@ impl ProviderAdapter for AnthropicAdapter {
         Ok(Pin::from(Box::new(stream)))
     }
 
+    // Importers/callers: called from server handlers through ProviderAdapter after
+    // resolve_route(...), specifically the new /v1/messages/count_tokens handler.
+    // Affected API: POST /v1/messages/count_tokens. Data schema: Anthropic request body
+    // and Anthropic response shape {"input_tokens": number}. User instruction:
+    // "要，添加`/v1/messages/count_tokens`的端点支持".
+    async fn count_tokens(
+        &self,
+        endpoint: &EndpointConfig,
+        body: Value,
+    ) -> Result<Value, ProviderError> {
+        self.relay(endpoint, "/v1/messages/count_tokens", body)
+            .await
+    }
+
     async fn relay(
         &self,
         endpoint: &EndpointConfig,
