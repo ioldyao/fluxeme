@@ -171,6 +171,22 @@ pub trait ProviderAdapter: Send + Sync {
         ))
     }
 
+    // Importers/callers: ProviderAdapter is consumed by server handlers via
+    // resolve_route(...), specifically the planned handlers::responses_input_tokens
+    // path. Affected API: POST /responses/input_tokens. Data schema: OpenAI
+    // Responses request body and response shape {"object":"response.input_tokens",
+    // "input_tokens": number}. User instruction: "openai的提供商层，也添加这个openai的端点`POST/responses/input_tokens`".
+    async fn responses_input_tokens(
+        &self,
+        _endpoint: &EndpointConfig,
+        _body: Value,
+    ) -> Result<Value, ProviderError> {
+        Err(ProviderError::new(
+            "Responses input_tokens not supported for this provider",
+            ErrorKind::Other,
+        ))
+    }
+
     async fn relay(
         &self,
         _endpoint: &EndpointConfig,
