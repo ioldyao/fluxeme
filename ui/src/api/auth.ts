@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 import { useAuth } from '@/store/auth';
 import type { LoginResponse } from '@/types';
@@ -23,6 +23,7 @@ export function useLogin() {
 }
 
 export function useUpdateTimezone() {
+  const qc = useQueryClient();
   const setTimezone = useAuth((s) => s.setTimezone);
   return useMutation({
     mutationFn: (timezone: string) =>
@@ -32,6 +33,10 @@ export function useUpdateTimezone() {
       }),
     onSuccess: (res) => {
       setTimezone(res.timezone);
+      void qc.invalidateQueries({ queryKey: ['dashboard', 'self'] });
+      void qc.invalidateQueries({ queryKey: ['usage', 'aggregate', 'self'] });
+      void qc.invalidateQueries({ queryKey: ['usage', 'funnel', 'self'] });
+      void qc.invalidateQueries({ queryKey: ['usage', 'model-activity', 'self'] });
     },
   });
 }

@@ -1,3 +1,10 @@
+// Importers/callers: mounted by ui/src/routes/config.ts and ui/src/routes/index.tsx
+// as the authenticated dashboard page. Affected APIs: GET /dashboard,
+// /dashboard/aggregations, /usage, /usage/aggregate, /usage/model-activity,
+// /usage/funnel, /wallet/overview, /wallet/estimated-days. Data schemas: the
+// component consumes DashboardStats, DashboardAggregations, UsageResponse,
+// DailyAggregate[], ModelActivity[], FunnelStats, WalletOverview, and
+// { days: number | null }. User instruction: "`网关运行总览` 这个前端页面中，哪些还有计算全部用户的，统一修改只看当前个人用户的数据,admin登陆也只看自己的数据".
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -5,12 +12,10 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
-import { usePermission } from '@/permissions';
 import { useCurrency, CURRENCY_SYMBOL } from '@/store/currency';
-import { useDashboard, useDashboardAggregations } from '@/api/dashboard';
-import { useUsage, useUsageAggregate, useModelActivity, useUsageFunnel } from '@/api/usage';
+import { useSelfDashboard, useSelfDashboardAggregations } from '@/api/dashboard';
+import { useMyUsage, useMyUsageAggregate, useMyModelActivity, useMyUsageFunnel } from '@/api/usage';
 import { useEstimatedDays, useWalletOverview } from '@/api/wallet';
-import { useRoutingHistory } from '@/api/routing';
 import { DashboardChartTooltip } from '@/components/dashboard/DashboardChartTooltip';
 import {
   Area, AreaChart, CartesianGrid, Cell, Pie, PieChart,
@@ -34,34 +39,71 @@ export default function Dashboard() {
   const { t } = useTranslation();
   const [days, setDays] = useState(1);
   const [chartOpt, setChartOpt] = useState<string>(CHART_OPTS[0]);
-  const isAdmin = usePermission('admin:dashboard');
 
-  const { data: stats, isError: statsErr, refetch } = useDashboard();
-  const { data: agg, isError: aggErr, refetch: ra } = useDashboardAggregations();
-  const { data: ua, refetch: rua } = useUsageAggregate(days);
-  const { data: ma, refetch: rma } = useModelActivity(days);
-  const { data: recent, refetch: rrl } = useUsage({ limit: 8 });
+  const {
+    data: stats,
+    isError: statsErr,
+    isLoading: statsLoading,
+    refetch,
+  } = useSelfDashboard();
+  const {
+    data: agg,
+    isError: aggErr,
+    isLoading: aggLoading,
+    refetch: ra,
+  } = useSelfDashboardAggregations();
+  const {
+    data: ua,
+    isError: usageAggregateError,
+    isLoading: usageAggregateLoading,
+    isPlaceholderData: isUsageAggregatePlaceholder,
+    refetch: rua,
+  } = useMyUsageAggregate(days);
+  const {
+    data: ma,
+    isLoading: modelActivityLoading,
+    refetch: rma,
+  } = useMyModelActivity(days);
+  const { data: recent, refetch: rrl } = useMyUsage({ limit: 8 });
   const { data: wo, refetch: rwo } = useWalletOverview();
   const { data: ed, refetch: red } = useEstimatedDays();
-  const { data: rh, refetch: rrh } = useRoutingHistory(days, { enabled: isAdmin });
-  const { data: funnel } = useUsageFunnel(days);
+  const {
+    data: funnel,
+    isError: funnelError,
+    isLoading: funnelLoading,
+    isPlaceholderData: isFunnelPlaceholder,
+    refetch: rfunnel,
+  } = useMyUsageFunnel(days);
   const { currency, rate } = useCurrency();
   const sym = CURRENCY_SYMBOL[currency];
 
+  const isHealthStripLoading = statsLoading || aggLoading;
   const availability = agg?.success_rate_24h ?? 0;
   const avgLat = agg?.avg_latency_ms_24h ?? 0;
-  const modelCount = stats?.models ?? 0;
   const apiKeyCount = stats?.api_keys ?? 0;
   const requests24h = agg?.requests_24h ?? 0;
   const totalTokens24h = agg?.total_tokens_24h ?? 0;
-  const channelCount = stats?.channels ?? 0;
-  const selectedPeriodRequests = useMemo(() => {
-    if (!ua?.length) return requests24h;
-    return ua.reduce((s, d) => s + d.count, 0);
-  }, [ua, requests24h]);
+  const selectedPeriodTokens = useMemo(() => {
+    if (!ua) return days === 1 ? totalTokens24h : 0;
+    return ua.reduce((sum, day) => sum + day.total_tokens, 0);
+  }, [days, totalTokens24h, ua]);
+  const isRequestFlowLoading = usageAggregateLoading
+    || funnelLoading
+    || isUsageAggregatePlaceholder
+    || isFunnelPlaceholder;
+  const hasRequestFlowData = !!funnel && (days === 1 || !!ua);
+  const hasRequestFlowError = !hasRequestFlowData && (funnelError || (days !== 1 && usageAggregateError));
   const gatewayError = statsErr || aggErr;
-  const toneCls = gatewayError ? 'bg-red-500 shadow-[0_0_0_6px_rgba(216,75,75,0.14)]' : availability >= 99 ? 'bg-emerald-500 shadow-[0_0_0_6px_rgba(20,150,106,0.12)]' : availability >= 95 ? 'bg-amber-500 shadow-[0_0_0_6px_rgba(217,145,19,0.14)]' : 'bg-emerald-500 shadow-[0_0_0_6px_rgba(20,150,106,0.12)]';
-  const toneLabel = gatewayError ? t('gateway.unstable') : t('gateway.healthy');
+  const toneCls = isHealthStripLoading
+    ? 'bg-muted-foreground/30 shadow-none'
+    : gatewayError
+      ? 'bg-red-500 shadow-[0_0_0_6px_rgba(216,75,75,0.14)]'
+      : availability >= 99
+        ? 'bg-emerald-500 shadow-[0_0_0_6px_rgba(20,150,106,0.12)]'
+        : availability >= 95
+          ? 'bg-amber-500 shadow-[0_0_0_6px_rgba(217,145,19,0.14)]'
+          : 'bg-emerald-500 shadow-[0_0_0_6px_rgba(20,150,106,0.12)]';
+  const toneLabel = isHealthStripLoading ? t('common.loading') : gatewayError ? t('gateway.unstable') : t('gateway.healthy');
 
   // model share
   const modelShare = useMemo(() => {
@@ -75,34 +117,35 @@ export default function Dashboard() {
     return items;
   }, [ma, t]);
 
-  // routing rows
-  const routingRows = useMemo(() => {
-    if (!rh?.summary) return [];
-    const total = rh.summary.reduce((s, r) => s + r.requests, 0);
-    return rh.summary.slice().sort((a, b) => b.requests - a.requests).slice(0, 3).map(r => ({
-      name: rh.series[r.channel_id]?.channel_name ?? r.channel_id,
-      share: total > 0 ? (r.requests / total) * 100 : 0,
-      requests: r.requests,
-      latency: r.avg_latency,
-      rate: r.success_rate,
-    }));
-  }, [rh]);
-
   // alerts
   const alerts = useMemo(() => {
     const a: { id: string; title: string; desc: string; warn: boolean }[] = [];
-    if (avgLat > 2000) a.push({ id: 'lat', title: t('dash.alertLatencyTitle'), desc: t('dash.alertLatencyDesc', { latency: avgLat.toFixed(0) }), warn: true });
-    if (availability < 95) a.push({ id: 'suc', title: t('dash.alertSuccessTitle'), desc: t('dash.alertSuccessDesc', { rate: availability.toFixed(1) }), warn: true });
+    if (agg && avgLat > 2000) a.push({ id: 'lat', title: t('dash.alertLatencyTitle'), desc: t('dash.alertLatencyDesc', { latency: avgLat.toFixed(0) }), warn: true });
+    if (agg && availability < 95) a.push({ id: 'suc', title: t('dash.alertSuccessTitle'), desc: t('dash.alertSuccessDesc', { rate: availability.toFixed(1) }), warn: true });
     if ((modelShare[0]?.percentage ?? 0) > 80) a.push({ id: 'con', title: t('dash.alertConcentrationTitle'), desc: t('dash.alertConcentrationDesc', { model: modelShare[0]?.model ?? '—', share: (modelShare[0]?.percentage ?? 0).toFixed(1) }), warn: false });
     if ((ed?.days ?? Infinity) < 10) a.push({ id: 'bal', title: t('dash.alertBalanceTitle'), desc: t('dash.alertBalanceDesc', { days: (ed?.days ?? 0).toFixed(1) }), warn: true });
     return a;
-  }, [avgLat, availability, modelShare, ed?.days, t]);
+  }, [agg, avgLat, availability, modelShare, ed?.days, t]);
 
-  const handleRefresh = () => { void refetch(); void ra(); void rua(); void rma(); void rrl(); void rwo(); void red(); if (isAdmin) void rrh(); };
+  const handleRefresh = () => {
+    void refetch();
+    void ra();
+    void rua();
+    void rma();
+    void rrl();
+    void rwo();
+    void red();
+    void rfunnel();
+  };
 
   const chartData = useMemo(() => {
     if (!ua?.length) return [];
-    return ua.map(d => ({ date: d.date.slice(5), requests: d.count, total_tokens: d.total_tokens, errors: d.count - d.success_count }));
+    return ua.map(d => ({
+      date: d.date.slice(5),
+      requests: d.count,
+      total_tokens: d.total_tokens,
+      errors: d.count - d.success_count,
+    }));
   }, [ua]);
 
   return (
@@ -135,20 +178,20 @@ export default function Dashboard() {
               <span className={`size-3 rounded-full ${toneCls}`} aria-hidden="true" />
               <div>
                 <div className="font-semibold text-foreground">{toneLabel}</div>
-                <div className="mt-1 text-sm text-muted-foreground">{isAdmin ? t('dash.gatewayHealthMeta', { modelCount, channelCount, apiKeyCount }) : t('dash.gatewayHealthMetaUser', { modelCount, apiKeyCount })}</div>
+                <div className="mt-1 text-sm text-muted-foreground">{t('dash.myKeys')}: {isHealthStripLoading ? '—' : apiKeyCount}</div>
               </div>
             </div>
             <div className="text-right">
-              <div className="text-2xl font-semibold tracking-tight">{gatewayError ? '—' : requests24h > 0 ? `${availability.toFixed(2)}%` : '—'}</div>
+              <div className="text-2xl font-semibold tracking-tight">{isHealthStripLoading || gatewayError ? '—' : requests24h > 0 ? `${availability.toFixed(2)}%` : '—'}</div>
               <div className="text-xs text-muted-foreground">{t('dash.availability')}</div>
             </div>
           </div>
         </div>
         {[
-          { title: t('dash.requests'), val: requests24h.toLocaleString(), icon: <Activity className="size-4" /> },
-          { title: t('usage.totalTokens'), val: totalTokens24h.toLocaleString(), icon: <Layers3 className="size-4" /> },
-          { title: t('dash.avgLatency'), val: fmtLat(avgLat), icon: <ShieldCheck className="size-4" /> },
-          { title: t('dash.cost24h'), val: fmt(sym, rate, agg?.cost_24h), icon: <Wallet className="size-4" /> },
+          { title: t('dash.requests'), val: isHealthStripLoading ? '—' : requests24h.toLocaleString(), icon: <Activity className="size-4" /> },
+          { title: t('usage.totalTokens'), val: isHealthStripLoading ? '—' : totalTokens24h.toLocaleString(), icon: <Layers3 className="size-4" /> },
+          { title: t('dash.avgLatency'), val: isHealthStripLoading ? '—' : fmtLat(avgLat), icon: <ShieldCheck className="size-4" /> },
+          { title: t('dash.cost24h'), val: isHealthStripLoading ? '—' : fmt(sym, rate, agg?.cost_24h), icon: <Wallet className="size-4" /> },
         ].map(m => (
           <div key={m.title} className="rounded-xl border bg-card p-4 shadow-sm">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -171,29 +214,43 @@ export default function Dashboard() {
               <CardDescription>{t('dash.requestFlowSub')}</CardDescription>
             </CardHeader>
             <CardContent>
-              {(() => {
+              {isRequestFlowLoading ? (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 md:grid-cols-5">
+                  {Array.from({ length: 5 }, (_, index) => (
+                    <div key={index} className="h-48 animate-pulse rounded-lg border bg-muted/20" />
+                  ))}
+                </div>
+              ) : hasRequestFlowError || !hasRequestFlowData ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">{t('dash.noData')}</p>
+              ) : (() => {
                 const f = funnel;
-                const total = f?.total ?? selectedPeriodRequests;
-                const successCount = f?.success_count ?? Math.round(total * (availability / 100));
-                const authCount = f?.auth_fail_count ?? 0;
-                const rateLimitCount = f?.rate_limit_count ?? 0;
-                const badReqCount = f?.bad_request_count ?? 0;
-                const upstreamErrCount = f?.upstream_error_count ?? 0;
-                const timeoutCount = f?.timeout_count ?? 0;
-                const otherErrCount = f?.other_error_count ?? 0;
-                const totalTokens = agg?.total_tokens_24h ?? 0;
+                if (!f) {
+                  return <p className="py-8 text-center text-sm text-muted-foreground">{t('dash.noData')}</p>;
+                }
+                const total = f.total;
+                const successCount = f.success_count;
+                const authCount = f.auth_fail_count;
+                const rateLimitCount = f.rate_limit_count;
+                const badReqCount = f.bad_request_count;
+                const upstreamErrCount = f.upstream_error_count;
+                const timeoutCount = f.timeout_count;
+                const otherErrCount = f.other_error_count;
+                const totalTokens = selectedPeriodTokens;
                 const intervalSecs = days * 86400;
-                const funnelLat = f;
                 const avgQps = intervalSecs > 0 ? (total / intervalSecs) : 0;
                 const avgTps = intervalSecs > 0 ? (totalTokens / intervalSecs) : 0;
-                const slaLvl = total > 0 ? (successCount / total) * 100 : 0;
-                const sysErrors = upstreamErrCount + timeoutCount;
                 const bizLimits = rateLimitCount + badReqCount + authCount;
-                const healthy = sysErrors + bizLimits === 0;
-                const p50s = funnelLat?.p50_latency ? funnelLat.p50_latency / 1000 : avgLat / 1000;
-                const p95s = funnelLat?.p95_latency ? funnelLat.p95_latency / 1000 : (avgLat / 1000) * 2.5;
-                const p99s = funnelLat?.p99_latency ? funnelLat.p99_latency / 1000 : (avgLat / 1000) * 4;
-                const avgS = funnelLat?.avg_latency ? funnelLat.avg_latency / 1000 : avgLat / 1000;
+                const slaEligibleTotal = Math.max(0, total - bizLimits);
+                const slaLvl = slaEligibleTotal > 0 ? (successCount / slaEligibleTotal) * 100 : 0;
+                const requestSuccessRate = total > 0 ? (successCount / total) * 100 : 0;
+                const requestErrorRate = total > 0 ? 100 - requestSuccessRate : 0;
+                const sysErrors = upstreamErrCount + timeoutCount;
+                const totalErrors = sysErrors + bizLimits + otherErrCount;
+                const healthy = totalErrors === 0;
+                const p50s = f.p50_latency / 1000;
+                const p95s = f.p95_latency / 1000;
+                const p99s = f.p99_latency / 1000;
+                const avgS = f.avg_latency / 1000;
                 return (
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 md:grid-cols-5">
                     {/* Stage 01 */}
@@ -226,9 +283,9 @@ export default function Dashboard() {
                     {/* Stage 03 */}
                     <div className="rounded-lg border bg-muted/20 p-4">
                       <div className="text-[11px] font-medium text-muted-foreground">阶段 03</div>
-                      <h3 className="mt-1.5 text-sm font-semibold text-foreground">首 Token 响应</h3>
+                      <h3 className="mt-1.5 text-sm font-semibold text-foreground">请求延迟</h3>
                       <div className="mt-4 text-2xl font-semibold tracking-tight">{p50s.toFixed(2)}s</div>
-                      <div className="mt-1 text-[11px] text-muted-foreground">TTFT · P50</div>
+                      <div className="mt-1 text-[11px] text-muted-foreground">端到端 · P50</div>
                       <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
                         <div><span className="text-muted-foreground">P95</span><div className="font-semibold">{p95s.toFixed(2)}s</div></div>
                         <div><span className="text-muted-foreground">P99</span><div className="font-semibold">{p99s.toFixed(2)}s</div></div>
@@ -257,11 +314,11 @@ export default function Dashboard() {
                     <div className="rounded-lg border bg-muted/20 p-4">
                       <div className="text-[11px] font-medium text-muted-foreground">阶段 05</div>
                       <h3 className="mt-1.5 text-sm font-semibold text-foreground">最终结果</h3>
-                      <div className="mt-4 text-2xl font-semibold tracking-tight">{slaLvl.toFixed(2)}%</div>
+                      <div className="mt-4 text-2xl font-semibold tracking-tight">{requestSuccessRate.toFixed(2)}%</div>
                       <div className="mt-1 text-[11px] text-muted-foreground">请求成功率</div>
                       <div className="mt-3 space-y-1.5 text-[11px]">
-                        <div className="flex justify-between"><span className="text-muted-foreground">请求错误率</span><b className="text-red-500">{(100 - slaLvl).toFixed(2)}%</b></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">错误请求</span><b className="text-red-500">{sysErrors + bizLimits + otherErrCount}</b></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">请求错误率</span><b className="text-red-500">{requestErrorRate.toFixed(2)}%</b></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">错误请求</span><b className="text-red-500">{totalErrors}</b></div>
                         <div className="flex justify-between"><span className="text-muted-foreground">上游错误率</span><b>{total > 0 ? ((upstreamErrCount / total) * 100).toFixed(2) : '0.00'}%</b></div>
                       </div>
                     </div>
@@ -287,7 +344,9 @@ export default function Dashboard() {
               </div>
             </CardHeader>
             <CardContent>
-              {chartData.length > 0 ? (
+              {usageAggregateLoading ? (
+                <div className="h-[285px] animate-pulse rounded-lg border bg-muted/20" />
+              ) : chartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height={285}>
                   <AreaChart data={chartData} margin={{ left: -12, right: 8, top: 4 }}>
                     <defs><linearGradient id="tf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.3} /><stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} /></linearGradient></defs>
@@ -303,40 +362,6 @@ export default function Dashboard() {
               )}
             </CardContent>
           </Card>
-
-          {/* Model Routing Performance (admin only) */}
-          {isAdmin && (
-            <Card className="card-hover">
-              <CardHeader className="flex flex-row items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-semibold leading-none">{t('dash.routingPerformance')}</h2>
-                  <CardDescription>{t('dash.routingPerformanceSub')}</CardDescription>
-                </div>
-                <Button variant="ghost" size="sm" onClick={() => window.location.href = '/routing-history'}>{t('dash.viewRouting')}</Button>
-              </CardHeader>
-              <CardContent>
-                {routingRows.length === 0 ? (
-                  <p className="py-8 text-center text-sm text-muted-foreground">{t('dash.noData')}</p>
-                ) : (
-                  <div className="space-y-1">
-                    {routingRows.map((r, i) => (
-                      <div key={r.name} className="grid grid-cols-[minmax(0,1fr)_80px_80px] items-center gap-3 border-t border-border/60 px-0 py-3 text-sm first:border-0">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <span className={`size-2 shrink-0 rounded-full ${i === 0 ? 'bg-brand' : i === 1 ? 'bg-blue-500' : 'bg-muted-foreground/40'}`} />
-                          <span className="truncate font-medium text-foreground">{r.name}</span>
-                        </div>
-                        <div className="text-right">
-                          <div className="truncate font-semibold">{r.share.toFixed(1)}%</div>
-                          <div className="text-[11px] text-muted-foreground">{r.requests.toLocaleString()}</div>
-                        </div>
-                        <div className="text-right text-muted-foreground">{fmtLat(r.latency)}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
 
           {/* Request Logs */}
           <Card className="card-hover">
@@ -426,7 +451,9 @@ export default function Dashboard() {
               <CardDescription>{t('dash.modelDistributionSub')}</CardDescription>
             </CardHeader>
             <CardContent>
-              {modelShare.length > 0 ? (
+              {modelActivityLoading ? (
+                <div className="h-[140px] animate-pulse rounded-lg border bg-muted/20" />
+              ) : modelShare.length > 0 ? (
                 <div className="grid grid-cols-[140px_1fr] items-center gap-4">
                   <ResponsiveContainer width="100%" height={140}>
                     <PieChart>

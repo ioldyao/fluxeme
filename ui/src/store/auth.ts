@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { queryClient } from '@/lib/query';
 import type { UserRole, LoginResponse } from '@/types';
 
 interface AuthState {
@@ -24,7 +25,8 @@ export const useAuth = create<AuthState>()(
       userName: null,
       timezone: 'UTC',
       currency: 'usd',
-      setSession: (res) =>
+      setSession: (res) => {
+        queryClient.clear();
         set({
           token: res.token,
           role: res.role,
@@ -32,10 +34,12 @@ export const useAuth = create<AuthState>()(
           userName: res.user_name,
           timezone: res.timezone || 'UTC',
           currency: res.currency || 'usd',
-        }),
+        });
+      },
       setTimezone: (timezone) => set({ timezone }),
       setCurrency: (currency) => set({ currency }),
-      clear: () =>
+      clear: () => {
+        queryClient.clear();
         set({
           token: null,
           role: null,
@@ -43,7 +47,8 @@ export const useAuth = create<AuthState>()(
           userName: null,
           timezone: 'UTC',
           currency: 'usd',
-        }),
+        });
+      },
     }),
     {
       name: 'auth',
