@@ -82,11 +82,7 @@ pub(crate) async fn delete_rule(
     state.db.delete_rule(&id).await.map_err(db_err)?;
     state.routing.reload().await.map_err(AdminError::internal)?;
 
-    tracing::info!(
-        "admin={} action=delete_rule target={}",
-        session.user_id,
-        id
-    );
+    tracing::info!("admin={} action=delete_rule target={}", session.user_id, id);
 
     Ok(Json(serde_json::json!({ "deleted": id })))
 }

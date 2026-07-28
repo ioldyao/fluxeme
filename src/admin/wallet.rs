@@ -115,9 +115,8 @@ pub(crate) async fn wallet_create_key(
     validate_finite_positive(req.amount)?;
     // Validate expires_at format if provided
     if let Some(ref exp) = req.expires_at {
-        chrono::DateTime::parse_from_rfc3339(exp).map_err(|_| {
-            AdminError::bad_request("expires_at must be a valid RFC3339 timestamp")
-        })?;
+        chrono::DateTime::parse_from_rfc3339(exp)
+            .map_err(|_| AdminError::bad_request("expires_at must be a valid RFC3339 timestamp"))?;
     }
     let key = uuid::Uuid::new_v4().to_string();
     state
@@ -313,8 +312,6 @@ pub(crate) struct EstimatedDaysResp {
     #[serde(with = "rust_decimal::serde::float_option")]
     days: Option<Decimal>,
 }
-
-
 
 pub(crate) async fn wallet_estimated_days(
     State(state): State<Arc<AppState>>,
