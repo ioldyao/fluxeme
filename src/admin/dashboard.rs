@@ -158,18 +158,25 @@ pub(crate) async fn dashboard_aggregations(
         (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO)
     }
 
-    // All-time totals: use COUNT SQL aggregate instead of loading all rows
+    // All-time totals must remain on PG metadata because ClickHouse data is TTL-limited.
     let total_requests = match user_filter {
         Some(uid) => state.usage.count_by_user(uid).await.unwrap_or(0),
         None => state.usage.count().await.unwrap_or(0),
     } as u64;
 
-    // 24h stats: use SQL aggregates
-    let (requests_24h, success_count, total_latency, total_tokens_24h) = state
-        .usage
-        .stats_since(&since_24h, user_filter)
-        .await
-        .unwrap_or((0, 0, 0, 0));
+    // 24h stats: prefer ClickHouse, fallback to PG only when CH is absent.
+    let (requests_24h, success_count, total_latency, total_tokens_24h) =
+        if let Some(ref ch) = state.ch {
+            ch.query_usage_stats_since(&since_24h, user_filter)
+                .await
+                .unwrap_or((0, 0, 0, 0))
+        } else {
+            state
+                .usage
+                .stats_since(&since_24h, user_filter)
+                .await
+                .unwrap_or((0, 0, 0, 0))
+        };
 
     if requests_24h == 0 {
         return Ok(Json(DashboardAggregations {
@@ -185,15 +192,22 @@ pub(crate) async fn dashboard_aggregations(
     }
 
     // Compute cost from 24h records (loads only token + model columns)
-    let records = state
-        .usage
-        .cost_rows_since(&since_24h, user_filter)
-        .await
-        .map_err(AdminError::internal)?;
+    let records = if let Some(ref ch) = state.ch {
+        ch.query_usage_since(&since_24h, user_filter)
+            .await
+            .map_err(AdminError::internal)?
+    } else {
+        state
+            .usage
+            .cost_rows_since(&since_24h, user_filter)
+            .await
+            .map_err(AdminError::internal)?
+    };
     let mut total_cost_24h = Decimal::ZERO;
     let mut model_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for r in &records {
-        let (pp, cp, crp) = if r.prompt_price > Decimal::ZERO || r.completion_price > Decimal::ZERO {
+        let (pp, cp, crp) = if r.prompt_price > Decimal::ZERO || r.completion_price > Decimal::ZERO
+        {
             (r.prompt_price, r.completion_price, r.cache_read_price)
         } else {
             lookup_price(&r.model, &pricing, &prefix_prices)
@@ -205,24 +219,23 @@ pub(crate) async fn dashboard_aggregations(
         *model_counts.entry(r.model.clone()).or_default() += 1;
     }
 
-    // All-time cost: load records with stored pricing
+    // All-time cost must remain on PG metadata because ClickHouse data is TTL-limited.
     let all_records = state
         .usage
         .cost_rows_since("1970-01-01T00:00:00", user_filter)
         .await
         .map_err(AdminError::internal)?;
-    let total_cost = all_records
-        .iter()
-        .fold(Decimal::ZERO, |acc, r| {
-            let (pp, cp, crp) = if r.prompt_price > Decimal::ZERO || r.completion_price > Decimal::ZERO {
-                (r.prompt_price, r.completion_price, r.cache_read_price)
-            } else {
-                lookup_price(&r.model, &pricing, &prefix_prices)
-            };
-            acc + (Decimal::from(r.prompt_tokens) / Decimal::from(1000000) * pp)
-                + (Decimal::from(r.completion_tokens) / Decimal::from(1000000) * cp)
-                + (Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000) * crp)
-        });
+    let total_cost = all_records.iter().fold(Decimal::ZERO, |acc, r| {
+        let (pp, cp, crp) = if r.prompt_price > Decimal::ZERO || r.completion_price > Decimal::ZERO
+        {
+            (r.prompt_price, r.completion_price, r.cache_read_price)
+        } else {
+            lookup_price(&r.model, &pricing, &prefix_prices)
+        };
+        acc + (Decimal::from(r.prompt_tokens) / Decimal::from(1000000) * pp)
+            + (Decimal::from(r.completion_tokens) / Decimal::from(1000000) * cp)
+            + (Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000) * crp)
+    });
 
     let success_rate = if requests_24h > 0 {
         success_count as f64 / requests_24h as f64 * 100.0

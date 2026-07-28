@@ -3,7 +3,6 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::Duration;
 
-
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
 
@@ -22,6 +21,13 @@ fn billing_shard(record: &UsageRecord) -> usize {
     let mut hasher = DefaultHasher::new();
     record.user_id.hash(&mut hasher);
     (hasher.finish() as usize) % N_BILLING_WORKERS
+}
+
+fn strip_usage_client_ip(record: UsageRecord) -> UsageRecord {
+    UsageRecord {
+        client_ip: None,
+        ..record
+    }
 }
 
 #[derive(Clone)]
@@ -86,15 +92,17 @@ impl UsageService {
         };
         self.event_bus.request_completed(event);
 
-        // 2. Clone record for observability before moving into billing channel
-        let obs_record = record.clone();
+        // 2. Preserve full billing fallback detail, but strip client IP from the CH/Redis usage stream.
+        let billing_record = record.clone();
+        let obs_record = strip_usage_client_ip(record);
 
         // 3. Route billing to sharded worker
-        let idx = billing_shard(&record);
-        if let Err(e) = self.billing_senders[idx].try_send(record) {
+        let idx = billing_shard(&billing_record);
+        if let Err(e) = self.billing_senders[idx].try_send(billing_record) {
             let dropped = e.into_inner();
             tracing::warn!(
-                worker = idx, request_id = dropped.request_id,
+                worker = idx,
+                request_id = dropped.request_id,
                 "Billing channel full — falling back to Redis Stream backlog"
             );
             let cache = self.cache.clone();
@@ -133,27 +141,15 @@ impl UsageService {
     }
 
     pub async fn count_by_user(&self, user_id: &str) -> Result<usize, String> {
-        self.db
-            .count_usage_by_user(user_id)
-            .await
-            .map_err(|e| e.0)
+        self.db.count_usage_by_user(user_id).await.map_err(|e| e.0)
     }
 
     pub async fn count_filtered(&self, filter: &UsageFilter) -> Result<usize, String> {
-        self.db
-            .count_usage_filtered(filter)
-            .await
-            .map_err(|e| e.0)
+        self.db.count_usage_filtered(filter).await.map_err(|e| e.0)
     }
 
-    pub async fn get_detail(
-        &self,
-        request_id: &str,
-    ) -> Result<Option<UsageRecord>, String> {
-        self.db
-            .get_usage_detail(request_id)
-            .await
-            .map_err(|e| e.0)
+    pub async fn get_detail(&self, request_id: &str) -> Result<Option<UsageRecord>, String> {
+        self.db.get_usage_detail(request_id).await.map_err(|e| e.0)
     }
 
     pub async fn daily_counts(
@@ -207,10 +203,7 @@ impl UsageService {
         since: &str,
         user_id: Option<&str>,
     ) -> Result<crate::db::FunnelStats, String> {
-        self.db
-            .funnel_stats(since, user_id)
-            .await
-            .map_err(|e| e.0)
+        self.db.funnel_stats(since, user_id).await.map_err(|e| e.0)
     }
 }
 
@@ -283,4 +276,3 @@ async fn billing_worker(
 
     tracing::warn!("Billing worker {id} exiting (channel closed)");
 }
-

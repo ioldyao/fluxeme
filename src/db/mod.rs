@@ -415,7 +415,10 @@ impl Database {
     ) -> Result<Vec<(String, Decimal, u64, u64)>, DbError> {
         self.backend.period_summary_for_user(user_id).await
     }
-    pub async fn lookup_model_pricing(&self, model_name: &str) -> Result<(Decimal, Decimal), DbError> {
+    pub async fn lookup_model_pricing(
+        &self,
+        model_name: &str,
+    ) -> Result<(Decimal, Decimal, Decimal), DbError> {
         self.backend.lookup_model_pricing(model_name).await
     }
 
@@ -423,7 +426,11 @@ impl Database {
     pub async fn get_wallet_balance(&self, user_id: &str) -> Result<(Decimal, Decimal), DbError> {
         self.backend.get_wallet_balance(user_id).await
     }
-    pub async fn update_wallet_balance(&self, user_id: &str, balance: Decimal) -> Result<(), DbError> {
+    pub async fn update_wallet_balance(
+        &self,
+        user_id: &str,
+        balance: Decimal,
+    ) -> Result<(), DbError> {
         self.backend.update_wallet_balance(user_id, balance).await
     }
     #[allow(clippy::too_many_arguments)]
@@ -485,7 +492,10 @@ impl Database {
     pub async fn get_total_recharged(&self, user_id: &str) -> Result<Decimal, DbError> {
         self.backend.get_total_recharged(user_id).await
     }
-    pub async fn get_wallet_estimated_days(&self, user_id: &str) -> Result<Option<Decimal>, DbError> {
+    pub async fn get_wallet_estimated_days(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<Decimal>, DbError> {
         self.backend.get_wallet_estimated_days(user_id).await
     }
 

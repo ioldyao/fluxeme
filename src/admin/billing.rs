@@ -16,10 +16,10 @@ fn validate_year_month(year: i32, month: u32) -> Result<(), AdminError> {
     if year == 0 && month == 0 {
         return Ok(()); // unset/placeholder — return empty results
     }
-    if year < 2020 || year > 2100 {
+    if !(2020..=2100).contains(&year) {
         return Err(AdminError::bad_request("Year out of range (2020-2100)"));
     }
-    if month < 1 || month > 12 {
+    if !(1..=12).contains(&month) {
         return Err(AdminError::bad_request("Month must be between 1 and 12"));
     }
     Ok(())
@@ -50,23 +50,22 @@ pub(crate) async fn billing_summary(
         .cost_rows_since("1970-01-01T00:00:00", user_filter)
         .await
         .map_err(AdminError::internal)?;
-    let total_cost = records
-        .iter()
-        .fold(Decimal::ZERO, |acc, r| {
-            let pp = if r.prompt_price > Decimal::ZERO {
-                r.prompt_price
-            } else {
-                Decimal::ZERO
-            };
-            let cp = if r.completion_price > Decimal::ZERO {
-                r.completion_price
-            } else {
-                Decimal::ZERO
-            };
-            acc + (Decimal::from(r.prompt_tokens) / Decimal::from(1000000) * pp)
-                + (Decimal::from(r.completion_tokens) / Decimal::from(1000000) * cp)
-                + (Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000) * r.cache_read_price)
-        });
+    let total_cost = records.iter().fold(Decimal::ZERO, |acc, r| {
+        let pp = if r.prompt_price > Decimal::ZERO {
+            r.prompt_price
+        } else {
+            Decimal::ZERO
+        };
+        let cp = if r.completion_price > Decimal::ZERO {
+            r.completion_price
+        } else {
+            Decimal::ZERO
+        };
+        acc + (Decimal::from(r.prompt_tokens) / Decimal::from(1000000) * pp)
+            + (Decimal::from(r.completion_tokens) / Decimal::from(1000000) * cp)
+            + (Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000)
+                * r.cache_read_price)
+    });
     let total_requests = records.len() as u64;
     let (balance, _) = state
         .db

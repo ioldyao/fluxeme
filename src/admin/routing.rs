@@ -22,7 +22,7 @@ pub(crate) async fn routing_health(
     let usage = if let Some(ref ch) = state.ch {
         ch.query_channel_usage_24h()
             .await
-            .map_err(|e| AdminError::internal(e))?
+            .map_err(AdminError::internal)?
     } else {
         state.db.channel_usage_24h().await.map_err(db_err)?
     };
@@ -141,7 +141,7 @@ pub(crate) async fn recent_request_paths(
     let records = if let Some(ref ch) = state.ch {
         ch.query_recent_request_paths(15)
             .await
-            .map_err(|e| AdminError::internal(e))?
+            .map_err(AdminError::internal)?
     } else {
         state.db.recent_request_paths(15).await.map_err(db_err)?
     };
@@ -216,7 +216,7 @@ pub(crate) async fn routing_flow_snapshot_handler(
         ch.query_routing_flow_snapshot(24)
             .await
             .map(Json)
-            .map_err(|e| AdminError::internal(e))
+            .map_err(AdminError::internal)
     } else {
         state
             .db
