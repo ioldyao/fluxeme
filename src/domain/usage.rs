@@ -39,6 +39,8 @@ pub struct UsageRecord {
     #[serde(with = "rust_decimal::serde::float")]
     pub cache_read_price: Decimal,
     pub client_ip: Option<String>,
+    #[serde(default)]
+    pub endpoint_id: Option<i64>,
     /// Original model name before routing rule rewrites.
     /// Empty string if no rewrite occurred.
     #[serde(default)]

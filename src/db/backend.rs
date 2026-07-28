@@ -9,9 +9,7 @@ use crate::domain::usage::UsageFilter;
 use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
 
-use super::{
-    DbError, FunnelStats, ProbeResultRow, RechargeKeyRow, WalletTransactionRow,
-};
+use super::{DbError, FunnelStats, ProbeResultRow, RechargeKeyRow, WalletTransactionRow};
 
 /// PostgreSQL persistence contract used by application services.
 ///
@@ -170,7 +168,10 @@ pub trait DbBackend: Send + Sync {
         &self,
         user_id: &str,
     ) -> Result<Vec<(String, Decimal, u64, u64)>, DbError>;
-    async fn lookup_model_pricing(&self, model_name: &str) -> Result<(Decimal, Decimal), DbError>;
+    async fn lookup_model_pricing(
+        &self,
+        model_name: &str,
+    ) -> Result<(Decimal, Decimal, Decimal), DbError>;
 
     // ── Wallet ───────────────────────────────────────────────────────────
     async fn get_wallet_balance(&self, user_id: &str) -> Result<(Decimal, Decimal), DbError>;

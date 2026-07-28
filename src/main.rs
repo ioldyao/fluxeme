@@ -260,15 +260,18 @@ async fn main() {
     let event_bus = observability::event_bus::EventBus::new(8192);
 
     // ClickHouse backend (optional — gracefully disabled when not configured)
-    let ch = ClickHouseBackend::new(&config.read().unwrap().database.clickhouse)
+    let (clickhouse_cfg, ch_retention_days) = {
+        let cfg = config.read().unwrap();
+        (cfg.database.clickhouse.clone(), cfg.database.retention_days)
+    };
+    let ch = ClickHouseBackend::new(&clickhouse_cfg)
         .await
         .unwrap_or_else(|e| {
             tracing::warn!("ClickHouse init failed: {e}");
             None
         });
     if let Some(ref ch) = ch {
-        let retention = config.read().unwrap().database.retention_days;
-        if let Err(e) = ch.migrate(retention as u32).await {
+        if let Err(e) = ch.migrate(ch_retention_days as u32).await {
             tracing::warn!("ClickHouse migration: {e}");
         }
     }
@@ -288,7 +291,8 @@ async fn main() {
     {
         let ch = ch.clone();
         let cache = cache.clone();
-        tokio::spawn(crate::cache::start_obs_consumer(ch, cache));
+        let db = db.clone();
+        tokio::spawn(crate::cache::start_obs_consumer(ch, cache, db));
     }
 
     // In-memory gate cache (populated by inspection, read by handler when Redis is down)
@@ -406,5 +410,7 @@ async fn main() {
     .await
     .expect("Server error");
 
-    for h in usage_handles { h.abort(); }
+    for h in usage_handles {
+        h.abort();
+    }
 }

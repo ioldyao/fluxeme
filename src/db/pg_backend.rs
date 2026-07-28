@@ -32,35 +32,37 @@ impl PgBackend {
     // ── Private helpers ──────────────────────────────────────────────────────────
 
     #[allow(dead_code)]
-    async fn pricing_lookup(&self, model_name: &str) -> (Decimal, Decimal) {
-        let result = query_as::<_, (f64, f64)>(
-            "SELECT prompt_price, completion_price FROM models WHERE name = $1",
+    async fn pricing_lookup(&self, model_name: &str) -> (Decimal, Decimal, Decimal) {
+        let result = query_as::<_, (f64, f64, f64)>(
+            "SELECT prompt_price, completion_price, cache_read_price FROM models WHERE name = $1",
         )
         .bind(model_name)
         .fetch_optional(&self.pool)
         .await;
 
         match result {
-            Ok(Some((p, c))) => (
+            Ok(Some((p, c, cr))) => (
                 Decimal::try_from(p).unwrap_or(Decimal::ZERO),
                 Decimal::try_from(c).unwrap_or(Decimal::ZERO),
+                Decimal::try_from(cr).unwrap_or(Decimal::ZERO),
             ),
             _ => {
                 // Fall back to pattern matching
-                let rows = query_as::<_, (f64, f64, String)>(
-                    "SELECT prompt_price, completion_price, model_pattern FROM models",
+                let rows = query_as::<_, (f64, f64, f64, String)>(
+                    "SELECT prompt_price, completion_price, cache_read_price, model_pattern FROM models",
                 )
                 .fetch_all(&self.pool)
                 .await;
 
                 if let Ok(rows) = rows {
-                    for (p, c, pattern) in rows {
+                    for (p, c, cr, pattern) in rows {
                         if pattern.ends_with('*') {
                             let prefix = &pattern[..pattern.len() - 1];
                             if model_name.starts_with(prefix) {
                                 return (
                                     Decimal::try_from(p).unwrap_or(Decimal::ZERO),
                                     Decimal::try_from(c).unwrap_or(Decimal::ZERO),
+                                    Decimal::try_from(cr).unwrap_or(Decimal::ZERO),
                                 );
                             }
                         }
@@ -68,11 +70,12 @@ impl PgBackend {
                             return (
                                 Decimal::try_from(p).unwrap_or(Decimal::ZERO),
                                 Decimal::try_from(c).unwrap_or(Decimal::ZERO),
+                                Decimal::try_from(cr).unwrap_or(Decimal::ZERO),
                             );
                         }
                     }
                 }
-                (Decimal::ZERO, Decimal::ZERO)
+                (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO)
             }
         }
     }
@@ -215,7 +218,11 @@ impl PgBackend {
         *idx += 1;
         let client_ip: Option<String> = row.get(*idx);
         *idx += 1;
-        let original_model: String = if *idx < row.len() { row.get(*idx) } else { String::new() };
+        let original_model: String = if *idx < row.len() {
+            row.get(*idx)
+        } else {
+            String::new()
+        };
         *idx += 1;
         UsageRecord {
             timestamp,
@@ -241,6 +248,7 @@ impl PgBackend {
             completion_price: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
             cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
             client_ip,
+            endpoint_id: None,
             original_model,
         }
     }
@@ -292,7 +300,11 @@ impl PgBackend {
         *idx += 1;
         let client_ip: Option<String> = row.get(*idx);
         *idx += 1;
-        let original_model: String = if *idx < row.len() { row.get(*idx) } else { String::new() };
+        let original_model: String = if *idx < row.len() {
+            row.get(*idx)
+        } else {
+            String::new()
+        };
         *idx += 1;
         UsageRecord {
             timestamp,
@@ -318,6 +330,7 @@ impl PgBackend {
             completion_price: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
             cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
             client_ip,
+            endpoint_id: None,
             original_model,
         }
     }
@@ -767,6 +780,82 @@ impl DbBackend for PgBackend {
 
         tracing::info!("usage_billing table ready");
 
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS billing_events (\
+                request_id TEXT PRIMARY KEY,\
+                user_id TEXT NOT NULL,\
+                user_name TEXT NOT NULL,\
+                channel_id TEXT NOT NULL,\
+                model TEXT NOT NULL,\
+                prompt_tokens BIGINT NOT NULL,\
+                completion_tokens BIGINT NOT NULL,\
+                total_tokens BIGINT NOT NULL,\
+                latency_ms BIGINT NOT NULL DEFAULT 0,\
+                cache_hit_input_tokens BIGINT NOT NULL DEFAULT 0,\
+                prompt_price DOUBLE PRECISION NOT NULL DEFAULT 0.0,\
+                completion_price DOUBLE PRECISION NOT NULL DEFAULT 0.0,\
+                cache_read_price DOUBLE PRECISION NOT NULL DEFAULT 0.0,\
+                cost_amount DOUBLE PRECISION NOT NULL DEFAULT 0.0,\
+                api_key_name TEXT,\
+                api_format TEXT NOT NULL DEFAULT '',\
+                stream BOOLEAN NOT NULL DEFAULT false,\
+                client_ip TEXT,\
+                endpoint_id BIGINT,\
+                request_body TEXT,\
+                response_body TEXT,\
+                reasoning_body TEXT,\
+                original_model TEXT NOT NULL DEFAULT '',\
+                success BOOLEAN NOT NULL,\
+                status_code INTEGER NOT NULL,\
+                timestamp TEXT NOT NULL,\
+                created_at TIMESTAMP NOT NULL DEFAULT NOW()\
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create billing_events: {e}")))?;
+        for alter in [
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS latency_ms BIGINT NOT NULL DEFAULT 0",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS api_key_name TEXT",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS api_format TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS stream BOOLEAN NOT NULL DEFAULT false",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS client_ip TEXT",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS endpoint_id BIGINT",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS request_body TEXT",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS response_body TEXT",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS reasoning_body TEXT",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS original_model TEXT NOT NULL DEFAULT ''",
+        ] {
+            let _ = raw_sql(alter).execute(&self.pool).await;
+        }
+        let _ = raw_sql(
+            "INSERT INTO billing_events (\
+                request_id, user_id, user_name, channel_id, model, \
+                prompt_tokens, completion_tokens, total_tokens, latency_ms, cache_hit_input_tokens, \
+                prompt_price, completion_price, cache_read_price, cost_amount, \
+                api_key_name, api_format, stream, client_ip, endpoint_id, \
+                request_body, response_body, reasoning_body, original_model, \
+                success, status_code, timestamp\
+             ) \
+             SELECT request_id, user_id, user_name, channel_id, model, \
+                prompt_tokens, completion_tokens, total_tokens, latency_ms, cache_hit_input_tokens, \
+                prompt_price, completion_price, cache_read_price, cost_amount, \
+                api_key_name, api_format, stream, client_ip, endpoint_id, \
+                request_body, response_body, reasoning_body, original_model, \
+                success, status_code, timestamp \
+             FROM usage_billing \
+             ON CONFLICT (request_id) DO NOTHING",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = raw_sql(
+            "CREATE INDEX IF NOT EXISTS idx_billing_events_user_time \
+             ON billing_events(user_id, timestamp)",
+        )
+        .execute(&self.pool)
+        .await;
+        tracing::info!("billing_events table ready");
+
         Ok(())
     }
 
@@ -964,7 +1053,9 @@ impl DbBackend for PgBackend {
                     name: r.get(2),
                     enabled: r.get(3),
                     expires_at: r.get(4),
-                    spend_limit: r.get::<Option<f64>, _>(5).map(|v| Decimal::try_from(v).unwrap_or(Decimal::ZERO)),
+                    spend_limit: r
+                        .get::<Option<f64>, _>(5)
+                        .map(|v| Decimal::try_from(v).unwrap_or(Decimal::ZERO)),
                     allowed_models: allowed_models_str
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
@@ -1031,7 +1122,9 @@ impl DbBackend for PgBackend {
                 name: r.get(11),
                 enabled: r.get(12),
                 expires_at: r.get(13),
-                spend_limit: r.get::<Option<f64>, _>(14).map(|v| Decimal::try_from(v).unwrap_or(Decimal::ZERO)),
+                spend_limit: r
+                    .get::<Option<f64>, _>(14)
+                    .map(|v| Decimal::try_from(v).unwrap_or(Decimal::ZERO)),
                 allowed_models: allowed_models_str
                     .filter(|s| !s.is_empty())
                     .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
@@ -1081,7 +1174,9 @@ impl DbBackend for PgBackend {
                     name: r.get(11),
                     enabled: r.get(12),
                     expires_at: r.get(13),
-                    spend_limit: r.get::<Option<f64>, _>(14).map(|v| Decimal::try_from(v).unwrap_or(Decimal::ZERO)),
+                    spend_limit: r
+                        .get::<Option<f64>, _>(14)
+                        .map(|v| Decimal::try_from(v).unwrap_or(Decimal::ZERO)),
                     allowed_models: allowed_models_str
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
@@ -1355,12 +1450,18 @@ impl DbBackend for PgBackend {
                 model_pattern: r.get(2),
                 pricing: Pricing {
                     prompt_price: Decimal::try_from(r.get::<f64, _>(3)).unwrap_or(Decimal::ZERO),
-                    completion_price: Decimal::try_from(r.get::<f64, _>(4)).unwrap_or(Decimal::ZERO),
-                    cache_read_price: Decimal::try_from(r.get::<f64, _>(5)).unwrap_or(Decimal::ZERO),
-                    cache_write_price: Decimal::try_from(r.get::<f64, _>(6)).unwrap_or(Decimal::ZERO),
-                    image_input_price: Decimal::try_from(r.get::<f64, _>(7)).unwrap_or(Decimal::ZERO),
-                    audio_input_price: Decimal::try_from(r.get::<f64, _>(8)).unwrap_or(Decimal::ZERO),
-                    audio_output_price: Decimal::try_from(r.get::<f64, _>(9)).unwrap_or(Decimal::ZERO),
+                    completion_price: Decimal::try_from(r.get::<f64, _>(4))
+                        .unwrap_or(Decimal::ZERO),
+                    cache_read_price: Decimal::try_from(r.get::<f64, _>(5))
+                        .unwrap_or(Decimal::ZERO),
+                    cache_write_price: Decimal::try_from(r.get::<f64, _>(6))
+                        .unwrap_or(Decimal::ZERO),
+                    image_input_price: Decimal::try_from(r.get::<f64, _>(7))
+                        .unwrap_or(Decimal::ZERO),
+                    audio_input_price: Decimal::try_from(r.get::<f64, _>(8))
+                        .unwrap_or(Decimal::ZERO),
+                    audio_output_price: Decimal::try_from(r.get::<f64, _>(9))
+                        .unwrap_or(Decimal::ZERO),
                 },
                 channels: Vec::new(),
                 published: r.get::<bool, _>(10),
@@ -1406,12 +1507,18 @@ impl DbBackend for PgBackend {
                 model_pattern: r.get(2),
                 pricing: Pricing {
                     prompt_price: Decimal::try_from(r.get::<f64, _>(3)).unwrap_or(Decimal::ZERO),
-                    completion_price: Decimal::try_from(r.get::<f64, _>(4)).unwrap_or(Decimal::ZERO),
-                    cache_read_price: Decimal::try_from(r.get::<f64, _>(5)).unwrap_or(Decimal::ZERO),
-                    cache_write_price: Decimal::try_from(r.get::<f64, _>(6)).unwrap_or(Decimal::ZERO),
-                    image_input_price: Decimal::try_from(r.get::<f64, _>(7)).unwrap_or(Decimal::ZERO),
-                    audio_input_price: Decimal::try_from(r.get::<f64, _>(8)).unwrap_or(Decimal::ZERO),
-                    audio_output_price: Decimal::try_from(r.get::<f64, _>(9)).unwrap_or(Decimal::ZERO),
+                    completion_price: Decimal::try_from(r.get::<f64, _>(4))
+                        .unwrap_or(Decimal::ZERO),
+                    cache_read_price: Decimal::try_from(r.get::<f64, _>(5))
+                        .unwrap_or(Decimal::ZERO),
+                    cache_write_price: Decimal::try_from(r.get::<f64, _>(6))
+                        .unwrap_or(Decimal::ZERO),
+                    image_input_price: Decimal::try_from(r.get::<f64, _>(7))
+                        .unwrap_or(Decimal::ZERO),
+                    audio_input_price: Decimal::try_from(r.get::<f64, _>(8))
+                        .unwrap_or(Decimal::ZERO),
+                    audio_output_price: Decimal::try_from(r.get::<f64, _>(9))
+                        .unwrap_or(Decimal::ZERO),
                 },
                 channels: Vec::new(),
                 published: r.get::<bool, _>(10),
@@ -1561,12 +1668,18 @@ impl DbBackend for PgBackend {
                 model_pattern: r.get(2),
                 pricing: Pricing {
                     prompt_price: Decimal::try_from(r.get::<f64, _>(3)).unwrap_or(Decimal::ZERO),
-                    completion_price: Decimal::try_from(r.get::<f64, _>(4)).unwrap_or(Decimal::ZERO),
-                    cache_read_price: Decimal::try_from(r.get::<f64, _>(5)).unwrap_or(Decimal::ZERO),
-                    cache_write_price: Decimal::try_from(r.get::<f64, _>(6)).unwrap_or(Decimal::ZERO),
-                    image_input_price: Decimal::try_from(r.get::<f64, _>(7)).unwrap_or(Decimal::ZERO),
-                    audio_input_price: Decimal::try_from(r.get::<f64, _>(8)).unwrap_or(Decimal::ZERO),
-                    audio_output_price: Decimal::try_from(r.get::<f64, _>(9)).unwrap_or(Decimal::ZERO),
+                    completion_price: Decimal::try_from(r.get::<f64, _>(4))
+                        .unwrap_or(Decimal::ZERO),
+                    cache_read_price: Decimal::try_from(r.get::<f64, _>(5))
+                        .unwrap_or(Decimal::ZERO),
+                    cache_write_price: Decimal::try_from(r.get::<f64, _>(6))
+                        .unwrap_or(Decimal::ZERO),
+                    image_input_price: Decimal::try_from(r.get::<f64, _>(7))
+                        .unwrap_or(Decimal::ZERO),
+                    audio_input_price: Decimal::try_from(r.get::<f64, _>(8))
+                        .unwrap_or(Decimal::ZERO),
+                    audio_output_price: Decimal::try_from(r.get::<f64, _>(9))
+                        .unwrap_or(Decimal::ZERO),
                 },
                 channels: Vec::new(),
                 published: true,
@@ -1631,7 +1744,6 @@ impl DbBackend for PgBackend {
             .await?;
         Ok(())
     }
-
 
     // ── Routing Rules ────────────────────────────────────────────────────
 
@@ -1795,14 +1907,14 @@ impl DbBackend for PgBackend {
     }
 
     async fn count_usage(&self) -> Result<usize, DbError> {
-        let (count,): (i64,) = query_as("SELECT COUNT(*) FROM usage_billing")
+        let (count,): (i64,) = query_as("SELECT COUNT(*) FROM billing_events")
             .fetch_one(&self.pool)
             .await?;
         Ok(count as usize)
     }
 
     async fn count_usage_by_user(&self, user_id: &str) -> Result<usize, DbError> {
-        let (count,): (i64,) = query_as("SELECT COUNT(*) FROM usage_billing WHERE user_id = $1")
+        let (count,): (i64,) = query_as("SELECT COUNT(*) FROM billing_events WHERE user_id = $1")
             .bind(user_id)
             .fetch_one(&self.pool)
             .await?;
@@ -1811,7 +1923,7 @@ impl DbBackend for PgBackend {
 
     async fn count_usage_filtered(&self, filter: &UsageFilter) -> Result<usize, DbError> {
         let mut builder: QueryBuilder<'_, Postgres> =
-            QueryBuilder::new("SELECT COUNT(*) FROM usage_billing WHERE 1=1");
+            QueryBuilder::new("SELECT COUNT(*) FROM billing_events WHERE 1=1");
 
         if let Some(ref uid) = filter.user_id {
             builder.push(" AND user_id = ");
@@ -1853,7 +1965,7 @@ impl DbBackend for PgBackend {
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
              cache_read_price, client_ip, original_model \
-             FROM usage_billing WHERE 1=1",
+             FROM billing_events WHERE 1=1",
         );
 
         if let Some(ref uid) = filter.user_id {
@@ -1903,7 +2015,7 @@ impl DbBackend for PgBackend {
              request_body, response_body, reasoning_body, api_key_name, api_format, stream, \
              cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip, \
              original_model \
-             FROM usage_billing WHERE request_id = $1",
+             FROM billing_events WHERE request_id = $1",
         )
         .bind(request_id)
         .fetch_all(&self.pool)
@@ -1915,7 +2027,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn purge_usage_logs(&self, cutoff: &str) -> Result<usize, DbError> {
-        let result = query("DELETE FROM usage_billing WHERE timestamp < $1")
+        let result = query("DELETE FROM billing_events WHERE timestamp < $1")
             .bind(cutoff)
             .execute(&self.pool)
             .await?;
@@ -1933,7 +2045,7 @@ impl DbBackend for PgBackend {
                  COALESCE(SUM(CASE WHEN success = true THEN 1 ELSE 0 END),0), \
                  COALESCE(SUM(latency_ms)::bigint,0), \
                  COALESCE(SUM(total_tokens)::bigint,0) \
-                 FROM usage_billing WHERE user_id = $1 AND timestamp >= $2",
+                 FROM billing_events WHERE user_id = $1 AND timestamp >= $2",
             )
             .bind(uid)
             .bind(since)
@@ -1946,7 +2058,7 @@ impl DbBackend for PgBackend {
                  COALESCE(SUM(CASE WHEN success = true THEN 1 ELSE 0 END),0), \
                  COALESCE(SUM(latency_ms)::bigint,0), \
                  COALESCE(SUM(total_tokens)::bigint,0) \
-                 FROM usage_billing WHERE timestamp >= $1",
+                 FROM billing_events WHERE timestamp >= $1",
             )
             .bind(since)
             .fetch_one(&self.pool)
@@ -1966,7 +2078,7 @@ impl DbBackend for PgBackend {
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
                  cache_read_price, client_ip \
-                 FROM usage_billing WHERE user_id = $1 AND timestamp >= $2 ORDER BY timestamp ASC",
+                 FROM billing_events WHERE user_id = $1 AND timestamp >= $2 ORDER BY timestamp ASC",
             )
             .bind(uid)
             .bind(since)
@@ -1978,7 +2090,7 @@ impl DbBackend for PgBackend {
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
                  cache_read_price, client_ip \
-                 FROM usage_billing WHERE timestamp >= $1 ORDER BY timestamp ASC",
+                 FROM billing_events WHERE timestamp >= $1 ORDER BY timestamp ASC",
             )
             .bind(since)
             .fetch_all(&self.pool)
@@ -2004,7 +2116,7 @@ impl DbBackend for PgBackend {
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
                  cache_read_price, client_ip, original_model \
-                 FROM usage_billing WHERE user_id = $1 AND timestamp >= $2 ORDER BY timestamp ASC",
+                 FROM billing_events WHERE user_id = $1 AND timestamp >= $2 ORDER BY timestamp ASC",
             )
             .bind(uid)
             .bind(since)
@@ -2016,7 +2128,7 @@ impl DbBackend for PgBackend {
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
                  cache_read_price, client_ip, original_model \
-                 FROM usage_billing WHERE timestamp >= $1 ORDER BY timestamp ASC",
+                 FROM billing_events WHERE timestamp >= $1 ORDER BY timestamp ASC",
             )
             .bind(since)
             .fetch_all(&self.pool)
@@ -2087,6 +2199,7 @@ impl DbBackend for PgBackend {
                     completion_price: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
                     cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
                     client_ip: None,
+                    endpoint_id: None,
                     original_model: String::new(),
                 }
             })
@@ -2102,7 +2215,7 @@ impl DbBackend for PgBackend {
         let day_expr = Self::day_expr(tz_offset_seconds);
         if let Some(uid) = user_id {
             let sql = format!(
-                "SELECT {}, COUNT(*) FROM usage_billing WHERE user_id = $1 AND timestamp >= $2 \
+                "SELECT {}, COUNT(*) FROM billing_events WHERE user_id = $1 AND timestamp >= $2 \
                  GROUP BY day ORDER BY day ASC",
                 day_expr
             );
@@ -2114,7 +2227,7 @@ impl DbBackend for PgBackend {
             Ok(rows)
         } else {
             let sql = format!(
-                "SELECT {}, COUNT(*) FROM usage_billing WHERE timestamp >= $1 GROUP BY day ORDER BY day ASC",
+                "SELECT {}, COUNT(*) FROM billing_events WHERE timestamp >= $1 GROUP BY day ORDER BY day ASC",
                 day_expr
             );
             let rows = query_as::<_, (String, i64)>(&sql)
@@ -2139,7 +2252,7 @@ impl DbBackend for PgBackend {
                  COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
                  COALESCE(SUM(latency_ms),0)::bigint, \
                  COALESCE(SUM(cache_hit_input_tokens),0)::bigint \
-                 FROM usage_billing WHERE user_id = $1 AND timestamp >= $2 \
+                 FROM billing_events WHERE user_id = $1 AND timestamp >= $2 \
                  GROUP BY day ORDER BY day ASC",
                 day_expr
             );
@@ -2164,7 +2277,7 @@ impl DbBackend for PgBackend {
                  COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
                  COALESCE(SUM(latency_ms),0)::bigint, \
                  COALESCE(SUM(cache_hit_input_tokens),0)::bigint \
-                 FROM usage_billing WHERE timestamp >= $1 \
+                 FROM billing_events WHERE timestamp >= $1 \
                  GROUP BY day ORDER BY day ASC",
                 day_expr
             );
@@ -2196,7 +2309,7 @@ impl DbBackend for PgBackend {
                  COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
                  COALESCE(SUM(CASE WHEN success=false THEN 1 ELSE 0 END),0)::bigint, \
                  COALESCE(SUM(cache_hit_input_tokens)::bigint,0) \
-                 FROM usage_billing WHERE timestamp >= $1 AND user_id = $2 \
+                 FROM billing_events WHERE timestamp >= $1 AND user_id = $2 \
                  GROUP BY model ORDER BY COUNT(*) DESC",
             )
             .bind(since)
@@ -2210,7 +2323,7 @@ impl DbBackend for PgBackend {
                  COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
                  COALESCE(SUM(CASE WHEN success=false THEN 1 ELSE 0 END),0)::bigint, \
                  COALESCE(SUM(cache_hit_input_tokens)::bigint,0) \
-                 FROM usage_billing WHERE timestamp >= $1 \
+                 FROM billing_events WHERE timestamp >= $1 \
                  GROUP BY model ORDER BY COUNT(*) DESC",
             )
             .bind(since)
@@ -2246,7 +2359,7 @@ impl DbBackend for PgBackend {
               percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms), \
               percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms), \
               COALESCE(AVG(latency_ms)::double precision,0) \
-            FROM usage_billing WHERE timestamp >= $1";
+            FROM billing_events WHERE timestamp >= $1";
         let row: (
             i64,
             i64,
@@ -2304,7 +2417,7 @@ impl DbBackend for PgBackend {
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
-                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3",
+                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3",
             )
             .bind(&start)
             .bind(&end)
@@ -2317,14 +2430,18 @@ impl DbBackend for PgBackend {
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
-                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2",
+                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2",
             )
             .bind(&start)
             .bind(&end)
             .fetch_one(&self.pool)
             .await?
         };
-        Ok((Decimal::try_from(cost).unwrap_or(Decimal::ZERO), count as u64, tokens as u64))
+        Ok((
+            Decimal::try_from(cost).unwrap_or(Decimal::ZERO),
+            count as u64,
+            tokens as u64,
+        ))
     }
 
     async fn period_model_breakdown(
@@ -2344,7 +2461,7 @@ impl DbBackend for PgBackend {
                 "SELECT model, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
-                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
+                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY model ORDER BY 2 DESC",
             )
             .bind(&start)
@@ -2357,7 +2474,7 @@ impl DbBackend for PgBackend {
                 "SELECT model, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
-                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2 \
+                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY model ORDER BY 2 DESC",
             )
             .bind(&start)
@@ -2365,7 +2482,10 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         };
-        Ok(rows.into_iter().map(|(m, c)| (m, Decimal::try_from(c).unwrap_or(Decimal::ZERO))).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(m, c)| (m, Decimal::try_from(c).unwrap_or(Decimal::ZERO)))
+            .collect())
     }
 
     async fn period_channel_breakdown(
@@ -2385,7 +2505,7 @@ impl DbBackend for PgBackend {
                 "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(ul.prompt_tokens / 1000000.0 * ul.prompt_price + \
                  ul.completion_tokens / 1000000.0 * ul.completion_price + \
                  ul.cache_hit_input_tokens / 1000000.0 * ul.cache_read_price), 0) \
-                 FROM usage_billing ul LEFT JOIN channels c ON c.id = ul.channel_id \
+                 FROM billing_events ul LEFT JOIN channels c ON c.id = ul.channel_id \
                  WHERE ul.timestamp >= $1 AND ul.timestamp < $2 AND ul.user_id = $3 \
                  GROUP BY ul.channel_id, c.name ORDER BY 3 DESC",
             )
@@ -2399,7 +2519,7 @@ impl DbBackend for PgBackend {
                 "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(ul.prompt_tokens / 1000000.0 * ul.prompt_price + \
                  ul.completion_tokens / 1000000.0 * ul.completion_price + \
                  ul.cache_hit_input_tokens / 1000000.0 * ul.cache_read_price), 0) \
-                 FROM usage_billing ul LEFT JOIN channels c ON c.id = ul.channel_id \
+                 FROM billing_events ul LEFT JOIN channels c ON c.id = ul.channel_id \
                  WHERE ul.timestamp >= $1 AND ul.timestamp < $2 \
                  GROUP BY ul.channel_id, c.name ORDER BY 3 DESC",
             )
@@ -2408,7 +2528,10 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         };
-        Ok(rows.into_iter().map(|(ch, n, c)| (ch, n, Decimal::try_from(c).unwrap_or(Decimal::ZERO))).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(ch, n, c)| (ch, n, Decimal::try_from(c).unwrap_or(Decimal::ZERO)))
+            .collect())
     }
 
     async fn daily_deductions(
@@ -2430,7 +2553,7 @@ impl DbBackend for PgBackend {
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint \
-                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
+                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY day ORDER BY day DESC",
             )
             .bind(&start)
@@ -2445,7 +2568,7 @@ impl DbBackend for PgBackend {
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint \
-                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2 \
+                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY day ORDER BY day DESC",
             )
             .bind(&start)
@@ -2453,7 +2576,10 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         };
-        Ok(rows.into_iter().map(|(d, c, n)| (d, Decimal::try_from(c).unwrap_or(Decimal::ZERO), n as u64)).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(d, c, n)| (d, Decimal::try_from(c).unwrap_or(Decimal::ZERO), n as u64))
+            .collect())
     }
 
     async fn count_daily_deductions(
@@ -2471,7 +2597,7 @@ impl DbBackend for PgBackend {
         let (count,): (i64,) = if let Some(uid) = user_id {
             query_as(
                 "SELECT COUNT(DISTINCT LEFT(timestamp::text, 10)) \
-                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3",
+                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3",
             )
             .bind(&start)
             .bind(&end)
@@ -2481,7 +2607,7 @@ impl DbBackend for PgBackend {
         } else {
             query_as(
                 "SELECT COUNT(DISTINCT LEFT(timestamp::text, 10)) \
-                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2",
+                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2",
             )
             .bind(&start)
             .bind(&end)
@@ -2512,7 +2638,7 @@ impl DbBackend for PgBackend {
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint \
-                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
+                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY day ORDER BY day DESC LIMIT $4 OFFSET $5",
             )
             .bind(&start)
@@ -2529,7 +2655,7 @@ impl DbBackend for PgBackend {
                  completion_tokens / 1000000.0 * completion_price + \
                  cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
                  COUNT(*)::bigint \
-                 FROM usage_billing WHERE timestamp >= $1 AND timestamp < $2 \
+                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY day ORDER BY day DESC LIMIT $3 OFFSET $4",
             )
             .bind(&start)
@@ -2539,12 +2665,15 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         };
-        Ok(rows.into_iter().map(|(d, c, n)| (d, Decimal::try_from(c).unwrap_or(Decimal::ZERO), n as u64)).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(d, c, n)| (d, Decimal::try_from(c).unwrap_or(Decimal::ZERO), n as u64))
+            .collect())
     }
 
     async fn billing_months(&self) -> Result<Vec<String>, DbError> {
         let rows: Vec<(String,)> = query_as(
-            "SELECT DISTINCT LEFT(timestamp::text, 7) AS month FROM usage_billing ORDER BY month DESC",
+            "SELECT DISTINCT LEFT(timestamp::text, 7) AS month FROM billing_events ORDER BY month DESC",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -2553,7 +2682,7 @@ impl DbBackend for PgBackend {
 
     async fn billing_months_for_user(&self, user_id: &str) -> Result<Vec<String>, DbError> {
         let rows: Vec<(String,)> = query_as(
-            "SELECT DISTINCT LEFT(timestamp::text, 7) AS month FROM usage_billing WHERE user_id = $1 ORDER BY month DESC",
+            "SELECT DISTINCT LEFT(timestamp::text, 7) AS month FROM billing_events WHERE user_id = $1 ORDER BY month DESC",
         )
         .bind(user_id)
         .fetch_all(&self.pool)
@@ -2568,13 +2697,20 @@ impl DbBackend for PgBackend {
              completion_tokens / 1000000.0 * completion_price + \
              cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
              COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
-             FROM usage_billing GROUP BY month ORDER BY month DESC",
+             FROM billing_events GROUP BY month ORDER BY month DESC",
         )
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(m, c, n, t)| (m, Decimal::try_from(c).unwrap_or(Decimal::ZERO), n as u64, t as u64))
+            .map(|(m, c, n, t)| {
+                (
+                    m,
+                    Decimal::try_from(c).unwrap_or(Decimal::ZERO),
+                    n as u64,
+                    t as u64,
+                )
+            })
             .collect())
     }
 
@@ -2588,19 +2724,31 @@ impl DbBackend for PgBackend {
              completion_tokens / 1000000.0 * completion_price + \
              cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
              COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
-             FROM usage_billing WHERE user_id = $1 GROUP BY month ORDER BY month DESC",
+             FROM billing_events WHERE user_id = $1 GROUP BY month ORDER BY month DESC",
         )
         .bind(user_id)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(m, c, n, t)| (m, Decimal::try_from(c).unwrap_or(Decimal::ZERO), n as u64, t as u64))
+            .map(|(m, c, n, t)| {
+                (
+                    m,
+                    Decimal::try_from(c).unwrap_or(Decimal::ZERO),
+                    n as u64,
+                    t as u64,
+                )
+            })
             .collect())
     }
 
-    async fn lookup_model_pricing(&self, model_name: &str) -> Result<(Decimal, Decimal), DbError> {
-        Ok(self.pricing_lookup(model_name).await)
+    async fn lookup_model_pricing(
+        &self,
+        model_name: &str,
+    ) -> Result<(Decimal, Decimal, Decimal), DbError> {
+        let (prompt_price, completion_price, cache_read_price) =
+            self.pricing_lookup(model_name).await;
+        Ok((prompt_price, completion_price, cache_read_price))
     }
 
     // ── Wallet ───────────────────────────────────────────────────────────
@@ -2610,7 +2758,10 @@ impl DbBackend for PgBackend {
             .bind(user_id)
             .fetch_one(&self.pool)
             .await?;
-        Ok((Decimal::try_from(row.0).unwrap_or(Decimal::ZERO), Decimal::try_from(row.1).unwrap_or(Decimal::ZERO)))
+        Ok((
+            Decimal::try_from(row.0).unwrap_or(Decimal::ZERO),
+            Decimal::try_from(row.1).unwrap_or(Decimal::ZERO),
+        ))
     }
 
     async fn update_wallet_balance(&self, user_id: &str, balance: Decimal) -> Result<(), DbError> {
@@ -2805,7 +2956,7 @@ impl DbBackend for PgBackend {
             "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
              completion_tokens / 1000000.0 * completion_price + \
              cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
-             FROM usage_billing WHERE user_id = $1",
+             FROM billing_events WHERE user_id = $1",
         )
         .bind(user_id)
         .fetch_one(&self.pool)
@@ -2830,7 +2981,7 @@ impl DbBackend for PgBackend {
             "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
              completion_tokens / 1000000.0 * completion_price + \
              cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
-             FROM usage_billing WHERE user_id = $1 AND timestamp >= $2",
+             FROM billing_events WHERE user_id = $1 AND timestamp >= $2",
         )
         .bind(user_id)
         .bind(&thirty_days_ago)
@@ -3293,7 +3444,7 @@ impl DbBackend for PgBackend {
     ) -> Result<Vec<(String, String, u64, u64, f64, f64)>, DbError> {
         let rows = query_as::<_, (String, String, i64, i64, f64, f64)>(
             "SELECT channel_id, model, COUNT(*)::bigint, SUM(CASE WHEN success THEN 1 ELSE 0 END)::bigint, COALESCE(AVG(latency_ms)::float8, 0), COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)::float8, 0)
-             FROM usage_billing
+             FROM billing_events
              WHERE timestamp::timestamptz >= NOW() - INTERVAL '1 day'
              GROUP BY channel_id, model ORDER BY COUNT(*) DESC"
         )
@@ -3312,7 +3463,7 @@ impl DbBackend for PgBackend {
         limit: usize,
     ) -> Result<Vec<(String, String, String, Option<i64>, u64, bool)>, DbError> {
         let rows = query_as::<_, (String, String, String, Option<i64>, i64, bool)>(
-            "SELECT timestamp, model, channel_id, endpoint_id, latency_ms, success FROM usage_billing ORDER BY timestamp DESC LIMIT $1"
+            "SELECT timestamp, model, channel_id, endpoint_id, latency_ms, success FROM billing_events ORDER BY timestamp DESC LIMIT $1"
         )
         .bind(limit as i64)
         .fetch_all(&self.pool)
@@ -3333,7 +3484,7 @@ impl DbBackend for PgBackend {
         let since = (chrono::Utc::now() - chrono::Duration::hours(hours as i64))
             .format("%Y-%m-%dT%H:%M:%S")
             .to_string();
-        let rows = query("SELECT model, channel_id, endpoint_id, COUNT(*)::bigint FROM usage_billing WHERE \"timestamp\"::timestamp >= $1::timestamp GROUP BY model, channel_id, endpoint_id")
+        let rows = query("SELECT model, channel_id, endpoint_id, COUNT(*)::bigint FROM billing_events WHERE \"timestamp\"::timestamp >= $1::timestamp GROUP BY model, channel_id, endpoint_id")
             .bind(&since).fetch_all(&self.pool).await.map_err(|e| DbError(format!("routing_flow_snapshot: {}", e)))?;
         Ok(rows
             .iter()
@@ -3365,7 +3516,7 @@ impl DbBackend for PgBackend {
                 COUNT(*)::bigint AS requests,
                 SUM(CASE WHEN success THEN 1 ELSE 0 END)::bigint AS successes,
                 AVG(latency_ms)::float8 AS avg_latency
-             FROM usage_billing
+             FROM billing_events
              WHERE \"timestamp\"::timestamp >= $1::timestamp
                AND \"timestamp\"::timestamp <= $2::timestamp
                AND ($3::text IS NULL OR model = $3)
@@ -3404,7 +3555,7 @@ impl DbBackend for PgBackend {
                     SUM(CASE WHEN success THEN 1 ELSE 0 END)::bigint AS successes,
                     AVG(latency_ms)::float8 AS avg_latency,
                     COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms), 0)::float8 AS p95_latency
-             FROM usage_billing
+             FROM billing_events
              WHERE \"timestamp\"::timestamp >= $1::timestamp
                AND \"timestamp\"::timestamp <= $2::timestamp
                AND ($3::text IS NULL OR model = $3)
@@ -3439,7 +3590,7 @@ impl DbBackend for PgBackend {
                     COUNT(*)::bigint, SUM(CASE WHEN ul.success THEN 1 ELSE 0 END)::bigint,
                     AVG(ul.latency_ms)::float8,
                     COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY ul.latency_ms),0)::float8
-             FROM usage_billing ul LEFT JOIN endpoints e ON e.id=ul.endpoint_id
+             FROM billing_events ul LEFT JOIN endpoints e ON e.id=ul.endpoint_id
              WHERE \"ul\".\"timestamp\"::timestamp>=$1::timestamp AND \"ul\".\"timestamp\"::timestamp<=$2::timestamp
                AND ($3::text IS NULL OR ul.model=$3)
              GROUP BY ul.channel_id, ul.endpoint_id, e.url ORDER BY ul.channel_id, COUNT(*) DESC",
@@ -3473,7 +3624,16 @@ impl DbBackend for PgBackend {
         .bind(offset as i64)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(|(id, b, f)| (id, Decimal::try_from(b).unwrap_or(Decimal::ZERO), Decimal::try_from(f).unwrap_or(Decimal::ZERO))).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(id, b, f)| {
+                (
+                    id,
+                    Decimal::try_from(b).unwrap_or(Decimal::ZERO),
+                    Decimal::try_from(f).unwrap_or(Decimal::ZERO),
+                )
+            })
+            .collect())
     }
 
     // ── Batch Operations ────────────────────────────────────────────────
@@ -3531,18 +3691,19 @@ impl DbBackend for PgBackend {
                 + record.completion_tokens as f64 / 1000000.0 * completion_price
                 + record.cache_hit_input_tokens as f64 / 1000000.0 * cache_read_price;
 
-            // Insert into usage_billing (billing snapshot, not observability)
+            // Insert only billing metadata into PostgreSQL.
             query(
-                "INSERT INTO usage_billing (\
+                "INSERT INTO billing_events (\
                  timestamp, request_id, user_id, user_name, channel_id, model, \
-                 prompt_tokens, completion_tokens, total_tokens, latency_ms, \
-                 status_code, success, cache_hit_input_tokens, \
+                 prompt_tokens, completion_tokens, total_tokens, latency_ms, cache_hit_input_tokens, \
                  prompt_price, completion_price, cache_read_price, cost_amount, \
-                 api_key_name, api_format, stream, client_ip, \
-                 request_body, response_body, reasoning_body, original_model) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, \
-                 $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, \
-                 $22, $23, $24, $25)",
+                 api_key_name, api_format, stream, client_ip, endpoint_id, \
+                 request_body, response_body, reasoning_body, original_model, \
+                 success, status_code) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, \
+                 $12, $13, $14, $15, $16, $17, $18, $19, $20, \
+                 $21, $22, $23, $24, $25, $26) \
+                 ON CONFLICT (request_id) DO NOTHING",
             )
             .bind(&record.timestamp)
             .bind(&record.request_id)
@@ -3554,8 +3715,6 @@ impl DbBackend for PgBackend {
             .bind(record.completion_tokens as i64)
             .bind(record.total_tokens as i64)
             .bind(record.latency_ms as i64)
-            .bind(record.status_code as i32)
-            .bind(record.success)
             .bind(record.cache_hit_input_tokens as i64)
             .bind(prompt_price)
             .bind(completion_price)
@@ -3565,70 +3724,72 @@ impl DbBackend for PgBackend {
             .bind(&record.api_format)
             .bind(record.stream)
             .bind(&record.client_ip)
-            .bind(&record.request_body)
-            .bind(&record.response_body)
-            .bind(&record.reasoning_body)
+            .bind(record.endpoint_id)
+            .bind(Option::<String>::None)
+            .bind(Option::<String>::None)
+            .bind(Option::<String>::None)
             .bind(&record.original_model)
+            .bind(record.success)
+            .bind(record.status_code as i32)
             .execute(&mut *tx)
             .await?;
 
-            if billing_enabled {
-                if cost_amount > 0.0 {
-                    let (balance, frozen): (f64, f64) =
-                        query_as("SELECT balance, frozen FROM users WHERE id = $1 FOR UPDATE")
-                            .bind(&record.user_id)
-                            .fetch_one(&mut *tx)
-                            .await?;
-
-                    let spendable = balance - frozen;
-                    if spendable < cost_amount {
-                        tracing::warn!(
-                            user_id = &record.user_id,
-                            balance, frozen, cost_amount,
-                            "Insufficient balance — skipping deduction"
-                        );
-                        continue;
-                    }
-
-                    let new_balance = balance - cost_amount;
-                    query("UPDATE users SET balance = $1 WHERE id = $2")
-                        .bind(new_balance)
+            if billing_enabled && cost_amount > 0.0 {
+                let (balance, frozen): (f64, f64) =
+                    query_as("SELECT balance, frozen FROM users WHERE id = $1 FOR UPDATE")
                         .bind(&record.user_id)
-                        .execute(&mut *tx)
+                        .fetch_one(&mut *tx)
                         .await?;
 
-                    let now = chrono::Utc::now().to_rfc3339();
-                    query(
-                        "INSERT INTO wallet_transactions (id, user_id, type, amount, \
-                         balance_before, balance_after, method, status, note, created_at) \
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-                    )
-                    .bind(uuid::Uuid::new_v4().to_string())
-                    .bind(&record.user_id)
-                    .bind("deduction")
-                    .bind(-cost_amount)
-                    .bind(balance)
+                let spendable = balance - frozen;
+                if spendable < cost_amount {
+                    tracing::warn!(
+                        user_id = &record.user_id,
+                        balance,
+                        frozen,
+                        cost_amount,
+                        "Insufficient balance — skipping deduction"
+                    );
+                    continue;
+                }
+
+                let new_balance = balance - cost_amount;
+                query("UPDATE users SET balance = $1 WHERE id = $2")
                     .bind(new_balance)
-                    .bind("usage")
-                    .bind("completed")
-                    .bind(format!("Usage: {}", record.model))
-                    .bind(&now)
+                    .bind(&record.user_id)
                     .execute(&mut *tx)
                     .await?;
 
-                    deductions.push((
-                        record.user_id.clone(),
-                        Decimal::try_from(new_balance).unwrap_or(Decimal::ZERO),
-                        Decimal::try_from(frozen).unwrap_or(Decimal::ZERO),
-                    ));
-                }
+                let now = chrono::Utc::now().to_rfc3339();
+                query(
+                    "INSERT INTO wallet_transactions (id, user_id, type, amount, \
+                     balance_before, balance_after, method, status, note, created_at) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                )
+                .bind(uuid::Uuid::new_v4().to_string())
+                .bind(&record.user_id)
+                .bind("deduction")
+                .bind(-cost_amount)
+                .bind(balance)
+                .bind(new_balance)
+                .bind("usage")
+                .bind("completed")
+                .bind(format!("Usage: {}", record.model))
+                .bind(&now)
+                .execute(&mut *tx)
+                .await?;
+
+                deductions.push((
+                    record.user_id.clone(),
+                    Decimal::try_from(new_balance).unwrap_or(Decimal::ZERO),
+                    Decimal::try_from(frozen).unwrap_or(Decimal::ZERO),
+                ));
             }
         }
 
         tx.commit().await?;
         Ok(deductions)
     }
-
 }
 
 impl PgBackend {

@@ -57,19 +57,33 @@ pub(crate) async fn get_usage(
         end_date: q.end_date,
     };
 
-    let total = state.usage.count_filtered(&filter).await.map_err(|e| {
-        tracing::error!("Usage count failed: {}", e);
-        AdminError::internal("Internal server error")
-    })?;
-
-    let records = state
-        .usage
-        .query(limit, offset, &filter)
-        .await
-        .map_err(|e| {
-            tracing::error!("Usage query failed: {}", e);
+    let total = if let Some(ref ch) = state.ch {
+        ch.count_usage(&filter).await.map_err(|e| {
+            tracing::error!("CH usage count failed: {}", e);
             AdminError::internal("Internal server error")
-        })?;
+        })?
+    } else {
+        state.usage.count_filtered(&filter).await.map_err(|e| {
+            tracing::error!("Usage count failed: {}", e);
+            AdminError::internal("Internal server error")
+        })?
+    };
+
+    let records = if let Some(ref ch) = state.ch {
+        ch.query_usage(limit, offset, &filter).await.map_err(|e| {
+            tracing::error!("CH usage query failed: {}", e);
+            AdminError::internal("Internal server error")
+        })?
+    } else {
+        state
+            .usage
+            .query(limit, offset, &filter)
+            .await
+            .map_err(|e| {
+                tracing::error!("Usage query failed: {}", e);
+                AdminError::internal("Internal server error")
+            })?
+    };
 
     Ok(Json(UsageResponse { records, total }))
 }
@@ -81,15 +95,18 @@ pub(crate) async fn get_usage_detail(
 ) -> Result<Json<crate::domain::usage::UsageRecord>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
 
-    let record = state
-        .usage
-        .get_detail(&request_id)
-        .await
-        .map_err(|e| {
+    let record = if let Some(ref ch) = state.ch {
+        ch.get_usage_detail(&request_id).await.map_err(|e| {
+            tracing::error!("CH usage detail query failed: {}", e);
+            AdminError::internal("Internal server error")
+        })?
+    } else {
+        state.usage.get_detail(&request_id).await.map_err(|e| {
             tracing::error!("Usage detail query failed: {}", e);
             AdminError::internal("Internal server error")
         })?
-        .ok_or_else(|| AdminError::not_found("Usage record not found"))?;
+    }
+    .ok_or_else(|| AdminError::not_found("Usage record not found"))?;
 
     if !state.authz.enforce(&session.role, "admin:usage").await && record.user_id != session.user_id
     {
@@ -129,11 +146,14 @@ pub(crate) async fn daily_usage(
     };
 
     let records: Vec<DailyUsage> = if let Some(ref ch) = state.ch {
-        ch.query_daily_usage_counts(&since, user_filter)
+        ch.query_daily_usage_counts(&since, user_filter, offset)
             .await
-            .map_err(|e| AdminError::internal(e))?
+            .map_err(AdminError::internal)?
             .into_iter()
-            .map(|(date, count)| DailyUsage { date, count: count as i64 })
+            .map(|(date, count)| DailyUsage {
+                date,
+                count: i64::try_from(count).unwrap_or(i64::MAX),
+            })
             .collect()
     } else {
         state
@@ -142,7 +162,7 @@ pub(crate) async fn daily_usage(
             .await
             .map_err(AdminError::internal)?
             .into_iter()
-            .map(|(date, count)| DailyUsage { date, count: count as i64 })
+            .map(|(date, count)| DailyUsage { date, count })
             .collect()
     };
 
@@ -193,20 +213,22 @@ pub(crate) async fn usage_aggregate(
     };
 
     let records: Vec<DailyAggregate> = if let Some(ref ch) = state.ch {
-        ch.query_daily_usage_stats(&since, user_filter)
+        ch.query_daily_usage_stats(&since, user_filter, offset)
             .await
-            .map_err(|e| AdminError::internal(e))?
+            .map_err(AdminError::internal)?
             .into_iter()
-            .map(|(date, count, pt, ct, tt, sc, lat, ch_tok)| DailyAggregate {
-                date,
-                count,
-                prompt_tokens: pt,
-                completion_tokens: ct,
-                total_tokens: tt,
-                success_count: sc,
-                latency_ms: lat,
-                cache_hit_tokens: ch_tok,
-            })
+            .map(
+                |(date, count, pt, ct, tt, sc, lat, ch_tok)| DailyAggregate {
+                    date,
+                    count,
+                    prompt_tokens: pt,
+                    completion_tokens: ct,
+                    total_tokens: tt,
+                    success_count: sc,
+                    latency_ms: lat,
+                    cache_hit_tokens: ch_tok,
+                },
+            )
             .collect()
     } else {
         state
@@ -215,16 +237,18 @@ pub(crate) async fn usage_aggregate(
             .await
             .map_err(AdminError::internal)?
             .into_iter()
-            .map(|(date, count, pt, ct, tt, sc, lat, ch_tok)| DailyAggregate {
-                date,
-                count,
-                prompt_tokens: pt,
-                completion_tokens: ct,
-                total_tokens: tt,
-                success_count: sc,
-                latency_ms: lat,
-                cache_hit_tokens: ch_tok,
-            })
+            .map(
+                |(date, count, pt, ct, tt, sc, lat, ch_tok)| DailyAggregate {
+                    date,
+                    count,
+                    prompt_tokens: pt,
+                    completion_tokens: ct,
+                    total_tokens: tt,
+                    success_count: sc,
+                    latency_ms: lat,
+                    cache_hit_tokens: ch_tok,
+                },
+            )
             .collect()
     };
 
@@ -267,7 +291,7 @@ pub(crate) async fn model_activity(
     let records: Vec<ModelActivity> = if let Some(ref ch) = state.ch {
         ch.query_model_activity(&since, user_filter)
             .await
-            .map_err(|e| AdminError::internal(e))?
+            .map_err(AdminError::internal)?
             .into_iter()
             .map(|(model, total, pt, ct, sc, fc, ch_tok)| ModelActivity {
                 model,
@@ -340,7 +364,7 @@ pub(crate) async fn usage_funnel(
     let stats = if let Some(ref ch) = state.ch {
         ch.query_funnel_stats(&since, user_filter)
             .await
-            .map_err(|e| AdminError::internal(e))?
+            .map_err(AdminError::internal)?
     } else {
         state
             .usage

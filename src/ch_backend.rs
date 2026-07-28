@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use clickhouse::Client;
 use clickhouse::Row;
+use rust_decimal::Decimal;
 use serde::Serialize;
 
 use crate::config::types::ClickHouseConfig;
@@ -27,15 +28,80 @@ pub struct UsageEvent {
     pub api_format: String,
     pub stream: u8,
     pub cache_hit_input_tokens: u64,
+    pub prompt_price: f64,
+    pub completion_price: f64,
+    pub cache_read_price: f64,
     pub cost_amount: f64,
     pub client_ip: Option<String>,
     pub endpoint_id: Option<i64>,
+    pub request_body: Option<String>,
+    pub response_body: Option<String>,
+    pub reasoning_body: Option<String>,
+    pub original_model: String,
 }
 
 /// ClickHouse backend for observability data.
 /// Handles writes and queries for the usage_events table.
 pub struct ClickHouseBackend {
     client: Client,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Row)]
+struct UsageEventRow {
+    timestamp: String,
+    request_id: String,
+    user_id: String,
+    user_name: String,
+    channel_id: String,
+    model: String,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+    latency_ms: u64,
+    status_code: u16,
+    success: u8,
+    api_key_name: Option<String>,
+    api_format: String,
+    stream: u8,
+    cache_hit_input_tokens: u64,
+    prompt_price: f64,
+    completion_price: f64,
+    cache_read_price: f64,
+    client_ip: Option<String>,
+    endpoint_id: Option<i64>,
+    original_model: String,
+}
+
+impl From<UsageEventRow> for crate::domain::usage::UsageRecord {
+    fn from(row: UsageEventRow) -> Self {
+        Self {
+            timestamp: row.timestamp,
+            request_id: row.request_id,
+            user_id: row.user_id,
+            user_name: row.user_name,
+            channel_id: row.channel_id,
+            model: row.model,
+            prompt_tokens: row.prompt_tokens,
+            completion_tokens: row.completion_tokens,
+            total_tokens: row.total_tokens,
+            latency_ms: row.latency_ms,
+            status_code: row.status_code,
+            success: row.success != 0,
+            request_body: None,
+            response_body: None,
+            reasoning_body: None,
+            api_key_name: row.api_key_name,
+            api_format: row.api_format,
+            stream: row.stream != 0,
+            cache_hit_input_tokens: row.cache_hit_input_tokens,
+            prompt_price: Decimal::try_from(row.prompt_price).unwrap_or(Decimal::ZERO),
+            completion_price: Decimal::try_from(row.completion_price).unwrap_or(Decimal::ZERO),
+            cache_read_price: Decimal::try_from(row.cache_read_price).unwrap_or(Decimal::ZERO),
+            client_ip: row.client_ip,
+            endpoint_id: row.endpoint_id,
+            original_model: row.original_model,
+        }
+    }
 }
 
 impl ClickHouseBackend {
@@ -97,9 +163,16 @@ impl ClickHouseBackend {
             api_format String,\
             stream UInt8,\
             cache_hit_input_tokens UInt64,\
+            prompt_price Float64,\
+            completion_price Float64,\
+            cache_read_price Float64,\
             cost_amount Float64,\
             client_ip Nullable(String),\
-            endpoint_id Nullable(Int64)\
+            endpoint_id Nullable(Int64),\
+            request_body Nullable(String),\
+            response_body Nullable(String),\
+            reasoning_body Nullable(String),\
+            original_model String\
         ) ENGINE = MergeTree()\
         PARTITION BY toYYYYMM(timestamp)\
         ORDER BY (model, channel_id, timestamp)\
@@ -131,6 +204,22 @@ impl ClickHouseBackend {
             .await
             .map_err(|e| format!("CH migration usage_events: {e}"))?;
 
+        for alter in [
+            "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS prompt_price Float64",
+            "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS completion_price Float64",
+            "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cache_read_price Float64",
+            "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS request_body Nullable(String)",
+            "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS response_body Nullable(String)",
+            "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS reasoning_body Nullable(String)",
+            "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS original_model String DEFAULT ''",
+        ] {
+            self.client
+                .query(alter)
+                .execute()
+                .await
+                .map_err(|e| format!("CH migration usage_events alter: {e}"))?;
+        }
+
         self.client
             .query(Self::CREATE_PROBE_RESULTS)
             .execute()
@@ -149,16 +238,6 @@ impl ClickHouseBackend {
     }
 
     // ── Writes ────────────────────────────────────────────────────────
-
-    /// Insert a single usage event into ClickHouse.
-    pub async fn insert_usage_event(&self, event: &UsageEvent) -> Result<(), String> {
-        let mut inserter = self
-            .client
-            .insert::<UsageEvent>("usage_events")
-            .map_err(|e| format!("CH insert: {e}"))?;
-        inserter.write(event).await.map_err(|e| format!("CH write: {e}"))?;
-        inserter.end().await.map_err(|e| format!("CH end: {e}"))
-    }
 
     /// Batch insert usage events.
     pub async fn insert_usage_events(&self, events: &[UsageEvent]) -> Result<(), String> {
@@ -182,11 +261,6 @@ impl ClickHouseBackend {
     }
 
     // ── Raw query access ─────────────────────────────────────────────
-
-    /// Returns a reference to the underlying ClickHouse client for ad-hoc queries.
-    pub fn client(&self) -> &Client {
-        &self.client
-    }
 
     // ── Observability queries (Phase 8, routed from admin handlers) ──
 
@@ -223,7 +297,12 @@ impl ClickHouseBackend {
             .into_iter()
             .map(|r| {
                 (
-                    r.channel_id, r.model, r.requests, r.successes, r.avg_latency, r.p95_latency,
+                    r.channel_id,
+                    r.model,
+                    r.requests,
+                    r.successes,
+                    r.avg_latency,
+                    r.p95_latency,
                 )
             })
             .collect())
@@ -336,7 +415,11 @@ impl ClickHouseBackend {
             .into_iter()
             .map(|r| {
                 (
-                    r.timestamp, r.model, r.channel_id, r.endpoint_id, r.latency_ms,
+                    r.timestamp,
+                    r.model,
+                    r.channel_id,
+                    r.endpoint_id,
+                    r.latency_ms,
                     r.success != 0,
                 )
             })
@@ -402,7 +485,9 @@ impl ClickHouseBackend {
         if let Some(uid) = user_id {
             query = query.bind(uid);
         }
-        let row = query.fetch_one::<FunnelRow>().await
+        let row = query
+            .fetch_one::<FunnelRow>()
+            .await
             .map_err(|e| format!("CH funnel_stats: {e}"))?;
         Ok(crate::db::FunnelStats {
             total: row.total,
@@ -425,38 +510,49 @@ impl ClickHouseBackend {
         &self,
         since: &str,
         user_id: Option<&str>,
+        tz_offset_seconds: i64,
     ) -> Result<Vec<(String, u64)>, String> {
         #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
         struct CountRow {
             date: String,
             count: u64,
         }
-        let rows = if let Some(uid) = user_id {
-            self.client
-                .query(
-                    "SELECT toDate(timestamp)::String AS date, count()::UInt64 AS count \
-                     FROM usage_events \
-                     WHERE timestamp >= ? AND user_id = ? \
-                     GROUP BY date ORDER BY date ASC",
-                )
-                .bind(since)
-                .bind(uid)
-                .fetch_all::<CountRow>()
-                .await
-                .map_err(|e| format!("CH daily_usage_counts: {e}"))?
+        let date_expr = if tz_offset_seconds >= 0 {
+            format!(
+                "toDate(timestamp + toIntervalSecond({}))::String AS date",
+                tz_offset_seconds
+            )
         } else {
-            self.client
-                .query(
-                    "SELECT toDate(timestamp)::String AS date, count()::UInt64 AS count \
-                     FROM usage_events \
-                     WHERE timestamp >= ? \
-                     GROUP BY date ORDER BY date ASC",
-                )
-                .bind(since)
-                .fetch_all::<CountRow>()
-                .await
-                .map_err(|e| format!("CH daily_usage_counts: {e}"))?
+            format!(
+                "toDate(timestamp - toIntervalSecond({}))::String AS date",
+                -tz_offset_seconds
+            )
         };
+        let sql = if user_id.is_some() {
+            format!(
+                "SELECT {}, count()::UInt64 AS count \
+                 FROM usage_events \
+                 WHERE timestamp >= ? AND user_id = ? \
+                 GROUP BY date ORDER BY date ASC",
+                date_expr
+            )
+        } else {
+            format!(
+                "SELECT {}, count()::UInt64 AS count \
+                 FROM usage_events \
+                 WHERE timestamp >= ? \
+                 GROUP BY date ORDER BY date ASC",
+                date_expr
+            )
+        };
+        let mut query = self.client.query(&sql).bind(since);
+        if let Some(uid) = user_id {
+            query = query.bind(uid);
+        }
+        let rows = query
+            .fetch_all::<CountRow>()
+            .await
+            .map_err(|e| format!("CH daily_usage_counts: {e}"))?;
         Ok(rows.into_iter().map(|r| (r.date, r.count)).collect())
     }
 
@@ -465,6 +561,7 @@ impl ClickHouseBackend {
         &self,
         since: &str,
         user_id: Option<&str>,
+        tz_offset_seconds: i64,
     ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64, u64)>, String> {
         #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
         struct StatRow {
@@ -477,37 +574,57 @@ impl ClickHouseBackend {
             latency_ms: u64,
             cache_hit_tokens: u64,
         }
-        let sql = "SELECT toDate(timestamp)::String AS date, \
-                   count()::UInt64 AS count, \
-                   sum(prompt_tokens)::UInt64 AS prompt_tokens, \
-                   sum(completion_tokens)::UInt64 AS completion_tokens, \
-                   sum(total_tokens)::UInt64 AS total_tokens, \
-                   countIf(success = 1)::UInt64 AS success_count, \
-                   sum(latency_ms)::UInt64 AS latency_ms, \
-                   sum(cache_hit_input_tokens)::UInt64 AS cache_hit_tokens \
-                   FROM usage_events WHERE timestamp >= ?";
-        let rows = if let Some(uid) = user_id {
-            self.client
-                .query(&format!("{} AND user_id = ? GROUP BY date ORDER BY date ASC", sql))
-                .bind(since)
-                .bind(uid)
-                .fetch_all::<StatRow>()
-                .await
-                .map_err(|e| format!("CH daily_usage_stats: {e}"))?
+        let date_expr = if tz_offset_seconds >= 0 {
+            format!(
+                "toDate(timestamp + toIntervalSecond({}))::String AS date",
+                tz_offset_seconds
+            )
         } else {
-            self.client
-                .query(&format!("{} GROUP BY date ORDER BY date ASC", sql))
-                .bind(since)
-                .fetch_all::<StatRow>()
-                .await
-                .map_err(|e| format!("CH daily_usage_stats: {e}"))?
+            format!(
+                "toDate(timestamp - toIntervalSecond({}))::String AS date",
+                -tz_offset_seconds
+            )
         };
+        let base_sql = format!(
+            "SELECT {}, \
+             count()::UInt64 AS count, \
+             sum(prompt_tokens)::UInt64 AS prompt_tokens, \
+             sum(completion_tokens)::UInt64 AS completion_tokens, \
+             sum(total_tokens)::UInt64 AS total_tokens, \
+             countIf(success = 1)::UInt64 AS success_count, \
+             sum(latency_ms)::UInt64 AS latency_ms, \
+             sum(cache_hit_input_tokens)::UInt64 AS cache_hit_tokens \
+             FROM usage_events WHERE timestamp >= ?",
+            date_expr
+        );
+        let sql = if user_id.is_some() {
+            format!(
+                "{} AND user_id = ? GROUP BY date ORDER BY date ASC",
+                base_sql
+            )
+        } else {
+            format!("{} GROUP BY date ORDER BY date ASC", base_sql)
+        };
+        let mut query = self.client.query(&sql).bind(since);
+        if let Some(uid) = user_id {
+            query = query.bind(uid);
+        }
+        let rows = query
+            .fetch_all::<StatRow>()
+            .await
+            .map_err(|e| format!("CH daily_usage_stats: {e}"))?;
         Ok(rows
             .into_iter()
             .map(|r| {
                 (
-                    r.date, r.count, r.prompt_tokens, r.completion_tokens, r.total_tokens,
-                    r.success_count, r.latency_ms, r.cache_hit_tokens,
+                    r.date,
+                    r.count,
+                    r.prompt_tokens,
+                    r.completion_tokens,
+                    r.total_tokens,
+                    r.success_count,
+                    r.latency_ms,
+                    r.cache_hit_tokens,
                 )
             })
             .collect())
@@ -539,7 +656,10 @@ impl ClickHouseBackend {
                    FROM usage_events WHERE timestamp >= ?";
         let rows = if let Some(uid) = user_id {
             self.client
-                .query(&format!("{} AND user_id = ? GROUP BY model ORDER BY total_requests DESC", sql))
+                .query(&format!(
+                    "{} AND user_id = ? GROUP BY model ORDER BY total_requests DESC",
+                    sql
+                ))
                 .bind(since)
                 .bind(uid)
                 .fetch_all::<ActRow>()
@@ -547,7 +667,10 @@ impl ClickHouseBackend {
                 .map_err(|e| format!("CH model_activity: {e}"))?
         } else {
             self.client
-                .query(&format!("{} GROUP BY model ORDER BY total_requests DESC", sql))
+                .query(&format!(
+                    "{} GROUP BY model ORDER BY total_requests DESC",
+                    sql
+                ))
                 .bind(since)
                 .fetch_all::<ActRow>()
                 .await
@@ -557,11 +680,254 @@ impl ClickHouseBackend {
             .into_iter()
             .map(|r| {
                 (
-                    r.model, r.total_requests, r.prompt_tokens, r.completion_tokens,
-                    r.success_count, r.failure_count, r.cache_hit_tokens,
+                    r.model,
+                    r.total_requests,
+                    r.prompt_tokens,
+                    r.completion_tokens,
+                    r.success_count,
+                    r.failure_count,
+                    r.cache_hit_tokens,
                 )
             })
             .collect())
+    }
+
+    pub async fn query_usage(
+        &self,
+        limit: usize,
+        offset: usize,
+        filter: &crate::domain::usage::UsageFilter,
+    ) -> Result<Vec<crate::domain::usage::UsageRecord>, String> {
+        let mut conditions = Vec::new();
+        let mut string_binds = Vec::new();
+        if let Some(user_id) = filter.user_id.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("user_id = ?");
+            string_binds.push(user_id);
+        }
+        if let Some(model) = filter.model.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("model = ?");
+            string_binds.push(model);
+        }
+        if let Some(api_key_name) = filter
+            .api_key_name
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push("api_key_name = ?");
+            string_binds.push(api_key_name);
+        }
+        if let Some(api_format) = filter
+            .api_format
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push("api_format = ?");
+            string_binds.push(api_format);
+        }
+        if let Some(start_date) = filter
+            .start_date
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push("timestamp >= parseDateTimeBestEffort(?)");
+            string_binds.push(start_date);
+        }
+        if let Some(end_date) = filter.end_date.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("timestamp <= parseDateTimeBestEffort(?)");
+            string_binds.push(end_date);
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        let sql = format!(
+            "SELECT \
+             toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
+             prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
+             api_key_name, api_format, stream, \
+             cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, original_model \
+             FROM usage_events \
+             {} \
+             ORDER BY timestamp DESC \
+             LIMIT ? OFFSET ?",
+            where_clause,
+        );
+        let mut query = self.client.query(&sql);
+        for bind in string_binds {
+            query = query.bind(bind);
+        }
+        let rows = query
+            .bind(limit as u64)
+            .bind(offset as u64)
+            .fetch_all::<UsageEventRow>()
+            .await
+            .map_err(|e| format!("CH query_usage: {e}"))?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn count_usage(
+        &self,
+        filter: &crate::domain::usage::UsageFilter,
+    ) -> Result<usize, String> {
+        let mut conditions = Vec::new();
+        let mut string_binds = Vec::new();
+        if let Some(user_id) = filter.user_id.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("user_id = ?");
+            string_binds.push(user_id);
+        }
+        if let Some(model) = filter.model.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("model = ?");
+            string_binds.push(model);
+        }
+        if let Some(api_key_name) = filter
+            .api_key_name
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push("api_key_name = ?");
+            string_binds.push(api_key_name);
+        }
+        if let Some(api_format) = filter
+            .api_format
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push("api_format = ?");
+            string_binds.push(api_format);
+        }
+        if let Some(start_date) = filter
+            .start_date
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push("timestamp >= parseDateTimeBestEffort(?)");
+            string_binds.push(start_date);
+        }
+        if let Some(end_date) = filter.end_date.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("timestamp <= parseDateTimeBestEffort(?)");
+            string_binds.push(end_date);
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        let sql = format!(
+            "SELECT count()::UInt64 AS count FROM usage_events {}",
+            where_clause
+        );
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct CountRow {
+            count: u64,
+        }
+        let mut query = self.client.query(&sql);
+        for bind in string_binds {
+            query = query.bind(bind);
+        }
+        let row = query
+            .fetch_one::<CountRow>()
+            .await
+            .map_err(|e| format!("CH count_usage: {e}"))?;
+        Ok(row.count as usize)
+    }
+
+    pub async fn get_usage_detail(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<crate::domain::usage::UsageRecord>, String> {
+        let row = self.client
+            .query(
+                "SELECT \
+                 toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
+                 prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
+                 api_key_name, api_format, stream, \
+                 cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, original_model \
+                 FROM usage_events \
+                 WHERE request_id = ? \
+                 ORDER BY timestamp DESC LIMIT 1",
+            )
+            .bind(request_id)
+            .fetch_optional::<UsageEventRow>()
+            .await
+            .map_err(|e| format!("CH get_usage_detail: {e}"))?;
+        Ok(row.map(Into::into))
+    }
+
+    pub async fn query_usage_since(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<Vec<crate::domain::usage::UsageRecord>, String> {
+        let sql = if user_id.is_some() {
+            "SELECT \
+             toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
+             prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
+             api_key_name, api_format, stream, \
+             cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, original_model \
+             FROM usage_events WHERE timestamp >= ? AND user_id = ? ORDER BY timestamp ASC"
+        } else {
+            "SELECT \
+             toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
+             prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
+             api_key_name, api_format, stream, \
+             cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, original_model \
+             FROM usage_events WHERE timestamp >= ? ORDER BY timestamp ASC"
+        };
+        let mut query = self.client.query(sql).bind(since);
+        if let Some(uid) = user_id {
+            query = query.bind(uid);
+        }
+        let rows = query
+            .fetch_all::<UsageEventRow>()
+            .await
+            .map_err(|e| format!("CH query_usage_since: {e}"))?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn query_usage_stats_since(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+    ) -> Result<(u64, u64, u64, u64), String> {
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct StatsRow {
+            total: u64,
+            success_count: u64,
+            total_latency: u64,
+            total_tokens: u64,
+        }
+        let sql = if user_id.is_some() {
+            "SELECT \
+             count()::UInt64 AS total, \
+             countIf(success = 1)::UInt64 AS success_count, \
+             sum(latency_ms)::UInt64 AS total_latency, \
+             sum(total_tokens)::UInt64 AS total_tokens \
+             FROM usage_events WHERE timestamp >= ? AND user_id = ?"
+        } else {
+            "SELECT \
+             count()::UInt64 AS total, \
+             countIf(success = 1)::UInt64 AS success_count, \
+             sum(latency_ms)::UInt64 AS total_latency, \
+             sum(total_tokens)::UInt64 AS total_tokens \
+             FROM usage_events WHERE timestamp >= ?"
+        };
+        let mut query = self.client.query(sql).bind(since);
+        if let Some(uid) = user_id {
+            query = query.bind(uid);
+        }
+        let row = query
+            .fetch_one::<StatsRow>()
+            .await
+            .map_err(|e| format!("CH query_usage_stats_since: {e}"))?;
+        Ok((
+            row.total,
+            row.success_count,
+            row.total_latency,
+            row.total_tokens,
+        ))
     }
 
     /// Routing history endpoint stats: (channel_id, endpoint_id, requests, successes, avg_latency, p95).

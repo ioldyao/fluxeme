@@ -20,12 +20,12 @@ use uuid::Uuid;
 use crate::balancer::LoadBalancer;
 use crate::cache::GateStatus;
 use crate::config::types::EndpointConfig;
-use rust_decimal::Decimal;
 use crate::domain::usage::UsageRecord;
 use crate::observability::event::RouteDecided;
 use crate::provider::{is_retryable_error, ErrorKind};
 use crate::server::AppState;
 use crate::service::moderation::FilterBlocked;
+use rust_decimal::Decimal;
 
 // ── Error type ────────────────────────────────────────────────────
 
@@ -285,23 +285,7 @@ fn normalize_sse_reasoning(data: &str) -> String {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-fn extract_client_ip(headers: &HeaderMap, addr: SocketAddr) -> String {
-    if let Some(fwd) = headers.get("x-forwarded-for") {
-        if let Ok(s) = fwd.to_str() {
-            if let Some(ip) = s.split(',').next().map(|s| s.trim()) {
-                if !ip.is_empty() {
-                    return ip.to_string();
-                }
-            }
-        }
-    }
-    if let Some(real) = headers.get("x-real-ip") {
-        if let Ok(s) = real.to_str() {
-            if !s.is_empty() {
-                return s.to_string();
-            }
-        }
-    }
+fn extract_client_ip(_headers: &HeaderMap, addr: SocketAddr) -> String {
     addr.ip().to_string()
 }
 
@@ -714,7 +698,9 @@ impl<S> UsageTrackingStream<S> {
                 prompt_price: Decimal::ZERO,
                 completion_price: Decimal::ZERO,
                 cache_read_price: Decimal::ZERO,
-                client_ip: Some(self.client_ip.clone()), original_model: self.original_model.clone(),
+                client_ip: Some(self.client_ip.clone()),
+                endpoint_id: self.endpoint_id,
+                original_model: self.original_model.clone(),
             },
             self.endpoint_id,
         );
@@ -889,7 +875,9 @@ async fn handle_streaming(
                 prompt_price: Decimal::ZERO,
                 completion_price: Decimal::ZERO,
                 cache_read_price: Decimal::ZERO,
-                client_ip: Some(client_ip), original_model: orig_model.clone(),
+                client_ip: Some(client_ip),
+                endpoint_id: endpoint.id,
+                original_model: orig_model.clone(),
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -990,7 +978,9 @@ async fn handle_messages_streaming(
                 prompt_price: Decimal::ZERO,
                 completion_price: Decimal::ZERO,
                 cache_read_price: Decimal::ZERO,
-                client_ip: Some(client_ip), original_model: orig_model.clone(),
+                client_ip: Some(client_ip),
+                endpoint_id: endpoint.id,
+                original_model: orig_model.clone(),
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -1072,7 +1062,9 @@ async fn handle_non_streaming(
                         prompt_price: Decimal::ZERO,
                         completion_price: Decimal::ZERO,
                         cache_read_price: Decimal::ZERO,
-                        client_ip: Some(client_ip.clone()), original_model: String::new(),
+                        client_ip: Some(client_ip.clone()),
+                        endpoint_id: route.endpoint.id,
+                        original_model: String::new(),
                     },
                     route.endpoint.id,
                 );
@@ -1135,7 +1127,9 @@ async fn handle_non_streaming(
                     prompt_price: Decimal::ZERO,
                     completion_price: Decimal::ZERO,
                     cache_read_price: Decimal::ZERO,
-                    client_ip: Some(client_ip.clone()), original_model: String::new(),
+                    client_ip: Some(client_ip.clone()),
+                    endpoint_id: route.endpoint.id,
+                    original_model: String::new(),
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Upstream request failed");
                 return Err(GatewayError::Upstream(e.0));
@@ -1169,7 +1163,9 @@ async fn handle_non_streaming(
         prompt_price: Decimal::ZERO,
         completion_price: Decimal::ZERO,
         cache_read_price: Decimal::ZERO,
-        client_ip: Some(client_ip), original_model: String::new(),
+        client_ip: Some(client_ip),
+        endpoint_id: route.endpoint.id,
+        original_model: String::new(),
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -1251,7 +1247,9 @@ async fn handle_messages_non_streaming(
                     prompt_price: Decimal::ZERO,
                     completion_price: Decimal::ZERO,
                     cache_read_price: Decimal::ZERO,
-                    client_ip: Some(client_ip.clone()), original_model: String::new(),
+                    client_ip: Some(client_ip.clone()),
+                    endpoint_id: route.endpoint.id,
+                    original_model: String::new(),
                 });
 
                 return Ok(Json(resp).into_response());
@@ -1297,7 +1295,9 @@ async fn handle_messages_non_streaming(
                     prompt_price: Decimal::ZERO,
                     completion_price: Decimal::ZERO,
                     cache_read_price: Decimal::ZERO,
-                    client_ip: Some(client_ip.clone()), original_model: String::new(),
+                    client_ip: Some(client_ip.clone()),
+                    endpoint_id: route.endpoint.id,
+                    original_model: String::new(),
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Messages upstream request failed");
                 return Err(GatewayError::Upstream(e.0));
@@ -1330,7 +1330,9 @@ async fn handle_messages_non_streaming(
         prompt_price: Decimal::ZERO,
         completion_price: Decimal::ZERO,
         cache_read_price: Decimal::ZERO,
-        client_ip: Some(client_ip), original_model: String::new(),
+        client_ip: Some(client_ip),
+        endpoint_id: route.endpoint.id,
+        original_model: String::new(),
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -1389,8 +1391,13 @@ pub async fn chat_completions(
         check_wallet_balance(&state, &user.user_id).await?;
     }
 
-    let (channel_id, resolved_model, upstream_model) = state.routing.route(&user.user_id, &model).await?;
-    let orig_model = if model != resolved_model { model.clone() } else { String::new() };
+    let (channel_id, resolved_model, upstream_model) =
+        state.routing.route(&user.user_id, &model).await?;
+    let orig_model = if model != resolved_model {
+        model.clone()
+    } else {
+        String::new()
+    };
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
@@ -1567,8 +1574,13 @@ pub async fn messages(
         check_wallet_balance(&state, &user.user_id).await?;
     }
 
-    let (channel_id, resolved_model, upstream_model) = state.routing.route(&user.user_id, &model).await?;
-    let orig_model = if model != resolved_model { model.clone() } else { String::new() };
+    let (channel_id, resolved_model, upstream_model) =
+        state.routing.route(&user.user_id, &model).await?;
+    let orig_model = if model != resolved_model {
+        model.clone()
+    } else {
+        String::new()
+    };
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
@@ -1736,8 +1748,13 @@ async fn relay_to_upstream(
         check_wallet_balance(state, &user.user_id).await?;
     }
 
-    let (channel_id, resolved_model, upstream_model) = state.routing.route(&user.user_id, &model).await?;
-    let orig_model = if model != resolved_model { model.clone() } else { String::new() };
+    let (channel_id, resolved_model, upstream_model) =
+        state.routing.route(&user.user_id, &model).await?;
+    let orig_model = if model != resolved_model {
+        model.clone()
+    } else {
+        String::new()
+    };
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
@@ -1831,7 +1848,9 @@ async fn relay_to_upstream(
                     prompt_price: Decimal::ZERO,
                     completion_price: Decimal::ZERO,
                     cache_read_price: Decimal::ZERO,
-                    client_ip: Some(client_ip.clone()), original_model: String::new(),
+                    client_ip: Some(client_ip.clone()),
+                    endpoint_id: route.endpoint.id,
+                    original_model: String::new(),
                 });
 
                 return Ok(Json(resp).into_response());
@@ -1877,7 +1896,9 @@ async fn relay_to_upstream(
                     prompt_price: Decimal::ZERO,
                     completion_price: Decimal::ZERO,
                     cache_read_price: Decimal::ZERO,
-                    client_ip: Some(client_ip.clone()), original_model: String::new(),
+                    client_ip: Some(client_ip.clone()),
+                    endpoint_id: route.endpoint.id,
+                    original_model: String::new(),
                 });
                 return Err(GatewayError::from(e));
             }
@@ -1909,7 +1930,9 @@ async fn relay_to_upstream(
         prompt_price: Decimal::ZERO,
         completion_price: Decimal::ZERO,
         cache_read_price: Decimal::ZERO,
-        client_ip: Some(client_ip), original_model: orig_model.clone(),
+        client_ip: Some(client_ip),
+        endpoint_id: route.endpoint.id,
+        original_model: orig_model.clone(),
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -2025,11 +2048,7 @@ pub async fn list_models(
 ) -> Result<Json<Value>, GatewayError> {
     let _user = state.auth.authenticate(&headers)?;
 
-    let mut models: Vec<Value> = state
-        .routing
-        .list_display_models()
-        .into_iter()
-        .collect();
+    let mut models: Vec<Value> = state.routing.list_display_models().into_iter().collect();
 
     let limit: usize = params
         .get("limit")

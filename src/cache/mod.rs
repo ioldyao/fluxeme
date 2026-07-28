@@ -241,8 +241,7 @@ impl RedisCache {
             Some(c) => c,
             None => return Err("Redis cache disabled".into()),
         };
-        let json = serde_json::to_string(&record)
-            .map_err(|e| format!("Backlog serialize: {e}"))?;
+        let json = serde_json::to_string(&record).map_err(|e| format!("Backlog serialize: {e}"))?;
         redis::cmd("XADD")
             .arg(Self::BILLING_BACKLOG_KEY)
             .arg("MAXLEN")
@@ -307,8 +306,8 @@ impl RedisCache {
             Some(c) => c,
             None => return Ok(()),
         };
-        let json = serde_json::to_string(&record)
-            .map_err(|e| format!("Obs event serialize: {e}"))?;
+        let json =
+            serde_json::to_string(&record).map_err(|e| format!("Obs event serialize: {e}"))?;
         redis::cmd("XADD")
             .arg(Self::OBS_EVENTS_KEY)
             .arg("MAXLEN")
@@ -372,19 +371,27 @@ pub async fn start_billing_backlog_drain(
     let mut interval = tokio::time::interval(Duration::from_secs(5));
     loop {
         interval.tick().await;
-        let Ok(records) = cache.read_billing_backlog(100).await else { continue };
+        let Ok(records) = cache.read_billing_backlog(100).await else {
+            continue;
+        };
         if records.is_empty() {
             continue;
         }
         let mut processed = Vec::new();
         for (entry_id, record) in &records {
-            let billing_enabled = db
-                .get_gateway_config()
-                .await
-                .map(|c| c.billing_enabled)
-                .unwrap_or(false);
+            let billing_enabled = match db.get_gateway_config().await {
+                Ok(config) => config.billing_enabled,
+                Err(error) => {
+                    tracing::warn!(
+                        request_id = record.request_id,
+                        error = %error.0,
+                        "Backlog drain: failed to read gateway config — leaving record pending"
+                    );
+                    continue;
+                }
+            };
             match db
-                .batch_insert_usage_with_billing(&[record.clone()], billing_enabled)
+                .batch_insert_usage_with_billing(std::slice::from_ref(record), billing_enabled)
                 .await
             {
                 Ok(_) => processed.push(entry_id.clone()),
@@ -408,6 +415,7 @@ pub async fn start_billing_backlog_drain(
 pub async fn start_obs_consumer(
     ch: Option<std::sync::Arc<crate::ch_backend::ClickHouseBackend>>,
     cache: std::sync::Arc<RedisCache>,
+    db: std::sync::Arc<crate::db::Database>,
 ) {
     let ch = match ch {
         Some(c) => c,
@@ -445,9 +453,36 @@ pub async fn start_obs_consumer(
             let ts = chrono::DateTime::parse_from_rfc3339(&r.timestamp)
                 .map(|dt| dt.timestamp() as u32)
                 .unwrap_or_else(|_| chrono::Utc::now().timestamp() as u32);
-            let cost_amount = (Decimal::from(r.prompt_tokens) / Decimal::from(1000000) * r.prompt_price
-                + Decimal::from(r.completion_tokens) / Decimal::from(1000000) * r.completion_price
-                + Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000) * r.cache_read_price)
+            let pricing = if r.prompt_price > Decimal::ZERO
+                || r.completion_price > Decimal::ZERO
+                || r.cache_read_price > Decimal::ZERO
+            {
+                Some((r.prompt_price, r.completion_price, r.cache_read_price))
+            } else {
+                match db.lookup_model_pricing(&r.model).await {
+                    Ok((pp, cp, crp))
+                        if pp > Decimal::ZERO || cp > Decimal::ZERO || crp > Decimal::ZERO =>
+                    {
+                        Some((pp, cp, crp))
+                    }
+                    Ok(_) => {
+                        tracing::warn!(request_id = r.request_id, model = r.model, "Obs consumer: pricing lookup returned zero prices — leaving record pending");
+                        None
+                    }
+                    Err(error) => {
+                        tracing::warn!(request_id = r.request_id, model = r.model, error = %error.0, "Obs consumer: pricing lookup failed — leaving record pending");
+                        None
+                    }
+                }
+            };
+            let Some((prompt_price, completion_price, cache_read_price)) = pricing else {
+                continue;
+            };
+            let cost_amount = (Decimal::from(r.prompt_tokens) / Decimal::from(1000000)
+                * prompt_price
+                + Decimal::from(r.completion_tokens) / Decimal::from(1000000) * completion_price
+                + Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000)
+                    * cache_read_price)
                 .to_f64()
                 .unwrap_or(0.0);
             events.push(crate::ch_backend::UsageEvent {
@@ -467,9 +502,16 @@ pub async fn start_obs_consumer(
                 api_format: r.api_format.clone(),
                 stream: if r.stream { 1 } else { 0 },
                 cache_hit_input_tokens: r.cache_hit_input_tokens,
+                prompt_price: prompt_price.to_f64().unwrap_or(0.0),
+                completion_price: completion_price.to_f64().unwrap_or(0.0),
+                cache_read_price: cache_read_price.to_f64().unwrap_or(0.0),
                 cost_amount,
                 client_ip: r.client_ip.clone(),
-                endpoint_id: None,
+                endpoint_id: r.endpoint_id,
+                request_body: None,
+                response_body: None,
+                reasoning_body: None,
+                original_model: r.original_model.clone(),
             });
             entry_ids.push(eid.clone());
         }
@@ -514,43 +556,72 @@ fn parse_usage_stream_records(raw: &redis::Value, stream_name: &str) -> Vec<(Str
 
     for stream in streams {
         let redis::Value::Array(stream_parts) = stream else {
-            tracing::warn!(stream = stream_name, "Redis stream entry wrapper is not an array");
+            tracing::warn!(
+                stream = stream_name,
+                "Redis stream entry wrapper is not an array"
+            );
             continue;
         };
         if stream_parts.len() < 2 {
-            tracing::warn!(stream = stream_name, parts = stream_parts.len(), "Redis stream wrapper is too short");
+            tracing::warn!(
+                stream = stream_name,
+                parts = stream_parts.len(),
+                "Redis stream wrapper is too short"
+            );
             continue;
         }
 
-        let actual_stream_name = as_str_bytes(&stream_parts[0]).unwrap_or_else(|| stream_name.to_string());
+        let actual_stream_name =
+            as_str_bytes(&stream_parts[0]).unwrap_or_else(|| stream_name.to_string());
         let redis::Value::Array(entries) = &stream_parts[1] else {
-            tracing::warn!(stream = actual_stream_name, "Redis stream entries payload is not an array");
+            tracing::warn!(
+                stream = actual_stream_name,
+                "Redis stream entries payload is not an array"
+            );
             continue;
         };
 
         for entry in entries {
             let redis::Value::Array(parts) = entry else {
-                tracing::warn!(stream = actual_stream_name, "Redis stream item is not an array");
+                tracing::warn!(
+                    stream = actual_stream_name,
+                    "Redis stream item is not an array"
+                );
                 continue;
             };
             if parts.len() < 2 {
-                tracing::warn!(stream = actual_stream_name, parts = parts.len(), "Redis stream item is too short");
+                tracing::warn!(
+                    stream = actual_stream_name,
+                    parts = parts.len(),
+                    "Redis stream item is too short"
+                );
                 continue;
             }
 
             let Some(entry_id) = as_str_bytes(&parts[0]) else {
-                tracing::warn!(stream = actual_stream_name, "Redis stream item is missing entry id");
+                tracing::warn!(
+                    stream = actual_stream_name,
+                    "Redis stream item is missing entry id"
+                );
                 continue;
             };
             let redis::Value::Array(field_pairs) = &parts[1] else {
-                tracing::warn!(stream = actual_stream_name, entry_id, "Redis stream fields are not an array");
+                tracing::warn!(
+                    stream = actual_stream_name,
+                    entry_id,
+                    "Redis stream fields are not an array"
+                );
                 continue;
             };
 
             let mut found_record = false;
             for pair in field_pairs.chunks(2) {
                 if pair.len() != 2 {
-                    tracing::warn!(stream = actual_stream_name, entry_id, "Redis stream field pair is incomplete");
+                    tracing::warn!(
+                        stream = actual_stream_name,
+                        entry_id,
+                        "Redis stream field pair is incomplete"
+                    );
                     continue;
                 }
                 if as_str_bytes(&pair[0]).as_deref() != Some("record") {
@@ -558,17 +629,27 @@ fn parse_usage_stream_records(raw: &redis::Value, stream_name: &str) -> Vec<(Str
                 }
                 found_record = true;
                 let Some(json) = as_str_bytes(&pair[1]) else {
-                    tracing::warn!(stream = actual_stream_name, entry_id, "Redis stream record payload is not a string");
+                    tracing::warn!(
+                        stream = actual_stream_name,
+                        entry_id,
+                        "Redis stream record payload is not a string"
+                    );
                     continue;
                 };
                 match serde_json::from_str::<UsageRecord>(&json) {
                     Ok(record) => records.push((entry_id.clone(), record)),
-                    Err(error) => tracing::warn!(stream = actual_stream_name, entry_id, error = %error, "Redis stream record JSON could not be parsed as UsageRecord"),
+                    Err(error) => {
+                        tracing::warn!(stream = actual_stream_name, entry_id, error = %error, "Redis stream record JSON could not be parsed as UsageRecord")
+                    }
                 }
             }
 
             if !found_record {
-                tracing::warn!(stream = actual_stream_name, entry_id, "Redis stream item did not contain a record field");
+                tracing::warn!(
+                    stream = actual_stream_name,
+                    entry_id,
+                    "Redis stream item did not contain a record field"
+                );
             }
         }
     }
