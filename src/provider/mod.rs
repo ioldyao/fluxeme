@@ -155,6 +155,22 @@ pub trait ProviderAdapter: Send + Sync {
         self.chat_complete_stream(endpoint, body).await
     }
 
+    // Importers/callers: ProviderAdapter is consumed by server handlers via
+    // resolve_route(...), especially handlers::messages and the new planned
+    // handlers::messages_count_tokens path. Affected API: POST /v1/messages/count_tokens.
+    // Data schema: Anthropic request body with model/messages/system/tools/etc. and
+    // response shape {"input_tokens": number}. User instruction: "要，添加`/v1/messages/count_tokens`的端点支持".
+    async fn count_tokens(
+        &self,
+        _endpoint: &EndpointConfig,
+        _body: Value,
+    ) -> Result<Value, ProviderError> {
+        Err(ProviderError::new(
+            "Count tokens not supported for this provider",
+            ErrorKind::Other,
+        ))
+    }
+
     async fn relay(
         &self,
         _endpoint: &EndpointConfig,
