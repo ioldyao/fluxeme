@@ -25,6 +25,21 @@ impl ProviderAdapter for OpenAIAdapter {
         super::relay_request(endpoint, path, body, "openai").await
     }
 
+    // Importers/callers: called from src/server/handlers.rs via ProviderAdapter after
+    // resolve_route(...), specifically the new responses_input_tokens handler.
+    // Affected API: POST /responses/input_tokens, relayed upstream to
+    // POST /v1/responses/input_tokens.
+    // Data schema: OpenAI Responses request body and response JSON
+    // {"object":"response.input_tokens","input_tokens": number}.
+    // User instruction: "openai的提供商层，也添加这个openai的端点`POST/responses/input_tokens`".
+    async fn responses_input_tokens(
+        &self,
+        endpoint: &EndpointConfig,
+        body: Value,
+    ) -> Result<Value, ProviderError> {
+        super::relay_request(endpoint, "/v1/responses/input_tokens", body, "openai").await
+    }
+
     async fn chat_complete(
         &self,
         endpoint: &EndpointConfig,

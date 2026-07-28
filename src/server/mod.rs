@@ -120,6 +120,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/v1/completions",
             axum::routing::post(handlers::completions),
         )
+        // Importers/callers: this router is the public HTTP entrypoint for gateway APIs.
+        // Affected API: adds POST /responses/input_tokens and relays upstream to
+        // POST /v1/responses/input_tokens. Data schema: OpenAI Responses request body
+        // and response shape {"object":"response.input_tokens","input_tokens":
+        // number}. User instruction: "openai的提供商层，也添加这个openai的端点`POST/responses/input_tokens`".
+        .route(
+            "/responses/input_tokens",
+            axum::routing::post(handlers::responses_input_tokens),
+        )
         .route("/v1/embeddings", axum::routing::post(handlers::embeddings))
         .route(
             "/v1/messages/batches",
