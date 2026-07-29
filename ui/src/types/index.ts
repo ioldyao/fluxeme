@@ -1,4 +1,5 @@
 export type UserRole = 'admin' | 'user';
+export type UserStatus = 'active' | 'suspended';
 
 export interface RateLimit {
   rpm: number | null;
@@ -11,6 +12,8 @@ export interface User {
   role?: string;
   rate_limits?: RateLimit | null;
   concurrency_limit?: number;
+  status: UserStatus;
+  suspended_at?: string | null;
 }
 
 export interface UserDetail extends User {

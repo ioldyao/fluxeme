@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -14,7 +15,8 @@ interface ConfirmDialogProps {
   onOpenChange: (open: boolean) => void;
   title: string;
   description: string;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
+  isPending?: boolean;
 }
 
 export function ConfirmDialog({
@@ -23,8 +25,24 @@ export function ConfirmDialog({
   title,
   description,
   onConfirm,
+  isPending = false,
 }: ConfirmDialogProps) {
   const { t } = useTranslation();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isBusy = isPending || isSubmitting;
+
+  const handleConfirm = async () => {
+    try {
+      setIsSubmitting(true);
+      await onConfirm();
+      onOpenChange(false);
+    } catch {
+      // The caller handles user-facing error reporting and the dialog stays open.
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -33,16 +51,10 @@ export function ConfirmDialog({
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isBusy}>
             {t('common.cancel')}
           </Button>
-          <Button
-            variant="destructive"
-            onClick={() => {
-              onConfirm();
-              onOpenChange(false);
-            }}
-          >
+          <Button variant="destructive" onClick={handleConfirm} disabled={isBusy}>
             {t('common.confirm')}
           </Button>
         </DialogFooter>
