@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::admin::AdminError;
 use crate::config::types::SsoConfig;
 use crate::db::Database;
-use crate::domain::user::{SessionInfo, User};
+use crate::domain::user::{SessionInfo, User, USER_STATUS_ACTIVE};
 use crate::server::AppState;
 
 const STATE_TTL: Duration = Duration::from_secs(300);
@@ -213,29 +213,41 @@ impl SsoModule {
             .or(user_info.email)
             .unwrap_or_else(|| sub.clone());
 
-        // Create user if not exists
-        if db.get_user(&sub).await.unwrap_or(None).is_none() {
-            let user = User {
-                id: sub.clone(),
-                name: user_name.clone(),
-                password_hash: None,
-                rate_limits: None,
-                timezone: "UTC".to_string(),
-                token_version: 0,
-                role: "user".to_string(),
-                concurrency_limit: 2000,
-                currency: "usd".to_string(),
-            };
-            db.create_user(&user)
-                .await
-                .map_err(|e| AdminError::internal(format!("Failed to create user: {e}")))?;
+        let user = match db.get_user(&sub).await {
+            Ok(Some(user)) => user,
+            Ok(None) => {
+                let user = User {
+                    id: sub.clone(),
+                    name: user_name.clone(),
+                    password_hash: None,
+                    rate_limits: None,
+                    timezone: "UTC".to_string(),
+                    token_version: 0,
+                    role: "user".to_string(),
+                    concurrency_limit: 2000,
+                    currency: "usd".to_string(),
+                    status: USER_STATUS_ACTIVE.to_string(),
+                    suspended_at: None,
+                };
+                db.create_user(&user)
+                    .await
+                    .map_err(|e| AdminError::internal(format!("Failed to create user: {e}")))?;
+                user
+            }
+            Err(e) => {
+                return Err(AdminError::internal(format!("Failed to load user: {e}")));
+            }
+        };
+
+        if user.status != USER_STATUS_ACTIVE {
+            return Err(AdminError::unauthorized("Invalid or expired SSO state"));
         }
 
         let info = SessionInfo {
-            user_id: sub.clone(),
-            user_name: user_name.clone(),
-            role: "user".to_string(),
-            token_version: 0,
+            user_id: user.id.clone(),
+            user_name: user.name.clone(),
+            role: user.role.clone(),
+            token_version: user.token_version,
         };
 
         admin.encode_token(&info)

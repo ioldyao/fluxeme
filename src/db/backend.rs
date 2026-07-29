@@ -8,6 +8,7 @@ use crate::domain::routing::RoutingRule;
 use crate::domain::usage::UsageFilter;
 use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
+use chrono::{DateTime, Utc};
 
 use super::{DbError, FunnelStats, ProbeResultRow, RechargeKeyRow, WalletTransactionRow};
 
@@ -22,13 +23,15 @@ pub trait DbBackend: Send + Sync {
     async fn migrate(&self) -> Result<(), DbError>;
 
     // ── Users ────────────────────────────────────────────────────────────
-    async fn list_users(&self) -> Result<Vec<User>, DbError>;
+    async fn list_users(&self, status: Option<&str>) -> Result<Vec<User>, DbError>;
     async fn get_user(&self, id: &str) -> Result<Option<User>, DbError>;
     async fn get_user_with_password(&self, id: &str) -> Result<Option<User>, DbError>;
     async fn create_user(&self, user: &User) -> Result<(), DbError>;
     async fn update_user(&self, user: &User) -> Result<(), DbError>;
+    async fn suspend_user(&self, id: &str, suspended_at: &DateTime<Utc>) -> Result<User, DbError>;
+    async fn restore_user(&self, id: &str) -> Result<User, DbError>;
     async fn delete_user(&self, id: &str) -> Result<(), DbError>;
-    async fn count_admins(&self) -> Result<i64, DbError>;
+    async fn count_admins(&self, status: Option<&str>) -> Result<i64, DbError>;
     async fn get_user_timezone(&self, id: &str) -> Result<String, DbError>;
     async fn update_user_timezone(&self, id: &str, timezone: &str) -> Result<(), DbError>;
     async fn get_user_currency(&self, id: &str) -> Result<String, DbError>;

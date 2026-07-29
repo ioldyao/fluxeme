@@ -1,6 +1,7 @@
 pub mod backend;
 pub mod pg_backend;
 
+use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 
 use crate::config::types::GatewayRuntimeConfig;
@@ -127,8 +128,8 @@ impl Database {
     }
 
     // ── Users ────────────────────────────────────────────────────────────
-    pub async fn list_users(&self) -> Result<Vec<User>, DbError> {
-        self.backend.list_users().await
+    pub async fn list_users(&self, status: Option<&str>) -> Result<Vec<User>, DbError> {
+        self.backend.list_users(status).await
     }
     pub async fn get_user(&self, id: &str) -> Result<Option<User>, DbError> {
         self.backend.get_user(id).await
@@ -142,11 +143,21 @@ impl Database {
     pub async fn update_user(&self, user: &User) -> Result<(), DbError> {
         self.backend.update_user(user).await
     }
+    pub async fn suspend_user(
+        &self,
+        id: &str,
+        suspended_at: &DateTime<Utc>,
+    ) -> Result<User, DbError> {
+        self.backend.suspend_user(id, suspended_at).await
+    }
+    pub async fn restore_user(&self, id: &str) -> Result<User, DbError> {
+        self.backend.restore_user(id).await
+    }
     pub async fn delete_user(&self, id: &str) -> Result<(), DbError> {
         self.backend.delete_user(id).await
     }
-    pub async fn count_admins(&self) -> Result<i64, DbError> {
-        self.backend.count_admins().await
+    pub async fn count_admins(&self, status: Option<&str>) -> Result<i64, DbError> {
+        self.backend.count_admins(status).await
     }
     pub async fn get_user_timezone(&self, id: &str) -> Result<String, DbError> {
         self.backend.get_user_timezone(id).await
