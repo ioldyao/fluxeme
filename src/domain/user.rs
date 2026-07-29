@@ -1,6 +1,9 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+pub const USER_STATUS_ACTIVE: &str = "active";
+pub const USER_STATUS_SUSPENDED: &str = "suspended";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: String,
@@ -19,6 +22,10 @@ pub struct User {
     pub concurrency_limit: u32,
     #[serde(default = "default_currency")]
     pub currency: String,
+    #[serde(default = "default_user_status")]
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suspended_at: Option<String>,
 }
 
 fn default_concurrency() -> u32 {
@@ -27,6 +34,10 @@ fn default_concurrency() -> u32 {
 
 fn default_currency() -> String {
     "usd".to_string()
+}
+
+fn default_user_status() -> String {
+    USER_STATUS_ACTIVE.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

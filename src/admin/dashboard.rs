@@ -38,7 +38,7 @@ pub(crate) async fn admin_dashboard(
     let session = require_session(&state.admin, &headers).await?;
 
     if state.authz.enforce(&session.role, "admin:dashboard").await {
-        let users = state.db.list_users().await.map_err(db_err)?;
+        let users = state.db.list_users(Some("active")).await.map_err(db_err)?;
         let channels = state.db.list_channels().await.map_err(db_err)?;
         let models = state.db.list_models().await.map_err(db_err)?;
         let rules = state.db.list_rules().await.map_err(db_err)?;

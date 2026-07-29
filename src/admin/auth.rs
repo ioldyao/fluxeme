@@ -6,7 +6,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::domain::user::{SessionInfo, User};
+use crate::domain::user::{SessionInfo, User, USER_STATUS_ACTIVE};
 use crate::server::AppState;
 
 use super::*;
@@ -68,6 +68,9 @@ pub(crate) async fn admin_login(
 
     if password_matched {
         let u = user.unwrap();
+        if u.status != USER_STATUS_ACTIVE {
+            return Err(AdminError::unauthorized("Invalid credentials"));
+        }
         let info = SessionInfo {
             user_id: u.id.clone(),
             user_name: u.name.clone(),
@@ -114,7 +117,7 @@ pub(crate) async fn setup_status(
 ) -> Result<Json<SetupStatus>, AdminError> {
     let count = state
         .db
-        .count_admins()
+        .count_admins(None)
         .await
         .map_err(|e| AdminError::internal(e.to_string()))?;
     Ok(Json(SetupStatus {
@@ -134,7 +137,7 @@ pub(crate) async fn setup_register(
 ) -> Result<Json<Value>, AdminError> {
     let count = state
         .db
-        .count_admins()
+        .count_admins(None)
         .await
         .map_err(|e| AdminError::internal(e.to_string()))?;
     if count > 0 {
@@ -170,6 +173,8 @@ pub(crate) async fn setup_register(
         role: "admin".to_string(),
         concurrency_limit: 2000,
         currency: "usd".to_string(),
+        status: "active".to_string(),
+        suspended_at: None,
     };
     state.db.create_user(&user).await.map_err(db_err)?;
     state.auth.reload().await;

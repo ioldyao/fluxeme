@@ -15,7 +15,7 @@ use crate::domain::model::{Model, ModelChannel, Pricing};
 use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
 use crate::domain::usage::{UsageFilter, UsageRecord};
-use crate::domain::user::{ApiKey, User};
+use crate::domain::user::{ApiKey, User, USER_STATUS_ACTIVE, USER_STATUS_SUSPENDED};
 
 pub struct PgBackend {
     pool: PgPool,
@@ -114,6 +114,10 @@ impl PgBackend {
         *idx += 1;
         let currency: String = row.get(*idx);
         *idx += 1;
+        let status: Option<String> = row.get(*idx);
+        *idx += 1;
+        let suspended_at: Option<String> = row.get(*idx);
+        *idx += 1;
         User {
             id,
             name,
@@ -132,6 +136,8 @@ impl PgBackend {
             role: role_val.unwrap_or_default(),
             concurrency_limit: concurrency_val as u32,
             currency,
+            status: status.unwrap_or_else(|| "active".to_string()),
+            suspended_at,
         }
     }
 
@@ -156,6 +162,10 @@ impl PgBackend {
         *idx += 1;
         let currency: String = row.get(*idx);
         *idx += 1;
+        let status: Option<String> = row.get(*idx);
+        *idx += 1;
+        let suspended_at: Option<String> = row.get(*idx);
+        *idx += 1;
         User {
             id,
             name,
@@ -174,6 +184,8 @@ impl PgBackend {
             role: role_val.unwrap_or_default(),
             concurrency_limit: concurrency_val as u32,
             currency,
+            status: status.unwrap_or_else(|| "active".to_string()),
+            suspended_at,
         }
     }
 
@@ -542,6 +554,10 @@ impl DbBackend for PgBackend {
         );
         add_col!("ALTER TABLE channels ADD COLUMN IF NOT EXISTS anthropic_compat BOOLEAN NOT NULL DEFAULT false");
         add_col!("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'");
+        add_col!(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'"
+        );
+        add_col!("ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TEXT");
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS expires_at TEXT");
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS revoked BOOLEAN NOT NULL DEFAULT false");
         add_col!("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS client_ip TEXT");
@@ -861,12 +877,21 @@ impl DbBackend for PgBackend {
 
     // ── Users ────────────────────────────────────────────────────────────
 
-    async fn list_users(&self) -> Result<Vec<User>, DbError> {
-        let rows = query(
-            "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency FROM users ORDER BY id",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+    async fn list_users(&self, status: Option<&str>) -> Result<Vec<User>, DbError> {
+        let rows = if let Some(status) = status {
+            query(
+                "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at FROM users WHERE status = $1 ORDER BY id",
+            )
+            .bind(status)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            query(
+                "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at FROM users ORDER BY id",
+            )
+            .fetch_all(&self.pool)
+            .await?
+        };
         Ok(rows
             .iter()
             .map(|r| {
@@ -878,7 +903,7 @@ impl DbBackend for PgBackend {
 
     async fn get_user(&self, id: &str) -> Result<Option<User>, DbError> {
         let rows = query(
-            "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency FROM users WHERE id = $1",
+            "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at FROM users WHERE id = $1",
         )
         .bind(id)
         .fetch_all(&self.pool)
@@ -891,7 +916,7 @@ impl DbBackend for PgBackend {
 
     async fn get_user_with_password(&self, id: &str) -> Result<Option<User>, DbError> {
         let rows = query(
-            "SELECT id, name, password_hash, rpm, tpm, timezone, token_version, role, concurrency_limit, currency FROM users WHERE id = $1",
+            "SELECT id, name, password_hash, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at FROM users WHERE id = $1",
         )
         .bind(id)
         .fetch_all(&self.pool)
@@ -920,7 +945,7 @@ impl DbBackend for PgBackend {
             &user.role
         };
         query(
-            "INSERT INTO users (id, name, password_hash, rpm, tpm, timezone, token_version, role, concurrency_limit, currency) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            "INSERT INTO users (id, name, password_hash, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(&user.id)
         .bind(&user.name)
@@ -932,6 +957,8 @@ impl DbBackend for PgBackend {
         .bind(role)
         .bind(user.concurrency_limit as i64)
         .bind(&user.currency)
+        .bind(&user.status)
+        .bind(&user.suspended_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -950,7 +977,7 @@ impl DbBackend for PgBackend {
         };
         if let Some(ref pw) = user.password_hash {
             query(
-                "UPDATE users SET name = $1, password_hash = $2, rpm = $3, tpm = $4, timezone = $5, token_version = $6, role = $7, concurrency_limit = $8, currency = $9 WHERE id = $10",
+                "UPDATE users SET name = $1, password_hash = $2, rpm = $3, tpm = $4, timezone = $5, token_version = $6, role = $7, concurrency_limit = $8, currency = $9, status = $10, suspended_at = $11 WHERE id = $12",
             )
             .bind(&user.name)
             .bind(pw)
@@ -961,12 +988,14 @@ impl DbBackend for PgBackend {
             .bind(&user.role)
             .bind(user.concurrency_limit as i64)
             .bind(&user.currency)
+            .bind(&user.status)
+            .bind(&user.suspended_at)
             .bind(&user.id)
             .execute(&self.pool)
             .await?;
         } else {
             query(
-                "UPDATE users SET name = $1, rpm = $2, tpm = $3, timezone = $4, token_version = $5, role = $6, concurrency_limit = $7, currency = $8 WHERE id = $9",
+                "UPDATE users SET name = $1, rpm = $2, tpm = $3, timezone = $4, token_version = $5, role = $6, concurrency_limit = $7, currency = $8, status = $9, suspended_at = $10 WHERE id = $11",
             )
             .bind(&user.name)
             .bind(rpm)
@@ -976,6 +1005,8 @@ impl DbBackend for PgBackend {
             .bind(&user.role)
             .bind(user.concurrency_limit as i64)
             .bind(&user.currency)
+            .bind(&user.status)
+            .bind(&user.suspended_at)
             .bind(&user.id)
             .execute(&self.pool)
             .await?;
@@ -983,18 +1014,147 @@ impl DbBackend for PgBackend {
         Ok(())
     }
 
+    async fn suspend_user(
+        &self,
+        id: &str,
+        suspended_at: &chrono::DateTime<chrono::Utc>,
+    ) -> Result<User, DbError> {
+        let mut tx = self.pool.begin().await?;
+        let rows = query(
+            "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at FROM users WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let existing = rows
+            .first()
+            .ok_or_else(|| DbError("User not found".to_string()))?;
+        let mut idx = 0usize;
+        let current_user = Self::map_user_row(existing, &mut idx);
+
+        if current_user.status == USER_STATUS_SUSPENDED {
+            return Ok(current_user);
+        }
+
+        if current_user.role == "admin" && current_user.status == USER_STATUS_ACTIVE {
+            let (active_admin_count,): (i64,) =
+                query_as("SELECT COUNT(*) FROM users WHERE role = 'admin' AND status = $1")
+                    .bind(USER_STATUS_ACTIVE)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            if active_admin_count <= 1 {
+                return Err(DbError("Cannot suspend the last active admin".to_string()));
+            }
+        }
+
+        let suspended_at_str = suspended_at.to_rfc3339();
+        query(
+            "UPDATE users SET status = $1, suspended_at = $2, token_version = token_version + 1 WHERE id = $3",
+        )
+        .bind(USER_STATUS_SUSPENDED)
+        .bind(&suspended_at_str)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
+        let rows = query(
+            "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at FROM users WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let updated = rows
+            .first()
+            .ok_or_else(|| DbError("User not found".to_string()))?;
+        let mut idx = 0usize;
+        let user = Self::map_user_row(updated, &mut idx);
+        tx.commit().await?;
+        Ok(user)
+    }
+
+    async fn restore_user(&self, id: &str) -> Result<User, DbError> {
+        let mut tx = self.pool.begin().await?;
+        let rows = query(
+            "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at FROM users WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let existing = rows
+            .first()
+            .ok_or_else(|| DbError("User not found".to_string()))?;
+        let mut idx = 0usize;
+        let current_user = Self::map_user_row(existing, &mut idx);
+
+        if current_user.status == USER_STATUS_ACTIVE {
+            return Ok(current_user);
+        }
+
+        query("UPDATE users SET status = $1, suspended_at = NULL WHERE id = $2")
+            .bind(USER_STATUS_ACTIVE)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+
+        let rows = query(
+            "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at FROM users WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let updated = rows
+            .first()
+            .ok_or_else(|| DbError("User not found".to_string()))?;
+        let mut idx = 0usize;
+        let user = Self::map_user_row(updated, &mut idx);
+        tx.commit().await?;
+        Ok(user)
+    }
+
     async fn delete_user(&self, id: &str) -> Result<(), DbError> {
+        let mut tx = self.pool.begin().await?;
+        let rows = query(
+            "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at FROM users WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let existing = rows
+            .first()
+            .ok_or_else(|| DbError("User not found".to_string()))?;
+        let mut idx = 0usize;
+        let current_user = Self::map_user_row(existing, &mut idx);
+
+        if current_user.role == "admin" && current_user.status == USER_STATUS_ACTIVE {
+            let (active_admin_count,): (i64,) =
+                query_as("SELECT COUNT(*) FROM users WHERE role = 'admin' AND status = $1")
+                    .bind(USER_STATUS_ACTIVE)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            if active_admin_count <= 1 {
+                return Err(DbError("Cannot delete the last active admin".to_string()));
+            }
+        }
+
         query("DELETE FROM users WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         Ok(())
     }
 
-    async fn count_admins(&self) -> Result<i64, DbError> {
-        let (count,): (i64,) = query_as("SELECT COUNT(*) FROM users WHERE role = 'admin'")
-            .fetch_one(&self.pool)
-            .await?;
+    async fn count_admins(&self, status: Option<&str>) -> Result<i64, DbError> {
+        let (count,): (i64,) = if let Some(status) = status {
+            query_as("SELECT COUNT(*) FROM users WHERE role = 'admin' AND status = $1")
+                .bind(status)
+                .fetch_one(&self.pool)
+                .await?
+        } else {
+            query_as("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+                .fetch_one(&self.pool)
+                .await?
+        };
         Ok(count)
     }
 
@@ -1107,7 +1267,7 @@ impl DbBackend for PgBackend {
 
     async fn lookup_key(&self, key: &str) -> Result<Option<(User, ApiKey)>, DbError> {
         let rows = query(
-            "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, u.concurrency_limit, u.currency, \
+            "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, u.concurrency_limit, u.currency, u.status, u.suspended_at, \
              a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models \
              FROM api_keys a JOIN users u ON u.id = a.user_id WHERE a.key = $1",
         )
@@ -1115,15 +1275,15 @@ impl DbBackend for PgBackend {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.first().map(|r| {
-            let allowed_models_str: Option<String> = r.get(15);
+            let allowed_models_str: Option<String> = r.get(17);
             let api_key = ApiKey {
-                key: r.get(9),
-                user_id: r.get(10),
-                name: r.get(11),
-                enabled: r.get(12),
-                expires_at: r.get(13),
+                key: r.get(11),
+                user_id: r.get(12),
+                name: r.get(13),
+                enabled: r.get(14),
+                expires_at: r.get(15),
                 spend_limit: r
-                    .get::<Option<f64>, _>(14)
+                    .get::<Option<f64>, _>(16)
                     .map(|v| Decimal::try_from(v).unwrap_or(Decimal::ZERO)),
                 allowed_models: allowed_models_str
                     .filter(|s| !s.is_empty())
@@ -1150,6 +1310,10 @@ impl DbBackend for PgBackend {
                     role: r.get::<Option<String>, _>(6).unwrap_or_default(),
                     concurrency_limit: r.get::<i64, _>(7) as u32,
                     currency: r.get::<Option<String>, _>(8).unwrap_or_default(),
+                    status: r
+                        .get::<Option<String>, _>(9)
+                        .unwrap_or_else(|| USER_STATUS_ACTIVE.to_string()),
+                    suspended_at: r.get(10),
                 }
             };
             (user, api_key)
@@ -1158,7 +1322,7 @@ impl DbBackend for PgBackend {
 
     async fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError> {
         let rows = query(
-            "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, u.concurrency_limit, u.currency, \
+            "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, u.concurrency_limit, u.currency, u.status, u.suspended_at, \
              a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models \
              FROM api_keys a JOIN users u ON u.id = a.user_id ORDER BY a.key",
         )
@@ -1167,15 +1331,15 @@ impl DbBackend for PgBackend {
         Ok(rows
             .iter()
             .map(|r| {
-                let allowed_models_str: Option<String> = r.get(15);
+                let allowed_models_str: Option<String> = r.get(17);
                 let api_key = ApiKey {
-                    key: r.get(9),
-                    user_id: r.get(10),
-                    name: r.get(11),
-                    enabled: r.get(12),
-                    expires_at: r.get(13),
+                    key: r.get(11),
+                    user_id: r.get(12),
+                    name: r.get(13),
+                    enabled: r.get(14),
+                    expires_at: r.get(15),
                     spend_limit: r
-                        .get::<Option<f64>, _>(14)
+                        .get::<Option<f64>, _>(16)
                         .map(|v| Decimal::try_from(v).unwrap_or(Decimal::ZERO)),
                     allowed_models: allowed_models_str
                         .filter(|s| !s.is_empty())
@@ -1202,6 +1366,10 @@ impl DbBackend for PgBackend {
                         role: r.get::<Option<String>, _>(6).unwrap_or_default(),
                         concurrency_limit: r.get::<i64, _>(7) as u32,
                         currency: r.get::<Option<String>, _>(8).unwrap_or_default(),
+                        status: r
+                            .get::<Option<String>, _>(9)
+                            .unwrap_or_else(|| USER_STATUS_ACTIVE.to_string()),
+                        suspended_at: r.get(10),
                     }
                 };
                 (user, api_key)

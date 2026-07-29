@@ -85,6 +85,8 @@ pub(crate) async fn change_my_password(
         role: existing.role,
         concurrency_limit: existing.concurrency_limit,
         currency: existing.currency.clone(),
+        status: existing.status,
+        suspended_at: existing.suspended_at,
     };
     state.db.update_user(&updated).await.map_err(db_err)?;
 

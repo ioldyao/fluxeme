@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 use axum::http::HeaderMap;
 
 use crate::db::Database;
-use crate::domain::user::{ApiKey, AuthResult, User};
+use crate::domain::user::{ApiKey, AuthResult, User, USER_STATUS_ACTIVE};
 
 pub struct AuthService {
     db: Arc<Database>,
@@ -36,7 +36,7 @@ impl AuthService {
             Err(e) => tracing::error!("Failed to load API keys: {}", e),
         }
 
-        match self.db.list_users().await {
+        match self.db.list_users(None).await {
             Ok(users) => {
                 let map: HashMap<_, _> = users.into_iter().map(|u| (u.id.clone(), u)).collect();
                 *self.users.write().unwrap() = map;
@@ -68,6 +68,9 @@ impl AuthService {
                             tracing::warn!("Failed to parse expires_at '{}': {}", expires, e);
                         }
                     }
+                }
+                if user.status != USER_STATUS_ACTIVE {
+                    return Err(AuthError("Unknown or disabled API key".into()));
                 }
                 return Ok(AuthResult {
                     user_id: user.id.clone(),

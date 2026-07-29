@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::authz::AuthzModule;
 use crate::db::Database;
-use crate::domain::user::SessionInfo;
+use crate::domain::user::{SessionInfo, USER_STATUS_ACTIVE};
 use crate::ratelimit::RateLimiter;
 
 const SESSION_TTL_SECS: i64 = 24 * 3600;
@@ -189,7 +189,7 @@ async fn require_session(
         .await
         .map_err(|e| AdminError::internal(e.to_string()))?
         .ok_or_else(|| AdminError::unauthorized("User not found"))?;
-    if db_user.token_version != session.token_version {
+    if db_user.token_version != session.token_version || db_user.status != USER_STATUS_ACTIVE {
         return Err(AdminError::unauthorized(
             "Session has been revoked. Please log in again.",
         ));
@@ -396,6 +396,14 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             axum::routing::get(users::get_user_detail)
                 .put(users::update_user)
                 .delete(users::delete_user),
+        )
+        .route(
+            "/api/users/{id}/suspend",
+            axum::routing::post(users::suspend_user),
+        )
+        .route(
+            "/api/users/{id}/restore",
+            axum::routing::post(users::restore_user),
         )
         // User API keys (admin)
         .route(

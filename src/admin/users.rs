@@ -1,26 +1,66 @@
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
+use chrono::Utc;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::domain::user::{ApiKey, User};
+use crate::domain::user::{ApiKey, User, USER_STATUS_ACTIVE, USER_STATUS_SUSPENDED};
 use crate::server::AppState;
 
 use super::*;
 
 // ── User CRUD ─────────────────────────────────────────────────────
 
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct ListUsersQuery {
+    status: Option<String>,
+}
+
+fn parse_user_status_filter(status: Option<&str>) -> Result<Option<&'static str>, AdminError> {
+    match status.map(str::trim).filter(|value| !value.is_empty()) {
+        None | Some("all") => Ok(None),
+        Some(USER_STATUS_ACTIVE) => Ok(Some(USER_STATUS_ACTIVE)),
+        Some(USER_STATUS_SUSPENDED) => Ok(Some(USER_STATUS_SUSPENDED)),
+        Some(_) => Err(AdminError::bad_request("Invalid user status filter")),
+    }
+}
+
+async fn ensure_not_last_active_admin(
+    state: &AppState,
+    user: &User,
+    action: &str,
+) -> Result<(), AdminError> {
+    if user.role != "admin" || user.status != USER_STATUS_ACTIVE {
+        return Ok(());
+    }
+
+    let active_admin_count = state
+        .db
+        .count_admins(Some(USER_STATUS_ACTIVE))
+        .await
+        .map_err(db_err)?;
+    if active_admin_count <= 1 {
+        return Err(AdminError::bad_request(format!(
+            "Cannot {action} the last active admin"
+        )));
+    }
+
+    Ok(())
+}
+
 pub(crate) async fn list_users(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(query): Query<ListUsersQuery>,
 ) -> Result<Json<Vec<User>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:users").await?;
-    let users = state.db.list_users().await.map_err(db_err)?;
+    let status = parse_user_status_filter(query.status.as_deref())?;
+    let users = state.db.list_users(status).await.map_err(db_err)?;
     Ok(Json(users))
 }
 
@@ -96,6 +136,8 @@ pub(crate) async fn create_user(
         role: req.role.unwrap_or_else(|| "user".to_string()),
         concurrency_limit: req.concurrency_limit,
         currency: "usd".to_string(),
+        status: "active".to_string(),
+        suspended_at: None,
     };
 
     state.db.create_user(&user).await.map_err(db_err)?;
@@ -157,10 +199,87 @@ pub(crate) async fn update_user(
         role: req.role.unwrap_or(existing.role),
         concurrency_limit: req.concurrency_limit.unwrap_or(existing.concurrency_limit),
         currency: existing.currency.clone(),
+        status: existing.status,
+        suspended_at: existing.suspended_at,
     };
 
     state.db.update_user(&user).await.map_err(db_err)?;
     state.auth.reload().await;
+
+    Ok(Json(User {
+        password_hash: None,
+        ..user
+    }))
+}
+
+pub(crate) async fn suspend_user(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<User>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:users").await?;
+
+    let existing = state
+        .db
+        .get_user(&id)
+        .await
+        .map_err(db_err)?
+        .ok_or_else(|| AdminError::not_found("User not found"))?;
+    ensure_not_last_active_admin(&state, &existing, "suspend").await?;
+
+    let suspended_at = Utc::now();
+    let user = state
+        .db
+        .suspend_user(&id, &suspended_at)
+        .await
+        .map_err(db_err_bad_request)?;
+    state.auth.reload().await;
+
+    tracing::info!(
+        "admin={} action=suspend_user target={}",
+        session.user_id,
+        id
+    );
+
+    Ok(Json(User {
+        password_hash: None,
+        ..user
+    }))
+}
+
+pub(crate) async fn restore_user(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<User>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:users").await?;
+
+    let existing = state
+        .db
+        .get_user(&id)
+        .await
+        .map_err(db_err)?
+        .ok_or_else(|| AdminError::not_found("User not found"))?;
+    if existing.status != USER_STATUS_SUSPENDED {
+        return Err(AdminError::bad_request(
+            "Only suspended users can be restored",
+        ));
+    }
+
+    let user = state
+        .db
+        .restore_user(&id)
+        .await
+        .map_err(db_err_bad_request)?;
+    state.auth.reload().await;
+
+    tracing::info!(
+        "admin={} action=restore_user target={}",
+        session.user_id,
+        id
+    );
 
     Ok(Json(User {
         password_hash: None,
@@ -176,7 +295,19 @@ pub(crate) async fn delete_user(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:users").await?;
 
-    state.db.delete_user(&id).await.map_err(db_err)?;
+    let existing = state
+        .db
+        .get_user(&id)
+        .await
+        .map_err(db_err)?
+        .ok_or_else(|| AdminError::not_found("User not found"))?;
+    ensure_not_last_active_admin(&state, &existing, "delete").await?;
+
+    state
+        .db
+        .delete_user(&id)
+        .await
+        .map_err(db_err_bad_request)?;
     state.auth.reload().await;
 
     tracing::info!("admin={} action=delete_user target={}", session.user_id, id);
