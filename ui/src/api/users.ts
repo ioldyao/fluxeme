@@ -1,45 +1,73 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
-import type { User, UserDetail, CreateUserReq, UpdateUserReq } from '@/types';
+import type {
+  CreateUserReq,
+  UpdateUserReq,
+  User,
+  UserDetail,
+  UserStatus,
+} from '@/types';
 
-export function useUsers() {
+function invalidateUserQueries(queryClient: ReturnType<typeof useQueryClient>) {
+  return queryClient.invalidateQueries({ queryKey: ['users'] });
+}
+
+export function useUsers(status: UserStatus = 'active', enabled = true) {
   return useQuery({
-    queryKey: ['users'],
-    queryFn: () => api<User[]>('/users'),
+    queryKey: ['users', 'list', status],
+    queryFn: () => api<User[]>(`/users?status=${encodeURIComponent(status)}`),
+    enabled,
   });
 }
 
 export function useUser(id: string) {
   return useQuery({
-    queryKey: ['users', id],
+    queryKey: ['users', 'detail', id],
     queryFn: () => api<UserDetail>(`/users/${encodeURIComponent(id)}`),
     enabled: !!id,
   });
 }
 
 export function useCreateUser() {
-  const qc = useQueryClient();
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: CreateUserReq) =>
-      api<User>('/users', { method: 'POST', body: data }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    mutationFn: (data: CreateUserReq) => api<User>('/users', { method: 'POST', body: data }),
+    onSuccess: () => invalidateUserQueries(queryClient),
   });
 }
 
 export function useUpdateUser(id: string) {
-  const qc = useQueryClient();
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data: UpdateUserReq) =>
       api<User>(`/users/${encodeURIComponent(id)}`, { method: 'PUT', body: data }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => invalidateUserQueries(queryClient),
   });
 }
 
-export function useDeleteUser() {
-  const qc = useQueryClient();
+export function useSuspendUser() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<void>(`/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+      api<User>(`/users/${encodeURIComponent(id)}/suspend`, { method: 'POST' }),
+    onSuccess: () => invalidateUserQueries(queryClient),
+  });
+}
+
+export function useRestoreUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api<User>(`/users/${encodeURIComponent(id)}/restore`, { method: 'POST' }),
+    onSuccess: () => invalidateUserQueries(queryClient),
+  });
+}
+
+export function usePermanentDeleteUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api<{ deleted: string }>(`/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    onSuccess: () => invalidateUserQueries(queryClient),
   });
 }
