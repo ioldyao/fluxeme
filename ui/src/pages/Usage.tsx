@@ -21,14 +21,33 @@ import {
   LineChart, Line, Legend,
 } from 'recharts';
 
-function ChartTooltip({ active, payload, label, formatter, showTotal }: any) {
+interface ChartTooltipEntry {
+  value?: number | string;
+  name: string;
+  color: string;
+}
+
+interface ChartTooltipProps {
+  active?: boolean;
+  payload?: ChartTooltipEntry[];
+  label?: string;
+  formatter?: (value: number | string | undefined, name: string) => string;
+  showTotal?: boolean;
+}
+
+function ChartTooltip({ active, payload, label, formatter, showTotal }: ChartTooltipProps) {
   const { t } = useTranslation();
   if (!active || !payload?.length) return null;
-  const total = showTotal ? payload.reduce((sum: number, e: any) => sum + (e.value ?? 0), 0) : null;
+  const total = showTotal
+    ? payload.reduce<number>(
+        (sum, entry) => sum + (typeof entry.value === 'number' ? entry.value : 0),
+        0,
+      )
+    : null;
   return (
     <div className="rounded-lg border bg-popover px-3 py-2 text-xs shadow-md">
       {label && <p className="mb-1 font-medium text-popover-foreground">{label}</p>}
-      {payload.map((entry: any, i: number) => {
+      {payload.map((entry: ChartTooltipEntry, i: number) => {
         const formatted = formatter?.(entry.value, entry.name) ?? (
           typeof entry.value === 'number' ? entry.value.toLocaleString() : entry.value
         );
@@ -407,7 +426,7 @@ export default function Usage() {
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                       <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} />
                       <YAxis domain={[0, 100]} unit="%" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} width={40} />
-                      <Tooltip content={<ChartTooltip formatter={(value: number) => `${value}%`} />} />
+                      <Tooltip content={<ChartTooltip formatter={(value: number | string | undefined) => `${value ?? 0}%`} />} />
                       <Line type="monotone" dataKey="successRate" stroke="hsl(142, 65%, 55%)" strokeWidth={2} dot={false} name={t('dash.successRate')} />
                     </LineChart>
                   </ResponsiveContainer>

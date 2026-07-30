@@ -1,16 +1,23 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
+import { createJSONStorage, persist } from 'zustand/middleware';
 import { queryClient } from '@/lib/query';
-import type { UserRole, LoginResponse } from '@/types';
+import { useCurrency, type CurrencyCode } from '@/store/currency';
+import type { CurrentSessionResponse, LoginResponse, UserRole } from '@/types';
+
+function toCurrencyCode(currency: string): CurrencyCode {
+  return currency === 'cny' ? 'cny' : 'usd';
+}
 
 interface AuthState {
-  token: string | null;
   role: UserRole | null;
   userId: string | null;
   userName: string | null;
   timezone: string;
   currency: string;
+  isAuthenticated: boolean;
+  isSessionResolved: boolean;
   setSession: (res: LoginResponse) => void;
+  setCurrentSession: (res: CurrentSessionResponse) => void;
   setTimezone: (tz: string) => void;
   setCurrency: (c: string) => void;
   clear: () => void;
@@ -19,40 +26,70 @@ interface AuthState {
 export const useAuth = create<AuthState>()(
   persist(
     (set) => ({
-      token: null,
       role: null,
       userId: null,
       userName: null,
       timezone: 'UTC',
       currency: 'usd',
+      isAuthenticated: false,
+      isSessionResolved: false,
       setSession: (res) => {
+        const nextCurrency = toCurrencyCode(res.currency || 'usd');
         queryClient.clear();
+        useCurrency.getState().setCurrency(nextCurrency);
         set({
-          token: res.token,
           role: res.role,
           userId: res.user_id,
           userName: res.user_name,
           timezone: res.timezone || 'UTC',
-          currency: res.currency || 'usd',
+          currency: nextCurrency,
+          isAuthenticated: true,
+          isSessionResolved: true,
+        });
+      },
+      setCurrentSession: (res) => {
+        const nextCurrency = toCurrencyCode(res.currency);
+        useCurrency.getState().setCurrency(nextCurrency);
+        set({
+          role: res.role,
+          userId: res.user_id,
+          userName: res.user_name,
+          timezone: res.timezone,
+          currency: nextCurrency,
+          isAuthenticated: true,
+          isSessionResolved: true,
         });
       },
       setTimezone: (timezone) => set({ timezone }),
-      setCurrency: (currency) => set({ currency }),
+      setCurrency: (currency) => {
+        const nextCurrency = toCurrencyCode(currency);
+        useCurrency.getState().setCurrency(nextCurrency);
+        set({ currency: nextCurrency });
+      },
       clear: () => {
         queryClient.clear();
+        useCurrency.getState().setCurrency('usd');
         set({
-          token: null,
           role: null,
           userId: null,
           userName: null,
           timezone: 'UTC',
           currency: 'usd',
+          isAuthenticated: false,
+          isSessionResolved: true,
         });
       },
     }),
     {
       name: 'auth',
       storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        role: state.role,
+        userId: state.userId,
+        userName: state.userName,
+        timezone: state.timezone,
+        currency: state.currency,
+      }),
     },
   ),
 );

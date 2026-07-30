@@ -140,8 +140,34 @@ impl Database {
     pub async fn create_user(&self, user: &User) -> Result<(), DbError> {
         self.backend.create_user(user).await
     }
+    pub async fn create_initial_admin(&self, user: &User) -> Result<(), DbError> {
+        self.backend.create_initial_admin(user).await
+    }
     pub async fn update_user(&self, user: &User) -> Result<(), DbError> {
         self.backend.update_user(user).await
+    }
+    pub async fn bump_user_token_version(&self, id: &str) -> Result<(), DbError> {
+        self.backend.bump_user_token_version(id).await
+    }
+    pub async fn update_user_admin_fields(
+        &self,
+        id: &str,
+        name: Option<String>,
+        password_hash: Option<String>,
+        rate_limits: Option<crate::domain::user::RateLimit>,
+        role: Option<String>,
+        concurrency_limit: Option<u32>,
+    ) -> Result<User, DbError> {
+        self.backend
+            .update_user_admin_fields(
+                id,
+                name,
+                password_hash,
+                rate_limits,
+                role,
+                concurrency_limit,
+            )
+            .await
     }
     pub async fn suspend_user(
         &self,

@@ -11,7 +11,9 @@ function getInitialLang(): string {
       const parsed = JSON.parse(stored);
       if (parsed?.state?.lang) return parsed.state.lang;
     }
-  } catch {}
+  } catch {
+    // Ignore malformed persisted language state and fall back to browser language.
+  }
   return navigator.language.startsWith('zh') ? 'zh' : 'en';
 }
 

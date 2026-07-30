@@ -105,7 +105,8 @@ export default function Models() {
     if (modalFilter !== 'all') rows = rows.filter((m) => m.category?.split(',').filter(Boolean).includes(modalFilter));
     if (statusFilter !== 'all') rows = rows.filter((m) => statusFilter === 'published' ? m.published : !m.published);
     rows.sort((a, b) => {
-      let av: any, bv: any;
+      let av: string | number;
+      let bv: string | number;
       switch (sortKey) {
         case 'name': av = a.name; bv = b.name; break;
         case 'channel': {
@@ -121,7 +122,10 @@ export default function Models() {
         case 'status': av = a.published ? 1 : 0; bv = b.published ? 1 : 0; break;
         default: av = a.name; bv = b.name;
       }
-      return typeof av === 'string' ? av.localeCompare(bv) * sortDir : (av - bv) * sortDir;
+      if (typeof av === 'string' && typeof bv === 'string') {
+        return av.localeCompare(bv) * sortDir;
+      }
+      return (Number(av) - Number(bv)) * sortDir;
     });
     return rows;
   }, [models, channelName, search, modalFilter, statusFilter, sortKey, sortDir, aggregateChannelProbe]);
@@ -150,7 +154,7 @@ export default function Models() {
 
   const handleFetch = async () => {
     if (!syncChannelId) return; setFetching(true);
-    try { const ms = await api<UpstreamModel[]>(`/channels/${encodeURIComponent(syncChannelId)}/upstream-models`, { method: 'GET' }); setUpstreamModels(ms); setSelectedIds(new Set()); setFetched(true); } catch (e: any) { toast.error(e.message); }
+    try { const ms = await api<UpstreamModel[]>(`/channels/${encodeURIComponent(syncChannelId)}/upstream-models`, { method: 'GET' }); setUpstreamModels(ms); setSelectedIds(new Set()); setFetched(true); } catch (error: unknown) { toast.error(error instanceof Error ? error.message : t('err.loadFailed')); }
     finally { setFetching(false); }
   };
   const toggleSelect = (id: string) => setSelectedIds((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -311,7 +315,7 @@ export default function Models() {
 
       {/* Dialogs */}
       {(showAdd || editModel) && (<ModelForm model={editModel} open={true} onOpenChange={(open) => { if (!open) { setShowAdd(false); setEditModel(null); }}}
-        onSubmit={(data: any) => { if (editModel) { updateModel.mutate(data, { onSuccess: () => { toast.success(t('toast.updated')); setEditModel(null); refetch(); }, onError: (err) => toast.error(err.message) }); } else { createModel.mutate(data, { onSuccess: () => { toast.success(t('toast.created')); setShowAdd(false); refetch(); }, onError: (err) => toast.error(err.message) }); } }}
+        onSubmit={(data) => { if (editModel) { updateModel.mutate(data, { onSuccess: () => { toast.success(t('toast.updated')); setEditModel(null); refetch(); }, onError: (err) => toast.error(err.message) }); } else { createModel.mutate(data, { onSuccess: () => { toast.success(t('toast.created')); setShowAdd(false); refetch(); }, onError: (err) => toast.error(err.message) }); } }}
         isPending={createModel.isPending || updateModel.isPending} />)}
 
       <Dialog open={syncOpen} onOpenChange={setSyncOpen}>

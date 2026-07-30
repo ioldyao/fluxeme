@@ -84,7 +84,7 @@ export default function WalletPage() {
           deductionCount: deductionItems.length,
         };
       });
-  }, [txData?.items]);
+  }, [txData]);
 
   // ── Key filter state ──
   const [keySearch, setKeySearch] = useState('');

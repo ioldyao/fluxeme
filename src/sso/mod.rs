@@ -2,17 +2,56 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::extract::{Query, State};
-use axum::response::Redirect;
+use axum::http::{header::SET_COOKIE, HeaderMap, HeaderValue};
+use axum::response::{IntoResponse, Redirect};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::admin::AdminError;
+use crate::admin::{
+    extract_cookie_value, should_set_secure_cookie, AdminError, HOST_SESSION_COOKIE_NAME,
+    SESSION_COOKIE_NAME,
+};
 use crate::config::types::SsoConfig;
 use crate::db::Database;
 use crate::domain::user::{SessionInfo, User, USER_STATUS_ACTIVE};
 use crate::server::AppState;
 
 const STATE_TTL: Duration = Duration::from_secs(300);
+const SSO_STATE_COOKIE_NAME: &str = "sso_state";
+const HOST_SSO_STATE_COOKIE_NAME: &str = "__Host-sso_state";
+
+fn session_cookie_name(is_secure: bool) -> &'static str {
+    if is_secure {
+        HOST_SESSION_COOKIE_NAME
+    } else {
+        SESSION_COOKIE_NAME
+    }
+}
+
+fn sso_state_cookie_name(is_secure: bool) -> &'static str {
+    if is_secure {
+        HOST_SSO_STATE_COOKIE_NAME
+    } else {
+        SSO_STATE_COOKIE_NAME
+    }
+}
+
+fn session_cookie_value(token: &str, is_secure: bool) -> String {
+    let secure_attr = if is_secure { "; Secure" } else { "" };
+    let cookie_name = session_cookie_name(is_secure);
+    format!("{cookie_name}={token}; HttpOnly{secure_attr}; Path=/; SameSite=Strict; Max-Age=86400")
+}
+
+fn sso_state_cookie_value(state: &str, is_secure: bool) -> String {
+    let secure_attr = if is_secure { "; Secure" } else { "" };
+    let cookie_name = sso_state_cookie_name(is_secure);
+    format!("{cookie_name}={state}; HttpOnly{secure_attr}; Path=/; SameSite=Lax; Max-Age=300")
+}
+
+fn expired_sso_state_cookie_value(name: &str, is_secure: bool) -> String {
+    let secure_attr = if is_secure { "; Secure" } else { "" };
+    format!("{name}=; HttpOnly{secure_attr}; Path=/; SameSite=Lax; Max-Age=0")
+}
 
 // ── OIDC discovery document ─────────────────────────────────────
 
@@ -122,11 +161,14 @@ impl SsoModule {
     }
 
     /// Generate the authorization URL and store CSRF state.
-    pub fn authorize_url(&self) -> Result<String, AdminError> {
+    pub fn authorize_url(&self) -> Result<(String, String), AdminError> {
         let meta = self
             .metadata
             .as_ref()
             .ok_or_else(|| AdminError::internal("SSO not configured"))?;
+
+        self.pending_states
+            .retain(|_, expires| *expires > Instant::now());
 
         let state = uuid::Uuid::new_v4().to_string();
         let auth_url = url::Url::parse_with_params(
@@ -142,9 +184,9 @@ impl SsoModule {
         .map_err(|e| AdminError::internal(format!("Failed to build auth URL: {e}")))?;
 
         self.pending_states
-            .insert(state, Instant::now() + STATE_TTL);
+            .insert(state.clone(), Instant::now() + STATE_TTL);
 
-        Ok(auth_url.to_string())
+        Ok((auth_url.to_string(), state))
     }
 
     /// Handle the OIDC callback: exchange code, fetch user info, create/find user, return JWT.
@@ -152,6 +194,7 @@ impl SsoModule {
         &self,
         code: &str,
         state: &str,
+        state_cookie: &str,
         admin: &crate::admin::AdminModule,
         db: &Database,
     ) -> Result<String, AdminError> {
@@ -159,8 +202,8 @@ impl SsoModule {
         self.pending_states
             .retain(|_, expires| *expires > Instant::now());
 
-        // Verify CSRF state
-        if self.pending_states.remove(state).is_none() {
+        // Verify CSRF state and bind it to the initiating browser.
+        if state_cookie != state || self.pending_states.remove(state).is_none() {
             return Err(AdminError::unauthorized("Invalid or expired SSO state"));
         }
 
@@ -212,12 +255,18 @@ impl SsoModule {
             .or(user_info.preferred_username)
             .or(user_info.email)
             .unwrap_or_else(|| sub.clone());
+        let provider_scope = if self.provider_name.is_empty() {
+            "oidc"
+        } else {
+            self.provider_name.as_str()
+        };
+        let user_id = format!("sso:{provider_scope}:{sub}");
 
-        let user = match db.get_user(&sub).await {
+        let user = match db.get_user(&user_id).await {
             Ok(Some(user)) => user,
             Ok(None) => {
                 let user = User {
-                    id: sub.clone(),
+                    id: user_id.clone(),
                     name: user_name.clone(),
                     password_hash: None,
                     rate_limits: None,
@@ -271,28 +320,73 @@ pub async fn sso_status_handler(State(state): State<Arc<AppState>>) -> axum::Jso
 }
 
 /// SSO login redirect handler
-pub async fn sso_login_handler(State(state): State<Arc<AppState>>) -> Result<Redirect, AdminError> {
+pub async fn sso_login_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<axum::response::Response, AdminError> {
     if !state.sso.is_enabled() {
         return Err(AdminError::unauthorized("SSO not enabled"));
     }
 
-    let auth_url = state.sso.authorize_url()?;
-    Ok(Redirect::to(&auth_url))
+    let is_secure = should_set_secure_cookie(&headers);
+    let (auth_url, sso_state) = state.sso.authorize_url()?;
+    let state_cookie = sso_state_cookie_value(&sso_state, is_secure);
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        SET_COOKIE,
+        HeaderValue::from_str(&state_cookie).map_err(|e| AdminError::internal(e.to_string()))?,
+    );
+
+    Ok((response_headers, Redirect::to(&auth_url)).into_response())
 }
 
 /// SSO callback handler
 pub async fn sso_callback_handler(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(params): Query<SsoCallbackParams>,
-) -> Result<Redirect, AdminError> {
+) -> Result<axum::response::Response, AdminError> {
     if !state.sso.is_enabled() {
         return Err(AdminError::unauthorized("SSO not enabled"));
     }
 
+    let is_secure = should_set_secure_cookie(&headers);
+    let state_cookie = extract_cookie_value(&headers, HOST_SSO_STATE_COOKIE_NAME)
+        .or_else(|| extract_cookie_value(&headers, SSO_STATE_COOKIE_NAME))
+        .ok_or_else(|| AdminError::unauthorized("Invalid or expired SSO state"))?;
     let token = state
         .sso
-        .handle_callback(&params.code, &params.state, &state.admin, &state.db)
+        .handle_callback(
+            &params.code,
+            &params.state,
+            &state_cookie,
+            &state.admin,
+            &state.db,
+        )
         .await?;
 
-    Ok(Redirect::to(&format!("/sso/callback#token={token}")))
+    let session_cookie = session_cookie_value(&token, is_secure);
+    let mut response_headers = HeaderMap::new();
+    response_headers.append(
+        SET_COOKIE,
+        HeaderValue::from_str(&session_cookie).map_err(|e| AdminError::internal(e.to_string()))?,
+    );
+    response_headers.append(
+        SET_COOKIE,
+        HeaderValue::from_str(&expired_sso_state_cookie_value(
+            HOST_SSO_STATE_COOKIE_NAME,
+            true,
+        ))
+        .map_err(|e| AdminError::internal(e.to_string()))?,
+    );
+    response_headers.append(
+        SET_COOKIE,
+        HeaderValue::from_str(&expired_sso_state_cookie_value(
+            SSO_STATE_COOKIE_NAME,
+            false,
+        ))
+        .map_err(|e| AdminError::internal(e.to_string()))?,
+    );
+
+    Ok((response_headers, Redirect::to("/sso/callback")).into_response())
 }

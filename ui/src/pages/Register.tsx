@@ -11,13 +11,24 @@ import { useAuth } from '@/store/auth';
 
 export default function Register() {
   const navigate = useNavigate();
-  const token = useAuth((s) => s.token);
+  const isAuthenticated = useAuth((s) => s.isAuthenticated);
+  const isSessionResolved = useAuth((s) => s.isSessionResolved);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const register = useSetupRegister();
   const { data: status, isLoading: statusLoading } = useSetupStatus();
 
-  if (token) return <Navigate to="/" replace />;
+  if (!isSessionResolved) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <p className="text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
+
+  if (isAuthenticated) {
+    return <Navigate to="/" replace />;
+  }
 
   if (statusLoading) {
     return (

@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::IntoResponse;
+use axum::extract::Request;
+use axum::http::{HeaderMap, Method, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use chrono::{Duration, Offset, TimeZone, Utc};
 use chrono_tz::Tz;
@@ -14,6 +16,8 @@ use crate::domain::user::{SessionInfo, USER_STATUS_ACTIVE};
 use crate::ratelimit::RateLimiter;
 
 const SESSION_TTL_SECS: i64 = 24 * 3600;
+pub(crate) const SESSION_COOKIE_NAME: &str = "session_token";
+pub(crate) const HOST_SESSION_COOKIE_NAME: &str = "__Host-session_token";
 
 // ── Sub-modules ────────────────────────────────────────────────────
 
@@ -146,8 +150,62 @@ fn validate_password(pw: &str) -> Result<(), AdminError> {
 
 // ── Auth helpers ──────────────────────────────────────────────────
 
+fn request_host(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get("host")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            if let Some(stripped) = value.strip_prefix('[') {
+                if let Some(end) = stripped.find(']') {
+                    return &stripped[..end];
+                }
+            }
+            value.split(':').next().unwrap_or(value)
+        })
+}
+
+pub(crate) fn should_set_secure_cookie(headers: &HeaderMap) -> bool {
+    if request_host(headers).is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "::1")) {
+        return false;
+    }
+
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("https"))
+        || headers
+            .get("x-forwarded-scheme")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.eq_ignore_ascii_case("https"))
+        || headers
+            .get("x-forwarded-ssl")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.eq_ignore_ascii_case("on"))
+        || headers
+            .get("origin")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("https://"))
+        || headers
+            .get("referer")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("https://"))
+}
+
+fn cookie_value_from_header(cookie_header: &str, name: &str) -> Option<String> {
+    cookie_header
+        .split(';')
+        .map(str::trim)
+        .find_map(|pair| pair.strip_prefix(&format!("{name}=")).map(str::to_string))
+}
+
+pub(crate) fn extract_cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get("cookie")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|cookie_header| cookie_value_from_header(cookie_header, name))
+}
+
 fn extract_token(headers: &HeaderMap) -> Result<String, AdminError> {
-    // Try Authorization header first (for API/programmatic access)
     if let Some(token) = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -156,16 +214,68 @@ fn extract_token(headers: &HeaderMap) -> Result<String, AdminError> {
     {
         return Ok(token);
     }
-    // Fall back to httpOnly cookie (for browser-based admin UI)
-    if let Some(cookie) = headers.get("cookie").and_then(|v| v.to_str().ok()) {
-        for pair in cookie.split(';') {
-            let pair = pair.trim();
-            if let Some(value) = pair.strip_prefix("session_token=") {
-                return Ok(value.to_string());
-            }
+
+    if let Some(token) = extract_cookie_value(headers, HOST_SESSION_COOKIE_NAME) {
+        return Ok(token);
+    }
+
+    if let Some(token) = extract_cookie_value(headers, SESSION_COOKIE_NAME) {
+        return Ok(token);
+    }
+
+    Err(AdminError::unauthorized("Missing or invalid admin token"))
+}
+
+fn request_origin(headers: &HeaderMap) -> Option<String> {
+    if let Some(origin) = headers.get("origin").and_then(|value| value.to_str().ok()) {
+        return Some(origin.to_string());
+    }
+
+    headers
+        .get("referer")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| url::Url::parse(value).ok())
+        .map(|url| url.origin().ascii_serialization())
+}
+
+fn has_session_cookie(headers: &HeaderMap) -> bool {
+    extract_cookie_value(headers, HOST_SESSION_COOKIE_NAME).is_some()
+        || extract_cookie_value(headers, SESSION_COOKIE_NAME).is_some()
+}
+
+fn is_safe_method(method: &Method) -> bool {
+    matches!(
+        *method,
+        Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE
+    )
+}
+
+async fn reject_cross_origin_cookie_requests(
+    request: Request,
+    next: Next,
+) -> Result<Response, AdminError> {
+    if is_safe_method(request.method())
+        || request.headers().get("authorization").is_some()
+        || !has_session_cookie(request.headers())
+    {
+        return Ok(next.run(request).await);
+    }
+
+    let host = request
+        .headers()
+        .get("host")
+        .and_then(|value| value.to_str().ok());
+    let origin = request_origin(request.headers());
+
+    if let (Some(host), Some(origin)) = (host, origin) {
+        let is_same_origin = origin.eq_ignore_ascii_case(&format!("https://{host}"))
+            || origin.eq_ignore_ascii_case(&format!("http://{host}"));
+        if is_same_origin {
+            return Ok(next.run(request).await);
         }
     }
-    Err(AdminError::unauthorized("Missing or invalid admin token"))
+
+    Err(AdminError::forbidden("Cross-origin request blocked"))
 }
 
 pub(crate) async fn require_session_internal(
@@ -198,10 +308,15 @@ async fn require_session(
     // Rate limit: 300 requests/minute per admin session to prevent abuse
     admin
         .rate_limiter
-        .check_rpm(&format!("admin:{}", session.user_id), 300)
+        .check_rpm(&format!("admin:{}", db_user.id), 300)
         .map_err(|_| AdminError::too_many_requests("Too many requests. Try again later."))?;
 
-    Ok(session)
+    Ok(SessionInfo {
+        user_id: db_user.id,
+        user_name: db_user.name,
+        role: db_user.role,
+        token_version: db_user.token_version,
+    })
 }
 
 /// Check Casbin permission for the given session.
@@ -321,6 +436,7 @@ fn since_local_days_ago(days: i64, offset_seconds: i64) -> String {
 pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
     Router::new()
         .route("/api/login", axum::routing::post(auth::admin_login))
+        .route("/api/logout", axum::routing::post(auth::admin_logout))
         .route("/api/setup/status", axum::routing::get(auth::setup_status))
         .route(
             "/api/setup/register",
@@ -360,6 +476,7 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             axum::routing::get(dashboard::self_dashboard_aggregations),
         )
         // Current user
+        .route("/api/me", axum::routing::get(me::get_my_session))
         .route(
             "/api/me/password",
             axum::routing::post(me::change_my_password),
@@ -632,4 +749,5 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             "/api/health/ws",
             axum::routing::get(crate::server::ws::ws_handler),
         )
+        .route_layer(middleware::from_fn(reject_cross_origin_cookie_requests))
 }

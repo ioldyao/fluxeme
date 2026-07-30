@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 import { useAuth } from '@/store/auth';
-import type { LoginResponse } from '@/types';
+import type { CurrentSessionResponse, LoginResponse } from '@/types';
 
 interface LoginInput {
   username: string;
@@ -15,10 +15,26 @@ export function useLogin() {
       api<LoginResponse>('/login', {
         method: 'POST',
         body: data,
+        skipAuthErrorHandling: true,
       }),
     onSuccess: (res) => {
       setSession(res);
     },
+  });
+}
+
+export function useCurrentSession(enabled = true) {
+  return useQuery({
+    queryKey: ['auth', 'current-session'],
+    queryFn: () => api<CurrentSessionResponse>('/me', { skipAuthErrorHandling: true }),
+    enabled,
+    retry: false,
+  });
+}
+
+export function useLogout() {
+  return useMutation({
+    mutationFn: () => api<{ ok: boolean }>('/logout', { method: 'POST', skipAuthErrorHandling: true }),
   });
 }
 

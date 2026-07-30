@@ -9,12 +9,44 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::domain::routing::RoutingRule;
-use crate::domain::user::{ApiKey, User};
+use crate::domain::user::ApiKey;
 use crate::server::AppState;
 
 use super::*;
 
 // ── Current User ("Me") ───────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+pub(crate) struct MySessionResponse {
+    user_id: String,
+    user_name: String,
+    role: String,
+    status: String,
+    timezone: String,
+    currency: String,
+}
+
+pub(crate) async fn get_my_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<MySessionResponse>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    let user = state
+        .db
+        .get_user(&session.user_id)
+        .await
+        .map_err(db_err)?
+        .ok_or_else(|| AdminError::not_found("User not found"))?;
+
+    Ok(Json(MySessionResponse {
+        user_id: user.id,
+        user_name: user.name,
+        role: user.role,
+        status: user.status,
+        timezone: user.timezone,
+        currency: user.currency,
+    }))
+}
 
 #[derive(Deserialize)]
 pub(crate) struct ChangePasswordReq {
@@ -68,27 +100,11 @@ pub(crate) async fn change_my_password(
     let new_hash =
         bcrypt::hash(&req.new_password, 10).map_err(|e| AdminError::internal(e.to_string()))?;
 
-    let existing = state
+    state
         .db
-        .get_user(&session.user_id)
+        .update_user_admin_fields(&session.user_id, None, Some(new_hash), None, None, None)
         .await
-        .map_err(db_err)?
-        .ok_or_else(|| AdminError::not_found("User not found"))?;
-
-    let updated = User {
-        id: session.user_id.clone(),
-        name: session.user_name.clone(),
-        password_hash: Some(new_hash),
-        rate_limits: existing.rate_limits,
-        timezone: existing.timezone,
-        token_version: existing.token_version + 1,
-        role: existing.role,
-        concurrency_limit: existing.concurrency_limit,
-        currency: existing.currency.clone(),
-        status: existing.status,
-        suspended_at: existing.suspended_at,
-    };
-    state.db.update_user(&updated).await.map_err(db_err)?;
+        .map_err(db_err)?;
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/store/auth';
 import { api } from '@/api/client';
@@ -12,7 +13,8 @@ import { toast } from 'sonner';
 
 export default function Profile() {
   const { t } = useTranslation();
-  const { userId, userName, role } = useAuth();
+  const navigate = useNavigate();
+  const { userId, userName, role, clear } = useAuth();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -38,6 +40,8 @@ export default function Profile() {
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
+      clear();
+      navigate('/login');
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed');
     } finally {
@@ -88,6 +92,7 @@ export default function Profile() {
               <Label htmlFor="current-password">{t('profile.currentPassword')}</Label>
               <Input
                 id="current-password"
+                name="current_password"
                 type="password"
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
@@ -98,6 +103,7 @@ export default function Profile() {
               <Label htmlFor="new-password">{t('profile.newPassword')}</Label>
               <Input
                 id="new-password"
+                name="new_password"
                 type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
@@ -108,6 +114,7 @@ export default function Profile() {
               <Label htmlFor="confirm-password">{t('profile.confirmPassword')}</Label>
               <Input
                 id="confirm-password"
+                name="confirm_password"
                 type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}

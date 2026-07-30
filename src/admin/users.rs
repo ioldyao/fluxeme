@@ -181,29 +181,37 @@ pub(crate) async fn update_user(
         .map_err(db_err)?
         .ok_or_else(|| AdminError::not_found("User not found"))?;
 
-    let user = User {
-        id: id.clone(),
-        name: req.name.unwrap_or(existing.name.clone()),
-        password_hash: if let Some(pw) = req.password {
-            if pw.is_empty() {
-                None // keep existing
-            } else {
-                Some(bcrypt::hash(pw, 10).map_err(|e| AdminError::internal(e.to_string()))?)
-            }
-        } else {
+    if req
+        .role
+        .as_deref()
+        .is_some_and(|role| role != existing.role)
+    {
+        ensure_not_last_active_admin(&state, &existing, "demote").await?;
+    }
+
+    let next_password_hash = if let Some(pw) = req.password {
+        if pw.is_empty() {
             None // keep existing
-        },
-        rate_limits: req.rate_limits.or(existing.rate_limits),
-        timezone: existing.timezone,
-        token_version: existing.token_version,
-        role: req.role.unwrap_or(existing.role),
-        concurrency_limit: req.concurrency_limit.unwrap_or(existing.concurrency_limit),
-        currency: existing.currency.clone(),
-        status: existing.status,
-        suspended_at: existing.suspended_at,
+        } else {
+            validate_password(&pw)?;
+            Some(bcrypt::hash(pw, 10).map_err(|e| AdminError::internal(e.to_string()))?)
+        }
+    } else {
+        None // keep existing
     };
 
-    state.db.update_user(&user).await.map_err(db_err)?;
+    let user = state
+        .db
+        .update_user_admin_fields(
+            &id,
+            req.name,
+            next_password_hash,
+            req.rate_limits,
+            req.role,
+            req.concurrency_limit,
+        )
+        .await
+        .map_err(db_err)?;
     state.auth.reload().await;
 
     Ok(Json(User {

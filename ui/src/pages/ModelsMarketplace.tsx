@@ -31,6 +31,10 @@ function inferProvider(pattern: string): string {
 
 const CATEGORY_KEYS = ['chat', 'reasoning', 'tools', 'web', 'vision', 'rerank', 'embedding'] as const;
 
+function categoryOrderIndex(category: string): number {
+  return CATEGORY_KEYS.indexOf(category as (typeof CATEGORY_KEYS)[number]);
+}
+
 const PROVIDER_ICON: Record<string, string> = {
   OpenAI: 'openai',
   Anthropic: 'anthropic',
@@ -227,7 +231,7 @@ function ModelCard({
               </div>
               <div className="flex items-center gap-2 mt-1">
                 <p className="text-xs text-muted-foreground">{model._provider || t('marketplace.provider')}</p>
-                {(model.category?.split(',').filter(Boolean).sort((a, b) => CATEGORY_KEYS.indexOf(a as any) - CATEGORY_KEYS.indexOf(b as any)) ?? []).map((cat) => (
+                {(model.category?.split(',').filter(Boolean).sort((a, b) => categoryOrderIndex(a) - categoryOrderIndex(b)) ?? []).map((cat) => (
                   <span key={cat} className="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-muted text-muted-foreground">
                     {t(`model.category.${cat}`, { defaultValue: cat })}
                   </span>

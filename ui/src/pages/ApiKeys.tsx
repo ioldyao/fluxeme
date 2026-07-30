@@ -141,9 +141,9 @@ export default function ApiKeys() {
           open={true}
           onOpenChange={(open) => { if (!open) { setShowAdd(false); setCreatedKey(null); }}}
           createdKey={createdKey}
-          onSubmit={(data: any) => {
+          onSubmit={(data) => {
             createKey.mutate(data, {
-              onSuccess: (resp: any) => {
+              onSuccess: (resp) => {
                 setCreatedKey(resp.key);
                 toast.success(t('apikey.generatedTitle'));
               },
