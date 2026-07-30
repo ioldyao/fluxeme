@@ -61,7 +61,7 @@ pub fn init_subscriber(
         .with_batch_exporter(exporter)
         .build();
 
-    let tracer = provider.tracer("aigateway");
+    let tracer = provider.tracer("fluxeme");
 
     // Use the free function `layer()` (not `OpenTelemetryLayer::new()`) so
     // the subscriber type parameter `S` stays generic and can be inferred

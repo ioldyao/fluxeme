@@ -78,50 +78,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ai-gateway"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "async-trait",
- "axum",
- "base64",
- "bcrypt",
- "bytes",
- "casbin",
- "chrono",
- "chrono-tz",
- "clickhouse",
- "dashmap",
- "dotenvy",
- "futures",
- "hex",
- "jsonwebtoken",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "redis",
- "regex",
- "reqwest 0.12.28",
- "rust_decimal",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2 0.10.9",
- "sled",
- "sqlx-core",
- "sqlx-postgres",
- "tokio",
- "tokio-stream",
- "tower",
- "tower-http",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -897,6 +853,50 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
+]
+
+[[package]]
+name = "fluxeme"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "async-trait",
+ "axum",
+ "base64",
+ "bcrypt",
+ "bytes",
+ "casbin",
+ "chrono",
+ "chrono-tz",
+ "clickhouse",
+ "dashmap",
+ "dotenvy",
+ "futures",
+ "hex",
+ "jsonwebtoken",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "redis",
+ "regex",
+ "reqwest 0.12.28",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.10.9",
+ "sled",
+ "sqlx-core",
+ "sqlx-postgres",
+ "tokio",
+ "tokio-stream",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "url",
+ "uuid",
 ]
 
 [[package]]
