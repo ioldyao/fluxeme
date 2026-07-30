@@ -614,6 +614,7 @@ const en: Record<string, string> = {
   'bills.compareTooltip': 'Compare periods',
   'bills.compareTitle': 'Period Comparison',
 
+  'nav.announcements': 'Announcements',
   'nav.moderation': 'Content Moderation',
   'moderation.title': 'Content Moderation',
   'moderation.subtitle': 'Manage content filter rules for requests and responses',
@@ -655,6 +656,24 @@ const en: Record<string, string> = {
   'dash.flowProviderErr': 'Provider error',
   'moderation.enableLabel': 'Content Moderation',
   'moderation.enableHint': 'When disabled, all filter rules are bypassed.',
+  'announcements.title': 'Announcements',
+  'announcements.subtitle': 'Manage platform announcements',
+  'announcements.create': 'New Announcement',
+  'announcements.edit': 'Edit Announcement',
+  'announcements.titleLabel': 'Title',
+  'announcements.titlePlaceholder': 'Announcement title',
+  'announcements.titleRequired': 'Title is required',
+  'announcements.contentLabel': 'Content',
+  'announcements.contentPlaceholder': 'Write your announcement...',
+  'announcements.publishLabel': 'Publish immediately',
+  'announcements.published': 'Published',
+  'announcements.draft': 'Draft',
+  'announcements.created': 'Announcement created',
+  'announcements.updated': 'Announcement updated',
+  'announcements.deleted': 'Announcement deleted',
+  'announcements.save': 'Save',
+  'announcements.empty': 'No announcements yet',
+  'announcements.deleteConfirm': 'Delete this announcement?',
 };
 
 export default en;

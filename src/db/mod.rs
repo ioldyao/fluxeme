@@ -87,6 +87,17 @@ pub struct ProbeResultRow {
     pub endpoint_url: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AnnouncementRow {
+    pub id: String,
+    pub title: String,
+    pub content: String,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub published: bool,
+}
+
 /// Per-time-bucket per-channel per-endpoint aggregate for routing flow history charts.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RoutingHistoryBucket {
@@ -633,6 +644,26 @@ impl Database {
         v1: &str,
     ) -> Result<(), DbError> {
         self.backend.casbin_remove_policy(ptype, v0, v1).await
+    }
+
+    // ── Announcements ─────────────────────────────────────────────────
+    pub async fn list_announcements(&self) -> Result<Vec<AnnouncementRow>, DbError> {
+        self.backend.list_announcements().await
+    }
+    pub async fn list_published_announcements(&self) -> Result<Vec<AnnouncementRow>, DbError> {
+        self.backend.list_published_announcements().await
+    }
+    pub async fn get_announcement(&self, id: &str) -> Result<Option<AnnouncementRow>, DbError> {
+        self.backend.get_announcement(id).await
+    }
+    pub async fn create_announcement(&self, a: &AnnouncementRow) -> Result<(), DbError> {
+        self.backend.create_announcement(a).await
+    }
+    pub async fn update_announcement(&self, a: &AnnouncementRow) -> Result<(), DbError> {
+        self.backend.update_announcement(a).await
+    }
+    pub async fn delete_announcement(&self, id: &str) -> Result<(), DbError> {
+        self.backend.delete_announcement(id).await
     }
 
     pub async fn get_balances_page(

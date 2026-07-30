@@ -365,6 +365,7 @@ pub(crate) async fn my_permissions(
         "admin:settings",
         "admin:gateway",
         "admin:policies",
+        "admin:announcements",
     ];
     let mut granted = Vec::new();
     for perm in &all_known {

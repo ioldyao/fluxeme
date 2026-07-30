@@ -21,7 +21,7 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
   { label: 'nav.group.overview', items: ['nav.flowControl'] },
   { label: 'nav.group.models', items: ['nav.models', 'nav.modelPricing'] },
   { label: 'nav.group.channels', items: ['nav.channels'] },
-  { label: 'nav.group.security', items: ['nav.rules', 'nav.moderation', 'nav.users', 'nav.rechargeKeys'] },
+  { label: 'nav.group.security', items: ['nav.rules', 'nav.moderation', 'nav.users', 'nav.rechargeKeys', 'nav.announcements'] },
 ];
 
 function createNavIndex(routes: NavRoute[]) {
