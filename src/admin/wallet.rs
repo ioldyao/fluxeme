@@ -272,12 +272,7 @@ pub(crate) async fn wallet_transactions(
     let session = require_session(&state.admin, &headers).await?;
     let page = q.page.unwrap_or(1);
     let size = q.size.unwrap_or(15).min(31);
-    let can_view_all = state.authz.enforce(&session.role, "admin:bills").await;
-    let uid_filter: Option<&str> = if can_view_all {
-        None
-    } else {
-        Some(&session.user_id)
-    };
+    let uid_filter: Option<&str> = Some(&session.user_id);
     let (rows, total_dates) = state
         .db
         .list_wallet_tx_by_dates(

@@ -39,15 +39,9 @@ pub(crate) async fn billing_summary(
     headers: HeaderMap,
 ) -> Result<Json<BillingSummary>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    let can_view_all = state.authz.enforce(&session.role, "admin:bills").await;
-    let user_filter: Option<&str> = if can_view_all {
-        None
-    } else {
-        Some(&session.user_id)
-    };
     let records = state
         .usage
-        .cost_rows_since("1970-01-01T00:00:00", user_filter)
+        .cost_rows_since("1970-01-01T00:00:00", Some(&session.user_id))
         .await
         .map_err(AdminError::internal)?;
     let total_cost = records.iter().fold(Decimal::ZERO, |acc, r| {
@@ -124,22 +118,17 @@ pub(crate) async fn billing_period_summary(
     let year = q.year.unwrap_or_else(|| now.year());
     let month = q.month.unwrap_or_else(|| now.month());
     validate_year_month(year, month)?;
-    let can_view_all = state.authz.enforce(&session.role, "admin:bills").await;
-    let user_filter: Option<&str> = if can_view_all {
-        None
-    } else {
-        Some(&session.user_id)
-    };
+    let uid: &str = &session.user_id;
 
     let (total_cost, total_requests, total_tokens) = state
         .db
-        .period_summary(year, month, user_filter)
+        .period_summary(year, month, Some(uid))
         .await
         .map_err(db_err)?;
 
     let by_model = state
         .db
-        .period_model_breakdown(year, month, user_filter)
+        .period_model_breakdown(year, month, Some(uid))
         .await
         .map_err(db_err)?
         .into_iter()
@@ -162,7 +151,7 @@ pub(crate) async fn billing_period_summary(
 
     let by_channel = state
         .db
-        .period_channel_breakdown(year, month, user_filter)
+        .period_channel_breakdown(year, month, Some(uid))
         .await
         .map_err(db_err)?
         .into_iter()
@@ -224,21 +213,16 @@ pub(crate) async fn billing_deductions(
     let month = q.month.unwrap_or_else(|| now.month());
     let limit = q.limit.unwrap_or(DEFAULT_DEDUCTION_PAGE_SIZE);
     let offset = q.offset.unwrap_or(0);
-    let can_view_all = state.authz.enforce(&session.role, "admin:bills").await;
-    let user_filter: Option<&str> = if can_view_all {
-        None
-    } else {
-        Some(&session.user_id)
-    };
+    let uid: &str = &session.user_id;
 
     let total = state
         .db
-        .count_daily_deductions(year, month, user_filter)
+        .count_daily_deductions(year, month, Some(uid))
         .await
         .map_err(db_err)?;
     let records = state
         .db
-        .daily_deductions_paginated(year, month, user_filter, limit, offset)
+        .daily_deductions_paginated(year, month, Some(uid), limit, offset)
         .await
         .map_err(db_err)?;
     let items: Vec<DeductionRecord> = records
@@ -274,16 +258,11 @@ pub(crate) async fn billing_months(
     headers: HeaderMap,
 ) -> Result<Json<Vec<String>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    let can_view_all = state.authz.enforce(&session.role, "admin:bills").await;
-    let months = if can_view_all {
-        state.db.billing_months().await.map_err(db_err)?
-    } else {
-        state
-            .db
-            .billing_months_for_user(&session.user_id)
-            .await
-            .map_err(db_err)?
-    };
+    let months = state
+        .db
+        .billing_months_for_user(&session.user_id)
+        .await
+        .map_err(db_err)?;
     Ok(Json(months))
 }
 
@@ -301,16 +280,11 @@ pub(crate) async fn billing_period_summary_all(
     headers: HeaderMap,
 ) -> Result<Json<Vec<MonthSummary>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    let can_view_all = state.authz.enforce(&session.role, "admin:bills").await;
-    let records = if can_view_all {
-        state.db.period_summary_all().await.map_err(db_err)?
-    } else {
-        state
-            .db
-            .period_summary_for_user(&session.user_id)
-            .await
-            .map_err(db_err)?
-    };
+    let records = state
+        .db
+        .period_summary_for_user(&session.user_id)
+        .await
+        .map_err(db_err)?;
     Ok(Json(
         records
             .into_iter()

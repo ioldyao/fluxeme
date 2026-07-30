@@ -5,11 +5,9 @@ import { useCurrency } from '@/store/currency';
 import { PageHeader } from '@/components/PageHeader';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Wallet, Receipt, Activity, TrendingDown, ChevronDown, BarChart3 } from 'lucide-react';
-import { usePermission } from '@/permissions';
 
 export default function Bills() {
   const { t, i18n } = useTranslation();
-  const isAdmin = usePermission('admin:bills');
   const { data: rawMonths } = useBillingMonths();
   const months = useMemo(() => (rawMonths ?? []).map((m) => {
     const [y, mo] = m.split('-').map(Number);
@@ -151,29 +149,6 @@ export default function Bills() {
                           </div>
                         </div>
                         <span className="text-xs text-muted-foreground w-10 text-right">{m.percentage}%</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Channel breakdown */}
-              {isAdmin && period.by_channel.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">{t('bills.byChannel')}</h4>
-                  <div className="space-y-1.5">
-                    {period.by_channel.map((c) => (
-                      <div key={c.channel} className="flex items-center gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex justify-between text-sm">
-                            <span className="truncate font-mono text-xs">{c.channel} ({c.name})</span>
-                            <span className="font-mono text-xs">{fmt(c.cost)}</span>
-                          </div>
-                          <div className="h-1.5 bg-muted rounded-full mt-1 overflow-hidden">
-                            <div className="h-full bg-brand rounded-full" style={{ width: `${c.percentage}%` }} />
-                          </div>
-                        </div>
-                        <span className="text-xs text-muted-foreground w-10 text-right">{c.percentage}%</span>
                       </div>
                     ))}
                   </div>

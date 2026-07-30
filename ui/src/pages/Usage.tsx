@@ -1,10 +1,9 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { usePermission } from '@/permissions';
 import { useCurrency } from '@/store/currency';
 import { formatCost, getRecordPricing } from '@/lib/cost';
-import { useUsage, useUsageAggregate, useModelActivity } from '@/api/usage';
+import { useMyUsage, useMyUsageAggregate, useMyModelActivity } from '@/api/usage';
 import { api } from '@/api/client';
 import { UsageLogDetail } from '@/components/UsageLogDetail';
 import { PageHeader } from '@/components/PageHeader';
@@ -14,7 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, RefreshCw, CheckCircle2, XCircle, BarChart3, List, Radio, RadioIcon, Filter, ChevronDown, ChevronRight } from 'lucide-react';
+import { RefreshCw, CheckCircle2, XCircle, BarChart3, List, Radio, RadioIcon, Filter, ChevronDown, ChevronRight } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -71,11 +70,9 @@ function ChartTooltip({ active, payload, label, formatter, showTotal }: ChartToo
 
 export default function Usage() {
   const { t } = useTranslation();
-  const canViewAll = usePermission('admin:usage');
   const [limit, setLimit] = useState(20);
   const [offset, setOffset] = useState(0);
   const [showFilters, setShowFilters] = useState(false);
-  const [userFilter, setUserFilter] = useState('');
   const [modelFilter, setModelFilter] = useState('');
   const [apiKeyFilter, setApiKeyFilter] = useState('');
   const [apiFormatFilter, setApiFormatFilter] = useState('');
@@ -112,16 +109,15 @@ export default function Usage() {
   }, [dateFilter]);
   const isCustomDate = dateFilter.length === 10 && dateFilter.includes('-');
 
-  const filtersActive = !!(canViewAll && userFilter) || modelFilter || apiKeyFilter || apiFormatFilter || dateFilter !== 'all';
+  const filtersActive = !!modelFilter || !!apiKeyFilter || !!apiFormatFilter || dateFilter !== 'all';
   const params = {
     limit, offset,
-    ...(canViewAll && userFilter ? { user_id: userFilter } : {}),
     ...(modelFilter ? { model: modelFilter } : {}),
     ...(apiKeyFilter ? { api_key: apiKeyFilter } : {}),
     ...(apiFormatFilter ? { api_format: apiFormatFilter } : {}),
     ...dateParams,
   };
-  const { data: usage, isLoading, isError, refetch } = useUsage(params);
+  const { data: usage, isLoading, isError, refetch } = useMyUsage(params);
   const records = usage?.records ?? [];
   const total = usage?.total ?? 0;
   const page = offset / limit + 1;
@@ -129,14 +125,13 @@ export default function Usage() {
   const { data: models } = useQuery({
     queryKey: ['models'],
     queryFn: () => api<import('@/types').Model[]>('/models'),
-    enabled: canViewAll,
     retry: false,
   });
   const { currency, rate } = useCurrency();
   const [chartTab, setChartTab] = useState('list');
   const [chartDays, setChartDays] = useState(7);
-  const { data: aggregate, isLoading: aggLoading } = useUsageAggregate(chartDays);
-  const { data: modelActivity } = useModelActivity(chartDays);
+  const { data: aggregate, isLoading: aggLoading } = useMyUsageAggregate(chartDays);
+  const { data: modelActivity } = useMyModelActivity(chartDays);
 
   const modelPricing = useMemo(() => {
     if (!models) return {};
@@ -200,16 +195,7 @@ export default function Usage() {
 
           {/* Filter inputs */}
           {showFilters && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 p-3 rounded-lg border bg-muted/30">
-              {canViewAll && (
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-                  <Input
-                    className="pl-9" placeholder={t('usage.allUsers')}
-                    value={userFilter} onChange={(e) => { setUserFilter(e.target.value); setOffset(0); }}
-                  />
-                </div>
-              )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 p-3 rounded-lg border bg-muted/30">
               <Input
                 placeholder={t('usage.filterModel')}
                 value={modelFilter} onChange={(e) => { setModelFilter(e.target.value); setOffset(0); }}
