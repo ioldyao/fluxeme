@@ -729,11 +729,11 @@ impl ClickHouseBackend {
             .as_deref()
             .filter(|value| !value.is_empty())
         {
-            conditions.push("timestamp >= parseDateTimeBestEffort(?)");
+            conditions.push("timestamp >= ?");
             string_binds.push(start_date);
         }
         if let Some(end_date) = filter.end_date.as_deref().filter(|value| !value.is_empty()) {
-            conditions.push("timestamp <= parseDateTimeBestEffort(?)");
+            conditions.push("timestamp <= ?");
             string_binds.push(end_date);
         }
 
@@ -802,11 +802,11 @@ impl ClickHouseBackend {
             .as_deref()
             .filter(|value| !value.is_empty())
         {
-            conditions.push("timestamp >= parseDateTimeBestEffort(?)");
+            conditions.push("timestamp >= ?");
             string_binds.push(start_date);
         }
         if let Some(end_date) = filter.end_date.as_deref().filter(|value| !value.is_empty()) {
-            conditions.push("timestamp <= parseDateTimeBestEffort(?)");
+            conditions.push("timestamp <= ?");
             string_binds.push(end_date);
         }
 
