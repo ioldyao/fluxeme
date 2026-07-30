@@ -512,6 +512,7 @@ const en: Record<string, string> = {
   'pricing.global': 'Global',
   'pricing.perModel': 'Per Model',
   'nav.modelPricing': 'Model Pricing',
+  'nav.rechargeKeys': 'Recharge Keys',
   'market.subtitle': 'Discover and subscribe to available models',
   'wallet.title': 'Wallet',
   'wallet.subtitle': 'Balance and top-up',

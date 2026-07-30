@@ -512,6 +512,7 @@ const zh: Record<string, string> = {
   'pricing.global': '全局',
   'pricing.perModel': '单模型',
   'nav.modelPricing': '模型定价',
+  'nav.rechargeKeys': '充值卡管理',
   'market.subtitle': '发现并订阅可用模型',
   'wallet.title': '钱包',
   'wallet.subtitle': '账户余额和充值',
