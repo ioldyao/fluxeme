@@ -29,6 +29,7 @@ pub mod health;
 pub mod me;
 pub mod models;
 pub mod moderation;
+pub mod policies;
 pub mod routing;
 pub mod rules;
 pub mod settings;
@@ -743,6 +744,13 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             "/api/moderation/enabled",
             axum::routing::get(moderation::get_content_moderation_enabled)
                 .put(moderation::set_content_moderation_enabled),
+        )
+        // Casbin policy management
+        .route(
+            "/api/admin/policies",
+            axum::routing::get(policies::list_policies)
+                .post(policies::add_policy)
+                .delete(policies::remove_policy),
         )
         // WebSocket real-time events
         .route(

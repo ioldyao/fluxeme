@@ -22,6 +22,8 @@ impl std::fmt::Display for DbError {
     }
 }
 
+impl std::error::Error for DbError {}
+
 impl From<sqlx_core::Error> for DbError {
     fn from(e: sqlx_core::Error) -> Self {
         Self(e.to_string())
@@ -602,6 +604,37 @@ impl Database {
     pub async fn set_gateway_config(&self, config: &GatewayRuntimeConfig) -> Result<(), DbError> {
         self.backend.set_gateway_config(config).await
     }
+    // ── Casbin Policies ─────────────────────────────────────────────────
+    pub async fn casbin_list_policies(
+        &self,
+    ) -> Result<Vec<(String, String, String, String, String, String, String)>, DbError> {
+        self.backend.casbin_list_policies().await
+    }
+
+    pub async fn casbin_add_policy(
+        &self,
+        ptype: &str,
+        v0: &str,
+        v1: &str,
+        v2: &str,
+        v3: &str,
+        v4: &str,
+        v5: &str,
+    ) -> Result<(), DbError> {
+        self.backend
+            .casbin_add_policy(ptype, v0, v1, v2, v3, v4, v5)
+            .await
+    }
+
+    pub async fn casbin_remove_policy(
+        &self,
+        ptype: &str,
+        v0: &str,
+        v1: &str,
+    ) -> Result<(), DbError> {
+        self.backend.casbin_remove_policy(ptype, v0, v1).await
+    }
+
     pub async fn get_balances_page(
         &self,
         limit: usize,

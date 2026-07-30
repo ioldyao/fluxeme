@@ -1,4 +1,6 @@
 import { useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/api/client';
 import { useCurrentSession } from '@/api/auth';
 import { AppRoutes } from '@/routes';
 import { useAuth } from '@/store/auth';
@@ -23,6 +25,21 @@ function SessionBootstrapper() {
       setCurrentSession(currentSession.data);
     }
   }, [currentSession.data, currentSession.isSuccess, setCurrentSession]);
+
+  // Fetch granular permissions from backend once authenticated
+  const isAuthed = useAuth((s) => s.isAuthenticated);
+  const setPermissions = useAuth((s) => s.setPermissions);
+  const { data: permsData } = useQuery({
+    queryKey: ['auth', 'permissions'],
+    queryFn: () => api<string[]>('/me/permissions'),
+    enabled: isAuthed,
+    staleTime: 120_000,
+  });
+  useEffect(() => {
+    if (permsData) {
+      setPermissions(permsData);
+    }
+  }, [permsData, setPermissions]);
 
   useEffect(() => {
     if (!currentSession.isError) {

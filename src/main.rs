@@ -346,12 +346,14 @@ async fn main() {
         });
     }
 
-    // Initialize Casbin authorization enforcer
+    // Initialize Casbin authorization enforcer (DB-backed policies)
     let authz = Arc::new(
         AuthzModule::new()
             .await
             .expect("Failed to initialize Casbin authorization module"),
     );
+    authz.seed_defaults(&db).await.expect("Failed to seed Casbin policies");
+    authz.reload(&db).await.expect("Failed to load Casbin policies from DB");
 
     // Initialize content filter service
     let content_filter = Arc::new(ContentFilterService::new(db.clone()).await);

@@ -16,6 +16,7 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
+import type { Permission } from '@/permissions/usePermission';
 
 export type RouteGuard = 'public' | 'auth' | 'admin';
 
@@ -28,6 +29,8 @@ export interface RouteConfig {
   icon?: ComponentType<{ className?: string }>;
   nav?: boolean;
   end?: boolean;
+  /** Fine-grained Casbin permission required (admin routes only). */
+  perm?: Permission;
 }
 
 export type NavRoute = RouteConfig & Required<Pick<RouteConfig, 'nav'>>;
@@ -53,14 +56,14 @@ export const authRoutes: RouteConfig[] = [
 ];
 
 export const adminRoutes: RouteConfig[] = [
-  { path: '/flow-control', Component: lazy(() => import('@/pages/FlowControlTower')), guard: 'admin', label: 'nav.flowControl', icon: Radio, nav: true },
-  { path: '/users', Component: lazy(() => import('@/pages/Users')), guard: 'admin', label: 'nav.users', icon: Users, nav: true },
-  { path: '/channels', Component: lazy(() => import('@/pages/Channels')), guard: 'admin', label: 'nav.channels', icon: Radio, nav: true },
-  { path: '/models', Component: lazy(() => import('@/pages/Models')), guard: 'admin', label: 'nav.models', icon: Cpu, nav: true, end: true },
-  { path: '/moderation', Component: lazy(() => import('@/pages/Moderation')), guard: 'admin', label: 'nav.moderation', icon: Shield, nav: true },
-  { path: '/rules', Component: lazy(() => import('@/pages/Rules')), guard: 'admin', label: 'nav.rules', icon: Route, nav: true },
-  { path: '/pricing', Component: lazy(() => import('@/pages/ModelPricing')), guard: 'admin', label: 'nav.modelPricing', icon: DollarSign, nav: true },
-  { path: '/recharge-keys', Component: lazy(() => import('@/pages/admin/RechargeKeys')), guard: 'admin', label: 'nav.rechargeKeys', icon: KeyRound, nav: true },
+  { path: '/flow-control', Component: lazy(() => import('@/pages/FlowControlTower')), guard: 'admin', label: 'nav.flowControl', icon: Radio, nav: true, perm: 'admin:dashboard' },
+  { path: '/users', Component: lazy(() => import('@/pages/Users')), guard: 'admin', label: 'nav.users', icon: Users, nav: true, perm: 'admin:users' },
+  { path: '/channels', Component: lazy(() => import('@/pages/Channels')), guard: 'admin', label: 'nav.channels', icon: Radio, nav: true, perm: 'admin:channels' },
+  { path: '/models', Component: lazy(() => import('@/pages/Models')), guard: 'admin', label: 'nav.models', icon: Cpu, nav: true, end: true, perm: 'admin:models' },
+  { path: '/moderation', Component: lazy(() => import('@/pages/Moderation')), guard: 'admin', label: 'nav.moderation', icon: Shield, nav: true, perm: 'admin:moderation' },
+  { path: '/rules', Component: lazy(() => import('@/pages/Rules')), guard: 'admin', label: 'nav.rules', icon: Route, nav: true, perm: 'admin:rules' },
+  { path: '/pricing', Component: lazy(() => import('@/pages/ModelPricing')), guard: 'admin', label: 'nav.modelPricing', icon: DollarSign, nav: true, perm: 'admin:model-pricing' },
+  { path: '/recharge-keys', Component: lazy(() => import('@/pages/admin/RechargeKeys')), guard: 'admin', label: 'nav.rechargeKeys', icon: KeyRound, nav: true, perm: 'admin:recharge-keys' },
 ];
 
 export const catchAllRoutes: RouteConfig[] = [

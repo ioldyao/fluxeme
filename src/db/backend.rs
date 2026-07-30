@@ -309,6 +309,20 @@ pub trait DbBackend: Send + Sync {
         model: Option<&str>,
     ) -> Result<Vec<super::RoutingHistoryBucket>, DbError>;
 
+    // ── Casbin Policies ─────────────────────────────────────────────────
+    async fn casbin_list_policies(&self) -> Result<Vec<(String, String, String, String, String, String, String)>, DbError>;
+    async fn casbin_add_policy(
+        &self,
+        ptype: &str,
+        v0: &str,
+        v1: &str,
+        v2: &str,
+        v3: &str,
+        v4: &str,
+        v5: &str,
+    ) -> Result<(), DbError>;
+    async fn casbin_remove_policy(&self, ptype: &str, v0: &str, v1: &str) -> Result<(), DbError>;
+
     /// Per-endpoint aggregate stats with P95 for routing flow history summary table.
     async fn routing_history_endpoint_stats(
         &self,
