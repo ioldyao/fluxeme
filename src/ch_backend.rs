@@ -750,11 +750,11 @@ impl ClickHouseBackend {
             .as_deref()
             .filter(|value| !value.is_empty())
         {
-            conditions.push("timestamp >= parseDateTimeBestEffort(?)");
+            conditions.push("usage_events.timestamp >= parseDateTimeBestEffort(?)");
             binds.push(normalize_clickhouse_datetime(start_date)?);
         }
         if let Some(end_date) = filter.end_date.as_deref().filter(|value| !value.is_empty()) {
-            conditions.push("timestamp <= parseDateTimeBestEffort(?)");
+            conditions.push("usage_events.timestamp <= parseDateTimeBestEffort(?)");
             binds.push(normalize_clickhouse_datetime(end_date)?);
         }
 
@@ -765,13 +765,13 @@ impl ClickHouseBackend {
         };
         let sql = format!(
             "SELECT \
-             toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
+             toString(usage_events.timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
              cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, original_model \
              FROM usage_events \
              {} \
-             ORDER BY timestamp DESC \
+             ORDER BY usage_events.timestamp DESC \
              LIMIT ? OFFSET ?",
             where_clause,
         );
@@ -823,11 +823,11 @@ impl ClickHouseBackend {
             .as_deref()
             .filter(|value| !value.is_empty())
         {
-            conditions.push("timestamp >= parseDateTimeBestEffort(?)");
+            conditions.push("usage_events.timestamp >= parseDateTimeBestEffort(?)");
             binds.push(normalize_clickhouse_datetime(start_date)?);
         }
         if let Some(end_date) = filter.end_date.as_deref().filter(|value| !value.is_empty()) {
-            conditions.push("timestamp <= parseDateTimeBestEffort(?)");
+            conditions.push("usage_events.timestamp <= parseDateTimeBestEffort(?)");
             binds.push(normalize_clickhouse_datetime(end_date)?);
         }
 
