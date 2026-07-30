@@ -1,24 +1,41 @@
 import { Suspense } from 'react';
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { AdminLayout } from '@/components/AdminLayout';
 import { AdminRoute } from '@/components/AdminRoute';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { UserLayout } from '@/components/UserLayout';
+import { useAuth } from '@/store/auth';
 import { adminRoutes, authRoutes, catchAllRoutes, publicRoutes } from './config';
 import type { RouteConfig } from './config';
 
-function renderRoute(route: RouteConfig) {
-  const element = (
+/** Wraps a route element and checks fine-grained Casbin permission. */
+function PermissionRoute({ route }: { route: RouteConfig }) {
+  const permissions = useAuth((s) => s.permissions);
+  const role = useAuth((s) => s.role);
+
+  // If route requires a specific permission, check it
+  if (route.perm) {
+    const hasPerm = permissions.length > 0
+      ? permissions.includes(route.perm)
+      : role === 'admin';
+    if (!hasPerm) {
+      return <Navigate to="/" replace />;
+    }
+  }
+
+  return (
     <Suspense fallback={<div className="p-8 text-center text-muted-foreground">Loading...</div>}>
       <route.Component />
     </Suspense>
   );
+}
 
+function renderRoute(route: RouteConfig) {
   return (
     <Route
       key={route.path ?? 'index'}
       {...(route.index ? { index: true } : { path: route.path })}
-      element={element}
+      element={<PermissionRoute route={route} />}
     />
   );
 }

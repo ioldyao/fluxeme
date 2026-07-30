@@ -14,10 +14,12 @@ interface AuthState {
   userName: string | null;
   timezone: string;
   currency: string;
+  permissions: string[];
   isAuthenticated: boolean;
   isSessionResolved: boolean;
   setSession: (res: LoginResponse) => void;
   setCurrentSession: (res: CurrentSessionResponse) => void;
+  setPermissions: (perms: string[]) => void;
   setTimezone: (tz: string) => void;
   setCurrency: (c: string) => void;
   clear: () => void;
@@ -31,6 +33,7 @@ export const useAuth = create<AuthState>()(
       userName: null,
       timezone: 'UTC',
       currency: 'usd',
+      permissions: [],
       isAuthenticated: false,
       isSessionResolved: false,
       setSession: (res) => {
@@ -60,6 +63,7 @@ export const useAuth = create<AuthState>()(
           isSessionResolved: true,
         });
       },
+      setPermissions: (permissions) => set({ permissions }),
       setTimezone: (timezone) => set({ timezone }),
       setCurrency: (currency) => {
         const nextCurrency = toCurrencyCode(currency);
@@ -75,6 +79,7 @@ export const useAuth = create<AuthState>()(
           userName: null,
           timezone: 'UTC',
           currency: 'usd',
+          permissions: [],
           isAuthenticated: false,
           isSessionResolved: true,
         });
@@ -89,6 +94,7 @@ export const useAuth = create<AuthState>()(
         userName: state.userName,
         timezone: state.timezone,
         currency: state.currency,
+        permissions: state.permissions,
       }),
     },
   ),

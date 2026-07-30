@@ -872,6 +872,30 @@ impl DbBackend for PgBackend {
         .await;
         tracing::info!("billing_events table ready");
 
+        // ── Casbin authorization policies ────────────────────────────────
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS casbin_policies (
+                id SERIAL PRIMARY KEY,
+                ptype TEXT NOT NULL DEFAULT 'p',
+                v0 TEXT NOT NULL DEFAULT '',
+                v1 TEXT NOT NULL DEFAULT '',
+                v2 TEXT NOT NULL DEFAULT '',
+                v3 TEXT NOT NULL DEFAULT '',
+                v4 TEXT NOT NULL DEFAULT '',
+                v5 TEXT NOT NULL DEFAULT ''
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create casbin_policies: {e}")))?;
+        let _ = raw_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_casbin_policy_unique \
+             ON casbin_policies(ptype, v0, v1, v2, v3, v4, v5)",
+        )
+        .execute(&self.pool)
+        .await;
+        tracing::info!("casbin_policies table ready");
+
         Ok(())
     }
 
@@ -3955,6 +3979,68 @@ impl DbBackend for PgBackend {
                 )
             })
             .collect())
+    }
+
+    // ── Casbin Policies ──────────────────────────────────────────────────
+
+    async fn casbin_list_policies(&self) -> Result<Vec<(String, String, String, String, String, String, String)>, DbError> {
+        let rows = query(
+            "SELECT ptype, v0, v1, v2, v3, v4, v5 FROM casbin_policies ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("casbin_list_policies: {e}")))?;
+        Ok(rows.iter().map(|r| {
+            (
+                r.try_get::<String, _>(0).unwrap_or_default(),
+                r.try_get::<String, _>(1).unwrap_or_default(),
+                r.try_get::<String, _>(2).unwrap_or_default(),
+                r.try_get::<String, _>(3).unwrap_or_default(),
+                r.try_get::<String, _>(4).unwrap_or_default(),
+                r.try_get::<String, _>(5).unwrap_or_default(),
+                r.try_get::<String, _>(6).unwrap_or_default(),
+            )
+        }).collect())
+    }
+
+    async fn casbin_add_policy(
+        &self,
+        ptype: &str,
+        v0: &str,
+        v1: &str,
+        v2: &str,
+        v3: &str,
+        v4: &str,
+        v5: &str,
+    ) -> Result<(), DbError> {
+        query(
+            "INSERT INTO casbin_policies (ptype, v0, v1, v2, v3, v4, v5) VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             ON CONFLICT (ptype, v0, v1, v2, v3, v4, v5) DO NOTHING",
+        )
+        .bind(ptype)
+        .bind(v0)
+        .bind(v1)
+        .bind(v2)
+        .bind(v3)
+        .bind(v4)
+        .bind(v5)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("casbin_add_policy: {e}")))?;
+        Ok(())
+    }
+
+    async fn casbin_remove_policy(&self, ptype: &str, v0: &str, v1: &str) -> Result<(), DbError> {
+        query(
+            "DELETE FROM casbin_policies WHERE ptype = $1 AND v0 = $2 AND v1 = $3",
+        )
+        .bind(ptype)
+        .bind(v0)
+        .bind(v1)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("casbin_remove_policy: {e}")))?;
+        Ok(())
     }
 
     async fn get_balances_page(
