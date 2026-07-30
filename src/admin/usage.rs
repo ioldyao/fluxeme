@@ -5,6 +5,7 @@ use axum::http::HeaderMap;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
+use crate::ch_backend::normalize_clickhouse_datetime;
 use crate::domain::usage::UsageFilter;
 use crate::server::AppState;
 
@@ -12,7 +13,7 @@ use super::*;
 
 // ── Usage Logs ────────────────────────────────────────────────────
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub(crate) struct UsageQuery {
     limit: Option<usize>,
     offset: Option<usize>,
@@ -28,6 +29,36 @@ pub(crate) struct UsageQuery {
 pub(crate) struct UsageResponse {
     records: Vec<crate::domain::usage::UsageRecord>,
     total: usize,
+}
+
+fn validate_usage_datetime(
+    value: Option<String>,
+    field_name: &str,
+) -> Result<Option<String>, AdminError> {
+    value
+        .filter(|candidate| !candidate.is_empty())
+        .map(|candidate| {
+            normalize_clickhouse_datetime(&candidate)
+                .map(|_| candidate)
+                .map_err(|_| {
+                    AdminError::bad_request(format!("{field_name} must be a valid datetime"))
+                })
+        })
+        .transpose()
+}
+
+fn build_usage_filter(
+    user_id: Option<String>,
+    query: UsageQuery,
+) -> Result<UsageFilter, AdminError> {
+    Ok(UsageFilter {
+        user_id,
+        model: query.model,
+        api_key_name: query.api_key,
+        api_format: query.api_format,
+        start_date: validate_usage_datetime(query.start_date, "start_date")?,
+        end_date: validate_usage_datetime(query.end_date, "end_date")?,
+    })
 }
 
 // Importers/callers: shared by ui/src/pages/Usage.tsx via /api/usage and the
@@ -50,17 +81,10 @@ pub(crate) async fn get_usage(
     let user_filter: Option<String> = if !can_view_all {
         Some(session.user_id.clone())
     } else {
-        q.user_id
+        q.user_id.clone()
     };
 
-    let filter = UsageFilter {
-        user_id: user_filter,
-        model: q.model,
-        api_key_name: q.api_key,
-        api_format: q.api_format,
-        start_date: q.start_date,
-        end_date: q.end_date,
-    };
+    let filter = build_usage_filter(user_filter, q)?;
 
     let total = if let Some(ref ch) = state.ch {
         ch.count_usage(&filter).await.map_err(|e| {
@@ -102,14 +126,7 @@ pub(crate) async fn get_my_usage(
 
     let limit = q.limit.unwrap_or(50);
     let offset = q.offset.unwrap_or(0);
-    let filter = UsageFilter {
-        user_id: Some(session.user_id.clone()),
-        model: q.model,
-        api_key_name: q.api_key,
-        api_format: q.api_format,
-        start_date: q.start_date,
-        end_date: q.end_date,
-    };
+    let filter = build_usage_filter(Some(session.user_id.clone()), q)?;
 
     let total = if let Some(ref ch) = state.ch {
         ch.count_usage(&filter).await.map_err(|e| {

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use chrono::{DateTime, NaiveDate, NaiveDateTime};
 use clickhouse::Client;
 use clickhouse::Row;
 use rust_decimal::Decimal;
@@ -102,6 +103,26 @@ impl From<UsageEventRow> for crate::domain::usage::UsageRecord {
             original_model: row.original_model,
         }
     }
+}
+
+pub(crate) fn normalize_clickhouse_datetime(value: &str) -> Result<String, String> {
+    if let Ok(datetime) = DateTime::parse_from_rfc3339(value) {
+        return Ok(datetime.to_rfc3339());
+    }
+
+    if let Ok(datetime) = NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S") {
+        return Ok(datetime.format("%Y-%m-%d %H:%M:%S").to_string());
+    }
+
+    if let Ok(date) = NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        return Ok(date
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight is always valid")
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string());
+    }
+
+    Err("invalid datetime filter".to_string())
 }
 
 impl ClickHouseBackend {
@@ -699,14 +720,14 @@ impl ClickHouseBackend {
         filter: &crate::domain::usage::UsageFilter,
     ) -> Result<Vec<crate::domain::usage::UsageRecord>, String> {
         let mut conditions = Vec::new();
-        let mut string_binds = Vec::new();
+        let mut binds = Vec::new();
         if let Some(user_id) = filter.user_id.as_deref().filter(|value| !value.is_empty()) {
             conditions.push("user_id = ?");
-            string_binds.push(user_id);
+            binds.push(user_id.to_string());
         }
         if let Some(model) = filter.model.as_deref().filter(|value| !value.is_empty()) {
             conditions.push("model = ?");
-            string_binds.push(model);
+            binds.push(model.to_string());
         }
         if let Some(api_key_name) = filter
             .api_key_name
@@ -714,7 +735,7 @@ impl ClickHouseBackend {
             .filter(|value| !value.is_empty())
         {
             conditions.push("api_key_name = ?");
-            string_binds.push(api_key_name);
+            binds.push(api_key_name.to_string());
         }
         if let Some(api_format) = filter
             .api_format
@@ -722,19 +743,19 @@ impl ClickHouseBackend {
             .filter(|value| !value.is_empty())
         {
             conditions.push("api_format = ?");
-            string_binds.push(api_format);
+            binds.push(api_format.to_string());
         }
         if let Some(start_date) = filter
             .start_date
             .as_deref()
             .filter(|value| !value.is_empty())
         {
-            conditions.push("timestamp >= ?");
-            string_binds.push(start_date);
+            conditions.push("timestamp >= parseDateTimeBestEffort(?)");
+            binds.push(normalize_clickhouse_datetime(start_date)?);
         }
         if let Some(end_date) = filter.end_date.as_deref().filter(|value| !value.is_empty()) {
-            conditions.push("timestamp <= ?");
-            string_binds.push(end_date);
+            conditions.push("timestamp <= parseDateTimeBestEffort(?)");
+            binds.push(normalize_clickhouse_datetime(end_date)?);
         }
 
         let where_clause = if conditions.is_empty() {
@@ -755,8 +776,8 @@ impl ClickHouseBackend {
             where_clause,
         );
         let mut query = self.client.query(&sql);
-        for bind in string_binds {
-            query = query.bind(bind);
+        for bind in &binds {
+            query = query.bind(bind.as_str());
         }
         let rows = query
             .bind(limit as u64)
@@ -772,14 +793,14 @@ impl ClickHouseBackend {
         filter: &crate::domain::usage::UsageFilter,
     ) -> Result<usize, String> {
         let mut conditions = Vec::new();
-        let mut string_binds = Vec::new();
+        let mut binds = Vec::new();
         if let Some(user_id) = filter.user_id.as_deref().filter(|value| !value.is_empty()) {
             conditions.push("user_id = ?");
-            string_binds.push(user_id);
+            binds.push(user_id.to_string());
         }
         if let Some(model) = filter.model.as_deref().filter(|value| !value.is_empty()) {
             conditions.push("model = ?");
-            string_binds.push(model);
+            binds.push(model.to_string());
         }
         if let Some(api_key_name) = filter
             .api_key_name
@@ -787,7 +808,7 @@ impl ClickHouseBackend {
             .filter(|value| !value.is_empty())
         {
             conditions.push("api_key_name = ?");
-            string_binds.push(api_key_name);
+            binds.push(api_key_name.to_string());
         }
         if let Some(api_format) = filter
             .api_format
@@ -795,19 +816,19 @@ impl ClickHouseBackend {
             .filter(|value| !value.is_empty())
         {
             conditions.push("api_format = ?");
-            string_binds.push(api_format);
+            binds.push(api_format.to_string());
         }
         if let Some(start_date) = filter
             .start_date
             .as_deref()
             .filter(|value| !value.is_empty())
         {
-            conditions.push("timestamp >= ?");
-            string_binds.push(start_date);
+            conditions.push("timestamp >= parseDateTimeBestEffort(?)");
+            binds.push(normalize_clickhouse_datetime(start_date)?);
         }
         if let Some(end_date) = filter.end_date.as_deref().filter(|value| !value.is_empty()) {
-            conditions.push("timestamp <= ?");
-            string_binds.push(end_date);
+            conditions.push("timestamp <= parseDateTimeBestEffort(?)");
+            binds.push(normalize_clickhouse_datetime(end_date)?);
         }
 
         let where_clause = if conditions.is_empty() {
@@ -824,8 +845,8 @@ impl ClickHouseBackend {
             count: u64,
         }
         let mut query = self.client.query(&sql);
-        for bind in string_binds {
-            query = query.bind(bind);
+        for bind in &binds {
+            query = query.bind(bind.as_str());
         }
         let row = query
             .fetch_one::<CountRow>()
@@ -973,5 +994,40 @@ impl ClickHouseBackend {
                 p95_latency: r.p95_latency,
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_clickhouse_datetime;
+
+    #[test]
+    fn preserves_rfc3339_datetime_for_clickhouse() {
+        let normalized = normalize_clickhouse_datetime("2026-07-26T16:00:00.000Z").unwrap();
+        assert_eq!(normalized, "2026-07-26T16:00:00+00:00");
+    }
+
+    #[test]
+    fn preserves_offset_datetime() {
+        let normalized = normalize_clickhouse_datetime("2026-07-27T00:00:00+08:00").unwrap();
+        assert_eq!(normalized, "2026-07-27T00:00:00+08:00");
+    }
+
+    #[test]
+    fn accepts_space_separated_datetime() {
+        let normalized = normalize_clickhouse_datetime("2026-07-26 16:00:00").unwrap();
+        assert_eq!(normalized, "2026-07-26 16:00:00");
+    }
+
+    #[test]
+    fn accepts_date_only_filter() {
+        let normalized = normalize_clickhouse_datetime("2026-07-26").unwrap();
+        assert_eq!(normalized, "2026-07-26 00:00:00");
+    }
+
+    #[test]
+    fn rejects_invalid_datetime() {
+        let error = normalize_clickhouse_datetime("not-a-datetime").unwrap_err();
+        assert_eq!(error, "invalid datetime filter");
     }
 }
