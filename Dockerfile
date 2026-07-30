@@ -21,14 +21,14 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs && \
 COPY src/ src/
 RUN touch src/main.rs && \
     cargo build --release -j $(nproc) && \
-    strip target/release/ai-gateway
+    strip target/release/fluxeme
 
 # ── Runtime ──
 FROM alpine:3.20
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories && \
     apk add --no-cache ca-certificates tzdata
 WORKDIR /app
-COPY --from=backend /app/target/release/ai-gateway .
+COPY --from=backend /app/target/release/fluxeme .
 COPY --from=frontend /web ./web
 EXPOSE 8080
-CMD ["./ai-gateway"]
+CMD ["./fluxeme"]
