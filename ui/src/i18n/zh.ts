@@ -413,6 +413,8 @@ const zh: Record<string, string> = {
   'nav.bills': '账单',
   'nav.settings': '设置',
   'nav.profile': '个人中心',
+  'nav.adminEntry': '后台',
+  'nav.userEntry': '前台',
   'profile.title': '个人中心',
   'profile.subtitle': '查看个人信息和修改密码',
   'profile.userInfo': '个人信息',

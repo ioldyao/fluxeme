@@ -1,19 +1,25 @@
 import { Suspense } from 'react';
-import { Routes, Route } from 'react-router-dom';
-import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { Route, Routes } from 'react-router-dom';
+import { AdminLayout } from '@/components/AdminLayout';
 import { AdminRoute } from '@/components/AdminRoute';
-import { Layout } from '@/components/Layout';
-import { publicRoutes, authRoutes, adminRoutes, catchAllRoutes } from './config';
+import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { UserLayout } from '@/components/UserLayout';
+import { adminRoutes, authRoutes, catchAllRoutes, publicRoutes } from './config';
 import type { RouteConfig } from './config';
 
-function renderRoute(r: RouteConfig) {
+function renderRoute(route: RouteConfig) {
   const element = (
     <Suspense fallback={<div className="p-8 text-center text-muted-foreground">Loading...</div>}>
-      <r.Component />
+      <route.Component />
     </Suspense>
   );
+
   return (
-    <Route key={r.path ?? 'index'} {...(r.index ? { index: true } : { path: r.path })} element={element} />
+    <Route
+      key={route.path ?? 'index'}
+      {...(route.index ? { index: true } : { path: route.path })}
+      element={element}
+    />
   );
 }
 
@@ -22,11 +28,9 @@ export function AppRoutes() {
     <Routes>
       {publicRoutes.map(renderRoute)}
       <Route element={<ProtectedRoute />}>
-        <Route element={<Layout />}>
-          {authRoutes.map(renderRoute)}
-          <Route element={<AdminRoute />}>
-            {adminRoutes.map(renderRoute)}
-          </Route>
+        <Route element={<UserLayout />}>{authRoutes.map(renderRoute)}</Route>
+        <Route element={<AdminRoute />}>
+          <Route element={<AdminLayout />}>{adminRoutes.map(renderRoute)}</Route>
         </Route>
       </Route>
       {catchAllRoutes.map(renderRoute)}

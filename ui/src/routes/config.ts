@@ -1,18 +1,19 @@
 import { lazy, type ComponentType } from 'react';
 import {
-  LayoutDashboard,
-  Users,
-  Radio,
   Braces,
+  Cog,
+  Cpu,
+  DollarSign,
   Key,
+  LayoutDashboard,
+  Radio,
+  Receipt,
   Route,
   ScrollText,
-  Cog,
-  DollarSign,
-  Wallet,
-  Receipt,
   Shield,
-  Cpu,
+  User,
+  Users,
+  Wallet,
 } from 'lucide-react';
 
 export type RouteGuard = 'public' | 'auth' | 'admin';
@@ -28,6 +29,10 @@ export interface RouteConfig {
   end?: boolean;
 }
 
+export type NavRoute = RouteConfig & Required<Pick<RouteConfig, 'nav'>>;
+
+const isNavRoute = (route: RouteConfig): route is NavRoute => !!route.nav;
+
 export const publicRoutes: RouteConfig[] = [
   { path: '/login', Component: lazy(() => import('@/pages/Login')), guard: 'public' },
   { path: '/register', Component: lazy(() => import('@/pages/Register')), guard: 'public' },
@@ -42,7 +47,7 @@ export const authRoutes: RouteConfig[] = [
   { path: '/usage', Component: lazy(() => import('@/pages/Usage')), guard: 'auth', label: 'nav.usage', icon: ScrollText, nav: true },
   { path: '/wallet', Component: lazy(() => import('@/pages/Wallet')), guard: 'auth', label: 'nav.wallet', icon: Wallet, nav: true },
   { path: '/bills', Component: lazy(() => import('@/pages/Bills')), guard: 'auth', label: 'nav.bills', icon: Receipt, nav: true },
-  { path: '/profile', Component: lazy(() => import('@/pages/Profile')), guard: 'auth' },
+  { path: '/profile', Component: lazy(() => import('@/pages/Profile')), guard: 'auth', label: 'nav.profile', icon: User, nav: true },
   { path: '/settings', Component: lazy(() => import('@/pages/Settings')), guard: 'auth', label: 'nav.settings', icon: Cog, nav: true },
 ];
 
@@ -60,7 +65,5 @@ export const catchAllRoutes: RouteConfig[] = [
   { path: '*', Component: lazy(() => import('@/pages/NotFound')), guard: 'public' },
 ];
 
-export const navRoutes: (RouteConfig & Required<Pick<RouteConfig, 'nav'>>)[] = [
-  ...authRoutes.filter((r): r is RouteConfig & Required<Pick<RouteConfig, 'nav'>> => !!r.nav),
-  ...adminRoutes.filter((r): r is RouteConfig & Required<Pick<RouteConfig, 'nav'>> => !!r.nav),
-];
+export const userNavRoutes = authRoutes.filter(isNavRoute);
+export const adminNavRoutes = adminRoutes.filter(isNavRoute);
