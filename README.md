@@ -1,4 +1,4 @@
-# AI Gateway
+# Fluxeme AI Gateway
 
 A reverse proxy gateway for LLM APIs. Compatible with OpenAI and Anthropic protocols — routes requests to upstream providers with channel management, load balancing, usage tracking, rate limiting, and a full admin UI.
 
@@ -130,7 +130,7 @@ Also supports Anthropic format (`POST /v1/messages`) and any OpenAI-compatible S
 
 | Port | Service |
 |------|---------|
-| 8080 | AI Gateway (proxy + admin UI) |
+| 8080 | Fluxeme AI Gateway (proxy + admin UI) |
 | 16379 | Redis |
 | 5432 | PostgreSQL |
 | 8123 | ClickHouse HTTP |

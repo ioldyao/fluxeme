@@ -101,7 +101,7 @@ async fn main() {
     // Initialise tracing subscriber (fmt + optional OTLP layer).
     let _otlp_provider = crate::observability::trace::init_subscriber(
         "ai_gateway=info,tower_http=info",
-        "ai-gateway",
+        "fluxeme",
     );
 
     let config_path =
@@ -388,7 +388,7 @@ async fn main() {
 
     let app = build_router(state);
 
-    tracing::info!("AI Gateway starting on {}", addr);
+    tracing::info!("Fluxeme AI Gateway starting on {}", addr);
 
     use std::net::{IpAddr, SocketAddr};
     use tokio::net::TcpSocket;

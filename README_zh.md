@@ -1,4 +1,4 @@
-# AI Gateway
+# Fluxeme AI Gateway
 
 大语言模型 API 反向代理网关。兼容 OpenAI/Anthropic 协议，支持多供应商路由、渠道管理、负载均衡、用量跟踪、限流和完整管理后台。
 
@@ -130,7 +130,7 @@ curl http://localhost:8080/v1/chat/completions \
 
 | 端口 | 服务 |
 |------|------|
-| 8080 | AI Gateway（代理 + 管理后台）|
+| 8080 | Fluxeme AI Gateway（代理 + 管理后台）|
 | 16379 | Redis |
 | 5432 | PostgreSQL |
 | 8123 | ClickHouse HTTP |
