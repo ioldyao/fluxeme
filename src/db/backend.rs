@@ -10,7 +10,7 @@ use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
 use chrono::{DateTime, Utc};
 
-use super::{DbError, FunnelStats, ProbeResultRow, RechargeKeyRow, WalletTransactionRow};
+use super::{AnnouncementRow, DbError, FunnelStats, ProbeResultRow, RechargeKeyRow, WalletTransactionRow};
 
 /// PostgreSQL persistence contract used by application services.
 ///
@@ -268,6 +268,14 @@ pub trait DbBackend: Send + Sync {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<(String, Decimal, Decimal)>, DbError>;
+
+    // ── Announcements ─────────────────────────────────────────────────────
+    async fn list_announcements(&self) -> Result<Vec<AnnouncementRow>, DbError>;
+    async fn list_published_announcements(&self) -> Result<Vec<AnnouncementRow>, DbError>;
+    async fn get_announcement(&self, id: &str) -> Result<Option<AnnouncementRow>, DbError>;
+    async fn create_announcement(&self, a: &AnnouncementRow) -> Result<(), DbError>;
+    async fn update_announcement(&self, a: &AnnouncementRow) -> Result<(), DbError>;
+    async fn delete_announcement(&self, id: &str) -> Result<(), DbError>;
 
     // ── Content Filter Rules ──────────────────────────────────────────────
     async fn list_filter_rules(&self) -> Result<Vec<ContentFilterRule>, DbError>;

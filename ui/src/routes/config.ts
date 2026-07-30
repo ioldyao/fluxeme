@@ -1,5 +1,6 @@
 import { lazy, type ComponentType } from 'react';
 import {
+  Bell,
   Braces,
   Cog,
   Cpu,
@@ -64,6 +65,7 @@ export const adminRoutes: RouteConfig[] = [
   { path: '/rules', Component: lazy(() => import('@/pages/Rules')), guard: 'admin', label: 'nav.rules', icon: Route, nav: true, perm: 'admin:rules' },
   { path: '/pricing', Component: lazy(() => import('@/pages/ModelPricing')), guard: 'admin', label: 'nav.modelPricing', icon: DollarSign, nav: true, perm: 'admin:model-pricing' },
   { path: '/recharge-keys', Component: lazy(() => import('@/pages/admin/RechargeKeys')), guard: 'admin', label: 'nav.rechargeKeys', icon: KeyRound, nav: true, perm: 'admin:recharge-keys' },
+  { path: '/announcements', Component: lazy(() => import('@/pages/admin/Announcements')), guard: 'admin', label: 'nav.announcements', icon: Bell, nav: true, perm: 'admin:announcements' },
 ];
 
 export const catchAllRoutes: RouteConfig[] = [

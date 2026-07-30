@@ -14,7 +14,8 @@ export type Permission =
   | 'admin:settings'
   | 'admin:gateway'
   | 'admin:moderation'
-  | 'admin:policies';
+  | 'admin:policies'
+  | 'admin:announcements';
 
 /** Known permission strings for use in route configs. */
 export const PERMISSIONS = {
@@ -32,6 +33,7 @@ export const PERMISSIONS = {
   SETTINGS: 'admin:settings' as Permission,
   GATEWAY: 'admin:gateway' as Permission,
   POLICIES: 'admin:policies' as Permission,
+  ANNOUNCEMENTS: 'admin:announcements' as Permission,
 } as const;
 
 /** Check if the current user has a specific permission.

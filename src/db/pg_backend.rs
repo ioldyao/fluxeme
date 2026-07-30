@@ -9,7 +9,7 @@ use sqlx_postgres::{PgPool, PgRow, Postgres};
 
 use crate::config::types::GatewayRuntimeConfig;
 use crate::db::backend::DbBackend;
-use crate::db::{DbError, ProbeResultRow, RechargeKeyRow, WalletTransactionRow};
+use crate::db::{AnnouncementRow, DbError, ProbeResultRow, RechargeKeyRow, WalletTransactionRow};
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, ModelChannel, Pricing};
 use crate::domain::moderation::ContentFilterRule;
@@ -19,6 +19,18 @@ use crate::domain::user::{ApiKey, User, USER_STATUS_ACTIVE, USER_STATUS_SUSPENDE
 
 pub struct PgBackend {
     pool: PgPool,
+}
+
+fn map_announcement_row(row: &PgRow) -> AnnouncementRow {
+    AnnouncementRow {
+        id: row.try_get::<String, _>(0).unwrap_or_default(),
+        title: row.try_get::<String, _>(1).unwrap_or_default(),
+        content: row.try_get::<String, _>(2).unwrap_or_default(),
+        created_by: row.try_get::<String, _>(3).unwrap_or_default(),
+        created_at: row.try_get::<String, _>(4).unwrap_or_default(),
+        updated_at: row.try_get::<String, _>(5).unwrap_or_default(),
+        published: row.try_get::<bool, _>(6).unwrap_or(false),
+    }
 }
 
 impl PgBackend {
@@ -871,6 +883,29 @@ impl DbBackend for PgBackend {
         .execute(&self.pool)
         .await;
         tracing::info!("billing_events table ready");
+
+        // ── Announcements ─────────────────────────────────────────────────
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS announcements (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                published BOOLEAN NOT NULL DEFAULT false
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create announcements: {e}")))?;
+        let _ = raw_sql(
+            "CREATE INDEX IF NOT EXISTS idx_announcements_published \
+             ON announcements(published, created_at DESC)",
+        )
+        .execute(&self.pool)
+        .await;
+        tracing::info!("announcements table ready");
 
         // ── Casbin authorization policies ────────────────────────────────
         let _ = raw_sql(
@@ -3979,6 +4014,85 @@ impl DbBackend for PgBackend {
                 )
             })
             .collect())
+    }
+
+    // ── Announcements ──────────────────────────────────────────────────
+
+    async fn list_announcements(&self) -> Result<Vec<AnnouncementRow>, DbError> {
+        let rows = query(
+            "SELECT id, title, content, created_by, created_at, updated_at, published \
+             FROM announcements ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("list_announcements: {e}")))?;
+        Ok(rows.iter().map(map_announcement_row).collect())
+    }
+
+    async fn list_published_announcements(&self) -> Result<Vec<AnnouncementRow>, DbError> {
+        let rows = query(
+            "SELECT id, title, content, created_by, created_at, updated_at, published \
+             FROM announcements WHERE published = true ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("list_published_announcements: {e}")))?;
+        Ok(rows.iter().map(map_announcement_row).collect())
+    }
+
+    async fn get_announcement(&self, id: &str) -> Result<Option<AnnouncementRow>, DbError> {
+        let row = query(
+            "SELECT id, title, content, created_by, created_at, updated_at, published \
+             FROM announcements WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("get_announcement: {e}")))?;
+        Ok(row.as_ref().map(map_announcement_row))
+    }
+
+    async fn create_announcement(&self, a: &AnnouncementRow) -> Result<(), DbError> {
+        query(
+            "INSERT INTO announcements (id, title, content, created_by, created_at, updated_at, published) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(&a.id)
+        .bind(&a.title)
+        .bind(&a.content)
+        .bind(&a.created_by)
+        .bind(&a.created_at)
+        .bind(&a.updated_at)
+        .bind(a.published)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("create_announcement: {e}")))?;
+        Ok(())
+    }
+
+    async fn update_announcement(&self, a: &AnnouncementRow) -> Result<(), DbError> {
+        query(
+            "UPDATE announcements SET title = $1, content = $2, updated_at = $3, published = $4 \
+             WHERE id = $5",
+        )
+        .bind(&a.title)
+        .bind(&a.content)
+        .bind(&a.updated_at)
+        .bind(a.published)
+        .bind(&a.id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("update_announcement: {e}")))?;
+        Ok(())
+    }
+
+    async fn delete_announcement(&self, id: &str) -> Result<(), DbError> {
+        query("DELETE FROM announcements WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError(format!("delete_announcement: {e}")))?;
+        Ok(())
     }
 
     // ── Casbin Policies ──────────────────────────────────────────────────

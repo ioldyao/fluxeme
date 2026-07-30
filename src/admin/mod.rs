@@ -21,6 +21,7 @@ pub(crate) const HOST_SESSION_COOKIE_NAME: &str = "__Host-session_token";
 
 // ── Sub-modules ────────────────────────────────────────────────────
 
+pub mod announcements;
 pub mod auth;
 pub mod billing;
 pub mod channels;
@@ -741,6 +742,21 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             "/api/gateway/config",
             axum::routing::get(settings::get_gateway_config_handler)
                 .put(settings::set_gateway_config_handler),
+        )
+        // Announcements
+        .route(
+            "/api/announcements",
+            axum::routing::get(announcements::list_announcements)
+                .post(announcements::create_announcement),
+        )
+        .route(
+            "/api/announcements/public",
+            axum::routing::get(announcements::list_published_announcements),
+        )
+        .route(
+            "/api/announcements/{id}",
+            axum::routing::put(announcements::update_announcement)
+                .delete(announcements::delete_announcement),
         )
         // Content Moderation
         .route(
