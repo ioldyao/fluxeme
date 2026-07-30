@@ -5,6 +5,7 @@ import {
   Cpu,
   DollarSign,
   Key,
+  KeyRound,
   LayoutDashboard,
   Radio,
   Receipt,
@@ -59,6 +60,7 @@ export const adminRoutes: RouteConfig[] = [
   { path: '/moderation', Component: lazy(() => import('@/pages/Moderation')), guard: 'admin', label: 'nav.moderation', icon: Shield, nav: true },
   { path: '/rules', Component: lazy(() => import('@/pages/Rules')), guard: 'admin', label: 'nav.rules', icon: Route, nav: true },
   { path: '/pricing', Component: lazy(() => import('@/pages/ModelPricing')), guard: 'admin', label: 'nav.modelPricing', icon: DollarSign, nav: true },
+  { path: '/recharge-keys', Component: lazy(() => import('@/pages/admin/RechargeKeys')), guard: 'admin', label: 'nav.rechargeKeys', icon: KeyRound, nav: true },
 ];
 
 export const catchAllRoutes: RouteConfig[] = [
