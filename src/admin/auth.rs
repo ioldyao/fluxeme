@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
+use axum::response::IntoResponse;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -17,6 +18,36 @@ use super::*;
 pub(crate) struct LoginReq {
     username: String,
     password: String,
+}
+
+fn session_cookie_name(is_secure: bool) -> &'static str {
+    if is_secure {
+        HOST_SESSION_COOKIE_NAME
+    } else {
+        SESSION_COOKIE_NAME
+    }
+}
+
+fn session_cookie_value(token: &str, is_secure: bool) -> String {
+    let secure_attr = if is_secure { "; Secure" } else { "" };
+    let cookie_name = session_cookie_name(is_secure);
+    format!("{cookie_name}={token}; HttpOnly{secure_attr}; Path=/; SameSite=Strict; Max-Age=86400")
+}
+
+fn expired_session_cookie_value(name: &str, is_secure: bool) -> String {
+    let secure_attr = if is_secure { "; Secure" } else { "" };
+    format!("{name}=; HttpOnly{secure_attr}; Path=/; SameSite=Strict; Max-Age=0")
+}
+
+fn run_dummy_password_check(password: &str) {
+    let _ = bcrypt::verify(
+        password,
+        "$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36PQm4sEPhMNPfFhpYN76Oe",
+    );
+}
+
+fn should_return_login_token(headers: &HeaderMap) -> bool {
+    headers.get("origin").is_none() && headers.get("referer").is_none()
 }
 
 pub(crate) async fn admin_login(
@@ -56,14 +87,14 @@ pub(crate) async fn admin_login(
                         return Err(AdminError::internal("Authentication error"));
                     }
                 }
+            } else {
+                run_dummy_password_check(&req.password);
             }
+        } else {
+            run_dummy_password_check(&req.password);
         }
     } else {
-        // Constant-time dummy to prevent user enumeration via timing
-        let _ = bcrypt::verify(
-            &req.password,
-            "$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36PQm4sEPhMNPfFhpYN76Oe",
-        );
+        run_dummy_password_check(&req.password);
     }
 
     if password_matched {
@@ -78,31 +109,71 @@ pub(crate) async fn admin_login(
             token_version: u.token_version,
         };
         let token = state.admin.encode_token(&info)?;
-        // Set httpOnly cookie for browser-based admin UI (prevents XSS token theft)
-        let cookie = format!(
-            "session_token={}; HttpOnly; Path=/; SameSite=Strict; Max-Age=86400",
-            token
-        );
-        let mut headers = HeaderMap::new();
-        headers.insert(
+        let is_secure = should_set_secure_cookie(&headers);
+        let cookie = session_cookie_value(&token, is_secure);
+        let mut response_headers = HeaderMap::new();
+        response_headers.insert(
             axum::http::header::SET_COOKIE,
             axum::http::HeaderValue::from_str(&cookie).unwrap(),
         );
-        return Ok((
-            headers,
-            Json(serde_json::json!({
-                "token": token,
-                "role": u.role,
-                "user_id": u.id,
-                "user_name": u.name,
-                "timezone": u.timezone,
-                "currency": u.currency,
-            })),
-        )
-            .into_response());
+
+        let mut response_body = serde_json::json!({
+            "role": u.role,
+            "user_id": u.id,
+            "user_name": u.name,
+            "timezone": u.timezone,
+            "currency": u.currency,
+        });
+        if should_return_login_token(&headers) {
+            response_body["token"] = serde_json::Value::String(token);
+        }
+
+        return Ok((response_headers, Json(response_body)).into_response());
     }
 
     Err(AdminError::unauthorized("Invalid credentials"))
+}
+
+pub(crate) async fn admin_logout(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<axum::response::Response, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    state
+        .db
+        .bump_user_token_version(&session.user_id)
+        .await
+        .map_err(db_err)?;
+    state.auth.reload().await;
+
+    let is_secure = should_set_secure_cookie(&headers);
+    let mut response_headers = HeaderMap::new();
+    response_headers.append(
+        axum::http::header::SET_COOKIE,
+        axum::http::HeaderValue::from_str(&expired_session_cookie_value(
+            HOST_SESSION_COOKIE_NAME,
+            true,
+        ))
+        .map_err(|e| AdminError::internal(e.to_string()))?,
+    );
+    response_headers.append(
+        axum::http::header::SET_COOKIE,
+        axum::http::HeaderValue::from_str(&expired_session_cookie_value(
+            SESSION_COOKIE_NAME,
+            false,
+        ))
+        .map_err(|e| AdminError::internal(e.to_string()))?,
+    );
+    response_headers.append(
+        axum::http::header::SET_COOKIE,
+        axum::http::HeaderValue::from_str(&expired_session_cookie_value(
+            session_cookie_name(is_secure),
+            is_secure,
+        ))
+        .map_err(|e| AdminError::internal(e.to_string()))?,
+    );
+
+    Ok((response_headers, Json(serde_json::json!({ "ok": true }))).into_response())
 }
 
 // ── Setup (first-time admin registration) ─────────────────────────
@@ -141,31 +212,20 @@ pub(crate) async fn setup_register(
         .await
         .map_err(|e| AdminError::internal(e.to_string()))?;
     if count > 0 {
-        return Err(AdminError::bad_request(
-            "Admin already exists. Please log in.",
-        ));
+        return Err(AdminError::bad_request("Setup already completed"));
     }
 
-    if req.username.is_empty() {
+    let username = req.username.trim();
+    if username.is_empty() {
         return Err(AdminError::bad_request("Username is required"));
     }
+
     validate_password(&req.password)?;
 
-    if state
-        .db
-        .get_user(&req.username)
-        .await
-        .map_err(db_err)?
-        .is_some()
-    {
-        return Err(AdminError::bad_request("Username already exists"));
-    }
-
     let hash = bcrypt::hash(&req.password, 10).map_err(|e| AdminError::internal(e.to_string()))?;
-
     let user = User {
-        id: req.username.clone(),
-        name: req.username.clone(),
+        id: username.to_string(),
+        name: username.to_string(),
         password_hash: Some(hash),
         rate_limits: None,
         timezone: "UTC".to_string(),
@@ -173,13 +233,16 @@ pub(crate) async fn setup_register(
         role: "admin".to_string(),
         concurrency_limit: 2000,
         currency: "usd".to_string(),
-        status: "active".to_string(),
+        status: USER_STATUS_ACTIVE.to_string(),
         suspended_at: None,
     };
-    state.db.create_user(&user).await.map_err(db_err)?;
-    state.auth.reload().await;
 
-    tracing::info!("setup_register: first admin user created: {}", user.id);
+    state
+        .db
+        .create_initial_admin(&user)
+        .await
+        .map_err(db_err_bad_request)?;
+    state.auth.reload().await;
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }

@@ -40,7 +40,7 @@ export function useSaveApiKey(userId?: string) {
   const qc = useQueryClient();
   const basePath = userId ? `/users/${encodeURIComponent(userId)}/keys` : '/me/keys';
   return useMutation({
-    mutationFn: ({ keyVal, data }: { keyVal: string; data: any }) =>
+    mutationFn: ({ keyVal, data }: { keyVal: string; data: CreateKeyReq }) =>
       api(`${basePath}/${encodeURIComponent(keyVal)}`, {
         method: 'PUT',
         body: data,

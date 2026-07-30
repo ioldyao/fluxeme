@@ -1,38 +1,49 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { useCurrentSession } from '@/api/auth';
 import { useAuth } from '@/store/auth';
 import { Cog } from 'lucide-react';
 
 export default function SsoCallback() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
-  const setSession = useAuth((s) => s.setSession);
+  const setCurrentSession = useAuth((s) => s.setCurrentSession);
+  const clear = useAuth((s) => s.clear);
   const [error, setError] = useState('');
+  const currentSession = useCurrentSession(true);
+  const isUnauthorized = useMemo(
+    () => currentSession.error instanceof Error && currentSession.error.message === 'unauthorized',
+    [currentSession.error],
+  );
 
   useEffect(() => {
-    const hash = window.location.hash.slice(1);
-    const params = new URLSearchParams(hash);
-    const token = params.get('token');
-    window.location.hash = "";
-    window.history.replaceState(null, "", window.location.pathname);
+    if (window.location.hash) {
+      window.location.hash = '';
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, []);
 
-    if (!token) {
-      setError('SSO 登录失败：未收到认证令牌');
+  useEffect(() => {
+    if (currentSession.isSuccess) {
+      setCurrentSession(currentSession.data);
+      navigate('/', { replace: true });
+    }
+  }, [currentSession.data, currentSession.isSuccess, navigate, setCurrentSession]);
+
+  useEffect(() => {
+    if (!currentSession.isError) {
       return;
     }
 
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      setSession({
-        token,
-        role: payload.role || 'user',
-        user_id: payload.sub || '',
-        user_name: payload.name || '',
-      });
-      navigate('/', { replace: true });
-    } catch {
-      setError('SSO 登录失败：无效的认证令牌');
+    if (isUnauthorized) {
+      clear();
+      setError(t('sso.verifyFailed'));
+      return;
     }
-  }, [navigate, setSession]);
+
+    setError(t('sso.serviceUnavailable'));
+  }, [clear, currentSession.isError, isUnauthorized, t]);
 
   if (error) {
     return (
@@ -44,7 +55,7 @@ export default function SsoCallback() {
             className="text-sm text-primary underline"
             onClick={() => navigate('/login')}
           >
-            返回登录
+            {t('sso.backToLogin')}
           </button>
         </div>
       </div>
@@ -55,7 +66,7 @@ export default function SsoCallback() {
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="text-center space-y-4">
         <Cog className="h-8 w-8 text-brand mx-auto animate-spin" />
-        <p className="text-muted-foreground">SSO 登录中...</p>
+        <p className="text-muted-foreground">{t('sso.loading')}</p>
       </div>
     </div>
   );

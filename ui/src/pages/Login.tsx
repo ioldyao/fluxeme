@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useNavigate, Navigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useLogin } from '@/api/auth';
 import { useAuth } from '@/store/auth';
@@ -14,7 +14,8 @@ import { api } from '@/api/client';
 export default function Login() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const token = useAuth((s) => s.token);
+  const isAuthenticated = useAuth((s) => s.isAuthenticated);
+  const isSessionResolved = useAuth((s) => s.isSessionResolved);
   const login = useLogin();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -23,15 +24,17 @@ export default function Login() {
   const [ssoLoading, setSsoLoading] = useState(true);
 
   useEffect(() => {
-    api<{ setup_required: boolean }>('/setup/status')
+    const abortController = new AbortController();
+
+    api<{ setup_required: boolean }>('/setup/status', { signal: abortController.signal })
       .then((res) => {
         if (res.setup_required) {
           navigate('/register', { replace: true });
-          return;
         }
       })
       .catch(() => {});
-    api<{ enabled: boolean; provider_name: string }>('/sso/status')
+
+    api<{ enabled: boolean; provider_name: string }>('/sso/status', { signal: abortController.signal })
       .then((res) => {
         setSsoEnabled(res.enabled);
         setSsoProviderName(res.provider_name);
@@ -39,22 +42,41 @@ export default function Login() {
       .catch(() => {
         // SSO endpoint not available
       })
-      .finally(() => setSsoLoading(false));
+      .finally(() => {
+        if (!abortController.signal.aborted) {
+          setSsoLoading(false);
+        }
+      });
+
+    return () => {
+      abortController.abort();
+    };
   }, [navigate]);
 
-  if (token) return <Navigate to="/" replace />;
+  if (!isSessionResolved) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <p className="text-muted-foreground" role="status">Loading...</p>
+      </div>
+    );
+  }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  if (isAuthenticated) {
+    return <Navigate to="/" replace />;
+  }
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     if (!username || !password) {
       toast.error(t('login.error'));
       return;
     }
+
     login.mutate(
       { username, password },
       {
         onSuccess: () => navigate('/'),
-        onError: (err) => toast.error(err.message),
+        onError: (error) => toast.error(error.message),
       },
     );
   };
@@ -77,7 +99,7 @@ export default function Login() {
                 id="username"
                 placeholder={t('login.usernamePlaceholder')}
                 value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                onChange={(event) => setUsername(event.target.value)}
                 autoFocus
               />
             </div>
@@ -88,7 +110,7 @@ export default function Login() {
                 type="password"
                 placeholder={t('login.passwordPlaceholder')}
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(event) => setPassword(event.target.value)}
               />
             </div>
             <Button type="submit" className="w-full" disabled={login.isPending}>

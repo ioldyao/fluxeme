@@ -26,7 +26,9 @@ function getStored(): ThemeMode {
   try {
     const stored = localStorage.getItem('theme-mode');
     if (stored === 'dark' || stored === 'light' || stored === 'system') return stored;
-  } catch {}
+  } catch {
+    // Ignore malformed persisted theme state and fall back to system mode.
+  }
   return 'system';
 }
 

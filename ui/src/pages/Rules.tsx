@@ -109,7 +109,7 @@ export default function Rules() {
           rule={editRule}
           open={true}
           onOpenChange={(open) => { if (!open) { setShowAdd(false); setEditRule(null); }}}
-          onSubmit={(data: any) => {
+          onSubmit={(data) => {
             if (editRule) {
               updateRule.mutate(data, {
                 onSuccess: () => { toast.success(t('toast.updated')); setEditRule(null); refetch(); },

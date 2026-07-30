@@ -127,7 +127,7 @@ export default function Channels() {
           channel={editChannel}
           open={true}
           onOpenChange={(open) => { if (!open) { setShowAdd(false); setEditChannel(null); }}}
-          onSubmit={(data: any) => {
+          onSubmit={(data) => {
             if (editChannel) {
               updateChannel.mutate(data, {
                 onSuccess: () => { toast.success(t('toast.updated')); setEditChannel(null); refetch(); },

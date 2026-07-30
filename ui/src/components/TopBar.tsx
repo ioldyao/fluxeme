@@ -1,5 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
+import { useLogout } from '@/api/auth';
 import { useAuth } from '@/store/auth';
 import { useLang } from '@/store/lang';
 import { useTheme } from '@/store/theme';
@@ -24,11 +26,25 @@ export function TopBar() {
   const { userName, clear } = useAuth();
   const { lang, setLang } = useLang();
   const { mode, resolved, setMode } = useTheme();
+  const logout = useLogout();
   const navigate = useNavigate();
 
   const handleLogout = () => {
-    clear();
-    navigate('/login');
+    logout.mutate(undefined, {
+      onSuccess: () => {
+        clear();
+        navigate('/login');
+      },
+      onError: (error) => {
+        if (error.message === 'unauthorized') {
+          clear();
+          navigate('/login');
+          return;
+        }
+
+        toast.error(error.message);
+      },
+    });
   };
 
   const ThemeIcon = resolved === 'dark' ? Moon : Sun;
@@ -42,7 +58,10 @@ export function TopBar() {
           {lang === 'zh' ? 'EN' : '中文'}
         </Button>
         <DropdownMenu>
-          <DropdownMenuTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-transparent px-3 py-1.5 text-sm font-medium text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground outline-none">
+          <DropdownMenuTrigger
+            aria-label={t('theme.change')}
+            className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-transparent px-3 py-1.5 text-sm font-medium text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground outline-none"
+          >
             <ThemeIcon className="h-4 w-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">

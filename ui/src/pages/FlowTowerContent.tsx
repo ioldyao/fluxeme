@@ -25,6 +25,7 @@ function fmtTokens(n: number) {
 
 interface TopoChannel { id: string; name: string }
 interface TopoModel { model: string; pattern: string; channels: TopoChannel[] }
+interface RoutingFlowEvent { model?: string; channel_id?: string }
 
 function buildTopology(models: Model[], channels: Channel[]): TopoModel[] {
   const channelMap = new Map(channels.map(c => [c.id, c]));
@@ -68,13 +69,20 @@ function useLiveCounts(topology: TopoModel[]) {
       ws = new WebSocket(`${proto}://${window.location.host}/api/health/ws`);
       ws.onopen = () => { setConnected(true); setReconnectIn(0); };
       ws.onmessage = (e) => {
-        let ev: any;
-        try { ev = JSON.parse(e.data); } catch { return; }
-        if (!ev || typeof ev.model !== 'string' || typeof ev.channel_id !== 'string') return;
+        let ev: RoutingFlowEvent;
+        try {
+          ev = JSON.parse(e.data) as RoutingFlowEvent;
+        } catch {
+          // Ignore malformed websocket payloads.
+          return;
+        }
+        if (typeof ev.model !== 'string' || typeof ev.channel_id !== 'string') return;
+        const model = ev.model;
+        const channelId = ev.channel_id;
         const topo = topoRef.current;
-        const m = topo.find(t => t.model === ev.model || (t.pattern !== '*' && ev.model.startsWith(t.pattern.replace('*', ''))));
+        const m = topo.find(t => t.model === model || (t.pattern !== '*' && model.startsWith(t.pattern.replace('*', ''))));
         if (!m) return;
-        const ch = m.channels.find(c => c.id === ev.channel_id);
+        const ch = m.channels.find(c => c.id === channelId);
         if (!ch) return;
         setCounts(prev => {
           const next = { ...prev };
@@ -97,10 +105,23 @@ function useLiveCounts(topology: TopoModel[]) {
           }, 1000);
         }
       };
-      ws.onerror = () => { try { ws?.close(); } catch {} };
+      ws.onerror = () => {
+        try {
+          ws?.close();
+        } catch {
+          // Ignore websocket close errors during reconnect handling.
+        }
+      };
     }
     connect();
-    return () => { closed = true; try { ws?.close(); } catch {} };
+    return () => {
+      closed = true;
+      try {
+        ws?.close();
+      } catch {
+        // Ignore websocket close errors during cleanup.
+      }
+    };
   }, []);
 
   return { counts, totalCount, connected, reconnectIn, pulseEvent };

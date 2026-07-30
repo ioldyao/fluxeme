@@ -964,6 +964,58 @@ impl DbBackend for PgBackend {
         Ok(())
     }
 
+    async fn create_initial_admin(&self, user: &User) -> Result<(), DbError> {
+        let (rpm, tpm) = user
+            .rate_limits
+            .as_ref()
+            .map(|r| (r.rpm.map(|v| v as i64), r.tpm.map(|v| v as i64)))
+            .unwrap_or((None, None));
+        let pw_hash = user.password_hash.as_deref().unwrap_or("");
+        let tz = if user.timezone.is_empty() {
+            "UTC"
+        } else {
+            &user.timezone
+        };
+        let role = if user.role.is_empty() {
+            "user"
+        } else {
+            &user.role
+        };
+
+        let mut tx = self.pool.begin().await?;
+        query("LOCK TABLE users IN EXCLUSIVE MODE")
+            .execute(&mut *tx)
+            .await?;
+
+        let (admin_count,): (i64,) = query_as("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+            .fetch_one(&mut *tx)
+            .await?;
+        if admin_count > 0 {
+            return Err(DbError("Setup already completed".to_string()));
+        }
+
+        query(
+            "INSERT INTO users (id, name, password_hash, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+        )
+        .bind(&user.id)
+        .bind(&user.name)
+        .bind(pw_hash)
+        .bind(rpm)
+        .bind(tpm)
+        .bind(tz)
+        .bind(user.token_version)
+        .bind(role)
+        .bind(user.concurrency_limit as i64)
+        .bind(&user.currency)
+        .bind(&user.status)
+        .bind(&user.suspended_at)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
     async fn update_user(&self, user: &User) -> Result<(), DbError> {
         let (rpm, tpm) = user
             .rate_limits
@@ -1014,12 +1066,129 @@ impl DbBackend for PgBackend {
         Ok(())
     }
 
+    async fn bump_user_token_version(&self, id: &str) -> Result<(), DbError> {
+        let result = query("UPDATE users SET token_version = token_version + 1 WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(DbError("User not found".to_string()));
+        }
+        Ok(())
+    }
+
+    async fn update_user_admin_fields(
+        &self,
+        id: &str,
+        name: Option<String>,
+        password_hash: Option<String>,
+        rate_limits: Option<crate::domain::user::RateLimit>,
+        role: Option<String>,
+        concurrency_limit: Option<u32>,
+    ) -> Result<User, DbError> {
+        let mut tx = self.pool.begin().await?;
+        query("LOCK TABLE users IN EXCLUSIVE MODE")
+            .execute(&mut *tx)
+            .await?;
+        let rows = query(
+            "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at FROM users WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let existing = rows
+            .first()
+            .ok_or_else(|| DbError("User not found".to_string()))?;
+        let mut idx = 0usize;
+        let current_user = Self::map_user_row(existing, &mut idx);
+
+        let next_name = name.unwrap_or(current_user.name.clone());
+        let next_role = role.unwrap_or(current_user.role.clone());
+        let next_rate_limits = rate_limits.or(current_user.rate_limits.clone());
+        let next_concurrency_limit = concurrency_limit.unwrap_or(current_user.concurrency_limit);
+
+        if current_user.role == "admin"
+            && current_user.status == USER_STATUS_ACTIVE
+            && next_role != current_user.role
+        {
+            let (active_admin_count,): (i64,) =
+                query_as("SELECT COUNT(*) FROM users WHERE role = 'admin' AND status = $1")
+                    .bind(USER_STATUS_ACTIVE)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            if active_admin_count <= 1 {
+                return Err(DbError("Cannot demote the last active admin".to_string()));
+            }
+        }
+        let next_token_version = if next_role != current_user.role || password_hash.is_some() {
+            current_user.token_version + 1
+        } else {
+            current_user.token_version
+        };
+        let (rpm, tpm) = next_rate_limits
+            .as_ref()
+            .map(|r| (r.rpm.map(|v| v as i64), r.tpm.map(|v| v as i64)))
+            .unwrap_or((None, None));
+        let tz = if current_user.timezone.is_empty() {
+            "UTC"
+        } else {
+            current_user.timezone.as_str()
+        };
+
+        let updated = if let Some(ref pw) = password_hash {
+            let row = query(
+                "UPDATE users SET name = $1, password_hash = $2, rpm = $3, tpm = $4, timezone = $5, token_version = $6, role = $7, concurrency_limit = $8, currency = $9, status = $10, suspended_at = $11 WHERE id = $12 RETURNING id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at",
+            )
+            .bind(&next_name)
+            .bind(pw)
+            .bind(rpm)
+            .bind(tpm)
+            .bind(tz)
+            .bind(next_token_version)
+            .bind(&next_role)
+            .bind(next_concurrency_limit as i64)
+            .bind(&current_user.currency)
+            .bind(&current_user.status)
+            .bind(&current_user.suspended_at)
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+            let mut idx = 0usize;
+            Self::map_user_row(&row, &mut idx)
+        } else {
+            let row = query(
+                "UPDATE users SET name = $1, rpm = $2, tpm = $3, timezone = $4, token_version = $5, role = $6, concurrency_limit = $7, currency = $8, status = $9, suspended_at = $10 WHERE id = $11 RETURNING id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at",
+            )
+            .bind(&next_name)
+            .bind(rpm)
+            .bind(tpm)
+            .bind(tz)
+            .bind(next_token_version)
+            .bind(&next_role)
+            .bind(next_concurrency_limit as i64)
+            .bind(&current_user.currency)
+            .bind(&current_user.status)
+            .bind(&current_user.suspended_at)
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+            let mut idx = 0usize;
+            Self::map_user_row(&row, &mut idx)
+        };
+
+        tx.commit().await?;
+        Ok(updated)
+    }
+
     async fn suspend_user(
         &self,
         id: &str,
         suspended_at: &chrono::DateTime<chrono::Utc>,
     ) -> Result<User, DbError> {
         let mut tx = self.pool.begin().await?;
+        query("LOCK TABLE users IN EXCLUSIVE MODE")
+            .execute(&mut *tx)
+            .await?;
         let rows = query(
             "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at FROM users WHERE id = $1 FOR UPDATE",
         )
@@ -1074,6 +1243,9 @@ impl DbBackend for PgBackend {
 
     async fn restore_user(&self, id: &str) -> Result<User, DbError> {
         let mut tx = self.pool.begin().await?;
+        query("LOCK TABLE users IN EXCLUSIVE MODE")
+            .execute(&mut *tx)
+            .await?;
         let rows = query(
             "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at FROM users WHERE id = $1 FOR UPDATE",
         )
@@ -1090,11 +1262,13 @@ impl DbBackend for PgBackend {
             return Ok(current_user);
         }
 
-        query("UPDATE users SET status = $1, suspended_at = NULL WHERE id = $2")
-            .bind(USER_STATUS_ACTIVE)
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+        query(
+            "UPDATE users SET status = $1, suspended_at = NULL, token_version = token_version + 1 WHERE id = $2",
+        )
+        .bind(USER_STATUS_ACTIVE)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
 
         let rows = query(
             "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at FROM users WHERE id = $1",
@@ -1113,6 +1287,9 @@ impl DbBackend for PgBackend {
 
     async fn delete_user(&self, id: &str) -> Result<(), DbError> {
         let mut tx = self.pool.begin().await?;
+        query("LOCK TABLE users IN EXCLUSIVE MODE")
+            .execute(&mut *tx)
+            .await?;
         let rows = query(
             "SELECT id, name, rpm, tpm, timezone, token_version, role, concurrency_limit, currency, status, suspended_at FROM users WHERE id = $1 FOR UPDATE",
         )

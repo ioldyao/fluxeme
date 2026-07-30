@@ -175,12 +175,21 @@ export interface DailyAggregate {
 }
 
 export interface LoginResponse {
-  token: string;
+  token?: string;
   role: UserRole;
   user_id: string;
   user_name: string;
   timezone?: string;
   currency?: string;
+}
+
+export interface CurrentSessionResponse {
+  user_id: string;
+  user_name: string;
+  role: UserRole;
+  status: UserStatus;
+  timezone: string;
+  currency: string;
 }
 
 export interface CreateUserReq {

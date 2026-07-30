@@ -27,7 +27,18 @@ pub trait DbBackend: Send + Sync {
     async fn get_user(&self, id: &str) -> Result<Option<User>, DbError>;
     async fn get_user_with_password(&self, id: &str) -> Result<Option<User>, DbError>;
     async fn create_user(&self, user: &User) -> Result<(), DbError>;
+    async fn create_initial_admin(&self, user: &User) -> Result<(), DbError>;
     async fn update_user(&self, user: &User) -> Result<(), DbError>;
+    async fn bump_user_token_version(&self, id: &str) -> Result<(), DbError>;
+    async fn update_user_admin_fields(
+        &self,
+        id: &str,
+        name: Option<String>,
+        password_hash: Option<String>,
+        rate_limits: Option<crate::domain::user::RateLimit>,
+        role: Option<String>,
+        concurrency_limit: Option<u32>,
+    ) -> Result<User, DbError>;
     async fn suspend_user(&self, id: &str, suspended_at: &DateTime<Utc>) -> Result<User, DbError>;
     async fn restore_user(&self, id: &str) -> Result<User, DbError>;
     async fn delete_user(&self, id: &str) -> Result<(), DbError>;
