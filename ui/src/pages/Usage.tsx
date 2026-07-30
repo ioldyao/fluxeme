@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useCurrency } from '@/store/currency';
 import { formatCost, getRecordPricing } from '@/lib/cost';
 import { useMyUsage, useMyUsageAggregate, useMyModelActivity } from '@/api/usage';
+import { usePermission } from '@/permissions';
 import { api } from '@/api/client';
 import { UsageLogDetail } from '@/components/UsageLogDetail';
 import { PageHeader } from '@/components/PageHeader';
@@ -122,9 +123,11 @@ export default function Usage() {
   const total = usage?.total ?? 0;
   const page = offset / limit + 1;
   const totalPages = Math.max(1, Math.ceil(total / limit));
+  const canViewModels = usePermission('admin:models');
   const { data: models } = useQuery({
     queryKey: ['models'],
     queryFn: () => api<import('@/types').Model[]>('/models'),
+    enabled: canViewModels,
     retry: false,
   });
   const { currency, rate } = useCurrency();
