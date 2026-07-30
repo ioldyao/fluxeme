@@ -45,18 +45,22 @@ impl AuthzModule {
         })
     }
 
-    /// Seed default policies into the DB if the table is empty.
+    /// Seed default policies into the DB if missing.
+    /// Idempotent — safe to run on every startup.
     pub async fn seed_defaults(&self, db: &Database) -> Result<(), Box<dyn std::error::Error>> {
         let existing = db.casbin_list_policies().await?;
-        if !existing.is_empty() {
-            tracing::info!("Casbin policies already exist, skipping seed");
-            return Ok(());
-        }
+        let existing_set: std::collections::HashSet<(String, String)> = existing
+            .iter()
+            .map(|(_ptype, v0, v1, _v2, _v3, _v4, _v5)| (v0.clone(), v1.clone()))
+            .collect();
 
         for (role, perm) in DEFAULT_POLICIES {
-            db.casbin_add_policy("p", role, perm, "", "", "", "")
-                .await?;
-            tracing::info!("Seeded Casbin policy: {role} -> {perm}");
+            let key = (role.to_string(), perm.to_string());
+            if !existing_set.contains(&key) {
+                db.casbin_add_policy("p", role, perm, "", "", "", "")
+                    .await?;
+                tracing::info!("Seeded missing Casbin policy: {role} -> {perm}");
+            }
         }
 
         self.reload(db).await?;
