@@ -52,7 +52,7 @@ const en: Record<string, string> = {
   'nav.group.channels': 'Channels',
   'nav.group.security': 'Routing & Security',
   'nav.group.developer': 'Developer',
-  'nav.subtitle': 'Fluxeme AI Gateway',
+  'nav.subtitle': 'Fluxeme',
   'dash.title': 'Dashboard',
   'dash.subtitle': 'Overview of your Fluxeme AI Gateway',
   'dash.recentUsage': 'Recent Activity',

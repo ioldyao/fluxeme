@@ -52,7 +52,7 @@ const zh: Record<string, string> = {
   'nav.group.channels': '渠道',
   'nav.group.security': '路由与安全',
   'nav.group.developer': '开发者',
-  'nav.subtitle': 'Fluxeme AI 网关',
+  'nav.subtitle': 'Fluxeme',
   'dash.title': '仪表盘',
   'dash.subtitle': 'Fluxeme AI 网关概览',
   'dash.recentUsage': '最近使用',
