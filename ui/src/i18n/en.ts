@@ -413,6 +413,8 @@ const en: Record<string, string> = {
   'nav.bills': 'Bills',
   'nav.settings': 'Settings',
   'nav.profile': 'Profile',
+  'nav.adminEntry': 'Admin',
+  'nav.userEntry': 'Console',
   'profile.title': 'Profile',
   'profile.subtitle': 'View your profile and change your password',
   'profile.userInfo': 'User Info',
