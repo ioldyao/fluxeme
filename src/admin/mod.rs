@@ -151,6 +151,21 @@ fn validate_password(pw: &str) -> Result<(), AdminError> {
 
 // ── Auth helpers ──────────────────────────────────────────────────
 
+fn request_host_with_port(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("host")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            // For IPv6 literal like [::1]:8080, strip brackets but keep port
+            if value.starts_with('[') {
+                if let Some(end) = value.find(']') {
+                    return value[..=end].to_string();
+                }
+            }
+            value.to_string()
+        })
+}
+
 fn request_host(headers: &HeaderMap) -> Option<&str> {
     headers
         .get("host")
@@ -262,10 +277,7 @@ async fn reject_cross_origin_cookie_requests(
         return Ok(next.run(request).await);
     }
 
-    let host = request
-        .headers()
-        .get("host")
-        .and_then(|value| value.to_str().ok());
+    let host = request_host_with_port(request.headers());
     let origin = request_origin(request.headers());
 
     if let (Some(host), Some(origin)) = (host, origin) {
