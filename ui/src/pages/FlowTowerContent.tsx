@@ -68,7 +68,6 @@ interface ModelRow {
   pattern: string;
   published: boolean;
   contextLength: number | null;
-  upstreamModel: string | null;
   channelNames: string;
   requests: number; // 24h
   successRate: number; // 0..1, weighted by requests
@@ -148,7 +147,6 @@ function buildRows(
       pattern: m.model_pattern,
       published: !!m.published,
       contextLength: m.context_length ?? null,
-      upstreamModel: m.channels[0]?.upstream_model ?? null,
       channelNames: m.channels
         .map((b) => channelName.get(b.channel_id) ?? b.channel_id)
         .join(' · '),
@@ -609,6 +607,105 @@ function RequestFlow({
   );
 }
 
+// ── center: channel endpoint status ────────────────────────────────
+
+const EP_BADGE: Record<'good' | 'bad' | 'none', string> = {
+  good: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+  bad: 'bg-red-500/10 text-red-700 dark:text-red-400',
+  none: 'bg-muted text-muted-foreground',
+};
+
+function ChannelEndpointStatus({
+  row, channelName, endpointUrl,
+}: {
+  row: ModelRow | null;
+  channelName: Map<string, string>;
+  endpointUrl: Map<string, Map<number, string>>;
+}) {
+  const { t } = useTranslation();
+
+  if (!row) {
+    return (
+      <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
+        <div className="px-4 min-h-[52px] flex items-center border-b border-border/60">
+          <div className="text-sm font-bold">{t('monitor.channelEndpoints')}</div>
+        </div>
+        <div className="p-6 text-center text-xs text-muted-foreground">{t('monitor.noSelection')}</div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-4 min-h-[52px] border-b border-border/60">
+        <div className="text-sm font-bold">{t('monitor.channelEndpoints')}</div>
+        <div className="text-[11px] text-muted-foreground">{row.name}</div>
+      </div>
+      <div className="divide-y divide-border/40">
+        {row.channels.length === 0 ? (
+          <div className="p-6 text-center text-xs text-muted-foreground">
+            {t('monitor.noChannelData')}
+          </div>
+        ) : (
+          row.channels.map((ch) => {
+            const enabled = ch.endpoints.filter((e) => e.enabled);
+            const available = enabled.filter((e) => e.available);
+            const state: 'good' | 'bad' | 'none' =
+              enabled.length === 0 ? 'none' : available.length === enabled.length ? 'good' : 'bad';
+            const label =
+              state === 'good'
+                ? `${available.length}/${enabled.length} ${t('monitor.epAvailable')}`
+                : state === 'none'
+                  ? t('monitor.epDisabled')
+                  : `${available.length}/${enabled.length} ${t('monitor.epUnavailable')}`;
+            return (
+              <div key={ch.channel_id} className="px-4 py-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <span className="text-xs font-semibold">
+                      {ch.channel_name || channelName.get(ch.channel_id) || ch.channel_id}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground font-mono ml-2">{ch.channel_id}</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-[10px] text-muted-foreground tabular-nums">
+                    <span>{fmtCount(ch.requests)} req</span>
+                    <span>{ch.requests > 0 ? `${(ch.success_rate * 100).toFixed(1)}%` : '—'}</span>
+                    <span>P95 {fmtLat(ch.p95_latency_ms)}</span>
+                    <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 font-medium', EP_BADGE[state])}>
+                      {label}
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-2 space-y-1">
+                  {ch.endpoints.map((ep, i) => {
+                    const url =
+                      (ep.endpoint_id != null && endpointUrl.get(ch.channel_id)?.get(ep.endpoint_id)) ??
+                      `#${i + 1}`;
+                    const epState = !ep.enabled ? 'none' : ep.available ? 'good' : 'bad';
+                    const epLabel = !ep.enabled
+                      ? t('monitor.epDisabled')
+                      : ep.available
+                        ? t('monitor.epAvailable')
+                        : t('monitor.epUnavailable');
+                    return (
+                      <div key={ep.endpoint_id ?? i} className="flex items-center justify-between gap-3 text-xs">
+                        <span className="font-mono text-muted-foreground truncate">{url}</span>
+                        <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium shrink-0', EP_BADGE[epState])}>
+                          {epLabel}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </section>
+  );
+}
+
 // ── center: model compare table ────────────────────────────────────
 
 const HEALTH_BADGE: Record<Health, string> = {
@@ -789,10 +886,6 @@ function ModelInspector({ row }: { row: ModelRow | null }) {
               <span className="text-foreground tabular-nums">{row.channels.length || 0}</span>
             </div>
             <div className="flex justify-between gap-6">
-              <span className="text-muted-foreground">{t('monitor.upstreamModel')}</span>
-              <span className="text-foreground truncate max-w-[120px]">{row.upstreamModel || '—'}</span>
-            </div>
-            <div className="flex justify-between gap-6">
               <span className="text-muted-foreground">{t('monitor.contextLength')}</span>
               <span className="text-foreground tabular-nums">
                 {row.contextLength ? fmtTokens(row.contextLength) : '—'}
@@ -883,6 +976,19 @@ export default function FlowTowerContent() {
     () => new Map((channels ?? []).map((c) => [c.id, c.name || c.id])),
     [channels],
   );
+
+  // channelId → endpointId → url (for the endpoint status panel)
+  const endpointUrl = useMemo(() => {
+    const map = new Map<string, Map<number, string>>();
+    for (const c of channels ?? []) {
+      const byId = new Map<number, string>();
+      for (const ep of c.endpoints) {
+        if (ep.id != null) byId.set(ep.id, ep.url);
+      }
+      map.set(c.id, byId);
+    }
+    return map;
+  }, [channels]);
 
   const probeByName = useMemo(() => {
     const map = new Map<string, ProbeResult[]>();
@@ -1033,6 +1139,7 @@ export default function FlowTowerContent() {
             p95={p95}
             timeout={funnel?.timeout_count ?? 0}
           />
+          <ChannelEndpointStatus row={selected} channelName={channelName} endpointUrl={endpointUrl} />
           <ModelCompareTable rows={rows} selectedName={selectedName} onSelect={setSelectedName} />
         </div>
 

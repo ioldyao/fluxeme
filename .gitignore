@@ -15,10 +15,10 @@ ai_ex/
 data/
 # Built admin UI assets are versioned with web/index.html.
 !web/
-!web/assets/
-!web/assets/**
+#!web/assets/
+#!web/assets/**
 # Added by code-review-graph
 .code-review-graph/
 outputs/
 test/
-# web/assets/
+web/assets/
