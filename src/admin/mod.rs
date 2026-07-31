@@ -608,6 +608,10 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             axum::routing::get(models::list_probe_results),
         )
         .route(
+            "/api/probe-results/recent",
+            axum::routing::get(models::list_recent_probes),
+        )
+        .route(
             "/api/health/routing",
             axum::routing::get(routing::routing_health),
         )

@@ -3856,6 +3856,56 @@ impl DbBackend for PgBackend {
             .collect())
     }
 
+    async fn recent_probe_results(&self, minutes: i64) -> Result<Vec<ProbeResultRow>, DbError> {
+        let rows = query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                bool,
+                i64,
+                Option<String>,
+                String,
+                Option<String>,
+            ),
+        >(
+            "SELECT id, channel_id, model_id, success, latency_ms, error, probed_at, endpoint_url \
+             FROM probe_results \
+             WHERE probed_at::timestamptz > NOW() - make_interval(mins => $1) \
+             ORDER BY probed_at DESC LIMIT 1000",
+        )
+        .bind(minutes)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Failed to query recent probe results: {}", e)))?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    channel_id,
+                    model_id,
+                    success,
+                    latency_ms,
+                    error,
+                    probed_at,
+                    endpoint_url,
+                )| ProbeResultRow {
+                    id,
+                    channel_id,
+                    model_id,
+                    success,
+                    latency_ms: latency_ms as u64,
+                    error,
+                    probed_at,
+                    endpoint_url,
+                },
+            )
+            .collect())
+    }
+
     async fn channel_usage_24h(
         &self,
     ) -> Result<Vec<(String, String, u64, u64, f64, f64)>, DbError> {

@@ -294,6 +294,10 @@ pub trait DbBackend: Send + Sync {
     /// separate latest record.
     async fn all_latest_probe_results(&self) -> Result<Vec<ProbeResultRow>, DbError>;
 
+    /// Raw probe results from the last `minutes` minutes, newest first.
+    /// Used by the flow-control endpoint state timeline (probe-driven grid).
+    async fn recent_probe_results(&self, minutes: i64) -> Result<Vec<ProbeResultRow>, DbError>;
+
     /// Per-model per-channel usage stats for the health/routing dashboard.
     /// Returns Vec<(channel_id, model, requests_count, success_count, avg_latency, p95_latency)>.
     async fn channel_usage_24h(&self)
