@@ -77,6 +77,7 @@ export default function Dashboard() {
   } = useMyUsageFunnel(days);
   const { currency, rate } = useCurrency();
   const sym = CURRENCY_SYMBOL[currency];
+  const { data: announcements } = usePublishedAnnouncements();
 
   const isHealthStripLoading = statsLoading || aggLoading;
   const availability = agg?.success_rate_24h ?? 0;
@@ -519,23 +520,19 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent>
               <p className="text-xs text-muted-foreground">{t('dash.announcementsSub')}</p>
-              {(() => {
-                const { data: announcements } = usePublishedAnnouncements();
-                if (!announcements || announcements.length === 0) {
-                  return <p className="mt-3 text-sm text-muted-foreground">{t('dash.noAnnouncements')}</p>;
-                }
-                return (
-                  <div className="mt-3 space-y-3">
-                    {announcements.map((a) => (
-                      <div key={a.id} className="border-l-2 border-brand pl-3">
-                        <p className="text-sm font-medium">{a.title}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5 whitespace-pre-wrap line-clamp-3">{a.content}</p>
-                        <p className="text-[10px] text-muted-foreground/60 mt-1">{new Date(a.created_at).toLocaleDateString()}</p>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()}
+              {!announcements || announcements.length === 0 ? (
+                <p className="mt-3 text-sm text-muted-foreground">{t('dash.noAnnouncements')}</p>
+              ) : (
+                <div className="mt-3 space-y-3">
+                  {announcements.map((a) => (
+                    <div key={a.id} className="border-l-2 border-brand pl-3">
+                      <p className="text-sm font-medium">{a.title}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5 whitespace-pre-wrap line-clamp-3">{a.content}</p>
+                      <p className="text-[10px] text-muted-foreground/60 mt-1">{new Date(a.created_at).toLocaleDateString()}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 

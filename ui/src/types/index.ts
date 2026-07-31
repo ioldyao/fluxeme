@@ -117,6 +117,7 @@ export interface UsageRecord {
   cache_hit_input_tokens: number;
   prompt_price: number;
   completion_price: number;
+  cache_read_price?: number;
   original_model?: string;
   client_ip?: string | null;
 }

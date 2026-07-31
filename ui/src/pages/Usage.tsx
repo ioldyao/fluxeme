@@ -4,8 +4,6 @@ import { useTranslation } from 'react-i18next';
 import { useCurrency } from '@/store/currency';
 import { formatCost, getRecordPricing } from '@/lib/cost';
 import { useMyUsage, useMyUsageAggregate, useMyModelActivity } from '@/api/usage';
-import { usePermission } from '@/permissions';
-import { api } from '@/api/client';
 import { UsageLogDetail } from '@/components/UsageLogDetail';
 import { PageHeader } from '@/components/PageHeader';
 import { EmptyState } from '@/components/EmptyState';
@@ -15,7 +13,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RefreshCw, CheckCircle2, XCircle, BarChart3, List, Radio, RadioIcon, Filter, ChevronDown, ChevronRight } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, Legend,
@@ -123,27 +120,11 @@ export default function Usage() {
   const total = usage?.total ?? 0;
   const page = offset / limit + 1;
   const totalPages = Math.max(1, Math.ceil(total / limit));
-  const canViewModels = usePermission('admin:models');
-  const { data: models } = useQuery({
-    queryKey: ['models'],
-    queryFn: () => api<import('@/types').Model[]>('/models'),
-    enabled: canViewModels,
-    retry: false,
-  });
   const { currency, rate } = useCurrency();
   const [chartTab, setChartTab] = useState('list');
   const [chartDays, setChartDays] = useState(7);
   const { data: aggregate, isLoading: aggLoading } = useMyUsageAggregate(chartDays);
   const { data: modelActivity } = useMyModelActivity(chartDays);
-
-  const modelPricing = useMemo(() => {
-    if (!models) return {};
-    const map: Record<string, { prompt_price: number; completion_price: number; cache_read_price: number }> = {};
-    for (const m of models) {
-      map[m.name] = m.pricing;
-    }
-    return map;
-  }, [models]);
 
   const handleChartTab = (tab: string) => {
     setChartTab(tab);
@@ -304,7 +285,7 @@ export default function Usage() {
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.cache_hit_input_tokens > 0 ? r.cache_hit_input_tokens : '—'}</td>
                           <td className="py-3 px-4 text-right">{r.completion_tokens}</td>
                           <td className="py-3 px-4 text-right font-medium">{r.total_tokens}</td>
-                          <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, r.cache_hit_input_tokens, getRecordPricing(r, modelPricing), currency, rate)}</td>
+                          <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, r.cache_hit_input_tokens, getRecordPricing(r), currency, rate)}</td>
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>
                           <td className="py-3 px-4 text-center">
                             {r.success ? (
