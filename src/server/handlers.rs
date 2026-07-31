@@ -292,6 +292,10 @@ fn extract_client_ip(_headers: &HeaderMap, addr: SocketAddr) -> String {
 struct RouteTarget {
     channel_id: String,
     endpoint: EndpointConfig,
+    /// Index of the current endpoint in the balancer's endpoint list.
+    /// Circuit-breaker feedback (record_success / record_failure) is keyed
+    /// by this index so live traffic updates real-time endpoint health.
+    endpoint_idx: usize,
     adapter: Arc<dyn crate::provider::ProviderAdapter>,
     balancer: Arc<LoadBalancer>,
 }
@@ -300,12 +304,27 @@ impl RouteTarget {
     /// Try the next available endpoint from the balancer.
     /// Returns `false` if no more endpoints available.
     fn retry_next(&mut self) -> bool {
-        if let Some((_idx, ep)) = self.balancer.as_health_aware().select() {
+        if let Some((idx, ep)) = self.balancer.as_health_aware().select() {
+            self.endpoint_idx = idx;
             self.endpoint = ep.clone();
             true
         } else {
             false
         }
+    }
+
+    /// Feed a successful upstream call into the circuit breaker (closes it).
+    fn report_success(&self) {
+        self.balancer
+            .as_health_aware()
+            .record_success(self.endpoint_idx);
+    }
+
+    /// Feed an upstream failure (connect / 5xx / timeout) into the breaker.
+    fn report_failure(&mut self) {
+        self.balancer
+            .as_health_aware()
+            .record_failure(self.endpoint_idx);
     }
 }
 
@@ -320,7 +339,7 @@ fn resolve_route(state: &AppState, channel_id: &str) -> Result<RouteTarget, Gate
         .get(provider_name.as_str())
         .ok_or_else(|| GatewayError::Internal("Provider not available".into()))?;
 
-    let (_idx, endpoint) = balancer
+    let (idx, endpoint) = balancer
         .as_health_aware()
         .select()
         .ok_or_else(|| GatewayError::Internal("No available endpoints".into()))?;
@@ -328,6 +347,7 @@ fn resolve_route(state: &AppState, channel_id: &str) -> Result<RouteTarget, Gate
     Ok(RouteTarget {
         channel_id: channel_id.to_string(),
         endpoint: endpoint.clone(),
+        endpoint_idx: idx,
         adapter,
         balancer,
     })
@@ -603,6 +623,11 @@ struct UsageTrackingStream<S> {
     recorded: bool,
     client_ip: String,
     endpoint_id: Option<i64>,
+    /// Circuit-breaker feedback for the streaming request: record_success
+    /// when the stream completes cleanly. Client disconnects / mid-stream
+    /// drops are not fed into the breaker — they aren't upstream failures.
+    balancer: Option<Arc<LoadBalancer>>,
+    endpoint_idx: usize,
 }
 
 impl<S: Stream<Item = String> + Unpin> Stream for UsageTrackingStream<S> {
@@ -637,6 +662,15 @@ impl<S> UsageTrackingStream<S> {
             return;
         }
         self.recorded = true;
+
+        // Live-traffic breaker feedback: a clean stream completion means the
+        // endpoint is healthy. Mid-stream drops (client disconnect) are not
+        // recorded — see the `balancer` field docs.
+        if completed {
+            if let Some(b) = &self.balancer {
+                b.as_health_aware().record_success(self.endpoint_idx);
+            }
+        }
 
         let latency_ms = self.start.elapsed().as_millis() as u64;
         let (mut p_tokens, mut c_tokens, cache_hit) = parse_sse_usage(&self.resp_buf);
@@ -787,6 +821,8 @@ async fn handle_streaming(
     state: &AppState,
     adapter: Arc<dyn crate::provider::ProviderAdapter>,
     endpoint: EndpointConfig,
+    balancer: Arc<LoadBalancer>,
+    endpoint_idx: usize,
     body: Value,
     request_id: String,
     user_id: String,
@@ -836,6 +872,8 @@ async fn handle_streaming(
                 client_ip,
                 endpoint_id: endpoint.id,
                 original_model: orig_model.clone(),
+                balancer: Some(balancer),
+                endpoint_idx,
             };
 
             let body_stream =
@@ -849,6 +887,7 @@ async fn handle_streaming(
                 .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
         }
         Err(e) => {
+            balancer.as_health_aware().record_failure(endpoint_idx);
             let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
             let latency_ms = start.elapsed().as_millis() as u64;
             let (p_tokens, c_tokens, cache_hit) = parse_sse_usage("");
@@ -891,6 +930,8 @@ async fn handle_messages_streaming(
     state: &AppState,
     adapter: Arc<dyn crate::provider::ProviderAdapter>,
     endpoint: EndpointConfig,
+    balancer: Arc<LoadBalancer>,
+    endpoint_idx: usize,
     body: Value,
     request_id: String,
     user_id: String,
@@ -939,6 +980,8 @@ async fn handle_messages_streaming(
                 client_ip,
                 endpoint_id: endpoint.id,
                 original_model: orig_model.clone(),
+                balancer: Some(balancer),
+                endpoint_idx,
             };
 
             let body_stream =
@@ -952,6 +995,7 @@ async fn handle_messages_streaming(
                 .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
         }
         Err(e) => {
+            balancer.as_health_aware().record_failure(endpoint_idx);
             let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
             let latency_ms = start.elapsed().as_millis() as u64;
             let (p_tokens, c_tokens, cache_hit) = parse_sse_usage("");
@@ -1077,6 +1121,7 @@ async fn handle_non_streaming(
                     }
                 }
 
+                route.report_success();
                 let mut resp = Json(resp).into_response();
                 resp.headers_mut()
                     .insert("x-cache", HeaderValue::from_static("MISS"));
@@ -1084,13 +1129,16 @@ async fn handle_non_streaming(
             }
             Err(e) if e.kind() == ErrorKind::ConnectFailed => {
                 // Connect failure: try next endpoint without consuming
-                // retry budget or recording on the circuit breaker.
+                // retry budget, but feed the failure into the circuit
+                // breaker so endpoint health reflects live traffic.
+                route.report_failure();
                 if !route.retry_next() {
                     break e.0;
                 }
                 continue;
             }
             Err(e) if is_retryable_error(&e) => {
+                route.report_failure();
                 if retry_count >= max_retries {
                     break e.0;
                 }
@@ -1198,6 +1246,7 @@ async fn handle_messages_non_streaming(
 
         match result {
             Ok(resp) => {
+                route.report_success();
                 let prompt_tokens = resp["usage"]["input_tokens"].as_u64().unwrap_or(0);
                 let completion_tokens = resp["usage"]["output_tokens"].as_u64().unwrap_or(0);
                 let cache_hit = resp["usage"]["cache_read_input_tokens"]
@@ -1255,12 +1304,14 @@ async fn handle_messages_non_streaming(
                 return Ok(Json(resp).into_response());
             }
             Err(e) if e.kind() == ErrorKind::ConnectFailed => {
+                route.report_failure();
                 if !route.retry_next() {
                     break e.0;
                 }
                 continue;
             }
             Err(e) if is_retryable_error(&e) => {
+                route.report_failure();
                 if retry_count >= max_retries {
                     break e.0;
                 }
@@ -1365,14 +1416,19 @@ async fn handle_messages_count_tokens(
             .await;
 
         match result {
-            Ok(resp) => return Ok(resp),
+            Ok(resp) => {
+                route.report_success();
+                return Ok(resp);
+            }
             Err(e) if e.kind() == ErrorKind::ConnectFailed => {
+                route.report_failure();
                 if !route.retry_next() {
                     break e.0;
                 }
                 continue;
             }
             Err(e) if is_retryable_error(&e) => {
+                route.report_failure();
                 if retry_count >= max_retries {
                     break e.0;
                 }
@@ -1411,14 +1467,19 @@ async fn handle_responses_input_tokens(
             .await;
 
         match result {
-            Ok(resp) => return Ok(resp),
+            Ok(resp) => {
+                route.report_success();
+                return Ok(resp);
+            }
             Err(e) if e.kind() == ErrorKind::ConnectFailed => {
+                route.report_failure();
                 if !route.retry_next() {
                     break e.0;
                 }
                 continue;
             }
             Err(e) if is_retryable_error(&e) => {
+                route.report_failure();
                 if retry_count >= max_retries {
                     break e.0;
                 }
@@ -1587,6 +1648,8 @@ pub async fn chat_completions(
                 &state_clone,
                 route.adapter,
                 route.endpoint,
+                route.balancer.clone(),
+                route.endpoint_idx,
                 body,
                 request_id,
                 user.user_id,
@@ -2001,6 +2064,8 @@ pub async fn messages(
                 &state_clone,
                 route.adapter,
                 route.endpoint,
+                route.balancer.clone(),
+                route.endpoint_idx,
                 body,
                 request_id,
                 user.user_id,
@@ -2150,6 +2215,7 @@ async fn relay_to_upstream(
 
         match result {
             Ok(mut resp) => {
+                route.report_success();
                 normalize_reasoning_inner(&mut resp);
                 let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
                 let completion_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0);
@@ -2198,6 +2264,7 @@ async fn relay_to_upstream(
                 return Ok(Json(resp).into_response());
             }
             Err(e) if e.kind() == ErrorKind::ConnectFailed => {
+                route.report_failure();
                 if !route.retry_next() {
                     break e.0;
                 }
