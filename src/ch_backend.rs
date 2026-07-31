@@ -73,6 +73,37 @@ struct UsageEventRow {
     original_model: String,
 }
 
+/// Row type for the usage-detail query — includes the request/response bodies
+/// that the list queries deliberately omit for payload size.
+#[derive(Debug, Clone, serde::Deserialize, Row)]
+struct UsageDetailRow {
+    timestamp: String,
+    request_id: String,
+    user_id: String,
+    user_name: String,
+    channel_id: String,
+    model: String,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+    latency_ms: u64,
+    status_code: u16,
+    success: u8,
+    api_key_name: Option<String>,
+    api_format: String,
+    stream: u8,
+    cache_hit_input_tokens: u64,
+    prompt_price: f64,
+    completion_price: f64,
+    cache_read_price: f64,
+    client_ip: Option<String>,
+    endpoint_id: Option<i64>,
+    original_model: String,
+    request_body: Option<String>,
+    response_body: Option<String>,
+    reasoning_body: Option<String>,
+}
+
 impl From<UsageEventRow> for crate::domain::usage::UsageRecord {
     fn from(row: UsageEventRow) -> Self {
         Self {
@@ -91,6 +122,38 @@ impl From<UsageEventRow> for crate::domain::usage::UsageRecord {
             request_body: None,
             response_body: None,
             reasoning_body: None,
+            api_key_name: row.api_key_name,
+            api_format: row.api_format,
+            stream: row.stream != 0,
+            cache_hit_input_tokens: row.cache_hit_input_tokens,
+            prompt_price: Decimal::try_from(row.prompt_price).unwrap_or(Decimal::ZERO),
+            completion_price: Decimal::try_from(row.completion_price).unwrap_or(Decimal::ZERO),
+            cache_read_price: Decimal::try_from(row.cache_read_price).unwrap_or(Decimal::ZERO),
+            client_ip: row.client_ip,
+            endpoint_id: row.endpoint_id,
+            original_model: row.original_model,
+        }
+    }
+}
+
+impl From<UsageDetailRow> for crate::domain::usage::UsageRecord {
+    fn from(row: UsageDetailRow) -> Self {
+        Self {
+            timestamp: row.timestamp,
+            request_id: row.request_id,
+            user_id: row.user_id,
+            user_name: row.user_name,
+            channel_id: row.channel_id,
+            model: row.model,
+            prompt_tokens: row.prompt_tokens,
+            completion_tokens: row.completion_tokens,
+            total_tokens: row.total_tokens,
+            latency_ms: row.latency_ms,
+            status_code: row.status_code,
+            success: row.success != 0,
+            request_body: row.request_body,
+            response_body: row.response_body,
+            reasoning_body: row.reasoning_body,
             api_key_name: row.api_key_name,
             api_format: row.api_format,
             stream: row.stream != 0,
@@ -865,13 +928,14 @@ impl ClickHouseBackend {
                  toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, \
-                 cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, original_model \
+                 cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, original_model, \
+                 request_body, response_body, reasoning_body \
                  FROM usage_events \
                  WHERE request_id = ? \
                  ORDER BY timestamp DESC LIMIT 1",
             )
             .bind(request_id)
-            .fetch_optional::<UsageEventRow>()
+            .fetch_optional::<UsageDetailRow>()
             .await
             .map_err(|e| format!("CH get_usage_detail: {e}"))?;
         Ok(row.map(Into::into))
