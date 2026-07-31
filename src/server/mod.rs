@@ -5,6 +5,7 @@ pub mod ws;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use axum::extract::DefaultBodyLimit;
 use axum::http::HeaderValue;
 use axum::Router;
 use tokio::sync::RwLock as AsyncRwLock;
@@ -152,6 +153,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             tower_http::services::ServeDir::new("web")
                 .fallback(tower_http::services::ServeFile::new("web/index.html")),
         )
+        // Remove the request body limit: LLM requests carry base64 images and
+        // long conversation context. Axum's default is 2MB (via Json extractor),
+        // which Claude Code hits with a few screenshots → 413 "request too large".
+        .layer(DefaultBodyLimit::disable())
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())
         .layer(cors)
