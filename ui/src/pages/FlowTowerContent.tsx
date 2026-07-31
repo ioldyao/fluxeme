@@ -35,8 +35,32 @@ function fmtHour(iso: string) {
 }
 
 type Health = 'good' | 'warn' | 'bad' | 'none';
-const HEALTH_BAD_RATE = 0.95; // success rate below this ⇒ bad
-const HEALTH_WARN_RATE = 0.99; // success rate below this ⇒ warn (degraded)
+
+/**
+ * Real-time health from the circuit breaker state (fed by live traffic and
+ * the 60s auto-probe task), NOT from historical probe records or 24h
+ * aggregates:
+ * - all enabled endpoints available  → good
+ * - some enabled endpoints down      → warn (degraded)
+ * - no enabled endpoint available    → bad (unavailable)
+ * - channel has no enabled endpoint  → none
+ */
+function channelHealth(ch: RoutingHealthChannel): Health {
+  const enabled = ch.endpoints.filter((e) => e.enabled);
+  if (enabled.length === 0) return 'none';
+  const available = enabled.filter((e) => e.available).length;
+  if (available === enabled.length) return 'good';
+  if (available > 0) return 'warn';
+  return 'bad';
+}
+
+function modelHealth(channels: RoutingHealthChannel[]): Health {
+  const states = channels.map(channelHealth);
+  if (states.length === 0) return 'none';
+  if (states.some((s) => s === 'bad')) return 'bad';
+  if (states.some((s) => s === 'warn')) return 'warn';
+  return 'good';
+}
 
 interface ModelRow {
   id: string;
@@ -56,16 +80,6 @@ interface ModelRow {
   enabledEps: number;
   brokenChannels: number;
   channels: RoutingHealthChannel[];
-}
-
-function healthOf(probeRows: ProbeResult[], successRate: number, hasTraffic: boolean): Health {
-  if (probeRows.length > 0) {
-    return probeRows.some((p) => !p.success) ? 'bad' : 'good';
-  }
-  if (!hasTraffic) return 'none';
-  if (successRate < HEALTH_BAD_RATE) return 'bad';
-  if (successRate < HEALTH_WARN_RATE) return 'warn';
-  return 'good';
 }
 
 /**
@@ -95,7 +109,6 @@ function buildRows(
   models: Model[] | undefined,
   rh: RoutingHealthResponse | undefined,
   ma: ModelActivity[] | undefined,
-  probesByModel: Map<string, ProbeResult[]>,
   channelName: Map<string, string>,
 ): ModelRow[] {
   if (!models) return [];
@@ -144,7 +157,7 @@ function buildRows(
       avgLatency: totalReq > 0 ? wLat / totalReq : 0,
       p95,
       cacheHitPct,
-      health: healthOf(probesByModel.get(m.id) ?? [], successRate, totalReq > 0),
+      health: modelHealth(rhs),
       availableEps: avail,
       enabledEps: enabled,
       brokenChannels: broken,
@@ -889,8 +902,8 @@ export default function FlowTowerContent() {
   }, [probeByName]);
 
   const rows = useMemo(
-    () => buildRows(models, rh, ma, effectiveProbesByModel, channelName),
-    [models, rh, ma, effectiveProbesByModel, channelName],
+    () => buildRows(models, rh, ma, channelName),
+    [models, rh, ma, channelName],
   );
 
   const firstWithTraffic = rows.find((r) => r.requests > 0)?.name ?? rows[0]?.name ?? null;

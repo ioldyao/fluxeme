@@ -118,12 +118,14 @@ export interface RoutingHealthResponse {
   };
 }
 
-/** Per-model × channel 24h health snapshot from GET /api/health/routing. */
+/** Per-model × channel 24h health snapshot from GET /api/health/routing.
+ *  Polled every 10s — endpoint availability reflects the live circuit
+ *  breaker, which is now fed by real traffic and the 60s auto-probe task. */
 export function useRoutingHealth(opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['routing', 'health'],
     queryFn: () => api<RoutingHealthResponse>('/health/routing'),
-    refetchInterval: 30_000,
+    refetchInterval: 10_000,
     enabled: opts?.enabled !== false,
   });
 }

@@ -414,6 +414,48 @@ async fn main() {
         routing.clone(),
     ));
 
+    // Automatic model health probes: every 60s probe all channel endpoints
+    // of every model, feeding circuit breakers and probe_results so the
+    // flow-control monitor shows real-time health without manual checks.
+    // Only channels already in the routing cache are probed (avoids writing
+    // synthetic "Route not available" failure rows for stale cache entries).
+    {
+        let db = db.clone();
+        let health_probe = health_probe.clone();
+        let routing = routing.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                let models = match db.list_models().await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        tracing::warn!("Auto probe: failed to list models: {}", e.0);
+                        continue;
+                    }
+                };
+                for model in &models {
+                    let channel_ids: Vec<String> = model
+                        .channels
+                        .iter()
+                        .filter(|binding| routing.get_route(&binding.channel_id).is_some())
+                        .map(|binding| binding.channel_id.clone())
+                        .collect();
+                    if channel_ids.is_empty() {
+                        continue;
+                    }
+                    if let Err(e) = health_probe
+                        .probe_model(&model.id, &channel_ids, false)
+                        .await
+                    {
+                        tracing::warn!(model = %model.name, "Auto probe failed: {}", e);
+                    }
+                }
+            }
+        });
+    }
+
     let state = Arc::new(AppState {
         config,
         auth,
