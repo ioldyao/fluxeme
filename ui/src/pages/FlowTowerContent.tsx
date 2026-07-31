@@ -894,6 +894,26 @@ function EndpointTimeline({
 
   return (
     <div className="border-t border-border/60 px-4 py-3">
+      <style>{`
+        .ep-cell { position: relative; }
+        .ep-cell:hover { outline: 2px solid #fff; }
+        .ep-cell:hover::after {
+          content: attr(data-tip);
+          position: absolute;
+          bottom: 28px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: hsl(var(--popover));
+          border: 1px solid hsl(var(--border));
+          padding: 6px 8px;
+          border-radius: 6px;
+          font-size: 11px;
+          white-space: pre;
+          line-height: 1.5;
+          z-index: 30;
+          pointer-events: none;
+        }
+      `}</style>
       <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">
         {t('monitor.endpointTimeline')}
       </div>
@@ -912,35 +932,16 @@ function EndpointTimeline({
                 const ago = Math.floor((nowAligned - cellTs) / 60000);
                 const tooltipLines = [
                   `${ago}m ago · ${h.fail > 0 ? 'FAIL' : h.ok > 0 ? 'OK' : 'NO DATA'}`,
-                  h.n > 0 ? `latency ${Math.round(h.times.length > 0 ? Math.random() * 500 + 200 : 0)}ms` : '',
+                  h.n > 0 ? `probes ${h.n} · ${h.ok} ok / ${h.fail} fail` : '',
                 ]
                   .filter(Boolean)
                   .join('\n');
                 return (
                   <span
                     key={i}
-                    className={`inline-block w-[22px] h-[22px] rounded-sm relative ${cls}`}
-                    data-tooltip={tooltipLines}
-                  >
-                    <style>{`
-                      [data-tooltip]:hover { outline: 2px solid white; }
-                      [data-tooltip]:hover::after {
-                        content: attr(data-tooltip);
-                        position: absolute;
-                        bottom: 28px;
-                        left: 50%;
-                        transform: translateX(-50%);
-                        background: hsl(var(--popover));
-                        border: 1px solid hsl(var(--border));
-                        padding: 6px 8px;
-                        border-radius: 6px;
-                        font-size: 11px;
-                        white-space: nowrap;
-                        z-index: 30;
-                        pointer-events: none;
-                      }
-                    `}</style>
-                  </span>
+                    className={`ep-cell inline-block w-[22px] h-[22px] rounded-sm ${cls}`}
+                    data-tip={tooltipLines}
+                  />
                 );
               })}
             </div>
