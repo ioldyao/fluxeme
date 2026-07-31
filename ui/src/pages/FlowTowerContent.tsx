@@ -173,6 +173,10 @@ export interface TimelineEntry {
   model: string;
   channel: string;
   endpointId?: number | null;
+  /** Endpoint URL at request time — stable across endpoint re-creation,
+   *  so the timeline can still match requests to current endpoints even
+   *  when the endpoint row (and its DB id) has been re-created. */
+  endpointUrl?: string;
   acceptedTs: number;
   completedTs?: number;
   latency?: number;
@@ -202,7 +206,7 @@ function useLiveTotal() {
   // a page refresh — the endpoint status grid shows recent real traffic.
   // Live WS events then append on top (newer requests win the display).
   useEffect(() => {
-    api<{ paths: { timestamp: string; model: string; channel_id: string; endpoint_id: number | null; latency_ms: number; success: boolean }[] }>(
+    api<{ paths: { timestamp: string; model: string; channel_id: string; endpoint_id: number | null; endpoint_url: string | null; latency_ms: number; success: boolean }[] }>(
       '/health/recent-paths',
     )
       .then((r) => {
@@ -217,6 +221,7 @@ function useLiveTotal() {
               model: p.model,
               channel: p.channel_id,
               endpointId: p.endpoint_id ?? null,
+              endpointUrl: p.endpoint_url ?? undefined,
               acceptedTs: tsNum - p.latency_ms,
               completedTs: tsNum,
               latency: p.latency_ms,
@@ -831,14 +836,25 @@ function EndpointTimeline({
     ? Math.min(...timeline.map((e) => e.acceptedTs))
     : now - 60_000;
 
-  const cellState = (endpointId: number | null, i: number): 'good' | 'bad' | 'inflight' | 'empty' => {
+  const cellState = (
+    ep: { channelId: string; endpointId: number | null; url: string },
+    i: number,
+  ): 'good' | 'bad' | 'inflight' | 'empty' => {
     const start = windowStart + i * bucketMs;
     const end = start + bucketMs;
     let bad = false;
     let inflight = false;
     let hit = false;
     for (const e of timeline) {
-      if (e.endpointId !== endpointId) continue;
+      if (e.channel !== ep.channelId) continue;
+      // Match by endpoint URL when available (stable across endpoint
+      // re-creation); fall back to the recorded endpoint id.
+      if (ep.url) {
+        if (e.endpointUrl && e.endpointUrl !== ep.url) continue;
+        if (!e.endpointUrl && e.endpointId !== ep.endpointId) continue;
+      } else if (e.endpointId !== ep.endpointId) {
+        continue;
+      }
       const eEnd = e.completedTs ?? end;
       if (eEnd < start || e.acceptedTs > end) continue;
       if (e.success === false) bad = true;
@@ -889,7 +905,7 @@ function EndpointTimeline({
                 {ep.url ? `${ep.channelName} ${ep.url}` : ep.channelName}
               </span>
               {Array.from({ length: EP_TIMELINE_COLS }, (_, i) => {
-                const s = cellState(ep.endpointId, i);
+                const s = cellState(ep, i);
                 return (
                   <span
                     key={i}

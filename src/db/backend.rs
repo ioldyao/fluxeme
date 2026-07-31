@@ -10,7 +10,9 @@ use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
 use chrono::{DateTime, Utc};
 
-use super::{AnnouncementRow, DbError, FunnelStats, ProbeResultRow, RechargeKeyRow, WalletTransactionRow};
+use super::{
+    AnnouncementRow, DbError, FunnelStats, ProbeResultRow, RechargeKeyRow, WalletTransactionRow,
+};
 
 /// PostgreSQL persistence contract used by application services.
 ///
@@ -320,7 +322,9 @@ pub trait DbBackend: Send + Sync {
     ) -> Result<Vec<super::RoutingHistoryBucket>, DbError>;
 
     // ── Casbin Policies ─────────────────────────────────────────────────
-    async fn casbin_list_policies(&self) -> Result<Vec<(String, String, String, String, String, String, String)>, DbError>;
+    async fn casbin_list_policies(
+        &self,
+    ) -> Result<Vec<(String, String, String, String, String, String, String)>, DbError>;
     async fn casbin_add_policy(
         &self,
         ptype: &str,

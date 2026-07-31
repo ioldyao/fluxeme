@@ -9,9 +9,7 @@ use crate::server::AppState;
 
 /// Liveness probe — returns 200 as long as the process is alive.
 /// Load balancers use this to decide whether to keep sending traffic.
-pub async fn liveness(
-    State(state): State<Arc<AppState>>,
-) -> (StatusCode, Json<Value>) {
+pub async fn liveness(State(state): State<Arc<AppState>>) -> (StatusCode, Json<Value>) {
     (
         StatusCode::OK,
         Json(json!({
@@ -25,9 +23,7 @@ pub async fn liveness(
 /// Readiness probe — checks critical dependencies (PostgreSQL, Redis).
 /// Load balancers use this to decide whether to route traffic to this instance.
 /// Returns 503 when a critical dependency is unreachable so the LB drains the instance.
-pub async fn readiness(
-    State(state): State<Arc<AppState>>,
-) -> (StatusCode, Json<Value>) {
+pub async fn readiness(State(state): State<Arc<AppState>>) -> (StatusCode, Json<Value>) {
     let mut ok = true;
     let mut checks = serde_json::Map::new();
 
@@ -38,7 +34,10 @@ pub async fn readiness(
         }
         Err(e) => {
             ok = false;
-            checks.insert("postgres".to_string(), json!({ "status": "error", "error": e.to_string() }));
+            checks.insert(
+                "postgres".to_string(),
+                json!({ "status": "error", "error": e.to_string() }),
+            );
         }
     }
 
@@ -50,7 +49,10 @@ pub async fn readiness(
             }
             Err(e) => {
                 ok = false;
-                checks.insert("redis".to_string(), json!({ "status": "error", "error": e }));
+                checks.insert(
+                    "redis".to_string(),
+                    json!({ "status": "error", "error": e }),
+                );
             }
         }
     } else {

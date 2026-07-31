@@ -36,11 +36,7 @@ pub(crate) async fn list_policies(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:policies").await?;
 
-    let rows = state
-        .db
-        .casbin_list_policies()
-        .await
-        .map_err(db_err)?;
+    let rows = state.db.casbin_list_policies().await.map_err(db_err)?;
     let policies: Vec<PolicyRow> = rows
         .into_iter()
         .map(|(_ptype, v0, v1, _v2, _v3, _v4, _v5)| PolicyRow {

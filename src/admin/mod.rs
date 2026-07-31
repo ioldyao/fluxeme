@@ -12,9 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::authz::AuthzModule;
 use crate::db::Database;
-use crate::server::AppState;
 use crate::domain::user::{SessionInfo, USER_STATUS_ACTIVE};
 use crate::ratelimit::RateLimiter;
+use crate::server::AppState;
 
 const SESSION_TTL_SECS: i64 = 24 * 3600;
 pub(crate) const SESSION_COOKIE_NAME: &str = "session_token";
@@ -758,8 +758,7 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         )
         .route(
             "/api/settings/probe-interval",
-            axum::routing::get(settings::get_probe_interval)
-                .put(settings::set_probe_interval),
+            axum::routing::get(settings::get_probe_interval).put(settings::set_probe_interval),
         )
         .route(
             "/api/gateway/config",

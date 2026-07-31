@@ -138,27 +138,43 @@ pub(crate) async fn recent_request_paths(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:dashboard").await?;
 
-    let records = if let Some(ref ch) = state.ch {
+    let paths: Vec<serde_json::Value> = if let Some(ref ch) = state.ch {
         ch.query_recent_request_paths(15)
             .await
             .map_err(AdminError::internal)?
-    } else {
-        state.db.recent_request_paths(15).await.map_err(db_err)?
-    };
-
-    let paths: Vec<serde_json::Value> = records
-        .into_iter()
-        .map(|(ts, m, ch, eid, lat, suc)| {
-            serde_json::json!({
-                "timestamp": ts,
-                "model": m,
-                "channel_id": ch,
-                "endpoint_id": eid,
-                "latency_ms": lat,
-                "success": suc,
+            .into_iter()
+            .map(|(ts, m, ch, eid, eurl, lat, suc)| {
+                serde_json::json!({
+                    "timestamp": ts,
+                    "model": m,
+                    "channel_id": ch,
+                    "endpoint_id": eid,
+                    "endpoint_url": eurl,
+                    "latency_ms": lat,
+                    "success": suc,
+                })
             })
-        })
-        .collect();
+            .collect()
+    } else {
+        state
+            .db
+            .recent_request_paths(15)
+            .await
+            .map_err(db_err)?
+            .into_iter()
+            .map(|(ts, m, ch, eid, lat, suc)| {
+                serde_json::json!({
+                    "timestamp": ts,
+                    "model": m,
+                    "channel_id": ch,
+                    "endpoint_id": eid,
+                    "endpoint_url": null,
+                    "latency_ms": lat,
+                    "success": suc,
+                })
+            })
+            .collect()
+    };
 
     Ok(Json(serde_json::json!({ "paths": paths })))
 }

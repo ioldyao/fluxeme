@@ -152,7 +152,8 @@ impl VllmAdapter {
         }
         headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        self.send_json(endpoint, "/v1/messages", body, headers).await
+        self.send_json(endpoint, "/v1/messages", body, headers)
+            .await
     }
 }
 

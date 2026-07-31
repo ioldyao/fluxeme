@@ -595,6 +595,7 @@ pub async fn start_obs_consumer(
                 cost_amount,
                 client_ip: r.client_ip.clone(),
                 endpoint_id: r.endpoint_id,
+                endpoint_url: r.endpoint_url.clone(),
                 request_body: r.request_body.clone(),
                 response_body: r.response_body.clone(),
                 reasoning_body: r.reasoning_body.clone(),

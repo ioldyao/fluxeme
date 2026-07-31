@@ -41,6 +41,13 @@ pub struct UsageRecord {
     pub client_ip: Option<String>,
     #[serde(default)]
     pub endpoint_id: Option<i64>,
+    /// Endpoint URL at request time. Stable across endpoint re-creation
+    /// (unlike endpoint_id, which changes when an endpoint row is deleted
+    /// and re-added) — used by the flow-control timeline to match a request
+    /// to its endpoint. Captured here because old endpoint rows may be gone
+    /// by the time the observability consumer runs.
+    #[serde(default)]
+    pub endpoint_url: Option<String>,
     /// Original model name before routing rule rewrites.
     /// Empty string if no rewrite occurred.
     #[serde(default)]
