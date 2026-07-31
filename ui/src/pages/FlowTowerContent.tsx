@@ -786,13 +786,13 @@ const EP_BADGE: Record<'good' | 'bad' | 'none', string> = {
 };
 
 // ── endpoint state timeline grid ────────────────────────────────────
-// One row per endpoint, columns are time buckets.
-// Cell width = probe-interval seconds (read from gateway settings).
-// Cell color: green = probe success, red = failure, muted = no probe.
-// Hover a cell to see timestamp + status.
-
+// One row per endpoint with 18 time-bucket cells. Cell width = probe
+// interval from gateway settings. Hover a cell for timestamp + status.
+// The probe-poll window is a fixed 30 minutes (stable, not tied to
+// interval) so the grid doesn't jitter when the settings load later.
 
 const EP_TIMELINE_COLS = 18;
+const EP_TIMELINE_MINUTES = 30;
 
 /** Read the configured probe interval from settings. */
 function useProbeInterval(): number {
@@ -805,13 +805,13 @@ function useProbeInterval(): number {
   return intervalSecs;
 }
 
-/** Poll recent raw probe results. */
-function useRecentProbes(minutes: number) {
+/** Poll recent raw probe results (fixed window, not tied to interval). */
+function useRecentProbes() {
   const [probes, setProbes] = useState<ProbeResult[]>([]);
   useEffect(() => {
     let active = true;
     const load = () => {
-      api<ProbeResult[]>(`/probe-results/recent?minutes=${minutes}`)
+      api<ProbeResult[]>(`/probe-results/recent?minutes=${EP_TIMELINE_MINUTES}`)
         .then((r) => {
           if (active) setProbes(r ?? []);
         })
@@ -823,7 +823,7 @@ function useRecentProbes(minutes: number) {
       active = false;
       clearInterval(t);
     };
-  }, [minutes]);
+  }, []);
   return probes;
 }
 
@@ -836,7 +836,7 @@ function EndpointTimeline({
 }) {
   const { t } = useTranslation();
   const intervalSecs = useProbeInterval();
-  const probes = useRecentProbes(EP_TIMELINE_COLS * Math.ceil(intervalSecs / 60) + 5);
+  const probes = useRecentProbes();
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
 
   const endpoints = useMemo(() => {
@@ -857,11 +857,13 @@ function EndpointTimeline({
     return list;
   }, [row, endpointUrl, channelName]);
 
-  // Every cell = intervalSecs seconds. Window = cols × intervalSecs.
-  const now = Date.now();
-  const bucketMs = intervalSecs * 1000;
-  const windowMs = EP_TIMELINE_COLS * bucketMs;
-  const windowStart = now - windowMs;
+  // Cell width = probe interval from settings. The timeline anchor is
+  // aligned to the bucketMs boundary so grid cells are stable across
+  // re-renders — otherwise changing now shifts all cell boundaries and
+  // makes probe data hop between cells on every 5s poll.
+  const bucketMs = Math.max(1000, intervalSecs * 1000);
+  const nowAligned = Math.floor(Date.now() / bucketMs) * bucketMs;
+  const windowStart = nowAligned - EP_TIMELINE_COLS * bucketMs;
 
   const hitsForCell = useCallback(
     (ep: { channelId: string; url: string }, i: number): { n: number; ok: number; fail: number; times: string[] } => {
@@ -916,18 +918,17 @@ function EndpointTimeline({
                   <span
                     key={i}
                     className={`h-5 rounded-sm relative ${cellClass(h.ok, h.fail)}`}
-                    onMouseEnter={(e) => {
-                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                      const start = new Date(windowStart + i * bucketMs);
-                      const end = new Date(windowStart + (i + 1) * bucketMs);
+                    onMouseMove={(e) => {
+                      const s = new Date(windowStart + i * bucketMs);
+                      const en = new Date(windowStart + (i + 1) * bucketMs);
                       const okLine = h.ok > 0 && h.fail === 0 ? `✅ ${h.ok}次成功` : '';
                       const failLine = h.fail > 0 ? `❌ ${h.fail}次失败` : '';
                       const emptyLine = h.n === 0 ? '— 无探测' : '';
                       setTooltip({
-                        x: rect.left + rect.width / 2,
-                        y: rect.top - 6,
+                        x: e.clientX,
+                        y: e.clientY - 8,
                         text: [
-                          `${start.toLocaleTimeString()} ~ ${end.toLocaleTimeString()}`,
+                          `${s.toLocaleTimeString()} ~ ${en.toLocaleTimeString()}`,
                           okLine,
                           failLine,
                           emptyLine,
