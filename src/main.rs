@@ -365,6 +365,15 @@ async fn main() {
         routing.clone(),
     ));
 
+    // Unique instance ID for multi-instance ops (logs, health probes)
+    let instance_id = std::env::var("INSTANCE_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let raw = uuid::Uuid::new_v4().simple().to_string();
+            raw[..12].to_string()
+        });
+
     let state = Arc::new(AppState {
         config,
         auth,
@@ -384,11 +393,12 @@ async fn main() {
         health_probe,
         event_bus: event_bus.clone(),
         ch,
+        instance_id: instance_id.clone(),
     });
 
     let app = build_router(state);
 
-    tracing::info!("Fluxeme AI Gateway starting on {}", addr);
+    tracing::info!(instance_id = %instance_id, "Fluxeme AI Gateway starting on {}", addr);
 
     use std::net::{IpAddr, SocketAddr};
     use tokio::net::TcpSocket;
@@ -405,14 +415,43 @@ async fn main() {
     socket.bind(addr).expect("Failed to bind address");
     let listener = socket.listen(32768).expect("Failed to listen");
 
+    // Graceful shutdown: on SIGTERM/SIGINT, stop accepting new connections,
+    // drain in-flight requests, then exit. Required for rolling deploys.
+    async fn shutdown_signal() {
+        let ctrl_c = async {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to install Ctrl+C handler");
+        };
+
+        #[cfg(unix)]
+        let terminate = async {
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to install SIGTERM handler")
+                .recv()
+                .await;
+        };
+
+        #[cfg(not(unix))]
+        let terminate = std::future::pending::<()>();
+
+        tokio::select! {
+            _ = ctrl_c => { tracing::info!("SIGINT received, draining connections..."); }
+            _ = terminate => { tracing::info!("SIGTERM received, draining connections..."); }
+        }
+    }
+
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
+    .with_graceful_shutdown(shutdown_signal())
     .await
     .expect("Server error");
 
     for h in usage_handles {
         h.abort();
     }
+
+    tracing::info!(instance_id = %instance_id, "Fluxeme AI Gateway stopped");
 }
