@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { api } from '@/api/client';
 import { useModels } from '@/api/models';
 import { useChannels } from '@/api/channels';
 import { useProbeResults } from '@/api/probe';
@@ -193,6 +194,40 @@ function useLiveTotal() {
           .filter(([k]) => k.split('>').length === 1)
           .reduce((s, [, v]) => s + v, 0);
         setTotalCount(total);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Seed the state timeline from ClickHouse so the grid isn't empty after
+  // a page refresh — the endpoint status grid shows recent real traffic.
+  // Live WS events then append on top (newer requests win the display).
+  useEffect(() => {
+    api<{ paths: { timestamp: string; model: string; channel_id: string; endpoint_id: number | null; latency_ms: number; success: boolean }[] }>(
+      '/health/recent-paths',
+    )
+      .then((r) => {
+        const seeded: TimelineEntry[] = (r.paths ?? [])
+          .filter((p) => p && typeof p.model === 'string' && typeof p.channel_id === 'string')
+          .reverse() // CH returns newest-first; store oldest-first so display stays newest-first
+          .map((p, i) => {
+            const ts = Date.parse(p.timestamp);
+            const tsNum = Number.isNaN(ts) ? Date.now() : ts;
+            return {
+              id: `seed-${i}-${p.endpoint_id ?? 'n'}`,
+              model: p.model,
+              channel: p.channel_id,
+              endpointId: p.endpoint_id ?? null,
+              acceptedTs: tsNum - p.latency_ms,
+              completedTs: tsNum,
+              latency: p.latency_ms,
+              success: p.success,
+            };
+          });
+        if (seeded.length === 0) return;
+        setTimeline((prev) => {
+          const merged = [...seeded, ...prev];
+          return merged.length > TIMELINE_CAP ? merged.slice(merged.length - TIMELINE_CAP) : merged;
+        });
       })
       .catch(() => {});
   }, []);
