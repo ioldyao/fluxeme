@@ -781,13 +781,12 @@ const EP_BADGE: Record<'good' | 'bad' | 'none', string> = {
 };
 
 // ── endpoint state timeline grid ────────────────────────────────────
-// One row per endpoint, columns are time buckets over the last 60s.
-// Cell color = endpoint state in that bucket (request-driven):
-// green = requests succeeded, red = failed, blue pulsing = in-flight,
-// muted = no traffic.
+// One row per endpoint, columns are time buckets spanning the requests
+// currently in the buffer (CH-seeded history + live WS). Cell color =
+// endpoint state in that bucket: green = succeeded, red = failed,
+// blue pulsing = in-flight, muted = no traffic.
 
 const EP_TIMELINE_COLS = 6;
-const EP_TIMELINE_WINDOW_MS = 60_000;
 
 function EndpointTimeline({
   row, timeline, endpointUrl,
@@ -817,8 +816,20 @@ function EndpointTimeline({
   }, [row, endpointUrl]);
 
   const now = Date.now();
-  const bucketMs = EP_TIMELINE_WINDOW_MS / EP_TIMELINE_COLS;
-  const windowStart = now - EP_TIMELINE_WINDOW_MS;
+  // Dynamic window covering the requests actually in the buffer, so
+  // CH-seeded history and live requests are both visible (a fixed window
+  // left older-but-seeded traffic outside it, showing an all-grey grid).
+  const span = timeline.length
+    ? Math.max(
+        Math.max(...timeline.map((e) => e.completedTs ?? now)) -
+          Math.min(...timeline.map((e) => e.acceptedTs)),
+        1000,
+      )
+    : 60_000;
+  const bucketMs = span / EP_TIMELINE_COLS;
+  const windowStart = timeline.length
+    ? Math.min(...timeline.map((e) => e.acceptedTs))
+    : now - 60_000;
 
   const cellState = (endpointId: number | null, i: number): 'good' | 'bad' | 'inflight' | 'empty' => {
     const start = windowStart + i * bucketMs;
@@ -851,14 +862,16 @@ function EndpointTimeline({
         <div className="min-w-[380px]">
           <div
             className="grid items-center gap-1 mb-1"
-            style={{ gridTemplateColumns: `minmax(110px,1fr) repeat(${EP_TIMELINE_COLS}, minmax(0,1fr))` }}
+            style={{ gridTemplateColumns: `minmax(150px,1fr) repeat(${EP_TIMELINE_COLS}, minmax(0,1fr))` }}
           >
             <span />
             {Array.from({ length: EP_TIMELINE_COLS }, (_, i) => {
-              const s = new Date(windowStart + i * bucketMs);
+              // relative time axis: how many seconds ago this bucket ends
+              const end = windowStart + (i + 1) * bucketMs;
+              const ago = Math.round((now - end) / 1000);
               return (
                 <span key={i} className="text-center text-[9px] text-muted-foreground tabular-nums">
-                  {String(s.getSeconds()).padStart(2, '0')}
+                  {ago <= 0 ? 'now' : `-${ago}s`}
                 </span>
               );
             })}
@@ -867,13 +880,13 @@ function EndpointTimeline({
             <div
               key={`${ep.channelId}-${ep.endpointId ?? ri}`}
               className="grid items-center gap-1 mb-1"
-              style={{ gridTemplateColumns: `minmax(110px,1fr) repeat(${EP_TIMELINE_COLS}, minmax(0,1fr))` }}
+              style={{ gridTemplateColumns: `minmax(150px,1fr) repeat(${EP_TIMELINE_COLS}, minmax(0,1fr))` }}
             >
               <span
                 className="truncate text-[10px] text-muted-foreground pr-1"
                 title={`${ep.channelName} ${ep.url}`}
               >
-                {ep.channelName}
+                {ep.url ? `${ep.channelName} ${ep.url}` : ep.channelName}
               </span>
               {Array.from({ length: EP_TIMELINE_COLS }, (_, i) => {
                 const s = cellState(ep.endpointId, i);
