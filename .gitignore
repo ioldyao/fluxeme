@@ -22,3 +22,4 @@ data/
 outputs/
 test/
 web/assets/
+.claude/commands/

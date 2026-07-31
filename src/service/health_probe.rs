@@ -188,28 +188,26 @@ impl HealthProbeService {
 
         let rows: Vec<ProbeResultRow> = ordered_results.into_iter().map(|o| o.row).collect();
 
-        // Probe results are observability data → ClickHouse. Falls back to
-        // PostgreSQL only when CH is not configured.
-        if let Some(ref ch) = self.ch {
-            ch.insert_probe_results(&rows)
-                .await
-                .map_err(|e| format!("CH probe write failed: {e}"))?;
-        } else {
-            for row in &rows {
-                self.db.insert_probe_result(row).await.map_err(|e| e.0)?;
-            }
-        }
+        // Probe results are observability data → ClickHouse only. No PG
+        // fallback: observability and business storage are fully decoupled.
+        let ch = self
+            .ch
+            .as_ref()
+            .ok_or_else(|| "ClickHouse not configured — probe results require CH".to_string())?;
+        ch.insert_probe_results(&rows)
+            .await
+            .map_err(|e| format!("CH probe write failed: {e}"))?;
 
         Ok(rows)
     }
 
     /// Get the most recent probe result for each channel endpoint.
     pub async fn all_latest_probes(&self) -> Result<Vec<ProbeResultRow>, String> {
-        if let Some(ref ch) = self.ch {
-            ch.all_latest_probe_results().await
-        } else {
-            self.db.all_latest_probe_results().await.map_err(|e| e.0)
-        }
+        let ch = self
+            .ch
+            .as_ref()
+            .ok_or_else(|| "ClickHouse not configured — probe results require CH".to_string())?;
+        ch.all_latest_probe_results().await
     }
 
     async fn run_probe_job(job: ProbeJob) -> OrderedProbeRow {
