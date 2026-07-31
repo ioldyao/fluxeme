@@ -484,7 +484,9 @@ fn parse_sse_usage(data: &str) -> (u64, u64, u64) {
                     }
                 }
             }
-            // Anthropic message_delta: {type: "message_delta", usage: {output_tokens}}
+            // Anthropic message_delta: {type: "message_delta", usage: {output_tokens, ...}}
+            // (converted anthropic_compat streams also carry
+            //  cache_read_input_tokens here — message_start has none)
             if val.get("type").and_then(|t| t.as_str()) == Some("message_delta") {
                 if let Some(usage) = val.get("usage") {
                     if let Some(p) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
@@ -495,6 +497,14 @@ fn parse_sse_usage(data: &str) -> (u64, u64, u64) {
                     if let Some(c) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
                         if c > c_tokens {
                             c_tokens = c;
+                        }
+                    }
+                    if let Some(cached) = usage
+                        .get("cache_read_input_tokens")
+                        .and_then(|v| v.as_u64())
+                    {
+                        if cached > cache_hit {
+                            cache_hit = cached;
                         }
                     }
                 }
