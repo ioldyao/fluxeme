@@ -1,17 +1,19 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { useDashboard, useDashboardAggregations } from '@/api/dashboard';
-import { useUsageFunnel, useUsageAggregate } from '@/api/usage';
+import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Search } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { useModels } from '@/api/models';
 import { useChannels } from '@/api/channels';
-import { fetchRoutingFlowSnapshot } from '@/api/routing';
-import type { Channel, Model } from '@/types';
+import { useProbeResults } from '@/api/probe';
+import { useUsageFunnel, useUsageAggregate, useModelActivity } from '@/api/usage';
+import { useDashboardAggregations } from '@/api/dashboard';
+import { fetchRoutingFlowSnapshot, useRoutingHealth } from '@/api/routing';
+import type { Model, ModelActivity, ProbeResult } from '@/types';
+import type { RoutingHealthChannel, RoutingHealthModel, RoutingHealthResponse } from '@/api/routing';
 
-const keyFor = (...parts: (string | number)[]) => parts.join('>');
+// ── formatters ─────────────────────────────────────────────────────
 
-function fmtLat(ms: number) {
-  if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
-  return `${ms.toFixed(0)}ms`;
-}
 function fmtCount(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
@@ -22,86 +24,178 @@ function fmtTokens(n: number) {
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
 }
-
-interface TopoChannel { id: string; name: string }
-interface TopoModel { model: string; pattern: string; channels: TopoChannel[] }
-interface RoutingFlowEvent { model?: string; channel_id?: string }
-
-function buildTopology(models: Model[], channels: Channel[]): TopoModel[] {
-  const channelMap = new Map(channels.map(c => [c.id, c]));
-  const merged = new Map<string, TopoModel>();
-  for (const m of models) {
-    const key = m.name;
-    let entry = merged.get(key);
-    if (!entry) { entry = { model: m.name, pattern: m.name, channels: [] }; merged.set(key, entry); }
-    for (const mc of m.channels) {
-      const ch = channelMap.get(mc.channel_id);
-      if (!ch || entry.channels.some(ec => ec.id === ch.id)) continue;
-      entry.channels.push({ id: ch.id, name: ch.name || ch.id });
-    }
-  }
-  return [...merged.values()];
+function fmtLat(ms: number) {
+  if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
+  return `${Math.round(ms)}ms`;
+}
+function fmtHour(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${String(d.getHours()).padStart(2, '0')}:00`;
 }
 
-function useLiveCounts(topology: TopoModel[]) {
-  const [counts, setCounts] = useState<Record<string, number>>({});
+type Health = 'good' | 'warn' | 'bad' | 'none';
+const HEALTH_BAD_RATE = 0.95; // success rate below this ⇒ bad
+const HEALTH_WARN_RATE = 0.99; // success rate below this ⇒ warn (degraded)
+
+interface ModelRow {
+  id: string;
+  name: string;
+  pattern: string;
+  published: boolean;
+  contextLength: number | null;
+  upstreamModel: string | null;
+  channelNames: string;
+  requests: number; // 24h
+  successRate: number; // 0..1, weighted by requests
+  avgLatency: number;
+  p95: number;
+  cacheHitPct: number | null;
+  health: Health;
+  availableEps: number;
+  enabledEps: number;
+  brokenChannels: number;
+  channels: RoutingHealthChannel[];
+}
+
+function healthOf(probeRows: ProbeResult[], successRate: number, hasTraffic: boolean): Health {
+  if (probeRows.length > 0) {
+    return probeRows.some((p) => !p.success) ? 'bad' : 'good';
+  }
+  if (!hasTraffic) return 'none';
+  if (successRate < HEALTH_BAD_RATE) return 'bad';
+  if (successRate < HEALTH_WARN_RATE) return 'warn';
+  return 'good';
+}
+
+function buildRows(
+  models: Model[] | undefined,
+  rh: RoutingHealthResponse | undefined,
+  ma: ModelActivity[] | undefined,
+  probes: ProbeResult[] | undefined,
+  channelName: Map<string, string>,
+): ModelRow[] {
+  if (!models) return [];
+  const rhByName = new Map((rh?.models ?? []).map((m) => [m.name, m]));
+  const maByName = new Map((ma ?? []).map((m) => [m.model, m]));
+  const probeByName = new Map<string, ProbeResult[]>();
+  for (const p of probes ?? []) {
+    const arr = probeByName.get(p.model_id) ?? [];
+    arr.push(p);
+    probeByName.set(p.model_id, arr);
+  }
+
+  const rows: ModelRow[] = [];
+  for (const m of models) {
+    const rhm: RoutingHealthModel | undefined = rhByName.get(m.name);
+    const rhs = rhm?.channels ?? [];
+    let totalReq = 0;
+    let totalSuc = 0;
+    let wLat = 0;
+    let p95 = 0;
+    let avail = 0;
+    let enabled = 0;
+    let broken = 0;
+    for (const ch of rhs) {
+      totalReq += ch.requests;
+      totalSuc += ch.requests * ch.success_rate;
+      wLat += ch.requests * ch.avg_latency_ms;
+      if (ch.p95_latency_ms > p95) p95 = ch.p95_latency_ms;
+      for (const ep of ch.endpoints) {
+        if (ep.enabled) enabled++;
+        if (ep.enabled && ep.available) avail++;
+      }
+      if (ch.requests > 0 && !ch.circuit_ok && ch.circuit_enabled) broken++;
+    }
+    const maRow = maByName.get(m.name);
+    const inTokens = (maRow?.prompt_tokens ?? 0) + (maRow?.cache_hit_tokens ?? 0);
+    const cacheHitPct = inTokens > 0 ? +(((maRow?.cache_hit_tokens ?? 0) / inTokens) * 100).toFixed(1) : null;
+    const successRate = totalReq > 0 ? totalSuc / totalReq : 0;
+
+    rows.push({
+      id: m.id,
+      name: m.name,
+      pattern: m.model_pattern,
+      published: !!m.published,
+      contextLength: m.context_length ?? null,
+      upstreamModel: m.channels[0]?.upstream_model ?? null,
+      channelNames: m.channels
+        .map((b) => channelName.get(b.channel_id) ?? b.channel_id)
+        .join(' · '),
+      requests: totalReq,
+      successRate,
+      avgLatency: totalReq > 0 ? wLat / totalReq : 0,
+      p95,
+      cacheHitPct,
+      health: healthOf(probeByName.get(m.id) ?? [], successRate, totalReq > 0),
+      availableEps: avail,
+      enabledEps: enabled,
+      brokenChannels: broken,
+      channels: rhs,
+    });
+  }
+  return rows.sort((a, b) => b.requests - a.requests);
+}
+
+// ── live total (24h snapshot baseline + WS increments) ─────────────
+
+function useLiveTotal() {
   const [totalCount, setTotalCount] = useState(0);
   const [connected, setConnected] = useState(false);
   const [reconnectIn, setReconnectIn] = useState(0);
-  const [pulseEvent, setPulseEvent] = useState<{ model: string; channel: string; ts: number } | null>(null);
-  const topoRef = useRef(topology);
-  topoRef.current = topology;
 
   useEffect(() => {
-    fetchRoutingFlowSnapshot().then(snap => {
-      if (Object.keys(snap).length === 0) return;
-      setCounts(snap);
-      const total = Object.entries(snap).filter(([k]) => k.split('>').length === 1).reduce((s, [, v]) => s + v, 0);
-      setTotalCount(total);
-    }).catch(() => {});
+    fetchRoutingFlowSnapshot()
+      .then((snap) => {
+        const total = Object.entries(snap)
+          .filter(([k]) => k.split('>').length === 1)
+          .reduce((s, [, v]) => s + v, 0);
+        setTotalCount(total);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
     let closed = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
     function connect() {
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
       ws = new WebSocket(`${proto}://${window.location.host}/api/health/ws`);
-      ws.onopen = () => { setConnected(true); setReconnectIn(0); };
+      ws.onopen = () => {
+        setConnected(true);
+        setReconnectIn(0);
+        if (timer) {
+          clearInterval(timer);
+          timer = null;
+        }
+      };
       ws.onmessage = (e) => {
-        let ev: RoutingFlowEvent;
+        let ev: { model?: string; channel_id?: string };
         try {
-          ev = JSON.parse(e.data) as RoutingFlowEvent;
+          ev = JSON.parse(e.data) as { model?: string; channel_id?: string };
         } catch {
-          // Ignore malformed websocket payloads.
           return;
         }
         if (typeof ev.model !== 'string' || typeof ev.channel_id !== 'string') return;
-        const model = ev.model;
-        const channelId = ev.channel_id;
-        const topo = topoRef.current;
-        const m = topo.find(t => t.model === model || (t.pattern !== '*' && model.startsWith(t.pattern.replace('*', ''))));
-        if (!m) return;
-        const ch = m.channels.find(c => c.id === channelId);
-        if (!ch) return;
-        setCounts(prev => {
-          const next = { ...prev };
-          next[keyFor(m.model)] = (next[keyFor(m.model)] || 0) + 1;
-          next[keyFor(m.model, ch.id)] = (next[keyFor(m.model, ch.id)] || 0) + 1;
-          return next;
-        });
-        setTotalCount(c => c + 1);
-        setPulseEvent({ model: m.model, channel: ch.id, ts: performance.now() });
+        setTotalCount((c) => c + 1);
       };
       ws.onclose = () => {
         setConnected(false);
         if (!closed) {
           let c = 3;
           setReconnectIn(c);
-          const timer = setInterval(() => {
+          timer = setInterval(() => {
             c--;
-            if (c <= 0) { clearInterval(timer); setTimeout(connect, 500); }
-            else setReconnectIn(c);
+            if (c <= 0) {
+              if (timer) {
+                clearInterval(timer);
+                timer = null;
+              }
+              setTimeout(connect, 500);
+            } else {
+              setReconnectIn(c);
+            }
           }, 1000);
         }
       };
@@ -109,314 +203,796 @@ function useLiveCounts(topology: TopoModel[]) {
         try {
           ws?.close();
         } catch {
-          // Ignore websocket close errors during reconnect handling.
+          // ignore
         }
       };
     }
     connect();
     return () => {
       closed = true;
+      if (timer) clearInterval(timer);
       try {
         ws?.close();
       } catch {
-        // Ignore websocket close errors during cleanup.
+        // ignore
       }
     };
   }, []);
 
-  return { counts, totalCount, connected, reconnectIn, pulseEvent };
+  return { totalCount, connected, reconnectIn };
 }
 
-function RiverPulse({ pathD, onDone }: { pathD: string; onDone: () => void }) {
-  const svgRef = useRef<SVGSVGElement | null>(null);
-  const doneRef = useRef(onDone);
-  doneRef.current = onDone;
-  useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const pathEl = svg.querySelector('path');
-    if (!pathEl) return;
-    const len = pathEl.getTotalLength();
-    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    circle.setAttribute('r', '4');
-    circle.setAttribute('fill', '#267b7b');
-    svg.appendChild(circle);
-    const start = performance.now();
-    const duration = 700;
-    let raf = 0;
-    function step(now: number) {
-      const t = Math.min(1, (now - start) / duration);
-      const pt = pathEl!.getPointAtLength(t * len);
-      circle.setAttribute('cx', String(pt.x));
-      circle.setAttribute('cy', String(pt.y));
-      circle.setAttribute('opacity', String(1 - t * 0.4));
-      if (t < 1) raf = requestAnimationFrame(step);
-      else { circle.remove(); doneRef.current(); }
-    }
-    raf = requestAnimationFrame(step);
-    return () => { cancelAnimationFrame(raf); circle.remove(); };
-  }, [pathD]);
-  return (<g ref={svgRef}><path d={pathD} fill="none" stroke="none" /></g>);
-}
+// ── top status strip ───────────────────────────────────────────────
 
-function TimelineScrub({ aggregates }: {
-  aggregates: { date: string; count: number; total_tokens: number }[];
+function StatusCell({ label, value, foot, tone }: {
+  label: string;
+  value: string;
+  foot?: string;
+  tone?: 'good' | 'warn' | 'bad';
 }) {
-  const [pos, setPos] = useState(24);
-  const factor = 0.55 + 0.45 * Math.sin((pos / 24) * Math.PI);
-  const peak = aggregates.length > 0 ? Math.max(...aggregates.map(d => d.count)) : 0;
   return (
-    <div>
-      <div className="flex justify-between text-[11px] text-muted-foreground mb-1.5">
-        <span>24 小时流量回放</span>
-        <span>{pos === 24 ? '现在' : `${String(pos).padStart(2, '0')}:00 · 历史回放`}</span>
+    <div className="border-t lg:border-t-0 lg:border-l border-border/60 px-5 py-4 min-w-0">
+      <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        {label}
       </div>
-      <input type="range" min={0} max={24} value={pos} step={1}
-        onChange={e => setPos(Number(e.target.value))}
-        className="w-full accent-[var(--chart-1)]" />
-      <div className="flex justify-between gap-3 text-[11px] text-muted-foreground mt-1">
-        <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>现在</span>
+      <div
+        className={cn(
+          'mt-1.5 text-2xl font-bold tracking-tight tabular-nums',
+          tone === 'good' && 'text-emerald-600 dark:text-emerald-400',
+          tone === 'warn' && 'text-amber-600 dark:text-amber-400',
+          tone === 'bad' && 'text-destructive',
+        )}
+      >
+        {value}
       </div>
-      <div className="flex gap-4 flex-wrap mt-3 text-[11px] text-muted-foreground">
-        <span><i className="inline-block w-5 h-2 rounded-sm mr-1 align-middle" style={{ background: 'var(--chart-1)' }} />峰值 {fmtCount(Math.round(peak * factor))} req</span>
+      {foot && <div className="mt-0.5 text-[11px] text-muted-foreground">{foot}</div>}
+    </div>
+  );
+}
+
+function StatusStrip({
+  leadTitle, leadCopy, availability, currentRequests, p95, totalTokens, cachePct, connected,
+}: {
+  leadTitle: string;
+  leadCopy: string;
+  availability: number;
+  currentRequests: number;
+  p95: number;
+  totalTokens: number;
+  cachePct: number | null;
+  connected: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
+      <div className="grid grid-cols-2 lg:grid-cols-[1.25fr_repeat(4,minmax(0,1fr))]">
+        <div className="col-span-2 lg:col-span-1 flex items-center gap-4 px-5 py-4 min-w-0">
+          <div className="relative size-11 shrink-0 rounded-full bg-gradient-to-br from-emerald-300 via-emerald-500 to-emerald-900 grid place-items-center shadow-[0_0_0_8px_rgba(16,185,129,0.07),0_0_28px_rgba(16,185,129,0.18)]">
+            <span className="absolute inset-0 rounded-full border border-emerald-400/40 animate-ping opacity-60" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-base font-bold truncate">{leadTitle}</div>
+            <div className="text-xs text-muted-foreground truncate">{leadCopy}</div>
+          </div>
+        </div>
+        <StatusCell
+          label={t('monitor.globalAvailability')}
+          value={`${availability.toFixed(2)}%`}
+          foot={t('monitor.sloFoot')}
+          tone={availability >= 99 ? 'good' : 'warn'}
+        />
+        <StatusCell
+          label={t('monitor.currentRequests')}
+          value={fmtCount(currentRequests)}
+          foot={connected ? t('monitor.live') : t('monitor.liveOffline')}
+        />
+        <StatusCell
+          label={t('monitor.p95Latency')}
+          value={fmtLat(p95)}
+          tone={p95 > 5000 ? 'warn' : undefined}
+        />
+        <StatusCell
+          label={t('monitor.todayTokens')}
+          value={fmtTokens(totalTokens)}
+          foot={cachePct !== null ? t('monitor.cacheHit', { pct: cachePct }) : undefined}
+        />
+      </div>
+    </section>
+  );
+}
+
+// ── left: model catalog ────────────────────────────────────────────
+
+const HEALTH_DOT: Record<Health, string> = {
+  good: 'bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.12)]',
+  warn: 'bg-amber-500 shadow-[0_0_0_4px_rgba(245,158,11,0.12)]',
+  bad: 'bg-red-500 shadow-[0_0_0_4px_rgba(239,68,68,0.12)]',
+  none: 'bg-muted-foreground/40',
+};
+
+function ModelCatalog({
+  rows, search, onSearch, selectedName, onSelect,
+}: {
+  rows: ModelRow[];
+  search: string;
+  onSearch: (v: string) => void;
+  selectedName: string | null;
+  onSelect: (name: string) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-4 min-h-[52px] border-b border-border/60">
+        <div className="text-sm font-bold">{t('monitor.modelCatalog')}</div>
+        <div className="text-[11px] text-muted-foreground">
+          {t('monitor.modelsCount', { n: rows.length })}
+        </div>
+      </div>
+      <div className="p-2.5 border-b border-border/60">
+        <div className="flex items-center gap-2 h-9 rounded-lg border bg-muted/40 px-2.5 text-muted-foreground">
+          <Search className="size-3.5 shrink-0" />
+          <input
+            value={search}
+            onChange={(e) => onSearch(e.target.value)}
+            placeholder={t('monitor.searchPlaceholder')}
+            className="w-full bg-transparent text-sm outline-none text-foreground placeholder:text-muted-foreground"
+          />
+        </div>
+      </div>
+      <div className="max-h-[620px] overflow-y-auto p-1.5">
+        {rows.length === 0 ? (
+          <div className="py-10 text-center text-xs text-muted-foreground">
+            {t('monitor.emptyModels')}
+          </div>
+        ) : (
+          rows.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => onSelect(r.name)}
+              className={cn(
+                'w-full text-left grid grid-cols-[8px_1fr_auto] gap-2 items-start rounded-lg px-2.5 py-2.5 mb-0.5 border border-transparent transition-colors cursor-pointer',
+                r.name === selectedName
+                  ? 'bg-brand/10 border-brand/20'
+                  : 'hover:bg-muted/50',
+              )}
+            >
+              <span className={cn('size-2 rounded-full mt-1.5', HEALTH_DOT[r.health])} />
+              <span className="min-w-0">
+                <span className="block text-xs font-semibold truncate">{r.name}</span>
+                <span className="block text-[10px] text-muted-foreground mt-0.5 truncate">
+                  {r.channelNames || '—'}
+                </span>
+              </span>
+              <span className="text-[11px] text-muted-foreground tabular-nums pt-0.5">
+                {fmtCount(r.requests)}
+              </span>
+            </button>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ── center: performance chart ──────────────────────────────────────
+
+type MetricKey = 'requests' | 'tokens' | 'latency' | 'error';
+
+function PerformanceChart({ data }: {
+  data: { time: string; count: number; tokens: number; latency: number; error: number }[];
+}) {
+  const { t } = useTranslation();
+  const [metric, setMetric] = useState<MetricKey>('requests');
+
+  const METRICS: { key: MetricKey; label: string; dataKey: string; unit: string }[] = [
+    { key: 'requests', label: t('monitor.metricRequests'), dataKey: 'count', unit: '' },
+    { key: 'tokens', label: t('monitor.metricTokens'), dataKey: 'tokens', unit: '' },
+    { key: 'latency', label: t('monitor.metricLatency'), dataKey: 'latency', unit: 'ms' },
+    { key: 'error', label: t('monitor.metricErrors'), dataKey: 'error', unit: '%' },
+  ];
+  const active = METRICS.find((m) => m.key === metric)!;
+
+  const main = useMemo(() => {
+    if (data.length === 0) return null;
+    switch (metric) {
+      case 'requests':
+        return { v: data.reduce((s, d) => s + d.count, 0), unit: t('monitor.req24h') };
+      case 'tokens':
+        return { v: data.reduce((s, d) => s + d.tokens, 0), unit: '' };
+      case 'latency': {
+        const last = [...data].reverse().find((d) => d.latency > 0);
+        return last ? { v: last.latency, unit: 'ms' } : null;
+      }
+      case 'error': {
+        const last = [...data].reverse().find((d) => d.count > 0);
+        return last ? { v: last.error, unit: '%' } : null;
+      }
+    }
+  }, [data, metric, t]);
+
+  const yFmt = (v: number) => {
+    if (metric === 'latency') return fmtLat(v);
+    if (metric === 'error') return `${v}%`;
+    if (metric === 'tokens') return fmtTokens(v);
+    return fmtCount(v);
+  };
+
+  return (
+    <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 min-h-[52px] border-b border-border/60">
+        <div>
+          <div className="text-sm font-bold">{t('monitor.realtimePerf')}</div>
+          <div className="text-[11px] text-muted-foreground">{t('monitor.recent24h')}</div>
+        </div>
+        <div className="flex gap-0.5">
+          {METRICS.map((m) => (
+            <button
+              key={m.key}
+              type="button"
+              onClick={() => setMetric(m.key)}
+              className={cn(
+                'px-2.5 py-1 rounded-md text-xs cursor-pointer transition-colors',
+                metric === m.key
+                  ? 'bg-muted text-foreground font-semibold'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="px-4 pt-3 pb-2">
+        <div className="flex items-baseline gap-2">
+          {main ? (
+            <>
+              <span className="text-[26px] font-extrabold tracking-tight tabular-nums">
+                {metric === 'latency' ? fmtLat(main.v) : metric === 'error' ? `${main.v}%` : fmtCount(main.v)}
+              </span>
+              <span className="text-[11px] text-muted-foreground">{main.unit}</span>
+            </>
+          ) : (
+            <span className="text-sm text-muted-foreground">{t('common.loading')}</span>
+          )}
+        </div>
+      </div>
+      <div className="px-3 pb-3">
+        {data.length > 0 ? (
+          <ResponsiveContainer width="100%" height={210}>
+            <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+              <defs>
+                <linearGradient id="monArea" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.25} />
+                  <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+              <XAxis
+                dataKey="time"
+                tickLine={false}
+                axisLine={false}
+                tick={{ fill: 'var(--muted-foreground)', fontSize: 10 }}
+                minTickGap={48}
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                tick={{ fill: 'var(--muted-foreground)', fontSize: 10 }}
+                tickFormatter={yFmt}
+                width={52}
+              />
+              <Tooltip
+                formatter={(value, name) => [yFmt(Number(value ?? 0)), String(name)]}
+                labelFormatter={(label) => String(label)}
+              />
+              <Area
+                type="monotone"
+                dataKey={active.dataKey}
+                stroke="var(--chart-1)"
+                strokeWidth={2}
+                fill="url(#monArea)"
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="h-[210px] grid place-items-center text-xs text-muted-foreground">
+            {t('monitor.noChartData')}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ── center: request flow ───────────────────────────────────────────
+
+function FlowLink({ delay }: { delay?: string }) {
+  return (
+    <div className="mon-link relative h-px bg-gradient-to-r from-border via-brand to-border mx-1 flex-1 min-w-[20px]">
+      <i style={delay ? { animationDelay: delay } : undefined} />
+    </div>
+  );
+}
+
+function RequestFlow({
+  ingress, directPass, upstream, rl, af, cachePct, p95, timeout,
+}: {
+  ingress: number;
+  directPass: number;
+  upstream: number;
+  rl: number;
+  af: number;
+  cachePct: number | null;
+  p95: number;
+  timeout: number;
+}) {
+  const { t } = useTranslation();
+  const node = (kicker: string, value: string, valueUnit: string, detail: string, gateway = false) => (
+    <div className={cn('relative min-h-[84px] rounded-lg border p-3 bg-muted/20 overflow-hidden', gateway && 'border-brand/40')}>
+      <span className={cn('absolute inset-y-0 left-0 w-0.5', gateway ? 'bg-brand shadow-[0_0_14px_var(--brand)]' : 'bg-border')} />
+      <div className="text-[9px] uppercase tracking-widest text-muted-foreground">{kicker}</div>
+      <div className="mt-1.5 text-lg font-bold tabular-nums leading-none">
+        {value}
+        {valueUnit && <span className="ml-1 text-[10px] font-medium text-muted-foreground">{valueUnit}</span>}
+      </div>
+      <div className="mt-1.5 text-[10px] text-muted-foreground leading-snug">{detail}</div>
+    </div>
+  );
+
+  return (
+    <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-4 min-h-[52px] border-b border-border/60">
+        <div className="text-sm font-bold">{t('monitor.reqFlow')}</div>
+        <div className="text-[11px] text-muted-foreground">{t('monitor.recent24h')}</div>
+      </div>
+      <div className="p-4 flex items-center">
+        <div className="flex-1 min-w-0">
+          {node(
+            t('monitor.ingress'),
+            fmtCount(ingress),
+            'req',
+            t('monitor.ingressDetail', { n: fmtCount(ingress) }),
+          )}
+        </div>
+        <FlowLink />
+        <div className="flex-1 min-w-0">
+          {node(
+            t('monitor.gateway'),
+            `${(directPass * 100).toFixed(1)}%`,
+            t('monitor.directPass'),
+            t('monitor.gatewayDetail', { rl: fmtCount(rl), af: fmtCount(af), cache: cachePct ?? 0 }),
+            true,
+          )}
+        </div>
+        <FlowLink delay="-0.9s" />
+        <div className="flex-1 min-w-0">
+          {node(
+            t('monitor.upstream'),
+            fmtCount(upstream),
+            'req',
+            t('monitor.upstreamDetail', { p95: fmtLat(p95), to: fmtCount(timeout) }),
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ── center: model compare table ────────────────────────────────────
+
+const HEALTH_BADGE: Record<Health, string> = {
+  good: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+  warn: 'bg-amber-500/10 text-amber-700 dark:text-amber-400',
+  bad: 'bg-red-500/10 text-red-700 dark:text-red-400',
+  none: 'bg-muted text-muted-foreground',
+};
+
+function ModelCompareTable({
+  rows, selectedName, onSelect,
+}: {
+  rows: ModelRow[];
+  selectedName: string | null;
+  onSelect: (name: string) => void;
+}) {
+  const { t } = useTranslation();
+  const statusLabel = (h: Health) =>
+    h === 'good'
+      ? t('monitor.statusHealthy')
+      : h === 'warn'
+        ? t('monitor.statusDegraded')
+        : h === 'bad'
+          ? t('monitor.statusMaintenance')
+          : t('monitor.statusUntested');
+
+  return (
+    <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-4 min-h-[52px] border-b border-border/60">
+        <div>
+          <div className="text-sm font-bold">{t('monitor.modelCompare')}</div>
+          <div className="text-[11px] text-muted-foreground">{t('monitor.compareSubtitle')}</div>
+        </div>
+        <div className="text-[11px] text-muted-foreground">{t('monitor.byRequests')}</div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs min-w-[760px]">
+          <thead>
+            <tr className="border-b border-border/60 text-muted-foreground">
+              <th className="text-left font-semibold uppercase tracking-wider px-4 py-2.5">{t('monitor.colModel')}</th>
+              <th className="text-right font-semibold uppercase tracking-wider px-3 py-2.5">{t('monitor.colStatus')}</th>
+              <th className="text-right font-semibold uppercase tracking-wider px-3 py-2.5">{t('monitor.colRps')}</th>
+              <th className="text-right font-semibold uppercase tracking-wider px-3 py-2.5">{t('monitor.colP95')}</th>
+              <th className="text-right font-semibold uppercase tracking-wider px-3 py-2.5">{t('monitor.colAvgLat')}</th>
+              <th className="text-right font-semibold uppercase tracking-wider px-3 py-2.5">{t('monitor.colError')}</th>
+              <th className="text-right font-semibold uppercase tracking-wider px-3 py-2.5">{t('monitor.colCache')}</th>
+              <th className="text-right font-semibold uppercase tracking-wider px-4 py-2.5">{t('monitor.colCost')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr
+                key={r.id}
+                onClick={() => onSelect(r.name)}
+                className={cn(
+                  'border-b border-border/40 last:border-0 cursor-pointer transition-colors',
+                  r.name === selectedName ? 'bg-brand/5' : 'hover:bg-muted/40',
+                )}
+              >
+                <td className="px-4 py-2.5">
+                  <span className="flex items-center gap-2 font-semibold">
+                    <span className={cn('size-1.5 rounded-full', HEALTH_DOT[r.health])} />
+                    {r.name}
+                  </span>
+                </td>
+                <td className="px-3 py-2.5 text-right">
+                  <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium', HEALTH_BADGE[r.health])}>
+                    {statusLabel(r.health)}
+                  </span>
+                </td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{fmtCount(r.requests)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{r.p95 > 0 ? fmtLat(r.p95) : '—'}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{r.avgLatency > 0 ? fmtLat(r.avgLatency) : '—'}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">
+                  {r.requests > 0 ? `${((1 - r.successRate) * 100).toFixed(2)}%` : '—'}
+                </td>
+                <td className="px-3 py-2.5 text-right tabular-nums">
+                  {r.cacheHitPct !== null ? `${r.cacheHitPct}%` : '—'}
+                </td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">—</td>
+              </tr>
+            ))}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={8} className="py-10 text-center text-muted-foreground">
+                  {t('monitor.emptyModels')}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+// ── right: inspector ───────────────────────────────────────────────
+
+function AvailabilityRing({ pct, tone }: { pct: number; tone: Health }) {
+  const { t } = useTranslation();
+  const color = tone === 'bad' ? 'hsl(var(--destructive))' : tone === 'warn' ? '#f59e0b' : 'hsl(var(--primary))';
+  return (
+    <div
+      className="relative size-[92px] shrink-0 rounded-full grid place-items-center"
+      style={{ background: `conic-gradient(${color} ${pct * 3.6}deg, hsl(var(--border)) 0deg)` }}
+    >
+      <div className="absolute inset-2 rounded-full bg-card border border-border" />
+      <div className="relative z-10 text-center">
+        <b className="block text-lg font-bold tabular-nums">{pct.toFixed(2)}%</b>
+        <span className="text-[9px] text-muted-foreground">{t('monitor.availability')}</span>
       </div>
     </div>
   );
 }
 
-export default function FlowTowerContent() {
-  const [days] = useState(1);
-  const { data: stats } = useDashboard();
-  const { data: agg } = useDashboardAggregations();
-  const { data: funnel } = useUsageFunnel(days);
-  const { data: ua } = useUsageAggregate(days);
-  const { data: models, isLoading: mLoading } = useModels();
-  const { data: channels, isLoading: cLoading } = useChannels();
+function ModelInspector({ row }: { row: ModelRow | null }) {
+  const { t } = useTranslation();
+  if (!row) {
+    return (
+      <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
+        <div className="px-4 min-h-[52px] flex items-center justify-between border-b border-border/60">
+          <div className="text-sm font-bold">{t('monitor.inspector')}</div>
+        </div>
+        <div className="p-6 text-center text-xs text-muted-foreground">{t('monitor.noSelection')}</div>
+      </section>
+    );
+  }
 
-  const topology = useMemo(() => {
-    if (!models || !channels) return [];
-    return buildTopology(models, channels).filter(m => m.channels.length > 0);
-  }, [models, channels]);
-
-  const { counts, totalCount, connected, reconnectIn, pulseEvent } = useLiveCounts(topology);
-  const loading = mLoading || cLoading;
-
-  const availability = agg?.success_rate_24h ?? 0;
-  const avgLat = agg?.avg_latency_ms_24h ?? 0;
-  const requests24h = agg?.requests_24h ?? 0;
-  const totalTokens24h = agg?.total_tokens_24h ?? 0;
-  const modelCount = stats?.models ?? 0;
-  const channelCount = stats?.channels ?? 0;
-
-  const funnelTotal = funnel?.total ?? requests24h;
-  const blocked = (funnel?.auth_fail_count ?? 0) + (funnel?.rate_limit_count ?? 0);
-  const upstreamErrTotal = (funnel?.upstream_error_count ?? 0) + (funnel?.timeout_count ?? 0);
-  const p99 = funnel?.p99_latency ?? avgLat;
-  const p50 = funnel?.p50_latency ?? avgLat;
-  const p95 = funnel?.p95_latency ?? avgLat;
-  const qps = funnelTotal > 0 ? (funnelTotal / 86400) : 0;
-
-  const maxModelCount = Math.max(...topology.map(t => counts[keyFor(t.model)] || 0), 1);
-  const sortedModels = useMemo(() =>
-    topology.slice().sort((a, b) => (counts[keyFor(b.model)] || 0) - (counts[keyFor(a.model)] || 0)),
-    [topology, counts]
+  const availability = row.requests > 0 ? row.successRate * 100 : 0;
+  const tone: Health = row.health;
+  const kv = (label: string, value: string) => (
+    <div className="rounded-lg border border-border/60 bg-muted/20 p-2.5 min-w-0">
+      <div className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">{label}</div>
+      <b className="block mt-1 text-sm tabular-nums truncate">{value}</b>
+    </div>
   );
-  const topModels = sortedModels.slice(0, 5);
-
-  const allChannelReqs = useMemo(() => {
-    const sum: Record<string, { name: string; count: number }> = {};
-    topology.forEach(t => {
-      t.channels.forEach(c => {
-        const cnt = counts[keyFor(t.model, c.id)] || 0;
-        if (sum[c.id]) sum[c.id].count += cnt;
-        else sum[c.id] = { name: c.name, count: cnt };
-      });
-    });
-    return Object.entries(sum)
-      .map(([id, v]) => ({ id, name: v.name, count: v.count }))
-      .sort((a, b) => b.count - a.count);
-  }, [topology, counts]);
-  const maxChCount = Math.max(...allChannelReqs.map(c => c.count), 1);
-
-  const [pulses, setPulses] = useState<{ id: string; pathD: string }[]>([]);
-  const prevTsRef = useRef(0);
-  const pulseCooldown = useRef<Record<string, number>>({});
-  const COOLDOWN = 400;
-
-  const modelBandPath = useCallback((index: number, total: number) => {
-    const y = 60 + index * (380 / Math.max(total, 1));
-    const ty = 190 + (index - (total - 1) / 2) * 15;
-    return `M0,${y} C240,${y + 5} 400,${140 + index * 6} 620,${ty} C670,${ty + 3} 700,${ty + 5} 720,${ty + 6}`;
-  }, []);
-
-  const providerBandPath = useCallback((index: number, total: number) => {
-    const ty = 120 + index * (260 / Math.max(total, 1));
-    return `M770,${ty + 10} C850,${ty + 5} 950,${ty - 10} 1200,${ty - 20}`;
-  }, []);
-
-  useEffect(() => {
-    if (!pulseEvent || pulseEvent.ts === prevTsRef.current) return;
-    prevTsRef.current = pulseEvent.ts;
-    const { model, channel, ts } = pulseEvent;
-    const mi = topModels.findIndex(t => t.model === model);
-    if (mi >= 0) {
-      const bandKey = `model-${model}`;
-      const last = pulseCooldown.current[bandKey] || 0;
-      if (ts - last >= COOLDOWN) {
-        pulseCooldown.current[bandKey] = ts;
-        const d = modelBandPath(mi, Math.max(topModels.length, 1));
-        setPulses(prev => [...prev, { id: `${ts}-${model}`, pathD: d }]);
-      }
-    }
-    const ci = allChannelReqs.findIndex(ch => ch.id === channel);
-    if (ci >= 0) {
-      const bandKey = `ch-${channel}`;
-      const last = pulseCooldown.current[bandKey] || 0;
-      if (ts - last >= COOLDOWN) {
-        pulseCooldown.current[bandKey] = ts;
-        const d = providerBandPath(ci, Math.max(allChannelReqs.length, 1));
-        setPulses(prev => [...prev, { id: `${ts}-${channel}`, pathD: d }]);
-      }
-    }
-  }, [pulseEvent, topModels, allChannelReqs, modelBandPath, providerBandPath]);
-
-  const removePulse = useCallback((id: string) => setPulses(prev => prev.filter(p => p.id !== id)), []);
+  const progress = (label: string, pct: number, color: 'brand' | 'amber' | 'blue') => (
+    <div>
+      <div className="flex justify-between text-[10px] text-muted-foreground mb-1">
+        <span>{label}</span>
+        <span className="tabular-nums">{pct.toFixed(1)}%</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+        <i
+          className={cn(
+            'block h-full rounded-full transition-all',
+            color === 'brand' && 'bg-brand',
+            color === 'amber' && 'bg-amber-500',
+            color === 'blue' && 'bg-blue-500',
+          )}
+          style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+        />
+      </div>
+    </div>
+  );
 
   return (
-    <div className="space-y-0">
-      <div className="flex items-center justify-between gap-5 py-3 px-0.5 border-b text-sm flex-wrap">
-        <div className="flex items-center gap-5 flex-wrap">
-          <span className="flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-600 animate-pulse shadow-[0_0_0_0_rgba(5,150,105,0.35)]' : 'bg-muted-foreground'}`} />
-            <b>流控台</b>
-          </span>
-          <span className="text-muted-foreground tabular-nums">
-            <strong className="text-foreground">{modelCount}</strong> 模型 · <strong className="text-foreground">{channelCount}</strong> 渠道
-          </span>
-          <span className="text-muted-foreground">
-            可用性 <strong className={availability >= 99 ? 'text-emerald-700' : 'text-amber-700'}>{availability.toFixed(2)}%</strong>
-          </span>
-          <span className="text-[11px] font-mono tabular-nums flex items-center gap-1.5">
-            <span className={`inline-block w-1.5 h-1.5 rounded-full ${connected ? 'bg-emerald-500' : 'bg-muted-foreground'}`} />
-            {connected ? 'LIVE' : reconnectIn > 0 ? `${reconnectIn}s` : '离线'}
-          </span>
-        </div>
-        <div className="flex items-center gap-5 flex-wrap text-muted-foreground">
-          <span>请求 <strong className="text-foreground tabular-nums">{fmtCount(totalCount || funnelTotal)}</strong></span>
-          <span>Token <strong className="text-foreground tabular-nums">{fmtTokens(totalTokens24h)}</strong></span>
-          <span>QPS <strong className="text-foreground tabular-nums">{qps.toFixed(1)}</strong></span>
-        </div>
+    <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
+      <div className="px-4 min-h-[52px] flex items-center justify-between border-b border-border/60">
+        <div className="text-sm font-bold">{t('monitor.inspector')}</div>
+        <div className="text-[11px] text-muted-foreground">{t('monitor.live')}</div>
       </div>
-
-      <div className="relative py-4">
-        <div className="grid grid-cols-3 text-xs text-muted-foreground mb-1">
-          <div>模型入口</div>
-          <div className="text-center">网关闸门</div>
-          <div className="text-right">供应商出口</div>
+      <div className="p-4 space-y-4">
+        <div className="min-w-0">
+          <div className="text-[17px] font-extrabold tracking-tight truncate">{row.name}</div>
+          <div className="text-[10px] text-muted-foreground mt-0.5 font-mono truncate">{row.id}</div>
         </div>
 
-        <section className="relative h-[460px] border rounded-xl bg-card/40 overflow-hidden">
-          <svg viewBox="0 0 1200 460" preserveAspectRatio="none" className="absolute inset-0 w-full h-full">
-            <defs>
-              <linearGradient id="rw1" x1="0" x2="1">
-                <stop offset="0%" stopColor="#7fc1b5" stopOpacity="0.85" />
-                <stop offset="100%" stopColor="#267b7b" stopOpacity="0.6" />
-              </linearGradient>
-              <linearGradient id="rw2" x1="0" x2="1">
-                <stop offset="0%" stopColor="#a8d5c9" stopOpacity="0.75" />
-                <stop offset="100%" stopColor="#4f9b8e" stopOpacity="0.5" />
-              </linearGradient>
-            </defs>
-            <g opacity="0.15">
-              <line x1="400" y1="0" x2="400" y2="460" stroke="#688082" strokeWidth="0.5" />
-              <line x1="800" y1="0" x2="800" y2="460" stroke="#688082" strokeWidth="0.5" />
-            </g>
-            {topModels.map((m, i) => {
-              const cnt = counts[keyFor(m.model)] || 0;
-              const w = Math.max(6, Math.min(40, 8 + (cnt / maxModelCount) * 32));
-              const grad = i % 2 === 0 ? 'url(#rw1)' : 'url(#rw2)';
-              const y = 50 + i * 72;
-              const ty = 190 + (i - (Math.max(topModels.length, 1) - 1) / 2) * 18;
-              return (
-                <path key={m.model}
-                  d={`M0,${y} C240,${y + 5} 400,${130 + i * 6} 620,${ty} C670,${ty + 3} 700,${ty + 5} 720,${ty + 6}`}
-                  fill="none" stroke={grad} strokeWidth={w} strokeLinecap="round" opacity={0.85} />
-              );
-            })}
-            {(blocked + upstreamErrTotal) > 0 && (
-              <path d="M0,430 C260,430 380,370 560,340"
-                fill="none" stroke="#c65d50" strokeWidth="5" strokeDasharray="8 6" strokeLinecap="round" opacity="0.7" />
-            )}
-            <ellipse cx="600" cy="230" rx="150" ry="190" fill="rgba(38,123,123,0.04)" />
-            <rect x="540" y="185" width="120" height="90" rx="16" fill="rgba(255,255,255,0.92)" stroke="#267b7b" strokeWidth="1.5" opacity="0.9" />
-            {allChannelReqs.slice(0, 3).map((ch, i) => {
-              const w = Math.max(6, Math.min(36, 8 + (ch.count / maxChCount) * 28));
-              const grad = i === 0 ? 'url(#rw1)' : 'url(#rw2)';
-              const ty = 150 + i * 80;
-              return (
-                <path key={ch.id}
-                  d={`M780,${ty} C880,${ty - 5} 980,${ty - 12} 1200,${ty - 18}`}
-                  fill="none" stroke={grad} strokeWidth={w} strokeLinecap="round" opacity={0.75} />
-              );
-            })}
-            {pulses.map(p => <RiverPulse key={p.id} pathD={p.pathD} onDone={() => removePulse(p.id)} />)}
-          </svg>
-
-          <div className="absolute inset-y-8 left-0 flex flex-col justify-around z-[3] pointer-events-none">
-            {topModels.map(m => {
-              const cnt = counts[keyFor(m.model)] || 0;
-              const pct = funnelTotal > 0 ? (cnt / funnelTotal) * 100 : 0;
-              return (
-                <div key={m.model} className="pl-4">
-                  <b className="text-xs leading-tight">{m.model.length > 16 ? `${m.model.slice(0, 14)}..` : m.model}</b>
-                  <div className="text-[10px] text-muted-foreground tabular-nums">{fmtCount(cnt)} req · {pct.toFixed(1)}%</div>
-                </div>
-              );
-            })}
-            {topModels.length === 0 && !loading && (
-              <div className="pl-4 text-[10px] text-muted-foreground">暂无模型数据</div>
-            )}
-          </div>
-
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[160px] z-[4] pointer-events-none">
-            <div className="bg-white/92 backdrop-blur rounded-xl border border-[rgba(38,123,123,0.3)] shadow-sm p-3.5 text-center">
-              <div className="text-[9px] uppercase tracking-widest text-muted-foreground">GATEWAY</div>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-2 mt-2.5">
-                <div><b className="text-base tabular-nums">{upstreamErrTotal + (funnel?.other_error_count ?? 0)}</b><div className="text-[9px] text-muted-foreground">异常拦截</div></div>
-                <div><b className="text-base tabular-nums">{blocked}</b><div className="text-[9px] text-muted-foreground">业务限制</div></div>
-                <div><b className="text-base tabular-nums">{availability.toFixed(1)}%</b><div className="text-[9px] text-muted-foreground">SLA</div></div>
-                <div><b className="text-base tabular-nums">{qps.toFixed(1)}</b><div className="text-[9px] text-muted-foreground">QPS</div></div>
-              </div>
+        <div className="flex items-center gap-4">
+          <AvailabilityRing pct={availability} tone={tone} />
+          <div className="grid gap-1.5 text-[10px] min-w-0">
+            <div className="flex justify-between gap-6">
+              <span className="text-muted-foreground">{t('monitor.published')}</span>
+              <span className="text-foreground">{row.published ? t('monitor.yes') : t('monitor.no')}</span>
+            </div>
+            <div className="flex justify-between gap-6">
+              <span className="text-muted-foreground">{t('monitor.channels')}</span>
+              <span className="text-foreground tabular-nums">{row.channels.length || 0}</span>
+            </div>
+            <div className="flex justify-between gap-6">
+              <span className="text-muted-foreground">{t('monitor.upstreamModel')}</span>
+              <span className="text-foreground truncate max-w-[120px]">{row.upstreamModel || '—'}</span>
+            </div>
+            <div className="flex justify-between gap-6">
+              <span className="text-muted-foreground">{t('monitor.contextLength')}</span>
+              <span className="text-foreground tabular-nums">
+                {row.contextLength ? fmtTokens(row.contextLength) : '—'}
+              </span>
             </div>
           </div>
+        </div>
 
-          <div className="absolute inset-y-8 right-0 flex flex-col justify-around z-[3] pointer-events-none text-right">
-            {loading ? (
-              <div className="pr-4 text-[10px] text-muted-foreground">加载中...</div>
-            ) : allChannelReqs.length > 0 ? allChannelReqs.slice(0, 3).map(ch => (
-              <div key={ch.id} className="pr-4">
-                <b className="text-xs leading-tight">{ch.name}</b>
-                <div className="text-[10px] text-muted-foreground tabular-nums">{fmtCount(ch.count)} req</div>
-              </div>
-            )) : (
-              <div className="pr-4 text-[10px] text-muted-foreground">暂无渠道流量</div>
-            )}
-          </div>
+        <div className="h-px bg-border/60" />
 
-          <div className="absolute left-[15%] right-[15%] bottom-3 flex justify-around text-[10px] text-muted-foreground z-[5]">
-            <span>TTFT P50 <b className="text-foreground">{fmtLat(p50)}</b></span>
-            <span>TTFT P99 <b className="text-foreground">{fmtLat(p99)}</b></span>
-            <span>P95 <b className="text-foreground">{fmtLat(p95)}</b></span>
-            <span>Max <b className="text-foreground">{fmtLat(funnel?.p99_latency ?? avgLat)}</b></span>
-          </div>
-        </section>
+        <div className="grid grid-cols-2 gap-2">
+          {kv(
+            t('monitor.activeInstances'),
+            row.enabledEps > 0 ? `${row.availableEps} / ${row.enabledEps}` : '—',
+          )}
+          {kv(t('monitor.requests24h'), fmtCount(row.requests))}
+          {kv(t('monitor.cacheHitRate'), row.cacheHitPct !== null ? `${row.cacheHitPct}%` : '—')}
+          {kv(t('monitor.avgLatency'), row.avgLatency > 0 ? fmtLat(row.avgLatency) : '—')}
+        </div>
+
+        <div className="grid gap-3">
+          {progress(t('monitor.cacheHitRate'), row.cacheHitPct ?? 0, 'blue')}
+          {progress(t('monitor.successRate'), row.requests > 0 ? row.successRate * 100 : 0, 'brand')}
+        </div>
       </div>
+    </section>
+  );
+}
 
-      <section className="pt-1 pb-4">
-        {ua && ua.length > 0 ? <TimelineScrub aggregates={ua} /> : (
-          <div className="text-xs text-muted-foreground text-center py-8">暂无时序数据</div>
+// ── right: incidents ───────────────────────────────────────────────
+
+function IncidentList({ incidents }: {
+  incidents: { key: string; kind: 'red' | 'amber' | 'blue'; title: string; meta: string }[];
+}) {
+  const { t } = useTranslation();
+  return (
+    <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-4 min-h-[52px] border-b border-border/60">
+        <div className="text-sm font-bold">{t('monitor.incidents')}</div>
+        <div className="text-[11px] text-muted-foreground">
+          {t('monitor.incidentsCount', { n: incidents.length })}
+        </div>
+      </div>
+      <div className="px-4 pb-2">
+        {incidents.length === 0 ? (
+          <div className="py-8 text-center text-xs text-muted-foreground">{t('monitor.noIncidents')}</div>
+        ) : (
+          incidents.map((inc) => (
+            <div key={inc.key} className="grid grid-cols-[8px_1fr] gap-2.5 py-3 border-b border-border/40 last:border-0">
+              <span
+                className={cn(
+                  'size-1.5 rounded-full mt-1.5',
+                  inc.kind === 'red' && 'bg-red-500 shadow-[0_0_0_4px_rgba(239,68,68,0.1)]',
+                  inc.kind === 'amber' && 'bg-amber-500 shadow-[0_0_0_4px_rgba(245,158,11,0.1)]',
+                  inc.kind === 'blue' && 'bg-blue-500 shadow-[0_0_0_4px_rgba(59,130,246,0.1)]',
+                )}
+              />
+              <div className="min-w-0">
+                <div className="text-[11px] leading-snug">{inc.title}</div>
+                <div className="text-[9px] text-muted-foreground mt-1">{inc.meta}</div>
+              </div>
+            </div>
+          ))
         )}
-      </section>
+      </div>
+    </section>
+  );
+}
+
+// ── page ───────────────────────────────────────────────────────────
+
+export default function FlowTowerContent() {
+  const { t } = useTranslation();
+  const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+
+  const { data: models } = useModels();
+  const { data: channels } = useChannels();
+  const { data: rh } = useRoutingHealth();
+  const { data: agg } = useDashboardAggregations();
+  const { data: funnel } = useUsageFunnel(1);
+  const { data: ua } = useUsageAggregate(1);
+  const { data: ma } = useModelActivity(1);
+  const { data: probes } = useProbeResults();
+  const { totalCount, connected } = useLiveTotal();
+
+  const channelName = useMemo(
+    () => new Map((channels ?? []).map((c) => [c.id, c.name || c.id])),
+    [channels],
+  );
+
+  const rows = useMemo(
+    () => buildRows(models, rh, ma, probes, channelName),
+    [models, rh, ma, probes, channelName],
+  );
+
+  const firstWithTraffic = rows.find((r) => r.requests > 0)?.name ?? rows[0]?.name ?? null;
+  useEffect(() => {
+    if (selectedName === null && firstWithTraffic) setSelectedName(firstWithTraffic);
+  }, [selectedName, firstWithTraffic]);
+  const selected = rows.find((r) => r.name === selectedName) ?? rows[0] ?? null;
+
+  const filtered = useMemo(
+    () =>
+      rows.filter(
+        (r) =>
+          !search ||
+          r.name.toLowerCase().includes(search.toLowerCase()) ||
+          r.channelNames.toLowerCase().includes(search.toLowerCase()),
+      ),
+    [rows, search],
+  );
+
+  // 24h cache hit ratio (input tokens served from cache)
+  const cachePct = useMemo(() => {
+    const inTok = (ma ?? []).reduce((s, m) => s + m.prompt_tokens + m.cache_hit_tokens, 0);
+    const hit = (ma ?? []).reduce((s, m) => s + m.cache_hit_tokens, 0);
+    return inTok > 0 ? +((hit / inTok) * 100).toFixed(1) : null;
+  }, [ma]);
+
+  const totalTokens24h = agg?.total_tokens_24h ?? 0;
+  const successRate24h = agg?.success_rate_24h ?? 0;
+  const p95 = funnel?.p95_latency ?? agg?.avg_latency_ms_24h ?? 0;
+  const healthyCount = rows.filter((r) => r.health === 'good').length;
+  const leadTitle = rows.some((r) => r.health === 'bad')
+    ? t('monitor.overallDown')
+    : rows.some((r) => r.health === 'warn')
+      ? t('monitor.overallDegraded')
+      : t('monitor.overallStable');
+
+  const blocked = (funnel?.auth_fail_count ?? 0) + (funnel?.rate_limit_count ?? 0);
+  const upstreamTotal = Math.max(
+    0,
+    (funnel?.total ?? 0) - blocked - (funnel?.bad_request_count ?? 0) - (funnel?.other_error_count ?? 0),
+  );
+
+  const incidents = useMemo(() => {
+    const list: { key: string; kind: 'red' | 'amber' | 'blue'; title: string; meta: string }[] = [];
+    for (const r of rows) {
+      for (const ch of r.channels) {
+        if (ch.requests > 0 && !ch.circuit_ok && ch.circuit_enabled) {
+          list.push({
+            key: `cb-${r.name}-${ch.channel_id}`,
+            kind: 'red',
+            title: `${r.name} · ${ch.channel_name || ch.channel_id}`,
+            meta: t('monitor.circuitBroken'),
+          });
+        }
+      }
+    }
+    for (const p of probes ?? []) {
+      if (p.success) continue;
+      const row = rows.find((r) => r.id === p.model_id);
+      list.push({
+        key: `pf-${p.id}`,
+        kind: 'amber',
+        title: `${row?.name ?? p.model_id} · ${channelName.get(p.channel_id) ?? p.channel_id}`,
+        meta: `${t('monitor.probeFailed')} · ${new Date(p.probed_at).toLocaleString()}`,
+      });
+    }
+    return list.slice(0, 8);
+  }, [rows, probes, channelName, t]);
+
+  const chartData = useMemo(
+    () =>
+      (ua ?? []).map((d) => ({
+        time: fmtHour(d.date),
+        count: d.count,
+        tokens: d.total_tokens,
+        latency: d.latency_ms,
+        error: d.count > 0 ? +((1 - d.success_count / d.count) * 100).toFixed(2) : 0,
+      })),
+    [ua],
+  );
+
+  return (
+    <div className="space-y-4">
+      <style>{`
+        .mon-link i {
+          position: absolute; top: -2.5px; left: 0; width: 6px; height: 6px;
+          border-radius: 50%; background: hsl(var(--primary));
+          box-shadow: 0 0 8px hsl(var(--primary));
+          animation: mon-travel 2.2s linear infinite;
+        }
+        @keyframes mon-travel {
+          from { left: 0; }
+          to { left: calc(100% - 6px); }
+        }
+      `}</style>
+
+      <StatusStrip
+        leadTitle={leadTitle}
+        leadCopy={t('monitor.leadCopy', { total: rows.length, healthy: healthyCount })}
+        availability={successRate24h * 100}
+        currentRequests={totalCount || funnel?.total || 0}
+        p95={p95}
+        totalTokens={totalTokens24h}
+        cachePct={cachePct}
+        connected={connected}
+      />
+
+      <div className="grid gap-4 lg:grid-cols-[238px_minmax(0,1fr)_300px] items-start">
+        <ModelCatalog
+          rows={filtered}
+          search={search}
+          onSearch={setSearch}
+          selectedName={selectedName}
+          onSelect={setSelectedName}
+        />
+
+        <div className="grid gap-4 min-w-0">
+          <PerformanceChart data={chartData} />
+          <RequestFlow
+            ingress={totalCount || funnel?.total || 0}
+            directPass={successRate24h}
+            upstream={upstreamTotal}
+            rl={funnel?.rate_limit_count ?? 0}
+            af={funnel?.auth_fail_count ?? 0}
+            cachePct={cachePct}
+            p95={p95}
+            timeout={funnel?.timeout_count ?? 0}
+          />
+          <ModelCompareTable rows={rows} selectedName={selectedName} onSelect={setSelectedName} />
+        </div>
+
+        <div className="grid gap-4">
+          <ModelInspector row={selected} />
+          <IncidentList incidents={incidents} />
+        </div>
+      </div>
     </div>
   );
 }
