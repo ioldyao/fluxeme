@@ -1647,6 +1647,22 @@ pub async fn chat_completions(
         None
     };
 
+    // Ask the upstream for the final usage chunk in streaming responses.
+    // OpenAI-compatible servers only send usage when
+    // stream_options.include_usage is true — the gateway needs it for
+    // token + cache-hit accounting. Non-streaming responses always carry
+    // usage, so this is streaming-only.
+    if is_streaming {
+        match body.get_mut("stream_options") {
+            Some(serde_json::Value::Object(opts)) => {
+                opts.insert("include_usage".into(), serde_json::Value::Bool(true));
+            }
+            _ => {
+                body["stream_options"] = serde_json::json!({"include_usage": true});
+            }
+        }
+    }
+
     let handler_timeout = Duration::from_secs(gw_cfg.handler_timeout_secs);
     let state_clone = state.clone();
     let rid = request_id.clone();
