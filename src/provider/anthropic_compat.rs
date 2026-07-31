@@ -291,6 +291,20 @@ pub fn anthropic_to_openai(body: &Value) -> Value {
         };
     }
 
+    // Ask the upstream for the final usage chunk in streaming responses
+    // (stream_options.include_usage) so cache-hit tokens can be converted
+    // back; non-streaming responses always carry usage.
+    if openai.get("stream").and_then(|v| v.as_bool()).unwrap_or(false) {
+        match openai.get_mut("stream_options") {
+            Some(Value::Object(opts)) => {
+                opts.insert("include_usage".into(), Value::Bool(true));
+            }
+            _ => {
+                openai["stream_options"] = json!({"include_usage": true});
+            }
+        }
+    }
+
     openai
 }
 
