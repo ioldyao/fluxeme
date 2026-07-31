@@ -786,21 +786,45 @@ const EP_BADGE: Record<'good' | 'bad' | 'none', string> = {
 };
 
 // ── endpoint state timeline grid ────────────────────────────────────
-// One row per endpoint, columns are time buckets spanning the requests
-// currently in the buffer (CH-seeded history + live WS). Cell color =
-// endpoint state in that bucket: green = succeeded, red = failed,
-// blue pulsing = in-flight, muted = no traffic.
+// One row per endpoint, columns are time buckets over the last N minutes.
+// Cell color = ENDPOINT STATE in that bucket, driven by the health probes
+// (auto-probe every probe-interval seconds): green = probe succeeded,
+// red = probe failed, muted = no probe in that bucket. This is endpoint
+// health over time — NOT request traffic.
 
 const EP_TIMELINE_COLS = 6;
+const EP_TIMELINE_MINUTES = 10;
+
+/** Poll recent raw probe results (PG probe_results) for the probe-driven grid. */
+function useRecentProbes(minutes: number) {
+  const [probes, setProbes] = useState<ProbeResult[]>([]);
+  useEffect(() => {
+    let active = true;
+    const load = () => {
+      api<ProbeResult[]>(`/probe-results/recent?minutes=${minutes}`)
+        .then((r) => {
+          if (active) setProbes(r ?? []);
+        })
+        .catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 5000);
+    return () => {
+      active = false;
+      clearInterval(t);
+    };
+  }, [minutes]);
+  return probes;
+}
 
 function EndpointTimeline({
-  row, timeline, endpointUrl,
+  row, endpointUrl,
 }: {
   row: ModelRow | null;
-  timeline: TimelineEntry[];
   endpointUrl: Map<string, Map<number, string>>;
 }) {
   const { t } = useTranslation();
+  const probes = useRecentProbes(EP_TIMELINE_MINUTES);
 
   const endpoints = useMemo(() => {
     if (!row) return [];
@@ -821,48 +845,27 @@ function EndpointTimeline({
   }, [row, endpointUrl]);
 
   const now = Date.now();
-  // Dynamic window covering the requests actually in the buffer, so
-  // CH-seeded history and live requests are both visible (a fixed window
-  // left older-but-seeded traffic outside it, showing an all-grey grid).
-  const span = timeline.length
-    ? Math.max(
-        Math.max(...timeline.map((e) => e.completedTs ?? now)) -
-          Math.min(...timeline.map((e) => e.acceptedTs)),
-        1000,
-      )
-    : 60_000;
-  const bucketMs = span / EP_TIMELINE_COLS;
-  const windowStart = timeline.length
-    ? Math.min(...timeline.map((e) => e.acceptedTs))
-    : now - 60_000;
+  const windowMs = EP_TIMELINE_MINUTES * 60_000;
+  const bucketMs = windowMs / EP_TIMELINE_COLS;
+  const windowStart = now - windowMs;
 
   const cellState = (
-    ep: { channelId: string; endpointId: number | null; url: string },
+    ep: { channelId: string; url: string },
     i: number,
-  ): 'good' | 'bad' | 'inflight' | 'empty' => {
+  ): 'good' | 'bad' | 'empty' => {
     const start = windowStart + i * bucketMs;
     const end = start + bucketMs;
     let bad = false;
-    let inflight = false;
     let hit = false;
-    for (const e of timeline) {
-      if (e.channel !== ep.channelId) continue;
-      // Match by endpoint URL when available (stable across endpoint
-      // re-creation); fall back to the recorded endpoint id.
-      if (ep.url) {
-        if (e.endpointUrl && e.endpointUrl !== ep.url) continue;
-        if (!e.endpointUrl && e.endpointId !== ep.endpointId) continue;
-      } else if (e.endpointId !== ep.endpointId) {
-        continue;
-      }
-      const eEnd = e.completedTs ?? end;
-      if (eEnd < start || e.acceptedTs > end) continue;
-      if (e.success === false) bad = true;
-      else if (!e.completedTs) inflight = true;
+    for (const p of probes) {
+      if (p.channel_id !== ep.channelId) continue;
+      if (ep.url && p.endpoint_url !== ep.url) continue;
+      const ts = Date.parse(p.probed_at);
+      if (Number.isNaN(ts) || ts < start || ts >= end) continue;
+      if (!p.success) bad = true;
       else hit = true;
     }
     if (bad) return 'bad';
-    if (inflight) return 'inflight';
     if (hit) return 'good';
     return 'empty';
   };
@@ -882,12 +885,12 @@ function EndpointTimeline({
           >
             <span />
             {Array.from({ length: EP_TIMELINE_COLS }, (_, i) => {
-              // relative time axis: how many seconds ago this bucket ends
-              const end = windowStart + (i + 1) * bucketMs;
-              const ago = Math.round((now - end) / 1000);
+              const s = new Date(windowStart + i * bucketMs);
+              const mm = String(s.getMinutes()).padStart(2, '0');
+              const ss = String(s.getSeconds()).padStart(2, '0');
               return (
                 <span key={i} className="text-center text-[9px] text-muted-foreground tabular-nums">
-                  {ago <= 0 ? 'now' : `-${ago}s`}
+                  {`${mm}:${ss}`}
                 </span>
               );
             })}
@@ -913,7 +916,6 @@ function EndpointTimeline({
                       'h-5 rounded-sm',
                       s === 'good' && 'bg-emerald-500/50',
                       s === 'bad' && 'bg-red-500/60',
-                      s === 'inflight' && 'bg-blue-500/50 animate-pulse',
                       s === 'empty' && 'bg-muted/30',
                     )}
                   />
@@ -928,12 +930,11 @@ function EndpointTimeline({
 }
 
 function ChannelEndpointStatus({
-  row, channelName, endpointUrl, timeline,
+  row, channelName, endpointUrl,
 }: {
   row: ModelRow | null;
   channelName: Map<string, string>;
   endpointUrl: Map<string, Map<number, string>>;
-  timeline: TimelineEntry[];
 }) {
   const { t } = useTranslation();
 
@@ -1015,7 +1016,7 @@ function ChannelEndpointStatus({
           })
         )}
       </div>
-      <EndpointTimeline row={row} timeline={timeline} endpointUrl={endpointUrl} />
+      <EndpointTimeline row={row} endpointUrl={endpointUrl} />
     </section>
   );
 }
@@ -1454,7 +1455,7 @@ export default function FlowTowerContent() {
             timeout={funnel?.timeout_count ?? 0}
             timeline={timeline}
           />
-          <ChannelEndpointStatus row={selected} channelName={channelName} endpointUrl={endpointUrl} timeline={timeline} />
+          <ChannelEndpointStatus row={selected} channelName={channelName} endpointUrl={endpointUrl} />
           <ModelCompareTable rows={rows} selectedName={selectedName} onSelect={setSelectedName} />
         </div>
 

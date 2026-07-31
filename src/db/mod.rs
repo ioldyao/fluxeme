@@ -705,6 +705,9 @@ impl Database {
     pub async fn all_latest_probe_results(&self) -> Result<Vec<ProbeResultRow>, DbError> {
         self.backend.all_latest_probe_results().await
     }
+    pub async fn recent_probe_results(&self, minutes: i64) -> Result<Vec<ProbeResultRow>, DbError> {
+        self.backend.recent_probe_results(minutes).await
+    }
 
     pub async fn channel_usage_24h(
         &self,

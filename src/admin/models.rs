@@ -256,3 +256,25 @@ pub(crate) async fn list_probe_results(
     };
     Ok(Json(filtered))
 }
+
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct RecentProbesQuery {
+    minutes: Option<i64>,
+}
+
+/// Raw probe results from the last N minutes (probe-driven timeline grid).
+pub(crate) async fn list_recent_probes(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<RecentProbesQuery>,
+) -> Result<Json<Vec<crate::db::ProbeResultRow>>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:health").await?;
+    let minutes = query.minutes.unwrap_or(10).clamp(1, 60);
+    let results = state
+        .db
+        .recent_probe_results(minutes)
+        .await
+        .map_err(db_err)?;
+    Ok(Json(results))
+}
