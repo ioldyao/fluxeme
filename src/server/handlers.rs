@@ -1485,10 +1485,10 @@ pub async fn chat_completions(
     }
 
     if let Some((rpm, tpm)) = user.rate_limits {
-        state.rate_limiter.check_rpm(&user.user_id, rpm)?;
+        state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
         state
             .rate_limiter
-            .check_tpm(&user.user_id, tpm, estimate_tokens(&body))?;
+            .check_tpm(&user.user_id, tpm, estimate_tokens(&body)).await?;
     }
 
     // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
@@ -1671,10 +1671,10 @@ pub async fn messages_count_tokens(
     }
 
     if let Some((rpm, tpm)) = user.rate_limits {
-        state.rate_limiter.check_rpm(&user.user_id, rpm)?;
+        state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
         state
             .rate_limiter
-            .check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body))?;
+            .check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body)).await?;
     }
 
     if gw_cfg.billing_enabled {
@@ -1793,10 +1793,10 @@ pub async fn responses_input_tokens(
     }
 
     if let Some((rpm, tpm)) = user.rate_limits {
-        state.rate_limiter.check_rpm(&user.user_id, rpm)?;
+        state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
         state
             .rate_limiter
-            .check_tpm(&user.user_id, tpm, estimate_tokens_responses(&body))?;
+            .check_tpm(&user.user_id, tpm, estimate_tokens_responses(&body)).await?;
     }
 
     let (channel_id, resolved_model, upstream_model) =
@@ -1905,10 +1905,10 @@ pub async fn messages(
     }
 
     if let Some((rpm, tpm)) = user.rate_limits {
-        state.rate_limiter.check_rpm(&user.user_id, rpm)?;
+        state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
         state
             .rate_limiter
-            .check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body))?;
+            .check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body)).await?;
     }
 
     // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
@@ -2078,10 +2078,10 @@ async fn relay_to_upstream(
     }
 
     if let Some((rpm, tpm)) = user.rate_limits {
-        state.rate_limiter.check_rpm(&user.user_id, rpm)?;
+        state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
         state
             .rate_limiter
-            .check_tpm(&user.user_id, tpm, estimate_tokens(&body))?;
+            .check_tpm(&user.user_id, tpm, estimate_tokens(&body)).await?;
     }
 
     // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──

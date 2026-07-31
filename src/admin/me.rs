@@ -228,6 +228,7 @@ pub(crate) async fn create_my_key(
 
     state.db.create_api_key(&ak).await.map_err(db_err)?;
     state.auth.reload().await;
+    notify_config_changed(&state).await;
 
     Ok(Json(serde_json::json!({
         "key": ak.key,
@@ -278,6 +279,7 @@ pub(crate) async fn update_my_key(
 
     state.db.update_api_key(&ak).await.map_err(db_err)?;
     state.auth.reload().await;
+    notify_config_changed(&state).await;
 
     Ok(Json(serde_json::json!({ "key": key_val, "updated": true })))
 }
@@ -301,6 +303,7 @@ pub(crate) async fn delete_my_key(
 
     state.db.delete_api_key(&key_val).await.map_err(db_err)?;
     state.auth.reload().await;
+    notify_config_changed(&state).await;
 
     Ok(Json(serde_json::json!({ "deleted": key_val })))
 }
@@ -338,6 +341,7 @@ pub(crate) async fn toggle_my_key(
     };
     state.db.update_api_key(&ak).await.map_err(db_err)?;
     state.auth.reload().await;
+    notify_config_changed(&state).await;
 
     Ok(Json(
         serde_json::json!({ "key": key_val, "enabled": req.enabled }),
@@ -418,6 +422,7 @@ pub(crate) async fn create_my_rule(
     rule.updated_at = now;
     state.db.create_rule(&rule).await.map_err(db_err)?;
     state.routing.reload().await.map_err(AdminError::internal)?;
+    notify_config_changed(&state).await;
     Ok(Json(rule))
 }
 
@@ -438,5 +443,6 @@ pub(crate) async fn delete_my_rule(
     }
     state.db.delete_rule(&id).await.map_err(db_err)?;
     state.routing.reload().await.map_err(AdminError::internal)?;
+    notify_config_changed(&state).await;
     Ok(Json(serde_json::json!({ "deleted": id })))
 }

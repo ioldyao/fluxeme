@@ -75,7 +75,7 @@ impl AuthzModule {
         // Clear existing policies
         let current = e.get_policy();
         for p in &current {
-            let _ = e.remove_policy(p.clone());
+            let _ = e.remove_policy(p.clone()).await;
         }
 
         // Load from DB

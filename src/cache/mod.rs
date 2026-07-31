@@ -110,6 +110,53 @@ impl RedisCache {
         Ok(())
     }
 
+    /// Distributed fixed-window RPM check (Lua-atomic).
+    /// Returns Ok(true) if the request is allowed, Ok(false) if rate-limited.
+    /// Returns Ok(true) for noop (disabled) cache — caller falls back to local.
+    pub async fn rate_limit_rpm(&self, key: &str, limit: u64) -> Result<bool, String> {
+        let mut con = match self.con.clone() {
+            Some(c) => c,
+            None => return Ok(true),
+        };
+        let allowed: i64 = redis::Script::new(
+            "local cur = tonumber(redis.call('GET', KEYS[1]) or '0')
+             if cur >= tonumber(ARGV[1]) then return 0 end
+             local new = redis.call('INCR', KEYS[1])
+             if new == 1 then redis.call('EXPIRE', KEYS[1], 60) end
+             return 1",
+        )
+        .key(key)
+        .arg(limit)
+        .invoke_async(&mut con)
+        .await
+        .map_err(|e| format!("Redis rate_limit_rpm error: {e}"))?;
+        Ok(allowed == 1)
+    }
+
+    /// Distributed fixed-window TPM check (Lua-atomic).
+    /// Returns Ok(true) if the request is allowed, Ok(false) if rate-limited.
+    /// Returns Ok(true) for noop (disabled) cache — caller falls back to local.
+    pub async fn rate_limit_tpm(&self, key: &str, limit: u64, tokens: u64) -> Result<bool, String> {
+        let mut con = match self.con.clone() {
+            Some(c) => c,
+            None => return Ok(true),
+        };
+        let allowed: i64 = redis::Script::new(
+            "local cur = tonumber(redis.call('GET', KEYS[1]) or '0')
+             if cur + tonumber(ARGV[2]) > tonumber(ARGV[1]) then return 0 end
+             local new = redis.call('INCRBY', KEYS[1], ARGV[2])
+             if new == tonumber(ARGV[2]) then redis.call('EXPIRE', KEYS[1], 60) end
+             return 1",
+        )
+        .key(key)
+        .arg(limit)
+        .arg(tokens)
+        .invoke_async(&mut con)
+        .await
+        .map_err(|e| format!("Redis rate_limit_tpm error: {e}"))?;
+        Ok(allowed == 1)
+    }
+
     /// Retrieve a cached value for the given tenant.
     ///
     /// The key is constructed as `cache:exact:{tenant_id}:{sha256(cache_key)}`

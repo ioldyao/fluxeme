@@ -63,6 +63,7 @@ pub(crate) async fn create_channel(
         AdminError::internal("Internal server error")
     })?;
     state.routing.reload().await.map_err(AdminError::internal)?;
+    notify_config_changed(&state).await;
 
     tracing::info!(
         "admin={} action=create_channel target={}",
@@ -113,6 +114,7 @@ pub(crate) async fn update_channel(
     ch.id = id.clone();
     state.db.update_channel(&ch).await.map_err(db_err)?;
     state.routing.reload().await.map_err(AdminError::internal)?;
+    notify_config_changed(&state).await;
 
     tracing::info!(
         "admin={} action=update_channel target={}",
@@ -134,6 +136,7 @@ pub(crate) async fn delete_channel(
 
     state.db.delete_channel(&id).await.map_err(db_err)?;
     state.routing.reload().await.map_err(AdminError::internal)?;
+    notify_config_changed(&state).await;
 
     tracing::info!(
         "admin={} action=delete_channel target={}",

@@ -77,6 +77,7 @@ pub(crate) async fn add_policy(
         .reload(&state.db)
         .await
         .map_err(|e| AdminError::internal(e.to_string()))?;
+    notify_config_changed(&state).await;
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -106,6 +107,7 @@ pub(crate) async fn remove_policy(
         .reload(&state.db)
         .await
         .map_err(|e| AdminError::internal(e.to_string()))?;
+    notify_config_changed(&state).await;
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }

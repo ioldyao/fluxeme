@@ -175,6 +175,31 @@ async fn main() {
         }
     }
 
+    // Load runtime gateway config (timeouts, etc.)
+    let gateway_config = Arc::new(RwLock::new(
+        db.get_gateway_config().await.unwrap_or_default(),
+    ));
+
+    // Initialize Redis (noop when disabled) — before rate limiter / admin
+    // so they can share the connection for distributed rate limiting.
+    let redis_config = config.read().unwrap().redis.clone();
+    let cache_ttl = gateway_config.read().unwrap().cache_ttl_secs;
+    let cache = Arc::new(if redis_config.enabled {
+        match RedisCache::new(&redis_config.url, cache_ttl).await {
+            Ok(c) => {
+                tracing::info!("Redis cache enabled");
+                c
+            }
+            Err(e) => {
+                tracing::error!("Failed to connect to Redis: {}", e);
+                RedisCache::noop()
+            }
+        }
+    } else {
+        RedisCache::noop()
+    });
+    let shared_limiter_cache = cache.is_enabled().then(|| cache.clone());
+
     // Initialize services
     let auth = Arc::new(AuthService::new(db.clone()).await);
     let routing = Arc::new(
@@ -183,12 +208,17 @@ async fn main() {
             .expect("Failed to initialize routing credentials"),
     );
     let providers = Arc::new(ProviderRegistry::new());
-    let rate_limiter = Arc::new(RateLimiter::new());
+    let rate_limiter = Arc::new(RateLimiter::new(shared_limiter_cache.clone()));
     rate_limiter.start_cleanup_task();
     let health = Arc::new(
         HealthService::new(db.clone(), &encryption_key).expect("Failed to create HealthService"),
     );
-    let admin = Arc::new(AdminModule::new(&jwt_secret, &encryption_key, db.clone()));
+    let admin = Arc::new(AdminModule::new(
+        &jwt_secret,
+        &encryption_key,
+        db.clone(),
+        shared_limiter_cache.clone(),
+    ));
 
     let sso_config = config.read().unwrap().sso.clone();
     let sso = Arc::new(
@@ -232,29 +262,6 @@ async fn main() {
     // Load allow_private_ips setting from DB (default: true)
     let allow_private = db.get_setting("allow_private_ips").await.ok().flatten();
     provider::set_allow_private_ips(allow_private.as_deref() != Some("false"));
-
-    // Load runtime gateway config (timeouts, etc.)
-    let gateway_config = Arc::new(RwLock::new(
-        db.get_gateway_config().await.unwrap_or_default(),
-    ));
-
-    // Initialize Redis (noop when disabled)
-    let redis_config = config.read().unwrap().redis.clone();
-    let cache_ttl = gateway_config.read().unwrap().cache_ttl_secs;
-    let cache = Arc::new(if redis_config.enabled {
-        match RedisCache::new(&redis_config.url, cache_ttl).await {
-            Ok(c) => {
-                tracing::info!("Redis cache enabled");
-                c
-            }
-            Err(e) => {
-                tracing::error!("Failed to connect to Redis: {}", e);
-                RedisCache::noop()
-            }
-        }
-    } else {
-        RedisCache::noop()
-    });
 
     // Event bus for real-time observability (WebSocket push to admin UI)
     let event_bus = observability::event_bus::EventBus::new(8192);
@@ -395,6 +402,37 @@ async fn main() {
         ch,
         instance_id: instance_id.clone(),
     });
+
+    // Cross-instance config invalidation: poll config_version; when it
+    // changes (bumped by an admin mutation on any instance), reload the
+    // in-memory caches so all instances converge.
+    {
+        let poll_state = state.clone();
+        tokio::spawn(async move {
+            // Initialize to current version so we don't reload on startup
+            let mut last_version = poll_state.db.get_setting("config_version").await.ok().flatten();
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                let current = match poll_state.db.get_setting("config_version").await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::warn!("config_version poll failed: {}", e);
+                        continue;
+                    }
+                };
+                if current != last_version {
+                    last_version = current;
+                    let _ = poll_state.routing.reload().await;
+                    poll_state.auth.reload().await;
+                    poll_state.content_filter.reload().await;
+                    let _ = poll_state.authz.reload(&poll_state.db).await;
+                    tracing::debug!("Reloaded in-memory caches after config_version change");
+                }
+            }
+        });
+    }
 
     let app = build_router(state);
 

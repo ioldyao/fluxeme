@@ -142,6 +142,7 @@ pub(crate) async fn create_user(
 
     state.db.create_user(&user).await.map_err(db_err)?;
     state.auth.reload().await;
+    notify_config_changed(&state).await;
 
     tracing::info!(
         "admin={} action=create_user target={}",
@@ -213,6 +214,7 @@ pub(crate) async fn update_user(
         .await
         .map_err(db_err)?;
     state.auth.reload().await;
+    notify_config_changed(&state).await;
 
     Ok(Json(User {
         password_hash: None,
@@ -243,6 +245,7 @@ pub(crate) async fn suspend_user(
         .await
         .map_err(db_err_bad_request)?;
     state.auth.reload().await;
+    notify_config_changed(&state).await;
 
     tracing::info!(
         "admin={} action=suspend_user target={}",
@@ -282,6 +285,7 @@ pub(crate) async fn restore_user(
         .await
         .map_err(db_err_bad_request)?;
     state.auth.reload().await;
+    notify_config_changed(&state).await;
 
     tracing::info!(
         "admin={} action=restore_user target={}",
@@ -317,6 +321,7 @@ pub(crate) async fn delete_user(
         .await
         .map_err(db_err_bad_request)?;
     state.auth.reload().await;
+    notify_config_changed(&state).await;
 
     tracing::info!("admin={} action=delete_user target={}", session.user_id, id);
 
@@ -369,6 +374,7 @@ pub(crate) async fn create_user_key(
 
     state.db.create_api_key(&ak).await.map_err(db_err)?;
     state.auth.reload().await;
+    notify_config_changed(&state).await;
 
     tracing::info!(
         "admin={} action=create_api_key target={} user={}",
@@ -412,6 +418,7 @@ pub(crate) async fn update_user_key(
 
     state.db.update_api_key(&ak).await.map_err(db_err)?;
     state.auth.reload().await;
+    notify_config_changed(&state).await;
 
     tracing::info!(
         "admin={} action=update_api_key target={} user={}",
@@ -433,6 +440,7 @@ pub(crate) async fn delete_user_key(
 
     state.db.delete_api_key(&key_val).await.map_err(db_err)?;
     state.auth.reload().await;
+    notify_config_changed(&state).await;
 
     tracing::info!(
         "admin={} action=delete_api_key target={}",
@@ -468,6 +476,7 @@ pub(crate) async fn toggle_user_key(
     ak.enabled = req.enabled;
     state.db.update_api_key(&ak).await.map_err(db_err)?;
     state.auth.reload().await;
+    notify_config_changed(&state).await;
 
     Ok(Json(
         serde_json::json!({ "key": key_val, "enabled": req.enabled }),

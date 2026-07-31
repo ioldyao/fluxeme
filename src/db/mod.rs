@@ -618,6 +618,13 @@ impl Database {
     pub async fn set_gateway_config(&self, config: &GatewayRuntimeConfig) -> Result<(), DbError> {
         self.backend.set_gateway_config(config).await
     }
+    /// Bump the cross-instance config version so other instances reload
+    /// their in-memory caches (routing / auth / content_filter / authz).
+    pub async fn bump_config_version(&self) -> Result<(), DbError> {
+        let now = chrono::Utc::now().timestamp_millis().to_string();
+        self.backend.set_setting("config_version", &now).await
+    }
+
     // ── Casbin Policies ─────────────────────────────────────────────────
     pub async fn casbin_list_policies(
         &self,
