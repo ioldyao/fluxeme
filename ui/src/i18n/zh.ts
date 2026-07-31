@@ -691,6 +691,7 @@ const zh: Record<string, string> = {
   'monitor.noChartData': '暂无图表数据',
   'monitor.reqFlow': '当前请求流',
   'monitor.stateTimeline': '状态时间线',
+  'monitor.endpointTimeline': '端点状态时间线',
   'monitor.inFlight': '进行中',
   'monitor.noLiveData': '暂无实时数据',
   'monitor.ingress': '入口流量',
