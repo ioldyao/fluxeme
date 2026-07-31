@@ -355,7 +355,7 @@ pub fn openai_to_anthropic_response(openai_resp: &Value, model: &str) -> Value {
     let usage = openai_resp.get("usage");
     // Try standard OpenAI field names first, then fall back to
     // alternative naming used by some OpenAI-compatible endpoints.
-    let input_tokens = usage
+    let prompt_tokens = usage
         .and_then(|u| {
             u.get("prompt_tokens")
                 .or_else(|| u.get("input_tokens"))
@@ -369,11 +369,20 @@ pub fn openai_to_anthropic_response(openai_resp: &Value, model: &str) -> Value {
                 .and_then(|v| v.as_u64())
         })
         .unwrap_or(0);
+    // OpenAI `prompt_tokens` INCLUDES cached tokens; Anthropic semantics
+    // are "total input = input_tokens + cache_read_input_tokens +
+    // cache_creation_input_tokens", so input_tokens must exclude them.
     let cache_read = usage
         .and_then(|u| u.get("prompt_tokens_details"))
         .and_then(|d| d.get("cached_tokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
+    let cache_write = usage
+        .and_then(|u| u.get("prompt_tokens_details"))
+        .and_then(|d| d.get("cache_write_tokens"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let input_tokens = prompt_tokens.saturating_sub(cache_read);
 
     let finish = openai_resp
         .get("choices")
@@ -403,6 +412,9 @@ pub fn openai_to_anthropic_response(openai_resp: &Value, model: &str) -> Value {
 
     if cache_read > 0 {
         resp["usage"]["cache_read_input_tokens"] = json!(cache_read);
+    }
+    if cache_write > 0 {
+        resp["usage"]["cache_creation_input_tokens"] = json!(cache_write);
     }
 
     resp
@@ -473,6 +485,8 @@ struct ConvertState {
     text_block_index: Option<usize>,
     input_tokens: u64,
     output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_creation_tokens: u64,
     finish_reason: Option<String>,
     /// OpenAI tool index → (anthropic block index, anthropic tool id, name).
     tools: std::collections::HashMap<usize, (usize, String, String)>,
@@ -496,6 +510,8 @@ impl ConvertState {
             text_block_index: None,
             input_tokens: 0,
             output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
             finish_reason: None,
             tools: std::collections::HashMap::new(),
             block_seq: 0,
@@ -560,8 +576,27 @@ impl ConvertState {
                 .or_else(|| u.get("output_tokens"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
+            // OpenAI prompt_tokens includes cached tokens; Anthropic
+            // input_tokens must exclude them (total input = input_tokens +
+            // cache_read + cache_creation).
+            let cached = u
+                .get("prompt_tokens_details")
+                .and_then(|d| d.get("cached_tokens"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let cache_write = u
+                .get("prompt_tokens_details")
+                .and_then(|d| d.get("cache_write_tokens"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             if p > 0 {
-                self.input_tokens = p;
+                self.input_tokens = p.saturating_sub(cached);
+            }
+            if cached > 0 {
+                self.cache_read_tokens = cached;
+            }
+            if cache_write > 0 {
+                self.cache_creation_tokens = cache_write;
             }
             if c > 0 {
                 self.output_tokens = c;
@@ -733,10 +768,20 @@ impl ConvertState {
             None => "end_turn",
         };
 
+        let mut usage_json = json!({
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+        });
+        if self.cache_read_tokens > 0 {
+            usage_json["cache_read_input_tokens"] = json!(self.cache_read_tokens);
+        }
+        if self.cache_creation_tokens > 0 {
+            usage_json["cache_creation_input_tokens"] = json!(self.cache_creation_tokens);
+        }
         let delta = json!({
             "type": "message_delta",
             "delta": {"stop_reason": stop, "stop_sequence": null},
-            "usage": {"input_tokens": self.input_tokens, "output_tokens": self.output_tokens},
+            "usage": usage_json,
         });
         let _ = tx
             .send(format!(
@@ -902,6 +947,49 @@ mod tests {
         assert_eq!(blocks[1]["input"]["command"], "ls");
         assert!(!blocks[1]["id"].as_str().unwrap().is_empty());
         assert_eq!(anthropic["stop_reason"], "tool_use");
+    }
+
+    #[test]
+    fn maps_cache_fields_and_excludes_cached_from_input() {
+        let resp = json!({
+            "choices": [{
+                "message": {"role": "assistant", "content": "hi"},
+                "finish_reason": "stop",
+            }],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 10,
+                "total_tokens": 110,
+                "prompt_tokens_details": {"cached_tokens": 40, "cache_write_tokens": 60},
+            },
+        });
+        let anthropic = openai_to_anthropic_response(&resp, "m");
+        // input_tokens excludes cached (Anthropic: total = input + cache_read + cache_creation)
+        assert_eq!(anthropic["usage"]["input_tokens"], 60);
+        assert_eq!(anthropic["usage"]["output_tokens"], 10);
+        assert_eq!(anthropic["usage"]["cache_read_input_tokens"], 40);
+        assert_eq!(anthropic["usage"]["cache_creation_input_tokens"], 60);
+    }
+
+    #[tokio::test]
+    async fn streams_cache_fields_to_anthropic_usage() {
+        let chunks = vec![
+            "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"hi\"},\"finish_reason\":null}]}\n\n"
+                .to_string(),
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":10,\"prompt_tokens_details\":{\"cached_tokens\":40,\"cache_write_tokens\":60}}}\n\n"
+                .to_string(),
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n".to_string(),
+            "data: [DONE]\n\n".to_string(),
+        ];
+        let stream = futures::stream::iter(chunks);
+        let mut out = wrap_openai_sse_for_anthropic(Box::pin(stream), "m".to_string());
+        let mut all = String::new();
+        while let Some(chunk) = out.next().await {
+            all.push_str(&chunk);
+        }
+        assert!(all.contains("\"cache_read_input_tokens\":40"), "missing cache read: {all}");
+        assert!(all.contains("\"cache_creation_input_tokens\":60"), "missing cache creation: {all}");
+        assert!(all.contains("\"input_tokens\":60"), "input should exclude cached: {all}");
     }
 
     #[tokio::test]
