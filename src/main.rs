@@ -263,8 +263,50 @@ async fn main() {
     let allow_private = db.get_setting("allow_private_ips").await.ok().flatten();
     provider::set_allow_private_ips(allow_private.as_deref() != Some("false"));
 
-    // Event bus for real-time observability (WebSocket push to admin UI)
-    let event_bus = observability::event_bus::EventBus::new(8192);
+    // Unique instance ID for multi-instance ops (logs, health probes)
+    let instance_id = std::env::var("INSTANCE_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let raw = uuid::Uuid::new_v4().simple().to_string();
+            raw[..12].to_string()
+        });
+
+    // Event bus for real-time observability (WebSocket push to admin UI).
+    // Bridged to Redis pub/sub so events fan out across instances.
+    let event_bus =
+        observability::event_bus::EventBus::new(8192, shared_limiter_cache.clone(), instance_id.clone());
+
+    // Remote event subscriber: relays events from other instances into the
+    // local bus so WebSocket clients here see all gateway traffic.
+    if let Some(redis) = &shared_limiter_cache {
+        let bus = event_bus.clone();
+        let redis = redis.clone();
+        tokio::spawn(async move {
+            let mut pubsub = match redis.subscribe(observability::event_bus::BUS_CHANNEL).await {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!("Failed to subscribe to event bus channel: {e}");
+                    return;
+                }
+            };
+            let mut stream = pubsub.on_message();
+            use futures::StreamExt;
+            while let Some(msg) = stream.next().await {
+                let payload: String = match msg.get_payload() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::warn!("Event bus payload error: {e}");
+                        continue;
+                    }
+                };
+                match serde_json::from_str::<observability::event_bus::RemoteEnvelope>(&payload) {
+                    Ok(envelope) => bus.inject_remote(envelope),
+                    Err(e) => tracing::warn!("Event bus envelope parse error: {e}"),
+                }
+            }
+        });
+    }
 
     // ClickHouse backend (optional — gracefully disabled when not configured)
     let (clickhouse_cfg, ch_retention_days) = {
@@ -371,15 +413,6 @@ async fn main() {
         providers.clone(),
         routing.clone(),
     ));
-
-    // Unique instance ID for multi-instance ops (logs, health probes)
-    let instance_id = std::env::var("INSTANCE_ID")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| {
-            let raw = uuid::Uuid::new_v4().simple().to_string();
-            raw[..12].to_string()
-        });
 
     let state = Arc::new(AppState {
         config,

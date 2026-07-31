@@ -1,8 +1,8 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Event published when a request completes (supersedes the old ws::RequestEvent).
 /// Sent after the upstream response finishes — carries token counts and latency.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RequestCompleted {
     pub timestamp: String,
     pub request_id: String,
@@ -21,7 +21,7 @@ pub struct RequestCompleted {
 /// Event published immediately after route resolution, before the upstream
 /// call starts.  `latency_ms` is always 0 — the frontend uses this to
 /// distinguish "in-flight" from "completed" events.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RouteDecided {
     pub timestamp: String,
     pub request_id: String,
