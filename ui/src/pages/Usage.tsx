@@ -306,7 +306,6 @@ export default function Usage() {
                           <td className="py-3 px-4 text-right font-medium">{r.total_tokens}</td>
                           <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, r.cache_hit_input_tokens, getRecordPricing(r, modelPricing), currency, rate)}</td>
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>
-                          <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>
                           <td className="py-3 px-4 text-center">
                             {r.success ? (
                               <CheckCircle2 className="size-4 text-green-500 inline" />
