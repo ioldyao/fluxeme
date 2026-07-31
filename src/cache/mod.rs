@@ -595,9 +595,9 @@ pub async fn start_obs_consumer(
                 cost_amount,
                 client_ip: r.client_ip.clone(),
                 endpoint_id: r.endpoint_id,
-                request_body: None,
-                response_body: None,
-                reasoning_body: None,
+                request_body: r.request_body.clone(),
+                response_body: r.response_body.clone(),
+                reasoning_body: r.reasoning_body.clone(),
                 original_model: r.original_model.clone(),
             });
             entry_ids.push(eid.clone());
