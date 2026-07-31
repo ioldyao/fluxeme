@@ -164,6 +164,44 @@ pub fn anthropic_to_openai(body: &Value) -> Value {
         openai["max_completion_tokens"] = body["max_tokens"].clone();
     }
 
+    // Anthropic tools → OpenAI function tools. Claude Code sends `tools`;
+    // dropping them means the upstream never sees the tool definitions and
+    // tool-call conversations break.
+    if let Some(tools) = body.get("tools").and_then(|v| v.as_array()) {
+        let converted: Vec<Value> = tools
+            .iter()
+            .filter_map(|t| {
+                let name = t.get("name").and_then(|v| v.as_str())?;
+                Some(json!({
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": t.get("description").cloned().unwrap_or(Value::String(String::new())),
+                        "parameters": t.get("input_schema").cloned().unwrap_or(
+                            json!({"type": "object", "properties": {}}),
+                        ),
+                    }
+                }))
+            })
+            .collect();
+        if !converted.is_empty() {
+            openai["tools"] = Value::Array(converted);
+        }
+    }
+
+    // tool_choice: Anthropic auto/any/tool → OpenAI auto/required/function
+    if let Some(tc) = body.get("tool_choice") {
+        openai["tool_choice"] = match tc.get("type").and_then(|v| v.as_str()) {
+            Some("any") => json!("required"),
+            Some("tool") => tc
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|name| json!({"type": "function", "function": {"name": name}}))
+                .unwrap_or(json!("auto")),
+            _ => json!("auto"),
+        };
+    }
+
     openai
 }
 
@@ -181,6 +219,49 @@ pub fn openai_to_anthropic_response(openai_resp: &Value, model: &str) -> Value {
         .and_then(|m| m.get("content"))
         .and_then(|c| c.as_str())
         .unwrap_or("");
+
+    // message.tool_calls → Anthropic tool_use content blocks
+    let tool_calls = openai_resp
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("tool_calls"))
+        .and_then(|v| v.as_array());
+
+    let mut content_blocks: Vec<Value> = Vec::new();
+    if !content.is_empty() {
+        content_blocks.push(json!({"type": "text", "text": content}));
+    }
+    if let Some(tcs) = tool_calls {
+        for tc in tcs {
+            let name = tc
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let args = tc
+                .get("function")
+                .and_then(|f| f.get("arguments"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let input: Value = serde_json::from_str(args)
+                .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+            let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            content_blocks.push(json!({
+                "type": "tool_use",
+                "id": if id.is_empty() {
+                    format!("toolu_{}", Uuid::new_v4().simple())
+                } else {
+                    id.to_string()
+                },
+                "name": name,
+                "input": input,
+            }));
+        }
+    }
+    if content_blocks.is_empty() {
+        content_blocks.push(json!({"type": "text", "text": ""}));
+    }
 
     let usage = openai_resp.get("usage");
     // Try standard OpenAI field names first, then fall back to
@@ -221,7 +302,7 @@ pub fn openai_to_anthropic_response(openai_resp: &Value, model: &str) -> Value {
         "id": msg_id,
         "type": "message",
         "role": "assistant",
-        "content": [{"type": "text", "text": content}],
+        "content": content_blocks,
         "model": model,
         "stop_reason": stop_reason,
         "stop_sequence": null,
@@ -297,15 +378,22 @@ pub fn wrap_openai_sse_for_anthropic(
 struct ConvertState {
     message_id: String,
     model: String,
+    started: bool,
     phase: Phase,
+    /// Anthropic block index of the open text block, if any.
+    text_block_index: Option<usize>,
     input_tokens: u64,
     output_tokens: u64,
     finish_reason: Option<String>,
+    /// OpenAI tool index → (anthropic block index, anthropic tool id, name).
+    tools: std::collections::HashMap<usize, (usize, String, String)>,
+    block_seq: usize,
 }
 
 enum Phase {
     Start,
-    InContent,
+    InText,
+    InTool,
     Done,
 }
 
@@ -314,10 +402,55 @@ impl ConvertState {
         Self {
             message_id,
             model,
+            started: false,
             phase: Phase::Start,
+            text_block_index: None,
             input_tokens: 0,
             output_tokens: 0,
             finish_reason: None,
+            tools: std::collections::HashMap::new(),
+            block_seq: 0,
+        }
+    }
+
+    async fn ensure_started(&mut self, tx: &mpsc::Sender<String>) {
+        if self.started {
+            return;
+        }
+        self.started = true;
+        let start = json!({
+            "type": "message_start",
+            "message": {
+                "id": self.message_id,
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": self.model,
+                "stop_reason": null,
+                "stop_sequence": null,
+                "usage": {
+                    "input_tokens": self.input_tokens,
+                    "output_tokens": 0,
+                }
+            }
+        });
+        let _ = tx
+            .send(format!(
+                "event: message_start\ndata: {}\n\n",
+                serde_json::to_string(&start).unwrap_or_default()
+            ))
+            .await;
+    }
+
+    async fn close_text_block(&mut self, tx: &mpsc::Sender<String>) {
+        if let Some(index) = self.text_block_index.take() {
+            let _ = tx
+                .send(format!(
+                    "event: content_block_stop\ndata: {}\n\n",
+                    serde_json::to_string(&json!({"type": "content_block_stop", "index": index}))
+                        .unwrap_or_default()
+                ))
+                .await;
         }
     }
 
@@ -344,13 +477,6 @@ impl ConvertState {
             if c > 0 {
                 self.output_tokens = c;
             }
-            tracing::debug!(
-                p,
-                c,
-                input_tokens = self.input_tokens,
-                output_tokens = self.output_tokens,
-                "anthropic_compat stream: usage chunk received"
-            );
         }
 
         let choices = val
@@ -364,58 +490,123 @@ impl ConvertState {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty());
 
+        let tool_calls = choices
+            .and_then(|c| c.get("delta"))
+            .and_then(|d| d.get("tool_calls"))
+            .and_then(|v| v.as_array());
+
         let finish = choices
             .and_then(|c| c.get("finish_reason"))
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty());
 
-        // transition Start → InContent on first data
-        if matches!(self.phase, Phase::Start) {
-            if content.is_some() || finish.is_some() {
-                let start = json!({
-                    "type": "message_start",
-                    "message": {
-                        "id": self.message_id,
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [],
-                        "model": self.model,
-                        "stop_reason": null,
-                        "stop_sequence": null,
-                        "usage": {
-                            "input_tokens": self.input_tokens,
-                            "output_tokens": 0,
-                        }
-                    }
+        // text content delta
+        if let Some(text) = content {
+            if matches!(self.phase, Phase::Start) {
+                self.ensure_started(tx).await;
+                let index = self.block_seq;
+                self.block_seq += 1;
+                let _ = tx
+                    .send(format!(
+                        "event: content_block_start\ndata: {}\n\n",
+                        serde_json::to_string(&json!({
+                            "type": "content_block_start",
+                            "index": index,
+                            "content_block": {"type": "text", "text": ""},
+                        }))
+                        .unwrap_or_default()
+                    ))
+                    .await;
+                self.text_block_index = Some(index);
+                self.phase = Phase::InText;
+            } else if matches!(self.phase, Phase::InTool) {
+                // interleaved text after a tool block started — open another
+                // text block
+                let index = self.block_seq;
+                self.block_seq += 1;
+                let _ = tx
+                    .send(format!(
+                        "event: content_block_start\ndata: {}\n\n",
+                        serde_json::to_string(&json!({
+                            "type": "content_block_start",
+                            "index": index,
+                            "content_block": {"type": "text", "text": ""},
+                        }))
+                        .unwrap_or_default()
+                    ))
+                    .await;
+                self.text_block_index = Some(index);
+            }
+            if let Some(index) = self.text_block_index {
+                let delta = json!({
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": {"type": "text_delta", "text": text},
                 });
                 let _ = tx
                     .send(format!(
-                        "event: message_start\ndata: {}\n\n",
-                        serde_json::to_string(&start).unwrap_or_default()
+                        "event: content_block_delta\ndata: {}\n\n",
+                        serde_json::to_string(&delta).unwrap_or_default()
                     ))
                     .await;
-                let _ = tx
-                    .send("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n".to_string())
-                    .await;
-                self.phase = Phase::InContent;
-            } else {
-                return;
             }
         }
 
-        // content delta
-        if let Some(text) = content {
-            let delta = json!({
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "text_delta", "text": text},
-            });
-            let _ = tx
-                .send(format!(
-                    "event: content_block_delta\ndata: {}\n\n",
-                    serde_json::to_string(&delta).unwrap_or_default()
-                ))
-                .await;
+        // tool_calls deltas → tool_use content blocks + input_json_delta
+        if let Some(tcs) = tool_calls {
+            for tc in tcs {
+                let Some(oi) = tc.get("index").and_then(|v| v.as_u64()) else {
+                    continue;
+                };
+                let oi = oi as usize;
+                if !self.tools.contains_key(&oi) {
+                    self.ensure_started(tx).await;
+                    self.close_text_block(tx).await;
+                    let name = tc
+                        .get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let id = format!("toolu_{}", Uuid::new_v4().simple());
+                    let index = self.block_seq;
+                    self.block_seq += 1;
+                    let block = json!({
+                        "type": "content_block_start",
+                        "index": index,
+                        "content_block": {"type": "tool_use", "id": id, "name": name, "input": {}},
+                    });
+                    let _ = tx
+                        .send(format!(
+                            "event: content_block_start\ndata: {}\n\n",
+                            serde_json::to_string(&block).unwrap_or_default()
+                        ))
+                        .await;
+                    self.tools.insert(oi, (index, id, name));
+                    self.phase = Phase::InTool;
+                }
+                let Some((index, _, _)) = self.tools.get(&oi) else {
+                    continue;
+                };
+                let args = tc
+                    .get("function")
+                    .and_then(|f| f.get("arguments"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if !args.is_empty() {
+                    let delta = json!({
+                        "type": "content_block_delta",
+                        "index": index,
+                        "delta": {"type": "input_json_delta", "partial_json": args},
+                    });
+                    let _ = tx
+                        .send(format!(
+                            "event: content_block_delta\ndata: {}\n\n",
+                            serde_json::to_string(&delta).unwrap_or_default()
+                        ))
+                        .await;
+                }
+            }
         }
 
         // finish
@@ -426,19 +617,24 @@ impl ConvertState {
     }
 
     async fn finish(&mut self, tx: &mpsc::Sender<String>) {
-        if matches!(self.phase, Phase::Done | Phase::Start) {
+        if matches!(self.phase, Phase::Done | Phase::Start) || !self.started {
             return;
         }
-        tracing::debug!(
-            input_tokens = self.input_tokens,
-            output_tokens = self.output_tokens,
-            "anthropic_compat stream: finish — emitting message_delta"
-        );
         self.phase = Phase::Done;
 
-        let _ = tx
-            .send("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n".to_string())
-            .await;
+        self.close_text_block(tx).await;
+        // close each open tool block, ordered by anthropic block index
+        let mut tool_blocks: Vec<usize> = self.tools.values().map(|(i, _, _)| *i).collect();
+        tool_blocks.sort_unstable();
+        for index in tool_blocks {
+            let _ = tx
+                .send(format!(
+                    "event: content_block_stop\ndata: {}\n\n",
+                    serde_json::to_string(&json!({"type": "content_block_stop", "index": index}))
+                        .unwrap_or_default()
+                ))
+                .await;
+        }
 
         let stop = match self.finish_reason.as_deref() {
             Some("stop") => "end_turn",
@@ -522,5 +718,83 @@ fn convert_content(raw: Option<&Value>) -> Value {
             }
         }
         _ => Value::String(String::new()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt;
+
+    #[test]
+    fn forwards_tools_to_openai() {
+        let body = json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{
+                "name": "Bash",
+                "description": "run a command",
+                "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}},
+            }],
+            "tool_choice": {"type": "any"},
+        });
+        let openai = anthropic_to_openai(&body);
+        let tools = openai["tools"].as_array().expect("tools forwarded");
+        assert_eq!(tools[0]["type"], "function");
+        assert_eq!(tools[0]["function"]["name"], "Bash");
+        assert_eq!(tools[0]["function"]["parameters"]["type"], "object");
+        assert_eq!(openai["tool_choice"], "required");
+    }
+
+    #[test]
+    fn converts_tool_calls_in_non_streaming_response() {
+        let resp = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "let me run",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "Bash", "arguments": "{\"command\":\"ls\"}"},
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        });
+        let anthropic = openai_to_anthropic_response(&resp, "m");
+        let blocks = anthropic["content"].as_array().expect("content blocks");
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[1]["type"], "tool_use");
+        assert_eq!(blocks[1]["name"], "Bash");
+        assert_eq!(blocks[1]["input"]["command"], "ls");
+        assert!(!blocks[1]["id"].as_str().unwrap().is_empty());
+        assert_eq!(anthropic["stop_reason"], "tool_use");
+    }
+
+    #[tokio::test]
+    async fn streams_tool_calls_to_anthropic_sse() {
+        let chunks = vec![
+            "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}\n\n"
+                .to_string(),
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"command\\\":\\\"ls\\\"}\"}}]},\"finish_reason\":null}]}\n\n"
+                .to_string(),
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n".to_string(),
+            "data: [DONE]\n\n".to_string(),
+        ];
+        let stream = futures::stream::iter(chunks);
+        let mut out = wrap_openai_sse_for_anthropic(Box::pin(stream), "m".to_string());
+        let mut all = String::new();
+        while let Some(chunk) = out.next().await {
+            all.push_str(&chunk);
+        }
+        assert!(all.contains("\"type\":\"content_block_start\""), "missing block start: {all}");
+        assert!(all.contains("\"type\":\"tool_use\""), "missing tool_use block: {all}");
+        assert!(all.contains("input_json_delta"), "missing input_json_delta: {all}");
+        assert!(all.contains("partial_json"), "missing partial_json: {all}");
+        assert!(all.contains("\"stop_reason\":\"tool_use\""), "missing tool_use stop: {all}");
+        assert!(all.contains("message_stop"), "missing message_stop: {all}");
     }
 }
