@@ -1,4 +1,5 @@
 pub mod handlers;
+pub mod health;
 pub mod ws;
 
 use std::collections::HashMap;
@@ -55,6 +56,9 @@ pub struct AppState {
     /// ClickHouse backend for observability queries (optional).
     /// When `None`, observability queries fall back to PostgreSQL.
     pub ch: Option<Arc<ClickHouseBackend>>,
+    /// Unique identifier for this instance (INSTANCE_ID env or generated).
+    /// Used in logs and health probe responses for multi-instance ops.
+    pub instance_id: String,
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
@@ -138,6 +142,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/detokenize", axum::routing::post(handlers::detokenize))
         .route("/v1/models", axum::routing::get(handlers::list_models))
         .route("/health", axum::routing::get(handlers::health))
+        // Liveness/readiness probes for load balancers (no auth, no dependency)
+        .route("/healthz", axum::routing::get(health::liveness))
+        .route("/readyz", axum::routing::get(health::readiness))
         // admin API
         .merge(crate::admin::admin_routes())
         // static files for admin frontend

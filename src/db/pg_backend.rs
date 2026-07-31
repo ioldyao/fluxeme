@@ -934,6 +934,16 @@ impl DbBackend for PgBackend {
         Ok(())
     }
 
+    // ── Readiness ────────────────────────────────────────────────────────
+
+    async fn ping(&self) -> Result<(), DbError> {
+        query_scalar::<_, i32>("SELECT 1")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| DbError(format!("pg ping: {e}")))?;
+        Ok(())
+    }
+
     // ── Users ────────────────────────────────────────────────────────────
 
     async fn list_users(&self, status: Option<&str>) -> Result<Vec<User>, DbError> {

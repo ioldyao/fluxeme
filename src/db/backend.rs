@@ -21,6 +21,8 @@ use super::{AnnouncementRow, DbError, FunnelStats, ProbeResultRow, RechargeKeyRo
 pub trait DbBackend: Send + Sync {
     // ── Migration ────────────────────────────────────────────────────────
     async fn migrate(&self) -> Result<(), DbError>;
+    /// Connectivity check (SELECT 1). Used by readiness probes.
+    async fn ping(&self) -> Result<(), DbError>;
 
     // ── Users ────────────────────────────────────────────────────────────
     async fn list_users(&self, status: Option<&str>) -> Result<Vec<User>, DbError>;

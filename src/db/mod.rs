@@ -139,6 +139,9 @@ impl Database {
     pub async fn migrate(&self) -> Result<(), DbError> {
         self.backend.migrate().await
     }
+    pub async fn ping(&self) -> Result<(), DbError> {
+        self.backend.ping().await
+    }
 
     // ── Users ────────────────────────────────────────────────────────────
     pub async fn list_users(&self, status: Option<&str>) -> Result<Vec<User>, DbError> {

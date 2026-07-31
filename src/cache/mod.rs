@@ -96,6 +96,20 @@ impl RedisCache {
         self.con.is_some()
     }
 
+    /// Connectivity check (PING). Returns Ok only if Redis is reachable.
+    /// Used by readiness probes. Returns Ok(()) for noop (disabled) cache.
+    pub async fn ping(&self) -> Result<(), String> {
+        let mut con = match self.con.clone() {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        redis::Cmd::ping()
+            .query_async::<String>(&mut con)
+            .await
+            .map_err(|e| format!("Redis PING error: {e}"))?;
+        Ok(())
+    }
+
     /// Retrieve a cached value for the given tenant.
     ///
     /// The key is constructed as `cache:exact:{tenant_id}:{sha256(cache_key)}`
