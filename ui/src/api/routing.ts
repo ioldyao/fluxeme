@@ -76,3 +76,54 @@ export function useRoutingHistory(
     refetchInterval: 60_000,
   });
 }
+
+// ── Model monitoring (model × channel 24h health snapshot) ─────────
+
+export interface RoutingHealthEndpoint {
+  endpoint_id: number | null;
+  enabled: boolean;
+  available: boolean;
+}
+
+export interface RoutingHealthChannel {
+  channel_id: string;
+  channel_name: string;
+  priority: number;
+  provider?: string;
+  requests: number;
+  success_rate: number;
+  avg_latency_ms: number;
+  p95_latency_ms: number;
+  circuit_ok: boolean;
+  circuit_enabled: boolean;
+  endpoints: RoutingHealthEndpoint[];
+}
+
+export interface RoutingHealthModel {
+  id: string;
+  name: string;
+  model_pattern: string;
+  category?: string;
+  total_requests: number;
+  channels: RoutingHealthChannel[];
+}
+
+export interface RoutingHealthResponse {
+  models: RoutingHealthModel[];
+  summary: {
+    total_requests_24h: number;
+    overall_success_rate: number;
+    active_channels: number;
+    broken_channels: number;
+  };
+}
+
+/** Per-model × channel 24h health snapshot from GET /api/health/routing. */
+export function useRoutingHealth(opts?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['routing', 'health'],
+    queryFn: () => api<RoutingHealthResponse>('/health/routing'),
+    refetchInterval: 30_000,
+    enabled: opts?.enabled !== false,
+  });
+}
