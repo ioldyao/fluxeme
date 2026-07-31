@@ -68,22 +68,39 @@ function healthOf(probeRows: ProbeResult[], successRate: number, hasTraffic: boo
   return 'good';
 }
 
+/**
+ * Keep only the probe rows that represent the current health of a model:
+ * per channel, prefer rows carrying an endpoint_url (real endpoint probes);
+ * a synthetic failure row (endpoint_url = NULL, e.g. "Route not available")
+ * is only considered when the channel has no endpoint probes at all. This
+ * mirrors the backend's get_channel_health logic and prevents stale
+ * NULL-url failures from flagging a model that now passes checks.
+ */
+function effectiveProbes(probeRows: ProbeResult[]): ProbeResult[] {
+  const byChannel = new Map<string, ProbeResult[]>();
+  for (const p of probeRows) {
+    const arr = byChannel.get(p.channel_id) ?? [];
+    arr.push(p);
+    byChannel.set(p.channel_id, arr);
+  }
+  const out: ProbeResult[] = [];
+  for (const rows of byChannel.values()) {
+    const withUrl = rows.filter((r) => !!r.endpoint_url);
+    out.push(...(withUrl.length > 0 ? withUrl : rows));
+  }
+  return out;
+}
+
 function buildRows(
   models: Model[] | undefined,
   rh: RoutingHealthResponse | undefined,
   ma: ModelActivity[] | undefined,
-  probes: ProbeResult[] | undefined,
+  probesByModel: Map<string, ProbeResult[]>,
   channelName: Map<string, string>,
 ): ModelRow[] {
   if (!models) return [];
   const rhByName = new Map((rh?.models ?? []).map((m) => [m.name, m]));
   const maByName = new Map((ma ?? []).map((m) => [m.model, m]));
-  const probeByName = new Map<string, ProbeResult[]>();
-  for (const p of probes ?? []) {
-    const arr = probeByName.get(p.model_id) ?? [];
-    arr.push(p);
-    probeByName.set(p.model_id, arr);
-  }
 
   const rows: ModelRow[] = [];
   for (const m of models) {
@@ -127,7 +144,7 @@ function buildRows(
       avgLatency: totalReq > 0 ? wLat / totalReq : 0,
       p95,
       cacheHitPct,
-      health: healthOf(probeByName.get(m.id) ?? [], successRate, totalReq > 0),
+      health: healthOf(probesByModel.get(m.id) ?? [], successRate, totalReq > 0),
       availableEps: avail,
       enabledEps: enabled,
       brokenChannels: broken,
@@ -559,7 +576,7 @@ function RequestFlow({
         <div className="flex-1 min-w-0">
           {node(
             t('monitor.gateway'),
-            `${(directPass * 100).toFixed(1)}%`,
+            `${directPass.toFixed(1)}%`,
             t('monitor.directPass'),
             t('monitor.gatewayDetail', { rl: fmtCount(rl), af: fmtCount(af), cache: cachePct ?? 0 }),
             true,
@@ -854,9 +871,26 @@ export default function FlowTowerContent() {
     [channels],
   );
 
+  const probeByName = useMemo(() => {
+    const map = new Map<string, ProbeResult[]>();
+    for (const p of probes ?? []) {
+      const arr = map.get(p.model_id) ?? [];
+      arr.push(p);
+      map.set(p.model_id, arr);
+    }
+    return map;
+  }, [probes]);
+
+  // Per model, keep only current-health probe rows (see effectiveProbes).
+  const effectiveProbesByModel = useMemo(() => {
+    const map = new Map<string, ProbeResult[]>();
+    for (const [id, rows] of probeByName) map.set(id, effectiveProbes(rows));
+    return map;
+  }, [probeByName]);
+
   const rows = useMemo(
-    () => buildRows(models, rh, ma, probes, channelName),
-    [models, rh, ma, probes, channelName],
+    () => buildRows(models, rh, ma, effectiveProbesByModel, channelName),
+    [models, rh, ma, effectiveProbesByModel, channelName],
   );
 
   const firstWithTraffic = rows.find((r) => r.requests > 0)?.name ?? rows[0]?.name ?? null;
@@ -913,18 +947,19 @@ export default function FlowTowerContent() {
         }
       }
     }
-    for (const p of probes ?? []) {
-      if (p.success) continue;
-      const row = rows.find((r) => r.id === p.model_id);
-      list.push({
-        key: `pf-${p.id}`,
-        kind: 'amber',
-        title: `${row?.name ?? p.model_id} · ${channelName.get(p.channel_id) ?? p.channel_id}`,
-        meta: `${t('monitor.probeFailed')} · ${new Date(p.probed_at).toLocaleString()}`,
-      });
+    for (const r of rows) {
+      for (const p of effectiveProbesByModel.get(r.id) ?? []) {
+        if (p.success) continue;
+        list.push({
+          key: `pf-${p.id}`,
+          kind: 'amber',
+          title: `${r.name} · ${channelName.get(p.channel_id) ?? p.channel_id}`,
+          meta: `${t('monitor.probeFailed')} · ${new Date(p.probed_at).toLocaleString()}`,
+        });
+      }
     }
     return list.slice(0, 8);
-  }, [rows, probes, channelName, t]);
+  }, [rows, effectiveProbesByModel, channelName, t]);
 
   const chartData = useMemo(
     () =>
@@ -956,7 +991,7 @@ export default function FlowTowerContent() {
       <StatusStrip
         leadTitle={leadTitle}
         leadCopy={t('monitor.leadCopy', { total: rows.length, healthy: healthyCount })}
-        availability={successRate24h * 100}
+        availability={successRate24h}
         currentRequests={totalCount || funnel?.total || 0}
         p95={p95}
         totalTokens={totalTokens24h}
