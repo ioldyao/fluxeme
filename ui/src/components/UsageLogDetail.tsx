@@ -65,7 +65,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
   const { data: record, isLoading, error } = useUsageDetail(requestId);
   const { currency, rate } = useCurrency();
 
-  const costStr = record ? formatCost(record.prompt_tokens, record.completion_tokens, record.cache_hit_input_tokens, getRecordPricing(record, {}), currency, rate) : null;
+  const costStr = record ? formatCost(record.prompt_tokens, record.completion_tokens, record.cache_hit_input_tokens, getRecordPricing(record), currency, rate) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
