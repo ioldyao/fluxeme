@@ -40,6 +40,9 @@ pub struct HealthProbeService {
     db: Arc<Database>,
     providers: Arc<ProviderRegistry>,
     routing: Arc<RoutingService>,
+    /// ClickHouse backend — probe results are observability data and live
+    /// in CH. Falls back to PostgreSQL when CH is not configured.
+    ch: Option<std::sync::Arc<crate::ch_backend::ClickHouseBackend>>,
 }
 
 impl HealthProbeService {
@@ -47,11 +50,13 @@ impl HealthProbeService {
         db: Arc<Database>,
         providers: Arc<ProviderRegistry>,
         routing: Arc<RoutingService>,
+        ch: Option<std::sync::Arc<crate::ch_backend::ClickHouseBackend>>,
     ) -> Self {
         Self {
             db,
             providers,
             routing,
+            ch,
         }
     }
 
@@ -181,13 +186,18 @@ impl HealthProbeService {
                 .then_with(|| left.row.endpoint_url.cmp(&right.row.endpoint_url))
         });
 
-        let mut rows = Vec::with_capacity(ordered_results.len());
-        for ordered in ordered_results {
-            self.db
-                .insert_probe_result(&ordered.row)
+        let rows: Vec<ProbeResultRow> = ordered_results.into_iter().map(|o| o.row).collect();
+
+        // Probe results are observability data → ClickHouse. Falls back to
+        // PostgreSQL only when CH is not configured.
+        if let Some(ref ch) = self.ch {
+            ch.insert_probe_results(&rows)
                 .await
-                .map_err(|e| e.0)?;
-            rows.push(ordered.row);
+                .map_err(|e| format!("CH probe write failed: {e}"))?;
+        } else {
+            for row in &rows {
+                self.db.insert_probe_result(row).await.map_err(|e| e.0)?;
+            }
         }
 
         Ok(rows)
@@ -195,7 +205,11 @@ impl HealthProbeService {
 
     /// Get the most recent probe result for each channel endpoint.
     pub async fn all_latest_probes(&self) -> Result<Vec<ProbeResultRow>, String> {
-        self.db.all_latest_probe_results().await.map_err(|e| e.0)
+        if let Some(ref ch) = self.ch {
+            ch.all_latest_probe_results().await
+        } else {
+            self.db.all_latest_probe_results().await.map_err(|e| e.0)
+        }
     }
 
     async fn run_probe_job(job: ProbeJob) -> OrderedProbeRow {
