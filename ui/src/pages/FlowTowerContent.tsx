@@ -167,10 +167,23 @@ function buildRows(
 
 // ── live total (24h snapshot baseline + WS increments) ─────────────
 
+export interface TimelineEntry {
+  id: string;
+  model: string;
+  channel: string;
+  acceptedTs: number;
+  completedTs?: number;
+  latency?: number;
+  success?: boolean;
+}
+
+const TIMELINE_CAP = 15;
+
 function useLiveTotal() {
   const [totalCount, setTotalCount] = useState(0);
   const [connected, setConnected] = useState(false);
   const [reconnectIn, setReconnectIn] = useState(0);
+  const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
 
   useEffect(() => {
     fetchRoutingFlowSnapshot()
@@ -199,14 +212,54 @@ function useLiveTotal() {
         }
       };
       ws.onmessage = (e) => {
-        let ev: { model?: string; channel_id?: string };
+        let ev: {
+          model?: string;
+          channel_id?: string;
+          request_id?: string;
+          latency_ms?: number;
+          success?: boolean;
+          timestamp?: string;
+        };
         try {
-          ev = JSON.parse(e.data) as { model?: string; channel_id?: string };
+          ev = JSON.parse(e.data) as typeof ev;
         } catch {
           return;
         }
         if (typeof ev.model !== 'string' || typeof ev.channel_id !== 'string') return;
         setTotalCount((c) => c + 1);
+
+        // State timeline: RouteDecided (no latency) opens a request row;
+        // RequestCompleted (latency_ms) closes it.
+        if (typeof ev.request_id === 'string') {
+          const ts = Date.parse(ev.timestamp ?? '');
+          const tsNum = Number.isNaN(ts) ? Date.now() : ts;
+          setTimeline((prev) => {
+            let next = prev.slice();
+            if (ev.latency_ms != null) {
+              const idx = next.findIndex((e) => e.id === ev.request_id);
+              const entry = {
+                id: ev.request_id!,
+                model: ev.model!,
+                channel: ev.channel_id!,
+                acceptedTs: tsNum - ev.latency_ms,
+                completedTs: tsNum,
+                latency: ev.latency_ms,
+                success: ev.success,
+              };
+              if (idx >= 0) next[idx] = entry;
+              else next.push(entry);
+            } else if (!next.some((e) => e.id === ev.request_id)) {
+              next.push({
+                id: ev.request_id!,
+                model: ev.model!,
+                channel: ev.channel_id!,
+                acceptedTs: tsNum,
+              });
+            }
+            if (next.length > TIMELINE_CAP) next = next.slice(next.length - TIMELINE_CAP);
+            return next;
+          });
+        }
       };
       ws.onclose = () => {
         setConnected(false);
@@ -247,7 +300,7 @@ function useLiveTotal() {
     };
   }, []);
 
-  return { totalCount, connected, reconnectIn };
+  return { totalCount, connected, reconnectIn, timeline };
 }
 
 // ── top status strip ───────────────────────────────────────────────
@@ -543,8 +596,75 @@ function FlowLink({ delay }: { delay?: string }) {
   );
 }
 
+// ── center: request state timeline ─────────────────────────────────
+
+function StateTimeline({ timeline }: { timeline: TimelineEntry[] }) {
+  const { t } = useTranslation();
+  if (timeline.length === 0) {
+    return (
+      <div className="px-4 pb-4">
+        <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">
+          {t('monitor.stateTimeline')}
+        </div>
+        <div className="py-3 text-center text-xs text-muted-foreground">{t('monitor.noLiveData')}</div>
+      </div>
+    );
+  }
+  const now = Date.now();
+  const entries = [...timeline].reverse(); // newest first
+  const minTs = Math.min(...entries.map((e) => e.acceptedTs));
+  const maxTs = Math.max(...entries.map((e) => e.completedTs ?? now));
+  const span = Math.max(maxTs - minTs, 1);
+  const pct = (v: number) => `${Math.min(100, Math.max(0, (v / span) * 100))}%`;
+  return (
+    <div className="px-4 pb-4">
+      <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">
+        <span>{t('monitor.stateTimeline')}</span>
+        <span className="tabular-nums">{entries.length}</span>
+      </div>
+      <div className="space-y-1.5">
+        {entries.map((e) => {
+          const start = pct(e.acceptedTs - minTs);
+          const width = e.completedTs ? pct(e.completedTs - e.acceptedTs) : undefined;
+          const label = e.model || e.id.slice(0, 8);
+          return (
+            <div key={e.id} className="flex items-center gap-2 text-[10px]">
+              <span
+                className="w-24 truncate text-muted-foreground shrink-0"
+                title={`${e.model} · ${e.channel} · ${e.id}`}
+              >
+                {label.length > 12 ? `${label.slice(0, 11)}…` : label}
+              </span>
+              <div className="relative flex-1 h-4 rounded bg-muted/30 overflow-hidden">
+                <span className="absolute top-0 bottom-0 w-px bg-border/80" style={{ left: start }} />
+                {e.completedTs ? (
+                  <span
+                    className={cn(
+                      'absolute top-1 bottom-1 rounded-sm',
+                      e.success === false ? 'bg-red-500/60' : 'bg-emerald-500/60',
+                    )}
+                    style={{ left: start, width }}
+                  />
+                ) : (
+                  <span
+                    className="absolute top-1 bottom-1 w-1.5 rounded-full bg-blue-500 animate-pulse"
+                    style={{ left: start }}
+                  />
+                )}
+              </div>
+              <span className="w-16 text-right tabular-nums text-muted-foreground shrink-0">
+                {e.completedTs ? `${e.latency ?? 0}ms` : t('monitor.inFlight')}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function RequestFlow({
-  ingress, directPass, upstream, rl, af, cachePct, p95, timeout,
+  ingress, directPass, upstream, rl, af, cachePct, p95, timeout, timeline,
 }: {
   ingress: number;
   directPass: number;
@@ -554,6 +674,7 @@ function RequestFlow({
   cachePct: number | null;
   p95: number;
   timeout: number;
+  timeline: TimelineEntry[];
 }) {
   const { t } = useTranslation();
   const node = (kicker: string, value: string, valueUnit: string, detail: string, gateway = false) => (
@@ -602,6 +723,11 @@ function RequestFlow({
             t('monitor.upstreamDetail', { p95: fmtLat(p95), to: fmtCount(timeout) }),
           )}
         </div>
+      </div>
+
+      {/* State timeline: recent requests accepted → completed */}
+      <div className="border-t border-border/60">
+        <StateTimeline timeline={timeline} />
       </div>
     </section>
   );
@@ -970,7 +1096,7 @@ export default function FlowTowerContent() {
   const { data: ua } = useUsageAggregate(1);
   const { data: ma } = useModelActivity(1);
   const { data: probes } = useProbeResults();
-  const { totalCount, connected } = useLiveTotal();
+  const { totalCount, connected, timeline } = useLiveTotal();
 
   const channelName = useMemo(
     () => new Map((channels ?? []).map((c) => [c.id, c.name || c.id])),
@@ -1138,6 +1264,7 @@ export default function FlowTowerContent() {
             cachePct={cachePct}
             p95={p95}
             timeout={funnel?.timeout_count ?? 0}
+            timeline={timeline}
           />
           <ChannelEndpointStatus row={selected} channelName={channelName} endpointUrl={endpointUrl} />
           <ModelCompareTable rows={rows} selectedName={selectedName} onSelect={setSelectedName} />
