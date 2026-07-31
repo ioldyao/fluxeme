@@ -51,6 +51,55 @@ pub(crate) async fn set_allow_private_ips(
     Ok(Json(serde_json::json!({ "enabled": req.enabled })))
 }
 
+// ── Auto probe interval ────────────────────────────────────────────
+
+const PROBE_INTERVAL_MIN_SECS: u64 = 10;
+const PROBE_INTERVAL_MAX_SECS: u64 = 3600;
+
+pub(crate) async fn get_probe_interval(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:settings").await?;
+    let value = state
+        .db
+        .get_setting("probe_interval_secs")
+        .await
+        .map_err(db_err)?;
+    let interval_secs = value
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(60)
+        .clamp(PROBE_INTERVAL_MIN_SECS, PROBE_INTERVAL_MAX_SECS);
+    Ok(Json(serde_json::json!({ "interval_secs": interval_secs })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ProbeIntervalReq {
+    interval_secs: u64,
+}
+
+pub(crate) async fn set_probe_interval(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ProbeIntervalReq>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:settings").await?;
+    if !(PROBE_INTERVAL_MIN_SECS..=PROBE_INTERVAL_MAX_SECS).contains(&req.interval_secs) {
+        return Err(AdminError::bad_request(format!(
+            "Probe interval must be between {} and {} seconds",
+            PROBE_INTERVAL_MIN_SECS, PROBE_INTERVAL_MAX_SECS
+        )));
+    }
+    state
+        .db
+        .set_setting("probe_interval_secs", &req.interval_secs.to_string())
+        .await
+        .map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "interval_secs": req.interval_secs })))
+}
+
 // ── Gateway Config ──────────────────────────────────────────────────
 
 pub(crate) async fn get_gateway_config_handler(

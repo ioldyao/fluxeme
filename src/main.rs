@@ -414,20 +414,29 @@ async fn main() {
         routing.clone(),
     ));
 
-    // Automatic model health probes: every 60s probe all channel endpoints
-    // of every model, feeding circuit breakers and probe_results so the
-    // flow-control monitor shows real-time health without manual checks.
-    // Only channels already in the routing cache are probed (avoids writing
-    // synthetic "Route not available" failure rows for stale cache entries).
+    // Automatic model health probes: probe all channel endpoints of every
+    // model on an admin-configurable interval (default 60s, stored in
+    // balancer_settings key "probe_interval_secs", clamped 10..=3600).
+    // The interval is re-read each cycle so changes apply without a
+    // restart. Feeds circuit breakers + probe_results so the flow-control
+    // monitor shows real-time health without manual checks. Only channels
+    // already in the routing cache are probed (avoids writing synthetic
+    // "Route not available" failure rows for stale cache entries).
     {
         let db = db.clone();
         let health_probe = health_probe.clone();
         let routing = routing.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(60));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                interval.tick().await;
+                let interval_secs = db
+                    .get_setting("probe_interval_secs")
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(60)
+                    .clamp(10, 3600);
+                tokio::time::sleep(Duration::from_secs(interval_secs)).await;
                 let models = match db.list_models().await {
                     Ok(m) => m,
                     Err(e) => {
