@@ -419,6 +419,7 @@ async fn main() {
         db.clone(),
         providers.clone(),
         routing.clone(),
+        ch.clone(),
     ));
 
     // Automatic model health probes: probe all channel endpoints of every

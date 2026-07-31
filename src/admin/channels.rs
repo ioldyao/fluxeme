@@ -187,7 +187,11 @@ pub(crate) async fn get_channel_health(
     let ch = state.db.get_channel(&id).await.map_err(db_err)?;
     let channel_id = ch.as_ref().map(|c| c.id.clone()).unwrap_or(id);
     // Read latest endpoint-aware probe results from database (persisted across restarts)
-    let latest_probe = state.db.all_latest_probe_results().await.map_err(db_err)?;
+    let latest_probe = state
+        .health_probe
+        .all_latest_probes()
+        .await
+        .map_err(AdminError::internal)?;
     let channel_probe_rows: Vec<_> = latest_probe
         .iter()
         .filter(|row| row.channel_id == channel_id && row.endpoint_url.is_some())

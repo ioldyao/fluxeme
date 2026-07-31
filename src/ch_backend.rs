@@ -329,6 +329,144 @@ impl ClickHouseBackend {
 
     // ── Writes ────────────────────────────────────────────────────────
 
+    /// Batch insert health-probe results (observability → ClickHouse).
+    pub async fn insert_probe_results(
+        &self,
+        rows: &[crate::db::ProbeResultRow],
+    ) -> Result<(), String> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        #[derive(clickhouse::Row, serde::Serialize)]
+        struct ChProbeRow {
+            id: String,
+            channel_id: String,
+            model_id: String,
+            success: u8,
+            latency_ms: u64,
+            error: Option<String>,
+            endpoint_url: Option<String>,
+            probed_at: u32,
+        }
+        let mut inserter = self
+            .client
+            .insert::<ChProbeRow>("probe_results")
+            .map_err(|e| format!("CH probe inserter: {e}"))?;
+        for r in rows {
+            let ts = chrono::DateTime::parse_from_rfc3339(&r.probed_at)
+                .map(|d| d.timestamp() as u32)
+                .unwrap_or_else(|_| chrono::Utc::now().timestamp() as u32);
+            inserter
+                .write(&ChProbeRow {
+                    id: r.id.clone(),
+                    channel_id: r.channel_id.clone(),
+                    model_id: r.model_id.clone(),
+                    success: if r.success { 1 } else { 0 },
+                    latency_ms: r.latency_ms,
+                    error: r.error.clone(),
+                    endpoint_url: r.endpoint_url.clone(),
+                    probed_at: ts,
+                })
+                .await
+                .map_err(|e| format!("CH probe insert row: {e}"))?;
+        }
+        inserter
+            .end()
+            .await
+            .map_err(|e| format!("CH probe insert batch end: {e}"))
+    }
+
+    /// Latest probe result per (model, channel, endpoint_url) from ClickHouse.
+    pub async fn all_latest_probe_results(&self) -> Result<Vec<crate::db::ProbeResultRow>, String> {
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct Row {
+            id: String,
+            channel_id: String,
+            model_id: String,
+            success: u8,
+            latency_ms: u64,
+            error: Option<String>,
+            endpoint_url: Option<String>,
+            probed_at: u32,
+        }
+        let rows = self
+            .client
+            .query(
+                "SELECT p.id, p.channel_id, p.model_id, p.success, p.latency_ms, p.error, p.endpoint_url, toUInt32(p.probed_at) AS probed_at \
+                 FROM probe_results p \
+                 INNER JOIN ( \
+                     SELECT model_id, channel_id, COALESCE(endpoint_url, '') AS ek, MAX(probed_at) AS m \
+                     FROM probe_results GROUP BY model_id, channel_id, COALESCE(endpoint_url, '') \
+                 ) l \
+                   ON p.model_id = l.model_id AND p.channel_id = l.channel_id \
+                  AND COALESCE(p.endpoint_url, '') = l.ek AND p.probed_at = l.m \
+                 ORDER BY p.probed_at DESC",
+            )
+            .fetch_all::<Row>()
+            .await
+            .map_err(|e| format!("CH all_latest_probe_results: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| crate::db::ProbeResultRow {
+                id: r.id,
+                channel_id: r.channel_id,
+                model_id: r.model_id,
+                success: r.success != 0,
+                latency_ms: r.latency_ms,
+                error: r.error,
+                probed_at: chrono::DateTime::from_timestamp(r.probed_at as i64, 0)
+                    .map(|d| d.to_rfc3339())
+                    .unwrap_or_default(),
+                endpoint_url: r.endpoint_url,
+            })
+            .collect())
+    }
+
+    /// Raw probe results from the last `minutes` minutes (newest first).
+    pub async fn recent_probe_results(
+        &self,
+        minutes: i64,
+    ) -> Result<Vec<crate::db::ProbeResultRow>, String> {
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct Row {
+            id: String,
+            channel_id: String,
+            model_id: String,
+            success: u8,
+            latency_ms: u64,
+            error: Option<String>,
+            endpoint_url: Option<String>,
+            probed_at: u32,
+        }
+        let rows = self
+            .client
+            .query(
+                "SELECT id, channel_id, model_id, success, latency_ms, error, endpoint_url, toUInt32(probed_at) AS probed_at \
+                 FROM probe_results \
+                 WHERE probed_at >= now() - INTERVAL ? MINUTE \
+                 ORDER BY probed_at DESC LIMIT 1000",
+            )
+            .bind(minutes as u32)
+            .fetch_all::<Row>()
+            .await
+            .map_err(|e| format!("CH recent_probe_results: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| crate::db::ProbeResultRow {
+                id: r.id,
+                channel_id: r.channel_id,
+                model_id: r.model_id,
+                success: r.success != 0,
+                latency_ms: r.latency_ms,
+                error: r.error,
+                probed_at: chrono::DateTime::from_timestamp(r.probed_at as i64, 0)
+                    .map(|d| d.to_rfc3339())
+                    .unwrap_or_default(),
+                endpoint_url: r.endpoint_url,
+            })
+            .collect())
+    }
+
     /// Batch insert usage events.
     pub async fn insert_usage_events(&self, events: &[UsageEvent]) -> Result<(), String> {
         if events.is_empty() {
