@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::authz::AuthzModule;
 use crate::db::Database;
+use crate::server::AppState;
 use crate::domain::user::{SessionInfo, USER_STATUS_ACTIVE};
 use crate::ratelimit::RateLimiter;
 
@@ -67,8 +68,15 @@ pub struct AdminModule {
 }
 
 impl AdminModule {
-    pub fn new(secret: &str, encryption_key: &str, db: Arc<Database>) -> Self {
-        let rl = Arc::new(RateLimiter::new());
+    /// `redis` is `Some` when the shared Redis cache is enabled — used for
+    /// distributed rate limiting across instances.
+    pub fn new(
+        secret: &str,
+        encryption_key: &str,
+        db: Arc<Database>,
+        redis: Option<Arc<crate::cache::RedisCache>>,
+    ) -> Self {
+        let rl = Arc::new(RateLimiter::new(redis));
         rl.start_cleanup_task();
         Self {
             secret: secret.to_string(),
@@ -323,6 +331,7 @@ async fn require_session(
     admin
         .rate_limiter
         .check_rpm(&format!("admin:{}", db_user.id), 300)
+        .await
         .map_err(|_| AdminError::too_many_requests("Too many requests. Try again later."))?;
 
     Ok(SessionInfo {
@@ -331,6 +340,15 @@ async fn require_session(
         role: db_user.role,
         token_version: db_user.token_version,
     })
+}
+
+/// Bump the shared config_version so other gateway instances reload their
+/// in-memory caches. Called after any admin mutation that changes routing /
+/// auth / content_filter / authz state. Errors are logged, not propagated.
+async fn notify_config_changed(state: &Arc<AppState>) {
+    if let Err(e) = state.db.bump_config_version().await {
+        tracing::warn!("Failed to bump config_version: {}", e);
+    }
 }
 
 /// Check Casbin permission for the given session.

@@ -64,6 +64,7 @@ pub(crate) async fn admin_login(
     state
         .rate_limiter
         .check_rpm(&format!("login:{}", client_ip), 10)
+        .await
         .map_err(|_| AdminError::too_many_requests("Too many login attempts. Try again later."))?;
 
     // Authenticate against database (all users including admins)
@@ -145,6 +146,7 @@ pub(crate) async fn admin_logout(
         .await
         .map_err(db_err)?;
     state.auth.reload().await;
+    notify_config_changed(&state).await;
 
     let is_secure = should_set_secure_cookie(&headers);
     let mut response_headers = HeaderMap::new();
@@ -243,6 +245,7 @@ pub(crate) async fn setup_register(
         .await
         .map_err(db_err_bad_request)?;
     state.auth.reload().await;
+    notify_config_changed(&state).await;
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }

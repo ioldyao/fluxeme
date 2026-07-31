@@ -43,6 +43,7 @@ pub(crate) async fn create_rule(
 
     state.db.create_rule(&rule).await.map_err(db_err)?;
     state.routing.reload().await.map_err(AdminError::internal)?;
+    notify_config_changed(&state).await;
 
     tracing::info!(
         "admin={} action=create_rule target={}",
@@ -67,6 +68,7 @@ pub(crate) async fn update_rule(
     updated.updated_at = chrono::Utc::now().to_rfc3339();
     state.db.update_rule(&updated).await.map_err(db_err)?;
     state.routing.reload().await.map_err(AdminError::internal)?;
+    notify_config_changed(&state).await;
 
     Ok(Json(serde_json::json!({ "updated": true })))
 }
@@ -81,6 +83,7 @@ pub(crate) async fn delete_rule(
 
     state.db.delete_rule(&id).await.map_err(db_err)?;
     state.routing.reload().await.map_err(AdminError::internal)?;
+    notify_config_changed(&state).await;
 
     tracing::info!("admin={} action=delete_rule target={}", session.user_id, id);
 

@@ -76,6 +76,7 @@ pub(crate) async fn create_filter_rule(
     rule.updated_at = now;
     state.db.create_filter_rule(&rule).await.map_err(db_err)?;
     state.content_filter.reload().await;
+    notify_config_changed(&state).await;
     Ok(Json(serde_json::json!({ "ok": true, "id": rule.id })))
 }
 
@@ -91,6 +92,7 @@ pub(crate) async fn update_filter_rule(
     rule.updated_at = chrono::Utc::now().to_rfc3339();
     state.db.update_filter_rule(&rule).await.map_err(db_err)?;
     state.content_filter.reload().await;
+    notify_config_changed(&state).await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -103,5 +105,6 @@ pub(crate) async fn delete_filter_rule(
     check_perm(&state.authz, &session, "admin:moderation").await?;
     state.db.delete_filter_rule(&id).await.map_err(db_err)?;
     state.content_filter.reload().await;
+    notify_config_changed(&state).await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
