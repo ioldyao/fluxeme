@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Search } from 'lucide-react';
@@ -786,17 +786,26 @@ const EP_BADGE: Record<'good' | 'bad' | 'none', string> = {
 };
 
 // ── endpoint state timeline grid ────────────────────────────────────
-// One row per endpoint, columns are time buckets over the last N minutes.
-// Cell color = ENDPOINT STATE in that bucket, driven by the health probes
-// (auto-probe every probe-interval seconds): green = probe succeeded,
-// red = probe failed, muted = no probe in that bucket. This is endpoint
-// health over time — NOT request traffic.
+// One row per endpoint, columns are time buckets.
+// Cell width = probe-interval seconds (read from gateway settings).
+// Cell color: green = probe success, red = failure, muted = no probe.
+// Hover a cell to see timestamp + status.
+
 
 const EP_TIMELINE_COLS = 18;
-// 18 cells × 60s = 18-minute window; each cell spans ~60 seconds.
-const EP_TIMELINE_MINUTES = 18;
 
-/** Poll recent raw probe results (PG probe_results) for the probe-driven grid. */
+/** Read the configured probe interval from settings. */
+function useProbeInterval(): number {
+  const [intervalSecs, setIntervalSecs] = useState(60);
+  useEffect(() => {
+    api<{ interval_secs: number }>('/settings/probe-interval')
+      .then((r) => setIntervalSecs(r.interval_secs))
+      .catch(() => {});
+  }, []);
+  return intervalSecs;
+}
+
+/** Poll recent raw probe results. */
 function useRecentProbes(minutes: number) {
   const [probes, setProbes] = useState<ProbeResult[]>([]);
   useEffect(() => {
@@ -819,56 +828,65 @@ function useRecentProbes(minutes: number) {
 }
 
 function EndpointTimeline({
-  row, endpointUrl,
+  row, endpointUrl, channelName,
 }: {
   row: ModelRow | null;
   endpointUrl: Map<string, Map<number, string>>;
+  channelName: Map<string, string>;
 }) {
   const { t } = useTranslation();
-  const probes = useRecentProbes(EP_TIMELINE_MINUTES);
+  const intervalSecs = useProbeInterval();
+  const probes = useRecentProbes(EP_TIMELINE_COLS * Math.ceil(intervalSecs / 60) + 5);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
 
   const endpoints = useMemo(() => {
     if (!row) return [];
-    const list: { channelId: string; channelName: string; endpointId: number | null; url: string }[] = [];
+    const list: { channelId: string; channelName: string; url: string }[] = [];
     for (const ch of row.channels) {
+      const chUrlMap = endpointUrl.get(ch.channel_id);
       for (const ep of ch.endpoints) {
         const url =
-          (ep.endpoint_id != null && endpointUrl.get(ch.channel_id)?.get(ep.endpoint_id)) || '';
+          (ep.endpoint_id != null && chUrlMap?.get(ep.endpoint_id)) || '';
         list.push({
           channelId: ch.channel_id,
-          channelName: ch.channel_name || ch.channel_id,
-          endpointId: ep.endpoint_id,
+          channelName: channelName.get(ch.channel_id) || ch.channel_name || ch.channel_id,
           url,
         });
       }
     }
     return list;
-  }, [row, endpointUrl]);
+  }, [row, endpointUrl, channelName]);
 
+  // Every cell = intervalSecs seconds. Window = cols × intervalSecs.
   const now = Date.now();
-  const windowMs = EP_TIMELINE_MINUTES * 60_000;
-  const bucketMs = windowMs / EP_TIMELINE_COLS;
+  const bucketMs = intervalSecs * 1000;
+  const windowMs = EP_TIMELINE_COLS * bucketMs;
   const windowStart = now - windowMs;
 
-  const cellState = (
-    ep: { channelId: string; url: string },
-    i: number,
-  ): 'good' | 'bad' | 'empty' => {
-    const start = windowStart + i * bucketMs;
-    const end = start + bucketMs;
-    let bad = false;
-    let hit = false;
-    for (const p of probes) {
-      if (p.channel_id !== ep.channelId) continue;
-      if (ep.url && p.endpoint_url !== ep.url) continue;
-      const ts = Date.parse(p.probed_at);
-      if (Number.isNaN(ts) || ts < start || ts >= end) continue;
-      if (!p.success) bad = true;
-      else hit = true;
-    }
-    if (bad) return 'bad';
-    if (hit) return 'good';
-    return 'empty';
+  const hitsForCell = useCallback(
+    (ep: { channelId: string; url: string }, i: number): { n: number; ok: number; fail: number; times: string[] } => {
+      const start = windowStart + i * bucketMs;
+      const end = start + bucketMs;
+      let ok = 0, fail = 0;
+      const times: string[] = [];
+      for (const p of probes) {
+        if (p.channel_id !== ep.channelId) continue;
+        if (ep.url && p.endpoint_url !== ep.url) continue;
+        const ts = Date.parse(p.probed_at);
+        if (Number.isNaN(ts) || ts < start || ts >= end) continue;
+        const d = new Date(ts);
+        times.push(d.toLocaleTimeString());
+        if (p.success) ok++; else fail++;
+      }
+      return { n: ok + fail, ok, fail, times };
+    },
+    [probes, windowStart, bucketMs],
+  );
+
+  const cellClass = (ok: number, fail: number) => {
+    if (fail > 0) return 'bg-red-500/60';
+    if (ok > 0) return 'bg-emerald-500/50';
+    return 'bg-muted/30';
   };
 
   if (!row || endpoints.length === 0) return null;
@@ -878,27 +896,11 @@ function EndpointTimeline({
       <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">
         {t('monitor.endpointTimeline')}
       </div>
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto relative">
         <div className="min-w-[380px]">
-          <div
-            className="grid items-center gap-1 mb-1"
-            style={{ gridTemplateColumns: `minmax(150px,1fr) repeat(${EP_TIMELINE_COLS}, minmax(0,1fr))` }}
-          >
-            <span />
-            {Array.from({ length: EP_TIMELINE_COLS }, (_, i) => {
-              const s = new Date(windowStart + i * bucketMs);
-              const mm = String(s.getMinutes()).padStart(2, '0');
-              const ss = String(s.getSeconds()).padStart(2, '0');
-              return (
-                <span key={i} className="text-center text-[9px] text-muted-foreground tabular-nums">
-                  {`${mm}:${ss}`}
-                </span>
-              );
-            })}
-          </div>
           {endpoints.map((ep, ri) => (
             <div
-              key={`${ep.channelId}-${ep.endpointId ?? ri}`}
+              key={`${ep.channelId}-${ri}`}
               className="grid items-center gap-1 mb-1"
               style={{ gridTemplateColumns: `minmax(150px,1fr) repeat(${EP_TIMELINE_COLS}, minmax(0,1fr))` }}
             >
@@ -909,22 +911,47 @@ function EndpointTimeline({
                 {ep.url ? `${ep.channelName} ${ep.url}` : ep.channelName}
               </span>
               {Array.from({ length: EP_TIMELINE_COLS }, (_, i) => {
-                const s = cellState(ep, i);
+                const h = hitsForCell(ep, i);
                 return (
                   <span
                     key={i}
-                    className={cn(
-                      'h-5 rounded-sm',
-                      s === 'good' && 'bg-emerald-500/50',
-                      s === 'bad' && 'bg-red-500/60',
-                      s === 'empty' && 'bg-muted/30',
-                    )}
+                    className={`h-5 rounded-sm relative ${cellClass(h.ok, h.fail)}`}
+                    onMouseEnter={(e) => {
+                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                      const start = new Date(windowStart + i * bucketMs);
+                      const end = new Date(windowStart + (i + 1) * bucketMs);
+                      const okLine = h.ok > 0 && h.fail === 0 ? `✅ ${h.ok}次成功` : '';
+                      const failLine = h.fail > 0 ? `❌ ${h.fail}次失败` : '';
+                      const emptyLine = h.n === 0 ? '— 无探测' : '';
+                      setTooltip({
+                        x: rect.left + rect.width / 2,
+                        y: rect.top - 6,
+                        text: [
+                          `${start.toLocaleTimeString()} ~ ${end.toLocaleTimeString()}`,
+                          okLine,
+                          failLine,
+                          emptyLine,
+                          h.n > 0 ? `详情: ${h.times.join(' · ')}` : '',
+                        ]
+                          .filter(Boolean)
+                          .join('\n'),
+                      });
+                    }}
+                    onMouseLeave={() => setTooltip(null)}
                   />
                 );
               })}
             </div>
           ))}
         </div>
+        {tooltip && (
+          <div
+            className="fixed z-50 pointer-events-none bg-popover border rounded-lg shadow-lg px-3 py-2 text-xs whitespace-pre leading-relaxed"
+            style={{ left: tooltip.x, top: tooltip.y, transform: 'translate(-50%, -100%)' }}
+          >
+            {tooltip.text}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1017,7 +1044,7 @@ function ChannelEndpointStatus({
           })
         )}
       </div>
-      <EndpointTimeline row={row} endpointUrl={endpointUrl} />
+      <EndpointTimeline row={row} endpointUrl={endpointUrl} channelName={channelName} />
     </section>
   );
 }
