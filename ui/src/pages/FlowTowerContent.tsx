@@ -792,8 +792,9 @@ const EP_BADGE: Record<'good' | 'bad' | 'none', string> = {
 // red = probe failed, muted = no probe in that bucket. This is endpoint
 // health over time — NOT request traffic.
 
-const EP_TIMELINE_COLS = 6;
-const EP_TIMELINE_MINUTES = 10;
+const EP_TIMELINE_COLS = 18;
+// 18 cells × 60s = 18-minute window; each cell spans ~60 seconds.
+const EP_TIMELINE_MINUTES = 18;
 
 /** Poll recent raw probe results (PG probe_results) for the probe-driven grid. */
 function useRecentProbes(minutes: number) {
