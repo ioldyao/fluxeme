@@ -130,12 +130,94 @@ pub fn anthropic_to_openai(body: &Value) -> Value {
         }
     }
 
-    // messages
+    // messages — Anthropic content blocks → OpenAI chat messages:
+    //  - text/image blocks → content parts
+    //  - tool_result blocks (user msg) → separate {role: "tool"} messages
+    //    so the upstream sees tool results in multi-turn conversations
+    //  - tool_use blocks (assistant msg) → tool_calls array
     if let Some(anthropic_msgs) = body.get("messages").and_then(|v| v.as_array()) {
         for msg in anthropic_msgs {
             let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("user");
-            let content = convert_content(msg.get("content"));
-            messages.push(json!({"role": role, "content": content}));
+            match msg.get("content") {
+                Some(Value::String(s)) => {
+                    messages.push(json!({"role": role, "content": s}));
+                }
+                Some(Value::Array(blocks)) => {
+                    let mut parts: Vec<Value> = Vec::new();
+                    let mut tool_calls: Vec<Value> = Vec::new();
+                    for block in blocks {
+                        match block.get("type").and_then(|v| v.as_str()) {
+                            Some("text") | Some("image") => {
+                                if let Some(p) = convert_block(block) {
+                                    parts.push(p);
+                                }
+                            }
+                            Some("tool_result") => {
+                                if !parts.is_empty() {
+                                    messages.push(json!({"role": role, "content": compact_parts(std::mem::take(&mut parts))}));
+                                }
+                                let tool_use_id = block
+                                    .get("tool_use_id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let mut content = convert_tool_result_content(block.get("content"));
+                                if block
+                                    .get("is_error")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false)
+                                {
+                                    if let Value::String(ref mut s) = content {
+                                        s.insert_str(0, "[tool_error] ");
+                                    }
+                                }
+                                messages.push(json!({
+                                    "role": "tool",
+                                    "tool_call_id": tool_use_id,
+                                    "content": content,
+                                }));
+                            }
+                            Some("tool_use") => {
+                                let id = block
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let name = block
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let input = block
+                                    .get("input")
+                                    .cloned()
+                                    .unwrap_or_else(|| Value::Object(Default::default()));
+                                tool_calls.push(json!({
+                                    "id": id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": name,
+                                        "arguments": serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_string()),
+                                    }
+                                }));
+                            }
+                            _ => {
+                                // thinking / server_tool_use / others: not
+                                // representable in OpenAI chat format
+                            }
+                        }
+                    }
+                    if !parts.is_empty() {
+                        let mut m = json!({"role": role, "content": compact_parts(parts)});
+                        if !tool_calls.is_empty() {
+                            m["tool_calls"] = Value::Array(tool_calls);
+                        }
+                        messages.push(m);
+                    } else if !tool_calls.is_empty() {
+                        messages.push(json!({"role": role, "content": "", "tool_calls": tool_calls}));
+                    }
+                }
+                _ => {
+                    messages.push(json!({"role": role, "content": ""}));
+                }
+            }
         }
     }
 
@@ -149,6 +231,7 @@ pub fn anthropic_to_openai(body: &Value) -> Value {
         "max_tokens",
         "temperature",
         "top_p",
+        "top_k",
         "stop",
         "stream",
         "frequency_penalty",
@@ -157,6 +240,11 @@ pub fn anthropic_to_openai(body: &Value) -> Value {
         if let Some(v) = body.get(key) {
             openai[key] = v.clone();
         }
+    }
+
+    // Anthropic `stop_sequences` → OpenAI `stop`
+    if let Some(v) = body.get("stop_sequences") {
+        openai["stop"] = v.clone();
     }
 
     // max_tokens → max_completion_tokens (newer OpenAI API)
@@ -189,10 +277,11 @@ pub fn anthropic_to_openai(body: &Value) -> Value {
         }
     }
 
-    // tool_choice: Anthropic auto/any/tool → OpenAI auto/required/function
+    // tool_choice: Anthropic auto/any/tool/none → OpenAI auto/required/function/none
     if let Some(tc) = body.get("tool_choice") {
         openai["tool_choice"] = match tc.get("type").and_then(|v| v.as_str()) {
             Some("any") => json!("required"),
+            Some("none") => json!("none"),
             Some("tool") => tc
                 .get("name")
                 .and_then(|v| v.as_str())
@@ -675,50 +764,62 @@ fn blocks_to_text(blocks: &[Value]) -> String {
     text
 }
 
-fn convert_content(raw: Option<&Value>) -> Value {
+/// Convert a single Anthropic content block to its OpenAI equivalent.
+/// Returns `None` for blocks that have no OpenAI representation (thinking,
+/// server_tool_use, etc.).
+fn convert_block(block: &Value) -> Option<Value> {
+    match block.get("type").and_then(|v| v.as_str()) {
+        Some("text") => block
+            .get("text")
+            .and_then(|v| v.as_str())
+            .map(|t| json!({"type": "text", "text": t})),
+        Some("image") => {
+            let src = block.get("source")?;
+            let mime = src
+                .get("media_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("image/jpeg");
+            let data = src.get("data").and_then(|v| v.as_str()).unwrap_or("");
+            Some(json!({
+                "type": "image_url",
+                "image_url": {"url": format!("data:{};base64,{}", mime, data)},
+            }))
+        }
+        _ => None,
+    }
+}
+
+/// OpenAI tool-message content: accepts a string or an array of text/image
+/// parts. A single text part is collapsed to a plain string.
+fn convert_tool_result_content(raw: Option<&Value>) -> Value {
     match raw {
         Some(Value::String(s)) => Value::String(s.clone()),
         Some(Value::Array(blocks)) => {
-            let mut text = String::new();
-            let mut images: Vec<Value> = Vec::new();
-            for b in blocks {
-                match b.get("type").and_then(|v| v.as_str()) {
-                    Some("text") => {
-                        if let Some(t) = b.get("text").and_then(|v| v.as_str()) {
-                            text.push_str(t);
-                        }
-                    }
-                    Some("image") => {
-                        if let Some(src) = b.get("source") {
-                            let mime = src
-                                .get("media_type")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("image/jpeg");
-                            let data = src.get("data").and_then(|v| v.as_str()).unwrap_or("");
-                            images.push(json!({
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": format!("data:{};base64,{}", mime, data),
-                                }
-                            }));
-                        }
-                    }
-                    _ => {}
+            let parts: Vec<Value> = blocks.iter().filter_map(convert_block).collect();
+            if parts.len() == 1 {
+                if let Some(t) = parts[0].get("text").and_then(|v| v.as_str()) {
+                    return Value::String(t.to_string());
                 }
             }
-            if images.is_empty() {
-                Value::String(text)
+            if parts.is_empty() {
+                Value::String(String::new())
             } else {
-                let mut parts: Vec<Value> = Vec::new();
-                if !text.is_empty() {
-                    parts.push(json!({"type": "text", "text": text}));
-                }
-                parts.extend(images);
                 Value::Array(parts)
             }
         }
         _ => Value::String(String::new()),
     }
+}
+
+/// Collapse a list of OpenAI content parts to a plain string when it holds
+/// exactly one text part, otherwise keep the array.
+fn compact_parts(parts: Vec<Value>) -> Value {
+    if parts.len() == 1 {
+        if let Some(t) = parts[0].get("text").and_then(|v| v.as_str()) {
+            return Value::String(t.to_string());
+        }
+    }
+    Value::Array(parts)
 }
 
 #[cfg(test)]
@@ -727,6 +828,35 @@ mod tests {
     use futures::StreamExt;
 
     #[test]
+    #[test]
+    fn forwards_tool_result_and_tool_use_messages() {
+        let body = json!({
+            "model": "m",
+            "messages": [
+                {"role": "user", "content": "list the dir"},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "toolu_01", "name": "Bash", "input": {"command": "ls"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_01", "content": "a.txt\nb.txt"}
+                ]},
+            ],
+            "tools": [{"name": "Bash", "input_schema": {"type": "object"}}],
+        });
+        let openai = anthropic_to_openai(&body);
+        let msgs = openai["messages"].as_array().expect("messages");
+        assert_eq!(msgs.len(), 3);
+        // assistant tool_use block → tool_calls on the assistant message
+        assert_eq!(msgs[1]["role"], "assistant");
+        assert_eq!(msgs[1]["tool_calls"][0]["id"], "toolu_01");
+        assert_eq!(msgs[1]["tool_calls"][0]["function"]["name"], "Bash");
+        assert_eq!(msgs[1]["tool_calls"][0]["function"]["arguments"], "{\"command\":\"ls\"}");
+        // tool_result block → separate OpenAI tool message
+        assert_eq!(msgs[2]["role"], "tool");
+        assert_eq!(msgs[2]["tool_call_id"], "toolu_01");
+        assert_eq!(msgs[2]["content"], "a.txt\nb.txt");
+    }
+
     fn forwards_tools_to_openai() {
         let body = json!({
             "model": "m",
