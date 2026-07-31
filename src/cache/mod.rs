@@ -64,6 +64,7 @@ pub fn compute_gate_status(balance: Decimal, frozen: Decimal) -> GateStatus {
 /// sentinel is used — all operations return `None` / `Ok(())` without
 /// touching Redis.
 pub struct RedisCache {
+    client: Option<redis::Client>,
     con: Option<redis::aio::MultiplexedConnection>,
     default_ttl_secs: u64,
 }
@@ -78,6 +79,7 @@ impl RedisCache {
             .await
             .map_err(|e| format!("Redis connection failed: {}", e))?;
         Ok(Self {
+            client: Some(client),
             con: Some(con),
             default_ttl_secs,
         })
@@ -86,6 +88,7 @@ impl RedisCache {
     /// No-op cache — all operations are implicit no-ops.
     pub fn noop() -> Self {
         Self {
+            client: None,
             con: None,
             default_ttl_secs: 0,
         }
@@ -155,6 +158,37 @@ impl RedisCache {
         .await
         .map_err(|e| format!("Redis rate_limit_tpm error: {e}"))?;
         Ok(allowed == 1)
+    }
+
+    /// Publish a message to a Redis pub/sub channel.
+    /// Returns Ok(()) for noop (disabled) cache.
+    pub async fn publish(&self, channel: &str, payload: &str) -> Result<(), String> {
+        let mut con = match self.con.clone() {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        redis::Cmd::publish(channel, payload)
+            .query_async::<i64>(&mut con)
+            .await
+            .map_err(|e| format!("Redis PUBLISH error: {e}"))?;
+        Ok(())
+    }
+
+    /// Open a dedicated pub/sub subscription. Returns `None` for noop cache.
+    pub async fn subscribe(&self, channel: &str) -> Result<redis::aio::PubSub, String> {
+        let client = match &self.client {
+            Some(c) => c,
+            None => return Err("Redis cache disabled".to_string()),
+        };
+        let mut pubsub = client
+            .get_async_pubsub()
+            .await
+            .map_err(|e| format!("Redis pubsub connection failed: {e}"))?;
+        pubsub
+            .subscribe(channel)
+            .await
+            .map_err(|e| format!("Redis pubsub subscribe failed: {e}"))?;
+        Ok(pubsub)
     }
 
     /// Retrieve a cached value for the given tenant.
