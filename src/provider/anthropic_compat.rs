@@ -747,16 +747,24 @@ impl ConvertState {
             }
         }
 
-        // finish
+        // finish — record the reason but do NOT finalize here. OpenAI sends
+        // the final usage chunk AFTER the finish_reason chunk (right before
+        // [DONE]); finalizing now would set Phase::Done and the subsequent
+        // ingest would drop the usage chunk. The terminal message_delta /
+        // message_stop are emitted when the stream ends (see the wrapper).
         if let Some(fr) = finish {
             self.finish_reason = Some(fr.to_string());
-            self.finish(tx).await;
         }
     }
 
     async fn finish(&mut self, tx: &mpsc::Sender<String>) {
-        if matches!(self.phase, Phase::Done | Phase::Start) || !self.started {
+        if matches!(self.phase, Phase::Done) {
             return;
+        }
+        // Emit message_start even when no content arrived, so the client
+        // always gets a well-formed terminal sequence.
+        if !self.started {
+            self.ensure_started(tx).await;
         }
         self.phase = Phase::Done;
 
@@ -990,9 +998,11 @@ mod tests {
         let chunks = vec![
             "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"hi\"},\"finish_reason\":null}]}\n\n"
                 .to_string(),
+            // Real upstream order: finish_reason chunk comes BEFORE the
+            // usage chunk — the converter must not finalize on the former.
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n".to_string(),
             "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":10,\"prompt_tokens_details\":{\"cached_tokens\":40,\"cache_write_tokens\":60}}}\n\n"
                 .to_string(),
-            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n".to_string(),
             "data: [DONE]\n\n".to_string(),
         ];
         let stream = futures::stream::iter(chunks);
