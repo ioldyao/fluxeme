@@ -177,14 +177,8 @@ pub fn anthropic_to_openai(body: &Value) -> Value {
                                 }));
                             }
                             Some("tool_use") => {
-                                let id = block
-                                    .get("id")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
-                                let name = block
-                                    .get("name")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
+                                let id = block.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                                let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
                                 let input = block
                                     .get("input")
                                     .cloned()
@@ -211,7 +205,8 @@ pub fn anthropic_to_openai(body: &Value) -> Value {
                         }
                         messages.push(m);
                     } else if !tool_calls.is_empty() {
-                        messages.push(json!({"role": role, "content": "", "tool_calls": tool_calls}));
+                        messages
+                            .push(json!({"role": role, "content": "", "tool_calls": tool_calls}));
                     }
                 }
                 _ => {
@@ -294,7 +289,11 @@ pub fn anthropic_to_openai(body: &Value) -> Value {
     // Ask the upstream for the final usage chunk in streaming responses
     // (stream_options.include_usage) so cache-hit tokens can be converted
     // back; non-streaming responses always carry usage.
-    if openai.get("stream").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if openai
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         match openai.get_mut("stream_options") {
             Some(Value::Object(opts)) => {
                 opts.insert("include_usage".into(), Value::Bool(true));
@@ -917,7 +916,10 @@ mod tests {
         assert_eq!(msgs[1]["role"], "assistant");
         assert_eq!(msgs[1]["tool_calls"][0]["id"], "toolu_01");
         assert_eq!(msgs[1]["tool_calls"][0]["function"]["name"], "Bash");
-        assert_eq!(msgs[1]["tool_calls"][0]["function"]["arguments"], "{\"command\":\"ls\"}");
+        assert_eq!(
+            msgs[1]["tool_calls"][0]["function"]["arguments"],
+            "{\"command\":\"ls\"}"
+        );
         // tool_result block → separate OpenAI tool message
         assert_eq!(msgs[2]["role"], "tool");
         assert_eq!(msgs[2]["tool_call_id"], "toolu_01");
@@ -1011,9 +1013,18 @@ mod tests {
         while let Some(chunk) = out.next().await {
             all.push_str(&chunk);
         }
-        assert!(all.contains("\"cache_read_input_tokens\":40"), "missing cache read: {all}");
-        assert!(all.contains("\"cache_creation_input_tokens\":60"), "missing cache creation: {all}");
-        assert!(all.contains("\"input_tokens\":60"), "input should exclude cached: {all}");
+        assert!(
+            all.contains("\"cache_read_input_tokens\":40"),
+            "missing cache read: {all}"
+        );
+        assert!(
+            all.contains("\"cache_creation_input_tokens\":60"),
+            "missing cache creation: {all}"
+        );
+        assert!(
+            all.contains("\"input_tokens\":60"),
+            "input should exclude cached: {all}"
+        );
     }
 
     #[tokio::test]
@@ -1032,11 +1043,23 @@ mod tests {
         while let Some(chunk) = out.next().await {
             all.push_str(&chunk);
         }
-        assert!(all.contains("\"type\":\"content_block_start\""), "missing block start: {all}");
-        assert!(all.contains("\"type\":\"tool_use\""), "missing tool_use block: {all}");
-        assert!(all.contains("input_json_delta"), "missing input_json_delta: {all}");
+        assert!(
+            all.contains("\"type\":\"content_block_start\""),
+            "missing block start: {all}"
+        );
+        assert!(
+            all.contains("\"type\":\"tool_use\""),
+            "missing tool_use block: {all}"
+        );
+        assert!(
+            all.contains("input_json_delta"),
+            "missing input_json_delta: {all}"
+        );
         assert!(all.contains("partial_json"), "missing partial_json: {all}");
-        assert!(all.contains("\"stop_reason\":\"tool_use\""), "missing tool_use stop: {all}");
+        assert!(
+            all.contains("\"stop_reason\":\"tool_use\""),
+            "missing tool_use stop: {all}"
+        );
         assert!(all.contains("message_stop"), "missing message_stop: {all}");
     }
 }

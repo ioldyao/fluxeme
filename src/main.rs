@@ -99,10 +99,8 @@ async fn main() {
     dotenvy::dotenv().ok();
 
     // Initialise tracing subscriber (fmt + optional OTLP layer).
-    let _otlp_provider = crate::observability::trace::init_subscriber(
-        "ai_gateway=info,tower_http=info",
-        "fluxeme",
-    );
+    let _otlp_provider =
+        crate::observability::trace::init_subscriber("ai_gateway=info,tower_http=info", "fluxeme");
 
     let config_path =
         std::env::var("GATEWAY_CONFIG").unwrap_or_else(|_| "config/config.yaml".to_string());
@@ -274,8 +272,11 @@ async fn main() {
 
     // Event bus for real-time observability (WebSocket push to admin UI).
     // Bridged to Redis pub/sub so events fan out across instances.
-    let event_bus =
-        observability::event_bus::EventBus::new(8192, shared_limiter_cache.clone(), instance_id.clone());
+    let event_bus = observability::event_bus::EventBus::new(
+        8192,
+        shared_limiter_cache.clone(),
+        instance_id.clone(),
+    );
 
     // Remote event subscriber: relays events from other instances into the
     // local bus so WebSocket clients here see all gateway traffic.
@@ -401,8 +402,14 @@ async fn main() {
             .await
             .expect("Failed to initialize Casbin authorization module"),
     );
-    authz.seed_defaults(&db).await.expect("Failed to seed Casbin policies");
-    authz.reload(&db).await.expect("Failed to load Casbin policies from DB");
+    authz
+        .seed_defaults(&db)
+        .await
+        .expect("Failed to seed Casbin policies");
+    authz
+        .reload(&db)
+        .await
+        .expect("Failed to load Casbin policies from DB");
 
     // Initialize content filter service
     let content_filter = Arc::new(ContentFilterService::new(db.clone()).await);
@@ -494,7 +501,12 @@ async fn main() {
         let poll_state = state.clone();
         tokio::spawn(async move {
             // Initialize to current version so we don't reload on startup
-            let mut last_version = poll_state.db.get_setting("config_version").await.ok().flatten();
+            let mut last_version = poll_state
+                .db
+                .get_setting("config_version")
+                .await
+                .ok()
+                .flatten();
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {

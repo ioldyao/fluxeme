@@ -97,7 +97,9 @@ pub(crate) async fn set_probe_interval(
         .set_setting("probe_interval_secs", &req.interval_secs.to_string())
         .await
         .map_err(db_err)?;
-    Ok(Json(serde_json::json!({ "interval_secs": req.interval_secs })))
+    Ok(Json(
+        serde_json::json!({ "interval_secs": req.interval_secs }),
+    ))
 }
 
 // ── Gateway Config ──────────────────────────────────────────────────

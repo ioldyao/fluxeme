@@ -107,10 +107,6 @@ pub(crate) async fn delete_announcement(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:announcements").await?;
 
-    state
-        .db
-        .delete_announcement(&id)
-        .await
-        .map_err(db_err)?;
+    state.db.delete_announcement(&id).await.map_err(db_err)?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }

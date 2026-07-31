@@ -273,6 +273,7 @@ impl PgBackend {
             cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
             client_ip,
             endpoint_id: None,
+            endpoint_url: None,
             original_model,
         }
     }
@@ -355,6 +356,7 @@ impl PgBackend {
             cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
             client_ip,
             endpoint_id: None,
+            endpoint_url: None,
             original_model,
         }
     }
@@ -2614,6 +2616,7 @@ impl DbBackend for PgBackend {
                     cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
                     client_ip: None,
                     endpoint_id: None,
+                    endpoint_url: None,
                     original_model: String::new(),
                 }
             })
@@ -4107,24 +4110,27 @@ impl DbBackend for PgBackend {
 
     // ── Casbin Policies ──────────────────────────────────────────────────
 
-    async fn casbin_list_policies(&self) -> Result<Vec<(String, String, String, String, String, String, String)>, DbError> {
-        let rows = query(
-            "SELECT ptype, v0, v1, v2, v3, v4, v5 FROM casbin_policies ORDER BY id",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DbError(format!("casbin_list_policies: {e}")))?;
-        Ok(rows.iter().map(|r| {
-            (
-                r.try_get::<String, _>(0).unwrap_or_default(),
-                r.try_get::<String, _>(1).unwrap_or_default(),
-                r.try_get::<String, _>(2).unwrap_or_default(),
-                r.try_get::<String, _>(3).unwrap_or_default(),
-                r.try_get::<String, _>(4).unwrap_or_default(),
-                r.try_get::<String, _>(5).unwrap_or_default(),
-                r.try_get::<String, _>(6).unwrap_or_default(),
-            )
-        }).collect())
+    async fn casbin_list_policies(
+        &self,
+    ) -> Result<Vec<(String, String, String, String, String, String, String)>, DbError> {
+        let rows = query("SELECT ptype, v0, v1, v2, v3, v4, v5 FROM casbin_policies ORDER BY id")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DbError(format!("casbin_list_policies: {e}")))?;
+        Ok(rows
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get::<String, _>(0).unwrap_or_default(),
+                    r.try_get::<String, _>(1).unwrap_or_default(),
+                    r.try_get::<String, _>(2).unwrap_or_default(),
+                    r.try_get::<String, _>(3).unwrap_or_default(),
+                    r.try_get::<String, _>(4).unwrap_or_default(),
+                    r.try_get::<String, _>(5).unwrap_or_default(),
+                    r.try_get::<String, _>(6).unwrap_or_default(),
+                )
+            })
+            .collect())
     }
 
     async fn casbin_add_policy(
@@ -4155,15 +4161,13 @@ impl DbBackend for PgBackend {
     }
 
     async fn casbin_remove_policy(&self, ptype: &str, v0: &str, v1: &str) -> Result<(), DbError> {
-        query(
-            "DELETE FROM casbin_policies WHERE ptype = $1 AND v0 = $2 AND v1 = $3",
-        )
-        .bind(ptype)
-        .bind(v0)
-        .bind(v1)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DbError(format!("casbin_remove_policy: {e}")))?;
+        query("DELETE FROM casbin_policies WHERE ptype = $1 AND v0 = $2 AND v1 = $3")
+            .bind(ptype)
+            .bind(v0)
+            .bind(v1)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError(format!("casbin_remove_policy: {e}")))?;
         Ok(())
     }
 

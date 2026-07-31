@@ -633,6 +633,7 @@ struct UsageTrackingStream<S> {
     recorded: bool,
     client_ip: String,
     endpoint_id: Option<i64>,
+    endpoint_url: Option<String>,
     /// Circuit-breaker feedback for the streaming request: record_success
     /// when the stream completes cleanly. Client disconnects / mid-stream
     /// drops are not fed into the breaker — they aren't upstream failures.
@@ -744,6 +745,7 @@ impl<S> UsageTrackingStream<S> {
                 cache_read_price: Decimal::ZERO,
                 client_ip: Some(self.client_ip.clone()),
                 endpoint_id: self.endpoint_id,
+                endpoint_url: self.endpoint_url.clone(),
                 original_model: self.original_model.clone(),
             },
             self.endpoint_id,
@@ -881,6 +883,7 @@ async fn handle_streaming(
                 recorded: false,
                 client_ip,
                 endpoint_id: endpoint.id,
+                endpoint_url: Some(endpoint.url.clone()),
                 original_model: orig_model.clone(),
                 balancer: Some(balancer),
                 endpoint_idx,
@@ -926,6 +929,7 @@ async fn handle_streaming(
                 cache_read_price: Decimal::ZERO,
                 client_ip: Some(client_ip),
                 endpoint_id: endpoint.id,
+                endpoint_url: Some(endpoint.url.clone()),
                 original_model: orig_model.clone(),
             });
             Err(GatewayError::Upstream(e.0))
@@ -989,6 +993,7 @@ async fn handle_messages_streaming(
                 recorded: false,
                 client_ip,
                 endpoint_id: endpoint.id,
+                endpoint_url: Some(endpoint.url.clone()),
                 original_model: orig_model.clone(),
                 balancer: Some(balancer),
                 endpoint_idx,
@@ -1034,6 +1039,7 @@ async fn handle_messages_streaming(
                 cache_read_price: Decimal::ZERO,
                 client_ip: Some(client_ip),
                 endpoint_id: endpoint.id,
+                endpoint_url: Some(endpoint.url.clone()),
                 original_model: orig_model.clone(),
             });
             Err(GatewayError::Upstream(e.0))
@@ -1118,6 +1124,7 @@ async fn handle_non_streaming(
                         cache_read_price: Decimal::ZERO,
                         client_ip: Some(client_ip.clone()),
                         endpoint_id: route.endpoint.id,
+                        endpoint_url: Some(route.endpoint.url.clone()),
                         original_model: String::new(),
                     },
                     route.endpoint.id,
@@ -1187,6 +1194,7 @@ async fn handle_non_streaming(
                     cache_read_price: Decimal::ZERO,
                     client_ip: Some(client_ip.clone()),
                     endpoint_id: route.endpoint.id,
+                    endpoint_url: Some(route.endpoint.url.clone()),
                     original_model: String::new(),
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Upstream request failed");
@@ -1223,6 +1231,7 @@ async fn handle_non_streaming(
         cache_read_price: Decimal::ZERO,
         client_ip: Some(client_ip),
         endpoint_id: route.endpoint.id,
+        endpoint_url: Some(route.endpoint.url.clone()),
         original_model: String::new(),
     });
     Err(GatewayError::Upstream(err_msg))
@@ -1308,6 +1317,7 @@ async fn handle_messages_non_streaming(
                     cache_read_price: Decimal::ZERO,
                     client_ip: Some(client_ip.clone()),
                     endpoint_id: route.endpoint.id,
+                    endpoint_url: Some(route.endpoint.url.clone()),
                     original_model: String::new(),
                 });
 
@@ -1358,6 +1368,7 @@ async fn handle_messages_non_streaming(
                     cache_read_price: Decimal::ZERO,
                     client_ip: Some(client_ip.clone()),
                     endpoint_id: route.endpoint.id,
+                    endpoint_url: Some(route.endpoint.url.clone()),
                     original_model: String::new(),
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Messages upstream request failed");
@@ -1393,6 +1404,7 @@ async fn handle_messages_non_streaming(
         cache_read_price: Decimal::ZERO,
         client_ip: Some(client_ip),
         endpoint_id: route.endpoint.id,
+        endpoint_url: Some(route.endpoint.url.clone()),
         original_model: String::new(),
     });
     Err(GatewayError::Upstream(err_msg))
@@ -1559,7 +1571,8 @@ pub async fn chat_completions(
         state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
         state
             .rate_limiter
-            .check_tpm(&user.user_id, tpm, estimate_tokens(&body)).await?;
+            .check_tpm(&user.user_id, tpm, estimate_tokens(&body))
+            .await?;
     }
 
     // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
@@ -1763,7 +1776,8 @@ pub async fn messages_count_tokens(
         state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
         state
             .rate_limiter
-            .check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body)).await?;
+            .check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body))
+            .await?;
     }
 
     if gw_cfg.billing_enabled {
@@ -1885,7 +1899,8 @@ pub async fn responses_input_tokens(
         state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
         state
             .rate_limiter
-            .check_tpm(&user.user_id, tpm, estimate_tokens_responses(&body)).await?;
+            .check_tpm(&user.user_id, tpm, estimate_tokens_responses(&body))
+            .await?;
     }
 
     let (channel_id, resolved_model, upstream_model) =
@@ -1997,7 +2012,8 @@ pub async fn messages(
         state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
         state
             .rate_limiter
-            .check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body)).await?;
+            .check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body))
+            .await?;
     }
 
     // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
@@ -2172,7 +2188,8 @@ async fn relay_to_upstream(
         state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
         state
             .rate_limiter
-            .check_tpm(&user.user_id, tpm, estimate_tokens(&body)).await?;
+            .check_tpm(&user.user_id, tpm, estimate_tokens(&body))
+            .await?;
     }
 
     // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
@@ -2284,6 +2301,7 @@ async fn relay_to_upstream(
                     cache_read_price: Decimal::ZERO,
                     client_ip: Some(client_ip.clone()),
                     endpoint_id: route.endpoint.id,
+                    endpoint_url: Some(route.endpoint.url.clone()),
                     original_model: String::new(),
                 });
 
@@ -2333,6 +2351,7 @@ async fn relay_to_upstream(
                     cache_read_price: Decimal::ZERO,
                     client_ip: Some(client_ip.clone()),
                     endpoint_id: route.endpoint.id,
+                    endpoint_url: Some(route.endpoint.url.clone()),
                     original_model: String::new(),
                 });
                 return Err(GatewayError::from(e));
@@ -2367,6 +2386,7 @@ async fn relay_to_upstream(
         cache_read_price: Decimal::ZERO,
         client_ip: Some(client_ip),
         endpoint_id: route.endpoint.id,
+        endpoint_url: Some(route.endpoint.url.clone()),
         original_model: orig_model.clone(),
     });
     Err(GatewayError::Upstream(err_msg))
