@@ -171,6 +171,7 @@ export interface TimelineEntry {
   id: string;
   model: string;
   channel: string;
+  endpointId?: number | null;
   acceptedTs: number;
   completedTs?: number;
   latency?: number;
@@ -216,6 +217,7 @@ function useLiveTotal() {
           model?: string;
           channel_id?: string;
           request_id?: string;
+          endpoint_id?: number | null;
           latency_ms?: number;
           success?: boolean;
           timestamp?: string;
@@ -241,6 +243,7 @@ function useLiveTotal() {
                 id: ev.request_id!,
                 model: ev.model!,
                 channel: ev.channel_id!,
+                endpointId: ev.endpoint_id ?? null,
                 acceptedTs: tsNum - ev.latency_ms,
                 completedTs: tsNum,
                 latency: ev.latency_ms,
@@ -253,6 +256,7 @@ function useLiveTotal() {
                 id: ev.request_id!,
                 model: ev.model!,
                 channel: ev.channel_id!,
+                endpointId: ev.endpoint_id ?? null,
                 acceptedTs: tsNum,
               });
             }
@@ -741,12 +745,131 @@ const EP_BADGE: Record<'good' | 'bad' | 'none', string> = {
   none: 'bg-muted text-muted-foreground',
 };
 
+// ── endpoint state timeline grid ────────────────────────────────────
+// One row per endpoint, columns are time buckets over the last 60s.
+// Cell color = endpoint state in that bucket (request-driven):
+// green = requests succeeded, red = failed, blue pulsing = in-flight,
+// muted = no traffic.
+
+const EP_TIMELINE_COLS = 6;
+const EP_TIMELINE_WINDOW_MS = 60_000;
+
+function EndpointTimeline({
+  row, timeline, endpointUrl,
+}: {
+  row: ModelRow | null;
+  timeline: TimelineEntry[];
+  endpointUrl: Map<string, Map<number, string>>;
+}) {
+  const { t } = useTranslation();
+
+  const endpoints = useMemo(() => {
+    if (!row) return [];
+    const list: { channelId: string; channelName: string; endpointId: number | null; url: string }[] = [];
+    for (const ch of row.channels) {
+      for (const ep of ch.endpoints) {
+        const url =
+          (ep.endpoint_id != null && endpointUrl.get(ch.channel_id)?.get(ep.endpoint_id)) || '';
+        list.push({
+          channelId: ch.channel_id,
+          channelName: ch.channel_name || ch.channel_id,
+          endpointId: ep.endpoint_id,
+          url,
+        });
+      }
+    }
+    return list;
+  }, [row, endpointUrl]);
+
+  const now = Date.now();
+  const bucketMs = EP_TIMELINE_WINDOW_MS / EP_TIMELINE_COLS;
+  const windowStart = now - EP_TIMELINE_WINDOW_MS;
+
+  const cellState = (endpointId: number | null, i: number): 'good' | 'bad' | 'inflight' | 'empty' => {
+    const start = windowStart + i * bucketMs;
+    const end = start + bucketMs;
+    let bad = false;
+    let inflight = false;
+    let hit = false;
+    for (const e of timeline) {
+      if (e.endpointId !== endpointId) continue;
+      const eEnd = e.completedTs ?? end;
+      if (eEnd < start || e.acceptedTs > end) continue;
+      if (e.success === false) bad = true;
+      else if (!e.completedTs) inflight = true;
+      else hit = true;
+    }
+    if (bad) return 'bad';
+    if (inflight) return 'inflight';
+    if (hit) return 'good';
+    return 'empty';
+  };
+
+  if (!row || endpoints.length === 0) return null;
+
+  return (
+    <div className="border-t border-border/60 px-4 py-3">
+      <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">
+        {t('monitor.endpointTimeline')}
+      </div>
+      <div className="overflow-x-auto">
+        <div className="min-w-[380px]">
+          <div
+            className="grid items-center gap-1 mb-1"
+            style={{ gridTemplateColumns: `minmax(110px,1fr) repeat(${EP_TIMELINE_COLS}, minmax(0,1fr))` }}
+          >
+            <span />
+            {Array.from({ length: EP_TIMELINE_COLS }, (_, i) => {
+              const s = new Date(windowStart + i * bucketMs);
+              return (
+                <span key={i} className="text-center text-[9px] text-muted-foreground tabular-nums">
+                  {String(s.getSeconds()).padStart(2, '0')}
+                </span>
+              );
+            })}
+          </div>
+          {endpoints.map((ep, ri) => (
+            <div
+              key={`${ep.channelId}-${ep.endpointId ?? ri}`}
+              className="grid items-center gap-1 mb-1"
+              style={{ gridTemplateColumns: `minmax(110px,1fr) repeat(${EP_TIMELINE_COLS}, minmax(0,1fr))` }}
+            >
+              <span
+                className="truncate text-[10px] text-muted-foreground pr-1"
+                title={`${ep.channelName} ${ep.url}`}
+              >
+                {ep.channelName}
+              </span>
+              {Array.from({ length: EP_TIMELINE_COLS }, (_, i) => {
+                const s = cellState(ep.endpointId, i);
+                return (
+                  <span
+                    key={i}
+                    className={cn(
+                      'h-5 rounded-sm',
+                      s === 'good' && 'bg-emerald-500/50',
+                      s === 'bad' && 'bg-red-500/60',
+                      s === 'inflight' && 'bg-blue-500/50 animate-pulse',
+                      s === 'empty' && 'bg-muted/30',
+                    )}
+                  />
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ChannelEndpointStatus({
-  row, channelName, endpointUrl,
+  row, channelName, endpointUrl, timeline,
 }: {
   row: ModelRow | null;
   channelName: Map<string, string>;
   endpointUrl: Map<string, Map<number, string>>;
+  timeline: TimelineEntry[];
 }) {
   const { t } = useTranslation();
 
@@ -828,6 +951,7 @@ function ChannelEndpointStatus({
           })
         )}
       </div>
+      <EndpointTimeline row={row} timeline={timeline} endpointUrl={endpointUrl} />
     </section>
   );
 }
@@ -1266,7 +1390,7 @@ export default function FlowTowerContent() {
             timeout={funnel?.timeout_count ?? 0}
             timeline={timeline}
           />
-          <ChannelEndpointStatus row={selected} channelName={channelName} endpointUrl={endpointUrl} />
+          <ChannelEndpointStatus row={selected} channelName={channelName} endpointUrl={endpointUrl} timeline={timeline} />
           <ModelCompareTable rows={rows} selectedName={selectedName} onSelect={setSelectedName} />
         </div>
 

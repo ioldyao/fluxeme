@@ -691,6 +691,7 @@ const en: Record<string, string> = {
   'monitor.noChartData': 'No chart data',
   'monitor.reqFlow': 'Request flow',
   'monitor.stateTimeline': 'State Timeline',
+  'monitor.endpointTimeline': 'Endpoint State Timeline',
   'monitor.inFlight': 'in-flight',
   'monitor.noLiveData': 'No live data yet',
   'monitor.ingress': 'Ingress',
