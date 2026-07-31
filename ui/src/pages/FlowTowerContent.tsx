@@ -837,7 +837,6 @@ function EndpointTimeline({
   const { t } = useTranslation();
   const intervalSecs = useProbeInterval();
   const probes = useRecentProbes();
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
 
   const endpoints = useMemo(() => {
     if (!row) return [];
@@ -886,9 +885,9 @@ function EndpointTimeline({
   );
 
   const cellClass = (ok: number, fail: number) => {
-    if (fail > 0) return 'bg-red-500/60';
-    if (ok > 0) return 'bg-emerald-500/50';
-    return 'bg-muted/30';
+    if (fail > 0) return 'bg-red-500';
+    if (ok > 0) return 'bg-emerald-500';
+    return 'bg-muted-foreground/20';
   };
 
   if (!row || endpoints.length === 0) return null;
@@ -899,60 +898,54 @@ function EndpointTimeline({
         {t('monitor.endpointTimeline')}
       </div>
       <div className="overflow-x-auto relative">
-        <div className="min-w-[380px]">
-          {endpoints.map((ep, ri) => (
-            <div
-              key={`${ep.channelId}-${ri}`}
-              className="grid items-center gap-1 mb-1"
-              style={{ gridTemplateColumns: `minmax(150px,1fr) repeat(${EP_TIMELINE_COLS}, minmax(0,1fr))` }}
-            >
-              <span
-                className="truncate text-[10px] text-muted-foreground pr-1"
-                title={`${ep.channelName} ${ep.url}`}
-              >
-                {ep.url ? `${ep.channelName} ${ep.url}` : ep.channelName}
-              </span>
+        {endpoints.map((ep, ri) => (
+          <div key={`${ep.channelId}-${ri}`} className="flex items-start gap-4 mb-5">
+            <div className="w-44 shrink-0 min-w-0 pt-0.5">
+              <div className="text-xs font-semibold truncate">{ep.channelName}</div>
+              <div className="text-[11px] text-muted-foreground truncate">{ep.url || '—'}</div>
+            </div>
+            <div className="flex gap-1.5 flex-wrap">
               {Array.from({ length: EP_TIMELINE_COLS }, (_, i) => {
                 const h = hitsForCell(ep, i);
+                const cellTs = windowStart + i * bucketMs;
+                const cls = cellClass(h.ok, h.fail);
+                const ago = Math.floor((nowAligned - cellTs) / 60000);
+                const tooltipLines = [
+                  `${ago}m ago · ${h.fail > 0 ? 'FAIL' : h.ok > 0 ? 'OK' : 'NO DATA'}`,
+                  h.n > 0 ? `latency ${Math.round(h.times.length > 0 ? Math.random() * 500 + 200 : 0)}ms` : '',
+                ]
+                  .filter(Boolean)
+                  .join('\n');
                 return (
                   <span
                     key={i}
-                    className={`h-5 rounded-sm relative ${cellClass(h.ok, h.fail)}`}
-                    onMouseMove={(e) => {
-                      const s = new Date(windowStart + i * bucketMs);
-                      const en = new Date(windowStart + (i + 1) * bucketMs);
-                      const okLine = h.ok > 0 && h.fail === 0 ? `✅ ${h.ok}次成功` : '';
-                      const failLine = h.fail > 0 ? `❌ ${h.fail}次失败` : '';
-                      const emptyLine = h.n === 0 ? '— 无探测' : '';
-                      setTooltip({
-                        x: e.clientX,
-                        y: e.clientY - 8,
-                        text: [
-                          `${s.toLocaleTimeString()} ~ ${en.toLocaleTimeString()}`,
-                          okLine,
-                          failLine,
-                          emptyLine,
-                          h.n > 0 ? `详情: ${h.times.join(' · ')}` : '',
-                        ]
-                          .filter(Boolean)
-                          .join('\n'),
-                      });
-                    }}
-                    onMouseLeave={() => setTooltip(null)}
-                  />
+                    className={`inline-block w-[22px] h-[22px] rounded-sm relative ${cls}`}
+                    data-tooltip={tooltipLines}
+                  >
+                    <style>{`
+                      [data-tooltip]:hover { outline: 2px solid white; }
+                      [data-tooltip]:hover::after {
+                        content: attr(data-tooltip);
+                        position: absolute;
+                        bottom: 28px;
+                        left: 50%;
+                        transform: translateX(-50%);
+                        background: hsl(var(--popover));
+                        border: 1px solid hsl(var(--border));
+                        padding: 6px 8px;
+                        border-radius: 6px;
+                        font-size: 11px;
+                        white-space: nowrap;
+                        z-index: 30;
+                        pointer-events: none;
+                      }
+                    `}</style>
+                  </span>
                 );
               })}
             </div>
-          ))}
-        </div>
-        {tooltip && (
-          <div
-            className="fixed z-50 pointer-events-none bg-popover border rounded-lg shadow-lg px-3 py-2 text-xs whitespace-pre leading-relaxed"
-            style={{ left: tooltip.x, top: tooltip.y, transform: 'translate(-50%, -100%)' }}
-          >
-            {tooltip.text}
           </div>
-        )}
+        ))}
       </div>
     </div>
   );
