@@ -271,16 +271,14 @@ pub(crate) async fn list_recent_probes(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:health").await?;
     let minutes = query.minutes.unwrap_or(10).clamp(1, 60);
-    let results = if let Some(ref ch) = state.ch {
-        ch.recent_probe_results(minutes)
-            .await
-            .map_err(AdminError::internal)?
-    } else {
-        state
-            .db
-            .recent_probe_results(minutes)
-            .await
-            .map_err(db_err)?
-    };
+    // Probe results are observability data — ClickHouse only, no PG fallback.
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let results = ch
+        .recent_probe_results(minutes)
+        .await
+        .map_err(AdminError::internal)?;
     Ok(Json(results))
 }
