@@ -1,0 +1,20 @@
+{
+  "name": "fluxeme-ui-workspace",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@10.29.1",
+  "type": "module",
+  "scripts": {
+    "dev:user": "pnpm --filter user-app dev",
+    "dev:admin": "pnpm --filter admin-app dev",
+    "build:user": "pnpm --filter user-app build",
+    "build:admin": "pnpm --filter admin-app build",
+    "build:all": "pnpm --filter shared build --if-present && pnpm --filter user-app build && pnpm --filter admin-app build",
+    "lint": "pnpm -r lint"
+  },
+  "pnpm": {
+    "overrides": {
+      "minimatch@3.1.5>brace-expansion": "1.1.15"
+    }
+  }
+}
