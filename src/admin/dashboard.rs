@@ -24,7 +24,7 @@ pub(crate) struct DashboardResp {
 }
 
 // Importers/callers: exposed from src/admin/mod.rs as GET /api/dashboard and
-// consumed by admin observability views like ui/src/pages/FlowTowerContent.tsx.
+// consumed by admin observability views like apps/admin/src/pages/FlowTowerContent.tsx.
 // Affected API/data schema: DashboardResp { users, channels, models, rules,
 // api_keys, endpoints, total_requests }. User instruction: "`网关运行总览`
 // 这个前端页面中，哪些还有计算全部用户的，统一修改只看当前个人用户的
@@ -87,7 +87,7 @@ pub(crate) struct SelfDashboardResp {
 }
 
 // Importers/callers: exposed from src/admin/mod.rs as GET /api/dashboard/self
-// and consumed only by ui/src/pages/Dashboard.tsx via ui/src/api/dashboard.ts.
+// and consumed only by apps/portal/src/pages/Dashboard.tsx via apps/portal/src/api/dashboard.ts.
 // Affected API/data schema: SelfDashboardResp { api_keys, total_requests }.
 // User instruction: "`网关运行总览` 这个前端页面中，哪些还有计算全部用户的，
 // 统一修改只看当前个人用户的数据,admin登陆也只看自己的数据".
@@ -314,8 +314,8 @@ pub(crate) async fn dashboard_aggregations(
 }
 
 // Importers/callers: exposed from src/admin/mod.rs as GET
-// /api/dashboard/self/aggregations and consumed only by ui/src/pages/Dashboard.tsx
-// via ui/src/api/dashboard.ts. Affected API/data schema: DashboardAggregations.
+// /api/dashboard/self/aggregations and consumed only by apps/portal/src/pages/Dashboard.tsx
+// via apps/portal/src/api/dashboard.ts. Affected API/data schema: DashboardAggregations.
 // User instruction: "`网关运行总览` 这个前端页面中，哪些还有计算全部用户的，
 // 统一修改只看当前个人用户的数据,admin登陆也只看自己的数据".
 pub(crate) async fn self_dashboard_aggregations(

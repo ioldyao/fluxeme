@@ -53,8 +53,6 @@ fn expired_sso_state_cookie_value(name: &str, is_secure: bool) -> String {
     format!("{name}=; HttpOnly{secure_attr}; Path=/; SameSite=Lax; Max-Age=0")
 }
 
-// ── OIDC discovery document ─────────────────────────────────────
-
 #[derive(Deserialize)]
 struct OidcProviderMetadata {
     authorization_endpoint: String,
@@ -62,14 +60,10 @@ struct OidcProviderMetadata {
     userinfo_endpoint: String,
 }
 
-// ── Token response ──────────────────────────────────────────────
-
 #[derive(Deserialize)]
 struct TokenResponse {
     access_token: String,
 }
-
-// ── UserInfo response ───────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct UserInfo {
@@ -82,13 +76,13 @@ struct UserInfo {
     email: Option<String>,
 }
 
-// ── SSO Module ──────────────────────────────────────────────────
-
 pub struct SsoModule {
     metadata: Option<OidcProviderMetadata>,
     client_id: String,
     client_secret: String,
     redirect_url: String,
+    post_login_portal_url: String,
+    post_login_admin_url: String,
     provider_name: String,
     enabled: bool,
     http_client: reqwest::Client,
@@ -104,6 +98,8 @@ impl SsoModule {
                 client_id: String::new(),
                 client_secret: String::new(),
                 redirect_url: String::new(),
+                post_login_portal_url: String::new(),
+                post_login_admin_url: String::new(),
                 provider_name: String::new(),
                 enabled: false,
                 http_client: reqwest::Client::new(),
@@ -125,7 +121,6 @@ impl SsoModule {
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
 
-        // Discover OIDC metadata from the issuer
         let discovery_url = format!(
             "{}/.well-known/openid-configuration",
             cfg.issuer_url.trim_end_matches('/')
@@ -144,6 +139,8 @@ impl SsoModule {
             client_id: cfg.client_id.clone(),
             client_secret: crate::crypto::encrypt_store(&cfg.client_secret, enc_key),
             redirect_url: cfg.redirect_url.clone(),
+            post_login_portal_url: cfg.post_login_portal_url.clone(),
+            post_login_admin_url: cfg.post_login_admin_url.clone(),
             provider_name: cfg.provider_name.clone(),
             enabled: true,
             http_client,
@@ -160,7 +157,6 @@ impl SsoModule {
         &self.provider_name
     }
 
-    /// Generate the authorization URL and store CSRF state.
     pub fn authorize_url(&self) -> Result<(String, String), AdminError> {
         let meta = self
             .metadata
@@ -189,7 +185,6 @@ impl SsoModule {
         Ok((auth_url.to_string(), state))
     }
 
-    /// Handle the OIDC callback: exchange code, fetch user info, create/find user, return JWT.
     pub async fn handle_callback(
         &self,
         code: &str,
@@ -197,12 +192,10 @@ impl SsoModule {
         state_cookie: &str,
         admin: &crate::admin::AdminModule,
         db: &Database,
-    ) -> Result<String, AdminError> {
-        // Clean up expired states
+    ) -> Result<(String, String), AdminError> {
         self.pending_states
             .retain(|_, expires| *expires > Instant::now());
 
-        // Verify CSRF state and bind it to the initiating browser.
         if state_cookie != state || self.pending_states.remove(state).is_none() {
             return Err(AdminError::unauthorized("Invalid or expired SSO state"));
         }
@@ -212,7 +205,6 @@ impl SsoModule {
             .as_ref()
             .ok_or_else(|| AdminError::internal("SSO not configured"))?;
 
-        // Exchange authorization code for tokens
         let client_secret = crate::crypto::decrypt_load(&self.client_secret, &self.enc_key)
             .map_err(|e| AdminError::internal(format!("SSO secret decryption failed: {e}")))?;
         let params = [
@@ -234,7 +226,6 @@ impl SsoModule {
             .await
             .map_err(|e| AdminError::internal(format!("Failed to parse token response: {e}")))?;
 
-        // Fetch user info with the access token
         let user_info: UserInfo = self
             .http_client
             .get(&meta.userinfo_endpoint)
@@ -299,11 +290,20 @@ impl SsoModule {
             token_version: user.token_version,
         };
 
-        admin.encode_token(&info)
+        let token = admin.encode_token(&info)?;
+        let target = if user.role == "admin" && !self.post_login_admin_url.is_empty() {
+            self.post_login_admin_url.clone()
+        } else if !self.post_login_portal_url.is_empty() {
+            self.post_login_portal_url.clone()
+        } else if user.role == "admin" {
+            "/admin".to_string()
+        } else {
+            "/".to_string()
+        };
+
+        Ok((token, target))
     }
 }
-
-// ── HTTP handlers ───────────────────────────────────────────────
 
 #[derive(Deserialize)]
 pub struct SsoCallbackParams {
@@ -311,7 +311,6 @@ pub struct SsoCallbackParams {
     pub state: String,
 }
 
-/// SSO status endpoint (public, no auth needed)
 pub async fn sso_status_handler(State(state): State<Arc<AppState>>) -> axum::Json<Value> {
     axum::Json(serde_json::json!({
         "enabled": state.sso.is_enabled(),
@@ -319,7 +318,6 @@ pub async fn sso_status_handler(State(state): State<Arc<AppState>>) -> axum::Jso
     }))
 }
 
-/// SSO login redirect handler
 pub async fn sso_login_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -340,7 +338,6 @@ pub async fn sso_login_handler(
     Ok((response_headers, Redirect::to(&auth_url)).into_response())
 }
 
-/// SSO callback handler
 pub async fn sso_callback_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -354,7 +351,7 @@ pub async fn sso_callback_handler(
     let state_cookie = extract_cookie_value(&headers, HOST_SSO_STATE_COOKIE_NAME)
         .or_else(|| extract_cookie_value(&headers, SSO_STATE_COOKIE_NAME))
         .ok_or_else(|| AdminError::unauthorized("Invalid or expired SSO state"))?;
-    let token = state
+    let (token, target) = state
         .sso
         .handle_callback(
             &params.code,
@@ -388,5 +385,5 @@ pub async fn sso_callback_handler(
         .map_err(|e| AdminError::internal(e.to_string()))?,
     );
 
-    Ok((response_headers, Redirect::to("/sso/callback")).into_response())
+    Ok((response_headers, Redirect::to(&target)).into_response())
 }

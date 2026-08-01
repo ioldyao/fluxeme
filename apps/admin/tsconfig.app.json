@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "esnext",
+    "types": ["vite/client", "node", "react", "react-dom"],
+    "allowArbitraryExtensions": true,
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": false,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@fluxeme/ui": ["../../packages/ui/src/index.ts"],
+      "@fluxeme/ui/*": ["../../packages/ui/src/*"],
+      "@fluxeme/shared": ["../../packages/shared/src/index.ts"],
+      "@fluxeme/shared/*": ["../../packages/shared/src/*"],
+      "@fluxeme/auth-core": ["../../packages/auth-core/src/index.ts"],
+      "@fluxeme/auth-core/*": ["../../packages/auth-core/src/*"]
+    },
+    "ignoreDeprecations": "6.0",
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": false,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src"]
+}

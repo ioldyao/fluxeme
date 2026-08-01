@@ -30,4 +30,6 @@ sso:
   issuer_url: https://your-idp.example.com
   client_id: your-client-id
   client_secret: your-client-secret
-  redirect_url: http://localhost:8080/admin/api/sso/callback
+  redirect_url: http://localhost:8080/api/sso/callback
+  post_login_portal_url: http://localhost:8080/
+  post_login_admin_url: http://localhost:8080/admin

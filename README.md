@@ -1,94 +1,204 @@
 # Fluxeme AI Gateway
 
-A reverse proxy gateway for LLM APIs. Compatible with OpenAI and Anthropic protocols — routes requests to upstream providers with channel management, load balancing, usage tracking, rate limiting, and a full admin UI.
+Fluxeme is an LLM gateway for OpenAI-compatible and Anthropic-compatible APIs.
+It provides:
+
+- upstream channel and model management
+- request routing and load balancing
+- usage tracking and billing controls
+- user-facing portal
+- admin control plane
 
 [中文文档](./README_zh.md)
 
 ---
 
-## Requirements
+## Current repository layout
 
-| Dependency | Notes |
-|------------|-------|
-| Docker & Docker Compose | Deployment |
-| PostgreSQL 16 | Started by docker compose |
-| Redis 7 | Started by docker compose |
-| ClickHouse | Observability data store, decoupled from PostgreSQL (docker compose) |
-| Jaeger | Distributed tracing (docker compose) |
+This repository now uses a split frontend workspace:
+
+- `src/` — Rust gateway backend
+- `apps/portal` — user-facing frontend
+- `apps/admin` — admin frontend
+- `packages/ui` — shared UI primitives
+- `packages/shared` — shared frontend utilities, types, i18n, query setup
+- `packages/auth-core` — shared auth helper functions
+
+Frontend production build outputs:
+
+- `web/portal`
+- `web/admin`
 
 ---
 
-## Quick Deploy
+## Runtime model
 
-### 1. Configure environment
+### Routes
+
+- Portal: `/`
+- Admin: `/admin`
+- Backend APIs: `/api/*`, `/v1/*`, `/health`, `/tokenize`, `/detokenize`
+
+### Compose scheme C
+
+The repository supports a three-service split for local / intranet deployment:
+
+- `gateway` — Rust API backend
+- `portal` — user frontend service
+- `admin` — admin frontend service
+
+This means you can rebuild and restart them independently.
+
+---
+
+## Prerequisites
+
+| Dependency | Notes |
+|---|---|
+| Docker & Docker Compose | Main deployment path |
+| Node.js + pnpm | Frontend workspace development |
+| Rust toolchain | Backend local development |
+| PostgreSQL 16 | Local or remote |
+| Redis 7 | Required |
+| ClickHouse | Optional but recommended for observability |
+| Jaeger / OTLP collector | Optional tracing |
+
+---
+
+## Quick start with Compose
+
+### 1. Prepare environment
 
 ```bash
 cp .env.example .env
 ```
 
-Required — must be set (no defaults, gateway will panic if missing):
+Minimum required variables:
 
-| Variable | Requirement | Example |
-|----------|-------------|---------|
-| `GATEWAY_JWT_SECRET` | Any string | `openssl rand -base64 32` |
-| `GATEWAY_ENCRYPTION_KEY` | ≥32 chars, must differ from JWT secret | `openssl rand -base64 32` |
-| `REDIS_PASSWORD` | Redis password | `openssl rand -base64 16` |
-| `DB_PASSWORD` | PostgreSQL password | anything |
+| Variable | Requirement |
+|---|---|
+| `GATEWAY_JWT_SECRET` | Required |
+| `GATEWAY_ENCRYPTION_KEY` | Required, at least 32 chars |
+| `REDIS_PASSWORD` | Required |
+| `DB_PASSWORD` | Required when using local Postgres |
 
-Optionally adjust `DB_DEPLOYMENT`, `CLICKHOUSE_DEPLOYMENT`, etc.
+Typical local values in `.env`:
 
-### 2. Start
+```env
+DB_DEPLOYMENT=local
+CLICKHOUSE_DEPLOYMENT=local
+```
+
+### 2. Start everything
 
 ```bash
 make up
 ```
 
-Open `http://localhost:8080` — the first visit will guide you through admin registration.
+### 3. Access services
 
-| Command | Description |
-|---------|-------------|
-| `make up` | Start all services |
-| `make down` | Stop all services |
-| `make logs` | Tail logs |
-| `make restart` | Restart |
-| `make build` | Rebuild images |
+Assuming the host machine is `localhost`:
 
-### 3. Configure models & channels
-
-Via the admin UI:
-1. **Channels** → add upstream providers (OpenAI, Anthropic, vLLM, etc.)
-2. **Models** → add models and bind them to channels
-3. **Model Marketplace** → publish models for users
+- Portal: `http://localhost:8081/`
+- Admin: `http://localhost:8082/admin`
+- API: `http://localhost:8080/health`
 
 ---
 
-## Manual Build (without Docker)
+## Compose commands
 
-### Backend
+### Full stack
+
+| Command | Description |
+|---|---|
+| `make up` | Start API + portal + admin + infra |
+| `make down` | Stop the stack |
+| `make logs` | Tail logs |
+| `make restart` | Restart the full stack |
+| `make build` | Rebuild compose images |
+
+### Rebuild only one service
+
+| Command | Description |
+|---|---|
+| `make api` | Rebuild/restart Rust backend only |
+| `make portal` | Rebuild/restart portal only |
+| `make admin` | Rebuild/restart admin only |
+
+This is the main benefit of scheme C:
+
+- changing the admin frontend does **not** require rebuilding the backend
+- changing the portal frontend does **not** require rebuilding the admin frontend
+
+For full details, see:
+
+- `docs/compose-scheme-c.md`
+- `docs/deployment-run.md`
+
+---
+
+## Local development
+
+### Install workspace dependencies
+
+From the repository root:
 
 ```bash
-# Requires Rust 1.88+, a running PostgreSQL and Redis
-cp .env.example .env
-# Edit .env — set DB_HOST, REDIS_PASSWORD etc. to your local instances
-
-cargo build --release
-./target/release/ai-gateway
+pnpm install
 ```
 
-### Frontend
+### Start frontends in dev mode
 
 ```bash
-cd ui
-pnpm install
-pnpm run dev       # Dev mode, proxies API to localhost:8080
-pnpm run build     # Production build → ../web/
+pnpm dev:portal
+pnpm dev:admin
+```
+
+Default dev ports:
+
+- portal: `5173`
+- admin: `5174`
+
+### Start backend in dev mode
+
+```bash
+cargo run
+```
+
+### Build frontends manually
+
+```bash
+pnpm build:portal
+pnpm build:admin
+# or
+pnpm build:apps
+```
+
+### Verify backend
+
+```bash
+cargo check
+cargo test
 ```
 
 ---
 
 ## Configuration
 
-Main config file: `config/config.yaml`. Supports `${VAR}` and `${VAR:-default}` env var expansion.
+Primary config file:
+
+- `config/config.yaml`
+
+Example template:
+
+- `config/config.yaml.example`
+
+The config loader supports:
+
+- `${VAR}`
+- `${VAR:-default}`
+
+### Important runtime settings
 
 ```yaml
 server:
@@ -96,24 +206,40 @@ server:
   port: 8080
 
 database:
-  pg_url: ""                    # When empty, built from DB_USER/DB_PASSWORD/DB_HOST/DB_PORT/DB_NAME
-  retention_days: 90            # Usage log retention
+  pg_url: ""
+  retention_days: 90
 
 redis:
   enabled: true
-  url: "redis://:${REDIS_PASSWORD}@127.0.0.1:16379"   # Note port 16379
+  url: "redis://:${REDIS_PASSWORD}@127.0.0.1:16379"
 
 jwt_secret: ${GATEWAY_JWT_SECRET}
 encryption_key: ${GATEWAY_ENCRYPTION_KEY}
 ```
 
-On first start, `channels`, `models`, and `routing_rules` defined in `config.yaml` are auto-seeded into the database.
+### SSO settings
 
-> Runtime config (timeouts, retries, cache TTL, billing toggle) can be changed live via the **Settings** page.
+```yaml
+sso:
+  enabled: false
+  provider_name: SSO
+  issuer_url: https://your-idp.example.com
+  client_id: your-client-id
+  client_secret: your-client-secret
+  redirect_url: http://localhost:8080/api/sso/callback
+  post_login_portal_url: http://localhost:8080/
+  post_login_admin_url: http://localhost:8080/admin
+```
+
+Important:
+
+- `redirect_url` is the OIDC callback endpoint handled by the backend
+- `post_login_portal_url` is the final destination for regular users
+- `post_login_admin_url` is the final destination for admins
 
 ---
 
-## API
+## API example
 
 ```bash
 curl http://localhost:8080/v1/chat/completions \
@@ -122,16 +248,35 @@ curl http://localhost:8080/v1/chat/completions \
   -d '{"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]}'
 ```
 
-Also supports Anthropic format (`POST /v1/messages`) and any OpenAI-compatible SDK.
+Also supports:
+
+- `POST /v1/messages`
+- OpenAI-compatible SDKs
+- Anthropic-compatible SDKs
 
 ---
 
-## Ports
+## Default ports
 
 | Port | Service |
-|------|---------|
-| 8080 | Fluxeme AI Gateway (proxy + admin UI) |
+|---|---|
+| 8080 | Rust gateway API |
+| 8081 | Portal frontend |
+| 8082 | Admin frontend |
 | 16379 | Redis |
 | 5432 | PostgreSQL |
 | 8123 | ClickHouse HTTP |
 | 16686 | Jaeger UI |
+
+---
+
+## Verified state in this branch
+
+Verified in the current split setup:
+
+- `cargo check` passes
+- `pnpm --dir apps/portal build` passes
+- `pnpm --dir apps/admin build` passes
+- compose config validates for:
+  - `docker-compose.yml`
+  - `docker-compose.yml + compose.psql.yml + compose.clickhouse.yml`

@@ -61,7 +61,7 @@ fn build_usage_filter(
     })
 }
 
-// Importers/callers: shared by ui/src/pages/Usage.tsx via /api/usage and the
+// Importers/callers: shared by apps/portal/src/pages/Usage.tsx via /api/usage and the
 // new self-only dashboard routes below via /api/me/usage. Affected API/data
 // schema: UsageResponse { records, total } and query params limit, offset,
 // user_id, model, api_key, api_format, start_date, end_date. User instruction:

@@ -22,6 +22,10 @@ pub struct SsoConfig {
     pub client_secret: String,
     #[serde(default)]
     pub redirect_url: String,
+    #[serde(default)]
+    pub post_login_portal_url: String,
+    #[serde(default)]
+    pub post_login_admin_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -129,11 +133,10 @@ impl Default for CorsConfig {
 fn default_allowed_origins() -> Vec<String> {
     vec![
         "http://localhost:5173".to_string(),
+        "http://localhost:5174".to_string(),
         "http://localhost:8080".to_string(),
     ]
 }
-
-// ── Redis Config ────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RedisConfig {
@@ -160,7 +163,6 @@ fn default_redis_url() -> String {
     "redis://127.0.0.1:16379".to_string()
 }
 
-/// Resolved endpoint with credentials, passed to provider adapters.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EndpointConfig {
     #[serde(default)]
@@ -177,8 +179,6 @@ pub struct EndpointConfig {
 fn default_enabled() -> bool {
     true
 }
-
-// ── Gateway Runtime Config ──────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayRuntimeConfig {

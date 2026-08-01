@@ -1,0 +1,19 @@
+{
+  "name": "fluxeme-workspace",
+  "private": true,
+  "packageManager": "pnpm@10.29.1",
+  "scripts": {
+    "dev:portal": "pnpm --dir apps/portal dev",
+    "build:portal": "pnpm --dir apps/portal build",
+    "lint:portal": "pnpm --dir apps/portal lint",
+    "dev:admin": "pnpm --dir apps/admin dev",
+    "build:admin": "pnpm --dir apps/admin build",
+    "lint:admin": "pnpm --dir apps/admin lint",
+    "build:apps": "pnpm --filter @fluxeme/portal build && pnpm --filter @fluxeme/admin build"
+  },
+  "pnpm": {
+    "overrides": {
+      "minimatch@3.1.5>brace-expansion": "1.1.15"
+    }
+  }
+}

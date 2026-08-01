@@ -1,0 +1,1 @@
+import{A as e,S as t}from"./index-Cy4kgVMK.js";function n(n){return e({queryKey:[`probe-results`,n?.modelId??`all`],queryFn:()=>t(n?.modelId?`/probe-results?model_id=${encodeURIComponent(n.modelId)}`:`/probe-results`),refetchInterval:3e4,enabled:n?.enabled!==!1})}export{n as t};

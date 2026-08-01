@@ -494,8 +494,8 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             "/api/dashboard/aggregations",
             axum::routing::get(dashboard::dashboard_aggregations),
         )
-        // Importers/callers: these routes are consumed by ui/src/api/dashboard.ts
-        // from ui/src/pages/Dashboard.tsx. Affected APIs: GET /api/dashboard/self
+        // Importers/callers: these routes are consumed by apps/portal/src/api/dashboard.ts
+        // from apps/portal/src/pages/Dashboard.tsx. Affected APIs: GET /api/dashboard/self
         // and GET /api/dashboard/self/aggregations. Data schemas: SelfDashboardResp
         // { api_keys, total_requests } and DashboardAggregations. User instruction:
         // "`网关运行总览` 这个前端页面中，哪些还有计算全部用户的，统一修改只看当前个人用户的数据,admin登陆也只看自己的数据".

@@ -3,7 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: ai-gateway
+      target: api
+    container_name: ai-gateway-api
     restart: unless-stopped
     network_mode: host
     ulimits:
@@ -33,6 +34,40 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+
+  portal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: portal
+    container_name: ai-gateway-portal
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - PORT=8081
+      - STATIC_ROOT=/app/web/portal
+      - ROUTE_BASE=/
+      - API_ORIGIN=http://127.0.0.1:8080
+    depends_on:
+      gateway:
+        condition: service_started
+
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: admin
+    container_name: ai-gateway-admin
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - PORT=8082
+      - STATIC_ROOT=/app/web/admin
+      - ROUTE_BASE=/admin
+      - API_ORIGIN=http://127.0.0.1:8080
+    depends_on:
+      gateway:
+        condition: service_started
 
   # ── Observability ────────────────────────────────────────────
   jaeger:

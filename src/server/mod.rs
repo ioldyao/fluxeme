@@ -5,8 +5,10 @@ pub mod ws;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use axum::body::Body;
 use axum::extract::DefaultBodyLimit;
-use axum::http::HeaderValue;
+use axum::http::{HeaderValue, Request, StatusCode};
+use axum::response::Response;
 use axum::Router;
 use tokio::sync::RwLock as AsyncRwLock;
 use tower::ServiceBuilder;
@@ -40,26 +42,87 @@ pub struct AppState {
     pub authz: Arc<AuthzModule>,
     pub health: Arc<HealthService>,
     pub sso: Arc<SsoModule>,
-    /// Runtime-adjustable timeout config. Read on every request, updated by
-    /// PUT /admin/api/gateway/config.  Uses RwLock so writes propagate instantly
-    /// (single-instance; multi-instance deployments would need a refresh loop).
     pub gateway_config: Arc<RwLock<GatewayRuntimeConfig>>,
     pub cache: Arc<RedisCache>,
-    /// In-memory gate-status cache used as second fallback when Redis is
-    /// unavailable (avoids a database query during Redis outages).
     pub gate_cache: Arc<AsyncRwLock<HashMap<String, GateStatus>>>,
-    /// Content filter service for request/response moderation.
     pub content_filter: Arc<ContentFilterService>,
-    /// Health probe service for model channel health checks (DB-persisted).
     pub health_probe: Arc<HealthProbeService>,
-    /// Event bus for real-time request path events (WebSocket push).
     pub event_bus: crate::observability::event_bus::EventBus,
-    /// ClickHouse backend for observability queries (optional).
-    /// When `None`, observability queries fall back to PostgreSQL.
     pub ch: Option<Arc<ClickHouseBackend>>,
-    /// Unique identifier for this instance (INSTANCE_ID env or generated).
-    /// Used in logs and health probe responses for multi-instance ops.
     pub instance_id: String,
+}
+
+async fn frontend_fallback(req: Request<Body>) -> Response {
+    let path = req.uri().path().to_string();
+
+    if path.starts_with("/admin") {
+        if path == "/admin" || path == "/admin/" {
+            return serve_file("web/admin/index.html").await;
+        }
+
+        let trimmed = path.trim_start_matches('/');
+        let candidate = format!("web/{trimmed}");
+        if tokio::fs::metadata(&candidate).await.is_ok() {
+            return serve_file(&candidate).await;
+        }
+
+        return serve_file("web/admin/index.html").await;
+    }
+
+    if path == "/" {
+        return serve_file("web/portal/index.html").await;
+    }
+
+    let trimmed = path.trim_start_matches('/');
+    let candidate = format!("web/portal/{trimmed}");
+    if tokio::fs::metadata(&candidate).await.is_ok() {
+        return serve_file(&candidate).await;
+    }
+
+    serve_file("web/portal/index.html").await
+}
+
+async fn serve_file(path: &str) -> Response {
+    match tokio::fs::read(path).await {
+        Ok(bytes) => {
+            let mime = mime_for_path(path);
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(axum::http::header::CONTENT_TYPE, mime)
+                .body(Body::from(bytes))
+                .unwrap_or_else(|_| Response::new(Body::empty()))
+        }
+        Err(_) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("Not Found"))
+            .unwrap_or_else(|_| Response::new(Body::empty())),
+    }
+}
+
+fn mime_for_path(path: &str) -> &'static str {
+    if path.ends_with(".html") {
+        "text/html; charset=utf-8"
+    } else if path.ends_with(".js") {
+        "application/javascript; charset=utf-8"
+    } else if path.ends_with(".css") {
+        "text/css; charset=utf-8"
+    } else if path.ends_with(".svg") {
+        "image/svg+xml"
+    } else if path.ends_with(".json") {
+        "application/json; charset=utf-8"
+    } else if path.ends_with(".png") {
+        "image/png"
+    } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if path.ends_with(".woff2") {
+        "font/woff2"
+    } else if path.ends_with(".woff") {
+        "font/woff"
+    } else if path.ends_with(".ttf") {
+        "font/ttf"
+    } else {
+        "application/octet-stream"
+    }
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
@@ -113,10 +176,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             axum::routing::post(handlers::chat_completions),
         )
         .route("/v1/messages", axum::routing::post(handlers::messages))
-        // Importers/callers: this router is the public HTTP entrypoint for gateway APIs.
-        // Affected API: adds POST /v1/messages/count_tokens. Data schema: Anthropic
-        // request body and response shape {"input_tokens": number}. User instruction:
-        // "要，添加`/v1/messages/count_tokens`的端点支持".
         .route(
             "/v1/messages/count_tokens",
             axum::routing::post(handlers::messages_count_tokens),
@@ -125,11 +184,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/v1/completions",
             axum::routing::post(handlers::completions),
         )
-        // Importers/callers: this router is the public HTTP entrypoint for gateway APIs.
-        // Affected API: adds POST /responses/input_tokens and relays upstream to
-        // POST /v1/responses/input_tokens. Data schema: OpenAI Responses request body
-        // and response shape {"object":"response.input_tokens","input_tokens":
-        // number}. User instruction: "openai的提供商层，也添加这个openai的端点`POST/responses/input_tokens`".
         .route(
             "/responses/input_tokens",
             axum::routing::post(handlers::responses_input_tokens),
@@ -143,19 +197,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/detokenize", axum::routing::post(handlers::detokenize))
         .route("/v1/models", axum::routing::get(handlers::list_models))
         .route("/health", axum::routing::get(handlers::health))
-        // Liveness/readiness probes for load balancers (no auth, no dependency)
         .route("/healthz", axum::routing::get(health::liveness))
         .route("/readyz", axum::routing::get(health::readiness))
-        // admin API
         .merge(crate::admin::admin_routes())
-        // static files for admin frontend
-        .fallback_service(
-            tower_http::services::ServeDir::new("web")
-                .fallback(tower_http::services::ServeFile::new("web/index.html")),
-        )
-        // Remove the request body limit: LLM requests carry base64 images and
-        // long conversation context. Axum's default is 2MB (via Json extractor),
-        // which Claude Code hits with a few screenshots → 413 "request too large".
+        .fallback(axum::routing::any(frontend_fallback))
         .layer(DefaultBodyLimit::disable())
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())

@@ -1,0 +1,1 @@
+import{t as e}from"./useQuery-7KupAncE.js";import{T as t}from"./index-Caeb2t76.js";function n(){return e({queryKey:[`models`,`public`],queryFn:()=>t(`/models/public`)})}export{n as t};

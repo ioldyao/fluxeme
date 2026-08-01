@@ -1,0 +1,17 @@
+{
+  "name": "@fluxeme/shared",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*",
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.101.2",
+    "clsx": "^2.1.1",
+    "i18next": "^24.2.3",
+    "react-i18next": "^15.7.4",
+    "tailwind-merge": "^2.6.1"
+  }
+}

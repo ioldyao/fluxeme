@@ -1,10 +1,10 @@
 include .env
 export
 
-.PHONY: up down logs restart build
+.PHONY: up down logs restart build api portal admin
 
 up:
-	@echo "Starting with PostgreSQL ($(DB_DEPLOYMENT)) + ClickHouse ($(CLICKHOUSE_DEPLOYMENT))..."
+	@echo "Starting API + portal + admin with PostgreSQL ($(DB_DEPLOYMENT)) + ClickHouse ($(CLICKHOUSE_DEPLOYMENT))..."
 ifeq ($(DB_DEPLOYMENT),remote)
 	$(eval PSQL_FRAG := )
 else
@@ -29,6 +29,14 @@ restart: down up
 build:
 	docker compose build $(filter-out build,$(MAKECMDGOALS))
 
-# Allow build target to receive extra docker compose build flags (e.g. --no-cache)
+api:
+	docker compose up -d --build gateway
+
+portal:
+	docker compose up -d --build portal
+
+admin:
+	docker compose up -d --build admin
+
 %:
 	@true
