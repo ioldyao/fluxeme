@@ -8,6 +8,20 @@ interface LoginInput {
   password: string;
 }
 
+interface SessionResponse {
+  authenticated: boolean;
+  user?: {
+    id: string;
+    name: string;
+    role: string;
+  };
+  permissions?: string[];
+  portals?: {
+    user: boolean;
+    admin: boolean;
+  };
+}
+
 export function useLogin() {
   const setSession = useAuth((s) => s.setSession);
   return useMutation({
@@ -23,6 +37,17 @@ export function useLogin() {
   });
 }
 
+/** Session probe — always returns 200. Use instead of /api/me for initial load. */
+export function useSessionQuery() {
+  return useQuery({
+    queryKey: ['auth', 'session'],
+    queryFn: () => api<SessionResponse>('/auth/session', { skipAuthErrorHandling: true }),
+    retry: false,
+    staleTime: 30_000,
+  });
+}
+
+/** Current session detail — only call when authenticated. */
 export function useCurrentSession(enabled = true) {
   return useQuery({
     queryKey: ['auth', 'current-session'],
