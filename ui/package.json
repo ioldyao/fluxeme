@@ -5,10 +5,14 @@
   "packageManager": "pnpm@10.29.1",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev": "concurrently \"pnpm --filter @fluxeme/user-app dev\" \"pnpm --filter @fluxeme/admin-app dev\"",
+    "dev:user": "pnpm --filter @fluxeme/user-app dev",
+    "dev:admin": "pnpm --filter @fluxeme/admin-app dev",
+    "build": "pnpm --filter @fluxeme/user-app build && pnpm --filter @fluxeme/admin-app build",
+    "build:user": "pnpm --filter @fluxeme/user-app build",
+    "build:admin": "pnpm --filter @fluxeme/admin-app build",
     "lint": "eslint . && oxlint",
-    "preview": "vite preview"
+    "preview": "concurrently \"pnpm --filter @fluxeme/user-app preview\" \"pnpm --filter @fluxeme/admin-app preview\""
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.9",
