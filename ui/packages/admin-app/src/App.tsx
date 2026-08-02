@@ -8,56 +8,37 @@ import { useAuth } from '@fluxeme/shared/src/store/auth';
 
 function SessionBootstrapper() {
   const isSessionResolved = useAuth((s) => s.isSessionResolved);
-  const isAuthenticated = useAuth((s) => s.isAuthenticated);
-  const userId = useAuth((s) => s.userId);
   const setCurrentSession = useAuth((s) => s.setCurrentSession);
   const setPermissions = useAuth((s) => s.setPermissions);
   const clear = useAuth((s) => s.clear);
+  const isAuthed = useAuth((s) => s.isAuthenticated);
 
-  const pathname = window.location.pathname;
-  const isSsoCallbackRoute = pathname === '/sso/callback';
-  const isPublicAuthRoute = pathname === '/login' || pathname === '/register';
-  // There is a persisted session hint in localStorage
-  const hasSessionHint = isAuthenticated || Boolean(userId);
-  // Only verify session on the server when we have a reason to believe
-  // there IS a session — otherwise let the route guard redirect declaratively.
-  const shouldCheckSession =
-    !isSessionResolved && !isSsoCallbackRoute && hasSessionHint;
-
-  const currentSession = useCurrentSession(shouldCheckSession);
+  // Always check session on mount — no localStorage guesswork.
+  // /api/me with skipAuthErrorHandling returns 401 for anonymous users
+  // without triggering toast/clear/redirect.
+  const currentSession = useCurrentSession(!isSessionResolved);
   const isUnauthorized =
     currentSession.error instanceof Error &&
     currentSession.error.message === 'unauthorized';
 
-  // Session resolved by server response
+  // Session resolved by server
   useEffect(() => {
     if (currentSession.isSuccess) {
       setCurrentSession(currentSession.data);
     }
   }, [currentSession.data, currentSession.isSuccess, setCurrentSession]);
 
-  // No local session hint and not on a public page → no point checking with
-  // the server. Mark resolved immediately so the route guard can redirect.
+  // Server returned 401 — mark resolved as anonymous
   useEffect(() => {
-    if (!isSessionResolved && !shouldCheckSession && !isPublicAuthRoute) {
-      // user visits a protected page with no local session → fast path to login
+    if (isUnauthorized && !isSessionResolved) {
       clear();
     }
-  }, [isSessionResolved, shouldCheckSession, isPublicAuthRoute, clear]);
+  }, [isUnauthorized, isSessionResolved, clear]);
 
-  // Clear auth on server 401
+  // Load global currency settings (public API, works for all)
   useEffect(() => {
-    if (!currentSession.isError) return;
-    if (isUnauthorized) clear();
-  }, [clear, currentSession.isError, isUnauthorized]);
-
-  // Load global currency settings once authenticated
-  const isAuthed = useAuth((s) => s.isAuthenticated);
-  useEffect(() => {
-    if (isAuthed) {
-      void loadCurrencySettings();
-    }
-  }, [isAuthed]);
+    void loadCurrencySettings();
+  }, []);
 
   // Load permissions once authenticated
   const { data: permsData } = useQuery({
@@ -70,8 +51,8 @@ function SessionBootstrapper() {
     if (permsData) setPermissions(permsData);
   }, [permsData, setPermissions]);
 
-  // Non-401 server error on a non-public page → show retry UI
-  if (currentSession.isError && !isUnauthorized && !isPublicAuthRoute) {
+  // Non-401 server error on mount → show retry UI
+  if (currentSession.isError && !isUnauthorized) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 p-4">
         <div className="max-w-sm space-y-3 text-center">
