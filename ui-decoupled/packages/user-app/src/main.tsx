@@ -1,11 +1,20 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { Toaster } from 'sonner';
+import { queryClient } from '@shared/lib/query';
+import '@shared/i18n';
+import './index.css';
+import App from './App';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <div style={{ padding: 24, fontFamily: 'sans-serif' }}>
-      <h1>user-app scaffold OK</h1>
-      <p>Port 5173 · shared package verified. Real App.tsx / routes wired up in the next step.</p>
-    </div>
+    <BrowserRouter>
+      <QueryClientProvider client={queryClient}>
+        <App />
+        <Toaster richColors position="top-right" />
+      </QueryClientProvider>
+    </BrowserRouter>
   </StrictMode>,
 );

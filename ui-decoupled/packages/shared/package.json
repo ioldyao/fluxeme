@@ -20,6 +20,7 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-i18next": "^15.7.4",
+    "react-router-dom": "^6.30.4",
     "recharts": "^2.15.4",
     "sonner": "^1.7.4",
     "tailwind-merge": "^2.6.1",

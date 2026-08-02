@@ -5,12 +5,14 @@
 ## 当前进度
 
 - [x] pnpm workspace 骨架搭建（`packages/shared` `packages/user-app` `packages/admin-app`）
-- [x] `shared` 包迁移完成：`api/`、`types/`、`i18n/`、`store/`、`permissions/`、`lib/`、`components/ui/`、通用业务组件（`ConfirmDialog`、`CopyButton`、`EmptyState`、`PageHeader`、`ModelDetailDialog`、`ModelHealthCheckDialog`、`UsageLogDetail`、`DashboardChartTooltip`）
+- [x] `shared` 包迁移完成：`api/`、`types/`、`i18n/`、`store/`、`permissions/`、`lib/`、`constants/`、`components/ui/`、通用业务组件（`ConfirmDialog`、`CopyButton`、`EmptyState`、`PageHeader`、`ModelDetailDialog`、`ModelHealthCheckDialog`、`UsageLogDetail`、`DashboardChartTooltip`）
+- [x] `shared` 包新增 `components/layout/`（`LayoutShell`、`SidebarPrimitives`、`TopBar`）与 `routes/`（`ProtectedRoute`、`PermissionRoute`、`SessionBootstrapper`），供两个 app 复用
 - [x] `api/client.ts` 改造：支持 `VITE_API_BASE_URL` 环境变量 + `credentials: 'include'`，适配跨端口/跨域访问后端
-- [x] 两个 app 的 `tsc --noEmit` 类型检查通过，dev server 冒烟测试验证 `@shared/*` 别名运行时可用
-- [ ] `user-app` 业务页面迁移（Dashboard, ApiKeys, Usage, Wallet, Bills, Profile, Settings, ModelsMarketplace, MyRules）+ UserLayout/Sidebar/路由
-- [ ] `admin-app` 业务页面迁移（Users, Channels, Models, Rules, Moderation, FlowControlTower 等）+ AdminLayout/Sidebar/路由
-- [ ] `index.css`（Tailwind 主题变量）迁移
+- [x] `TopBar` 跨端跳转改造：原本的同 SPA 内部路由跳转，改为读取 `VITE_ADMIN_APP_URL`（或对称的 user 端变量）的绝对 URL + `window.location.href`，因为两个 app 不再共享同一个 router 实例
+- [x] **`user-app` 业务层完成**：路由配置（`publicRoutes` + `authRoutes`，已去除 `adminRoutes`/`perm` 字段）、路由树、`UserSidebar`、`UserLayout`、9 个用户页面（Dashboard/ApiKeys/Usage/Wallet/Bills/Profile/Settings/ModelsMarketplace/MyRules）+ 3 个公共页面（Login/Register/SsoCallback）+ NotFound、`ApiKeyForm`、`index.css`、静态资源（字体/图标）
+- [x] `user-app`：`tsc --noEmit` 通过；dev server 冒烟测试，`App.tsx`/路由树/关键页面均正确编译（HTTP 200）
+- [ ] `admin-app` 业务页面迁移（Users, Channels, Models, Rules, Moderation, FlowControlTower 等）+ AdminLayout/AdminSidebar/路由 + `ChannelForm`/`ModelForm`/`RuleForm`/`UserForm`
+- [ ] 两个 app 互相配置 `VITE_ADMIN_APP_URL`/`VITE_USER_APP_URL` 实际值
 - [ ] 后端 CORS 配置调整，支持两个前端跨端口访问
 - [ ] 验证通过后，替换根目录 `ui/`，更新 Rust 后端的静态资源托管路径
 
