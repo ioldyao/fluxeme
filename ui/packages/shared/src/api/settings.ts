@@ -2,7 +2,9 @@ import { api } from './client';
 import { useCurrency } from '../store/currency';
 
 export function fetchCurrencySettings() {
-  return api<{ currency: string; rate: number }>('/settings/currency');
+  return api<{ currency: string; rate: number }>('/settings/currency', {
+    skipAuthErrorHandling: true,
+  });
 }
 
 export function saveCurrencySettings(currency: string, rate: number) {
