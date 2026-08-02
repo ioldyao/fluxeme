@@ -11,7 +11,9 @@
 - [x] `TopBar` 跨端跳转改造：原本的同 SPA 内部路由跳转，改为读取 `VITE_ADMIN_APP_URL`（或对称的 user 端变量）的绝对 URL + `window.location.href`，因为两个 app 不再共享同一个 router 实例
 - [x] **`user-app` 业务层完成**：路由配置（`publicRoutes` + `authRoutes`，已去除 `adminRoutes`/`perm` 字段）、路由树、`UserSidebar`、`UserLayout`、9 个用户页面（Dashboard/ApiKeys/Usage/Wallet/Bills/Profile/Settings/ModelsMarketplace/MyRules）+ 3 个公共页面（Login/Register/SsoCallback）+ NotFound、`ApiKeyForm`、`index.css`、静态资源（字体/图标）
 - [x] `user-app`：`tsc --noEmit` 通过；dev server 冒烟测试，`App.tsx`/路由树/关键页面均正确编译（HTTP 200）
-- [ ] `admin-app` 业务页面迁移（Users, Channels, Models, Rules, Moderation, FlowControlTower 等）+ AdminLayout/AdminSidebar/路由 + `ChannelForm`/`ModelForm`/`RuleForm`/`UserForm`
+- [x] **`admin-app` 业务层完成**：路由配置（`publicRoutes` + `adminRoutes`，`/` 重定向到 `/flow-control`）、路由树、`AdminSidebar`、`AdminLayout`、`AdminRoute`（admin-app 专属，不放 shared）、13 个管理页面（Users/Channels/Models/Rules/Moderation/FlowControlTower/FlowTowerContent/RoutingFlow/RoutingHistory/ModelPricing + admin/AdminSettings/Announcements/RechargeKeys）+ 3 个公共页面 + NotFound、4 个表单（ChannelForm/ModelForm/RuleForm/UserForm）
+- [x] `shared/api/client.ts` 新增 `getWsUrl(path)`：`FlowTowerContent`/`RoutingFlow` 原本硬编码 `window.location.host` 的 WebSocket 连接（`/api/health/ws`）改用此函数，避免独立部署后连到前端自己的端口
+- [x] `admin-app`：`tsc --noEmit` 通过；dev server 冒烟测试；**验证两个 dev server（5173 + 5174）可同时运行、互不干扰**
 - [ ] 两个 app 互相配置 `VITE_ADMIN_APP_URL`/`VITE_USER_APP_URL` 实际值
 - [ ] 后端 CORS 配置调整，支持两个前端跨端口访问
 - [ ] 验证通过后，替换根目录 `ui/`，更新 Rust 后端的静态资源托管路径

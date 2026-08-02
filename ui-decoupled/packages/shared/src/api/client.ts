@@ -15,6 +15,24 @@ type ApiOptions = Omit<RequestInit, 'body'> & {
 // a gateway in front).
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
+/**
+ * Builds a ws:// or wss:// URL for a backend path (e.g. '/api/health/ws').
+ * Derives host/protocol from VITE_API_BASE_URL when set; otherwise falls
+ * back to the current page's origin, matching the old same-origin
+ * behavior. Needed because a plain `window.location.host` would point
+ * at the frontend's own host once user-app/admin-app are served from a
+ * different port/domain than the backend.
+ */
+export function getWsUrl(path: string): string {
+  if (API_BASE_URL) {
+    const httpUrl = new URL(path, API_BASE_URL);
+    httpUrl.protocol = httpUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+    return httpUrl.toString();
+  }
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${window.location.host}${path}`;
+}
+
 export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
   const { body, skipAuthErrorHandling = false, ...fetchOpts } = opts;
   const headers = new Headers(fetchOpts.headers);
