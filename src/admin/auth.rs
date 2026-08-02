@@ -135,6 +135,63 @@ pub(crate) async fn admin_login(
     Err(AdminError::unauthorized("Invalid credentials"))
 }
 
+// ── Session probe (anonymous-safe) ───────────────────────────────
+
+/// Returns the current session status. Always returns 200 — anonymous
+/// users get `{ "authenticated": false }` instead of a 401.
+pub(crate) async fn auth_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AdminError> {
+    // Try to extract and validate the session token (same logic as require_session
+    // but without returning an error on missing/invalid tokens).
+    let token = match extract_token(&headers) {
+        Ok(t) => t,
+        Err(_) => return Ok(Json(serde_json::json!({ "authenticated": false }))),
+    };
+    let info = match state.admin.decode_token(&token) {
+        Ok(s) => s,
+        Err(_) => return Ok(Json(serde_json::json!({ "authenticated": false }))),
+    };
+    let db_user = match state.db.get_user(&info.user_id).await {
+        Ok(Some(u)) => u,
+        _ => return Ok(Json(serde_json::json!({ "authenticated": false }))),
+    };
+    if db_user.token_version != info.token_version || db_user.status != USER_STATUS_ACTIVE {
+        return Ok(Json(serde_json::json!({ "authenticated": false })));
+    }
+
+    // Build granted permissions list
+    let all_known = [
+        "admin:dashboard", "admin:users", "admin:channels", "admin:models",
+        "admin:model-pricing", "admin:rules", "admin:moderation", "admin:usage",
+        "admin:bills", "admin:recharge-keys", "admin:health", "admin:settings",
+        "admin:gateway", "admin:policies", "admin:announcements",
+    ];
+    let mut permissions = Vec::new();
+    for perm in &all_known {
+        if state.authz.enforce(&info.role, perm).await {
+            permissions.push(perm.to_string());
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "authenticated": true,
+        "user": {
+            "id": info.user_id,
+            "name": info.user_name,
+            "role": info.role,
+        },
+        "permissions": permissions,
+        "portals": {
+            "user": true,
+            "admin": info.role == "admin",
+        },
+    })))
+}
+
+// ── Logout ────────────────────────────────────────────────────────
+
 pub(crate) async fn admin_logout(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

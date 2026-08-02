@@ -1,7 +1,26 @@
 import { useTranslation } from 'react-i18next';
+import { useLogout } from '@fluxeme/shared/src/api/auth';
+import { useAuth } from '@fluxeme/shared/src/store/auth';
+import { Button } from '@fluxeme/shared/src/components/ui/button';
 
 export function AdminAccessDeniedPage() {
   const { t } = useTranslation();
+  const logout = useLogout();
+  const clear = useAuth((s) => s.clear);
+  const isLoading = logout.isPending;
+
+  const handleSwitch = () => {
+    logout.mutate(undefined, {
+      onSuccess: () => {
+        clear();
+        window.location.replace('/admin/login');
+      },
+      onError: () => {
+        clear();
+        window.location.replace('/admin/login');
+      },
+    });
+  };
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4">
@@ -18,12 +37,13 @@ export function AdminAccessDeniedPage() {
           >
             {t('adminAccessDenied.goToUserCenter')}
           </a>
-          <a
-            href="/api/logout"
-            className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
+          <Button
+            variant="outline"
+            onClick={handleSwitch}
+            disabled={isLoading}
           >
             {t('adminAccessDenied.switchAccount')}
-          </a>
+          </Button>
         </div>
       </div>
     </div>

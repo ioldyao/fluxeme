@@ -469,6 +469,7 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
     Router::new()
         .route("/api/login", axum::routing::post(auth::admin_login))
         .route("/api/logout", axum::routing::post(auth::admin_logout))
+        .route("/api/auth/session", axum::routing::get(auth::auth_session))
         .route("/api/setup/status", axum::routing::get(auth::setup_status))
         .route(
             "/api/setup/register",

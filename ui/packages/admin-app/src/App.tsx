@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@fluxeme/shared';
-import { useCurrentSession } from '@fluxeme/shared/src/api/auth';
+import { useSessionQuery, useCurrentSession } from '@fluxeme/shared/src/api/auth';
 import { loadCurrencySettings } from '@fluxeme/shared/src/api/settings';
 import { AppRoutes } from './routes';
 import { useAuth } from '@fluxeme/shared/src/store/auth';
@@ -11,61 +11,66 @@ function SessionBootstrapper() {
   const setCurrentSession = useAuth((s) => s.setCurrentSession);
   const setPermissions = useAuth((s) => s.setPermissions);
   const clear = useAuth((s) => s.clear);
-  const isAuthed = useAuth((s) => s.isAuthenticated);
 
-  // Always check session on mount — no localStorage guesswork.
-  // /api/me with skipAuthErrorHandling returns 401 for anonymous users
-  // without triggering toast/clear/redirect.
-  const currentSession = useCurrentSession(!isSessionResolved);
-  const isUnauthorized =
-    currentSession.error instanceof Error &&
-    currentSession.error.message === 'unauthorized';
+  // Phase 1: Session probe (always 200, anonymous-safe)
+  const session = useSessionQuery();
+  const isAuthed = session.data?.authenticated ?? false;
 
-  // Session resolved by server
+  // Phase 2: When authenticated, fetch full session detail + permissions
+  const currentSession = useCurrentSession(isAuthed && !isSessionResolved);
+  const permsQuery = useQuery({
+    queryKey: ['auth', 'permissions'],
+    queryFn: () => api<string[]>('/me/permissions'),
+    enabled: isAuthed && isSessionResolved,
+    staleTime: 120_000,
+  });
+
+  // Session probe resolved → set current session
   useEffect(() => {
     if (currentSession.isSuccess) {
       setCurrentSession(currentSession.data);
     }
   }, [currentSession.data, currentSession.isSuccess, setCurrentSession]);
 
-  // Server returned 401 — mark resolved as anonymous
+  // Session probe says not authenticated → resolve as anonymous
   useEffect(() => {
-    if (isUnauthorized && !isSessionResolved) {
+    if (session.isSuccess && !session.data.authenticated && !isSessionResolved) {
       clear();
     }
-  }, [isUnauthorized, isSessionResolved, clear]);
+  }, [session.isSuccess, session.data?.authenticated, isSessionResolved, clear]);
 
-  // Load global currency settings (public API, works for all)
+  // Permissions loaded
+  useEffect(() => {
+    if (permsQuery.data) setPermissions(permsQuery.data);
+  }, [permsQuery.data, setPermissions]);
+
+  // Load global currency settings (public API)
   useEffect(() => {
     void loadCurrencySettings();
   }, []);
 
-  // Load permissions once authenticated
-  const { data: permsData } = useQuery({
-    queryKey: ['auth', 'permissions'],
-    queryFn: () => api<string[]>('/me/permissions'),
-    enabled: isAuthed,
-    staleTime: 120_000,
-  });
-  useEffect(() => {
-    if (permsData) setPermissions(permsData);
-  }, [permsData, setPermissions]);
+  // Loading state
+  if (session.isPending) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <p className="text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
 
-  // Non-401 server error on mount → show retry UI
-  if (currentSession.isError && !isUnauthorized) {
+  // Non-401 server error
+  if (session.isError) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 p-4">
         <div className="max-w-sm space-y-3 text-center">
-          <p className="text-sm font-medium text-foreground">
-            Unable to verify the current session.
-          </p>
+          <p className="text-sm font-medium text-foreground">Unable to connect</p>
           <p className="text-sm text-muted-foreground">
             The authentication service may be temporarily unavailable.
           </p>
           <button
             autoFocus
             className="text-sm text-primary underline"
-            onClick={() => void currentSession.refetch()}
+            onClick={() => void session.refetch()}
           >
             Retry
           </button>
