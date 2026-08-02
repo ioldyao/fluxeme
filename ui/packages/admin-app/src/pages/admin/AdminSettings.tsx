@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api } from '@fluxeme/shared/src/api/client';
-import { fetchCurrencySettings, saveCurrencySettings } from '@fluxeme/shared/src/api/settings';
+import { fetchAppConfig, saveCurrencySettings } from '@fluxeme/shared/src/api/settings';
 import { CURRENCY_SYMBOL, useCurrency, type CurrencyCode } from '@fluxeme/shared/src/store/currency';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
 import { Button } from '@fluxeme/shared/src/components/ui/button';
@@ -30,7 +30,7 @@ export default function AdminSettings() {
       .catch(() => {})
       .finally(() => setLoading(false));
     // Load currency settings into local state
-    fetchCurrencySettings().then((r) => {
+    fetchAppConfig().then((r) => {
       setLocalCurrency(r.currency);
       setLocalRate(r.rate);
     }).catch(() => {});

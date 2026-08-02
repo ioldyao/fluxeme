@@ -85,7 +85,15 @@ export default function Login() {
     login.mutate(
       { username, password },
       {
-        onSuccess: () => navigate(from, { replace: true }),
+        onSuccess: (res) => {
+          // Check admin role — login succeeded but user lacks admin portal access
+          if (res.role !== 'admin') {
+            toast.error(t('login.noAdminAccess'));
+            useAuth.getState().clear();
+            return;
+          }
+          navigate(from, { replace: true });
+        },
         onError: (error) => toast.error(error.message),
       },
     );

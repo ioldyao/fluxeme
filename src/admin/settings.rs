@@ -13,12 +13,11 @@ use super::*;
 
 // ── Global currency ─────────────────────────────────────────────────
 
-pub(crate) async fn get_currency(
+/// Public app config — no auth required. Returns global display settings
+/// such as currency and exchange rate that all frontends need.
+pub(crate) async fn get_app_config(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
 ) -> Result<Json<Value>, AdminError> {
-    let session = require_session(&state.admin, &headers).await?;
-    check_perm(&state.authz, &session, "admin:settings").await?;
     let currency = state
         .db
         .get_setting("site_currency")
@@ -33,12 +32,6 @@ pub(crate) async fn get_currency(
         .and_then(|v| v.parse().ok())
         .unwrap_or(7.2);
     Ok(Json(serde_json::json!({ "currency": currency, "rate": rate })))
-}
-
-#[derive(Deserialize)]
-pub(crate) struct CurrencyReq {
-    currency: String,
-    rate: f64,
 }
 
 pub(crate) async fn set_currency(
@@ -65,6 +58,12 @@ pub(crate) async fn set_currency(
         .await
         .map_err(db_err)?;
     Ok(Json(serde_json::json!({ "currency": req.currency, "rate": req.rate })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CurrencyReq {
+    currency: String,
+    rate: f64,
 }
 
 // ── Settings ──────────────────────────────────────────────────────

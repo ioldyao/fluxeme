@@ -771,7 +771,11 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         )
         .route(
             "/api/settings/currency",
-            axum::routing::get(settings::get_currency).put(settings::set_currency),
+            axum::routing::put(settings::set_currency),
+        )
+        .route(
+            "/api/app/config",
+            axum::routing::get(settings::get_app_config),
         )
         // Announcements
         .route(

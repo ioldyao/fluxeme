@@ -1,5 +1,6 @@
-import { Navigate, Outlet } from 'react-router-dom';
+import { Outlet } from 'react-router-dom';
 import { useAuth } from '@fluxeme/shared/src/store/auth';
+import { AdminAccessDeniedPage } from './AdminAccessDeniedPage';
 
 export function AdminRoute() {
   const isSessionResolved = useAuth((s) => s.isSessionResolved);
@@ -10,7 +11,7 @@ export function AdminRoute() {
   }
 
   if (role !== 'admin') {
-    return <Navigate to="/" replace />;
+    return <AdminAccessDeniedPage />;
   }
 
   return <Outlet />;

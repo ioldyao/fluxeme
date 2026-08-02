@@ -56,13 +56,13 @@ export function TopBar({ adminEntryPath, userEntryPath }: TopBarProps) {
       <div />
       <div className="flex items-center gap-2">
         {shouldShowUserEntry ? (
-          <Button variant="outline" size="sm" onClick={() => navigate(userEntryPath)}>
-            {t('nav.userEntry')}
+          <Button variant="outline" size="sm" asChild>
+            <a href={userEntryPath}>{t('nav.userEntry')}</a>
           </Button>
         ) : null}
         {shouldShowAdminEntry ? (
-          <Button variant="outline" size="sm" onClick={() => navigate(adminEntryPath)}>
-            {t('nav.adminEntry')}
+          <Button variant="outline" size="sm" asChild>
+            <a href={adminEntryPath}>{t('nav.adminEntry')}</a>
           </Button>
         ) : null}
         <Button variant="ghost" size="sm" onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}>
