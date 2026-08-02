@@ -9,6 +9,9 @@ type ApiOptions = Omit<RequestInit, 'body'> & {
   skipAuthErrorHandling?: boolean;
 };
 
+/** Guards against multiple simultaneous 401 clear-toast sequences. */
+let _clearingAuth = false;
+
 export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
   const { body, skipAuthErrorHandling = false, ...fetchOpts } = opts;
   const headers = new Headers(fetchOpts.headers);
@@ -26,12 +29,14 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
   });
 
   if (response.status === 401) {
-    if (!skipAuthErrorHandling) {
+    if (!skipAuthErrorHandling && !_clearingAuth) {
+      _clearingAuth = true;
       toast.error(i18n.t('login.sessionExpired'));
       useAuth.getState().clear();
-      setTimeout(() => {
-        window.location.href = '/login';
-      }, 1500);
+      // Allow the React Router guard to handle the redirect declaratively.
+      // Reset the latch after a grace period so subsequent 401s can fire
+      // if the user returns without a valid session.
+      setTimeout(() => { _clearingAuth = false; }, 3000);
     }
 
     throw new Error('unauthorized');

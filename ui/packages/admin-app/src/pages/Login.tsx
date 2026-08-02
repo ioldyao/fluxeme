@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useLogin } from '@fluxeme/shared/src/api/auth';
 import { useAuth } from '@fluxeme/shared/src/store/auth';
@@ -14,8 +14,8 @@ import { api } from '@fluxeme/shared/src/api/client';
 export default function Login() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const isAuthenticated = useAuth((s) => s.isAuthenticated);
-  const isSessionResolved = useAuth((s) => s.isSessionResolved);
+  const location = useLocation();
+  const { isAuthenticated, isSessionResolved } = useAuth();
   const login = useLogin();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -23,10 +23,16 @@ export default function Login() {
   const [ssoProviderName, setSsoProviderName] = useState('');
   const [ssoLoading, setSsoLoading] = useState(true);
 
+  // Redirect destination: where the user was trying to go before hitting login
+  const from = (location.state as { from?: string })?.from ?? '/';
+
   useEffect(() => {
     const abortController = new AbortController();
 
-    api<{ setup_required: boolean }>('/setup/status', { signal: abortController.signal })
+    api<{ setup_required: boolean }>('/setup/status', {
+      signal: abortController.signal,
+      skipAuthErrorHandling: true,
+    })
       .then((res) => {
         if (res.setup_required) {
           navigate('/register', { replace: true });
@@ -34,39 +40,43 @@ export default function Login() {
       })
       .catch(() => {});
 
-    api<{ enabled: boolean; provider_name: string }>('/sso/status', { signal: abortController.signal })
+    api<{ enabled: boolean; provider_name: string }>('/sso/status', {
+      signal: abortController.signal,
+      skipAuthErrorHandling: true,
+    })
       .then((res) => {
         setSsoEnabled(res.enabled);
         setSsoProviderName(res.provider_name);
       })
-      .catch(() => {
-        // SSO endpoint not available
-      })
+      .catch(() => {})
       .finally(() => {
         if (!abortController.signal.aborted) {
           setSsoLoading(false);
         }
       });
 
-    return () => {
-      abortController.abort();
-    };
+    return () => abortController.abort();
   }, [navigate]);
 
+  // Session still loading → spinner
   if (!isSessionResolved) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
-        <p className="text-muted-foreground" role="status">Loading...</p>
+        <p className="text-muted-foreground" role="status">
+          {t('common.loading')}
+        </p>
       </div>
     );
   }
 
+  // Already authenticated → redirect to destination (or root)
   if (isAuthenticated) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={from} replace />;
   }
 
-  const handleSubmit = async (event: React.FormEvent) => {
+  const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
+
     if (!username || !password) {
       toast.error(t('login.error'));
       return;
@@ -75,7 +85,7 @@ export default function Login() {
     login.mutate(
       { username, password },
       {
-        onSuccess: () => navigate('/'),
+        onSuccess: () => navigate(from, { replace: true }),
         onError: (error) => toast.error(error.message),
       },
     );
@@ -99,7 +109,7 @@ export default function Login() {
                 id="username"
                 placeholder={t('login.usernamePlaceholder')}
                 value={username}
-                onChange={(event) => setUsername(event.target.value)}
+                onChange={(e) => setUsername(e.target.value)}
                 autoFocus
               />
             </div>
@@ -110,7 +120,7 @@ export default function Login() {
                 type="password"
                 placeholder={t('login.passwordPlaceholder')}
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(e) => setPassword(e.target.value)}
               />
             </div>
             <Button type="submit" className="w-full" disabled={login.isPending}>
