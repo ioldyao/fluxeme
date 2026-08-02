@@ -24,10 +24,7 @@ fn billing_shard(record: &UsageRecord) -> usize {
 }
 
 fn strip_usage_client_ip(record: UsageRecord) -> UsageRecord {
-    UsageRecord {
-        client_ip: None,
-        ..record
-    }
+    record
 }
 
 #[derive(Clone)]
