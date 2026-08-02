@@ -7,11 +7,14 @@ use std::sync::{Arc, RwLock};
 
 use axum::extract::DefaultBodyLimit;
 use axum::http::HeaderValue;
+use axum::response::Redirect;
+use axum::routing::get;
 use axum::Router;
 use tokio::sync::RwLock as AsyncRwLock;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
@@ -89,7 +92,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             axum::http::header::AUTHORIZATION,
             axum::http::header::CONTENT_TYPE,
             axum::http::header::HeaderName::from_static("x-api-key"),
-        ]);
+        ])
+        .allow_credentials(true);
 
     let security_headers = ServiceBuilder::new()
         .layer(SetResponseHeaderLayer::overriding(
@@ -148,10 +152,21 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/readyz", axum::routing::get(health::readiness))
         // admin API
         .merge(crate::admin::admin_routes())
-        // static files for admin frontend
+        // static files — SPA routing
+        // nest strips /admin/ prefix before passing to ServeDir,
+        // so /admin/assets/foo.js → web/admin/assets/foo.js
+        .route("/admin", get(|| async { Redirect::permanent("/admin/") }))
+        .nest(
+            "/admin",
+            Router::new().fallback_service(
+                ServeDir::new("web/admin")
+                    .fallback(ServeFile::new("web/admin/index.html")),
+            ),
+        )
+        // everything else → user SPA
         .fallback_service(
-            tower_http::services::ServeDir::new("web")
-                .fallback(tower_http::services::ServeFile::new("web/index.html")),
+            ServeDir::new("web")
+                .fallback(ServeFile::new("web/index.html")),
         )
         // Remove the request body limit: LLM requests carry base64 images and
         // long conversation context. Axum's default is 2MB (via Json extractor),

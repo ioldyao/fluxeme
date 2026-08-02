@@ -1,0 +1,1 @@
+import{n as e}from"./createLucideIcon-D4TIyf5a.js";import{t}from"./useQuery-BgcCIsUj.js";function n(){return t({queryKey:[`models`,`public`],queryFn:()=>e(`/models/public`)})}export{n as t};

@@ -1,0 +1,61 @@
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+
+export type CurrencyCode = 'cny' | 'usd';
+
+interface CurrencyState {
+  currency: CurrencyCode;
+  rate: number;
+  loaded: boolean;
+  setCurrency: (c: CurrencyCode) => void;
+  setRate: (r: number) => void;
+  setLoaded: (loaded: boolean) => void;
+}
+
+export const CURRENCY_SYMBOL: Record<CurrencyCode, string> = {
+  cny: '¥',
+  usd: '$',
+};
+
+export const CURRENCY_CODE: Record<CurrencyCode, string> = {
+  cny: 'CNY',
+  usd: 'USD',
+};
+
+export const useCurrency = create<CurrencyState>()((set) => ({
+  currency: 'usd',
+  rate: 7.2,
+  loaded: false,
+  setCurrency: (currency) => set({ currency }),
+  setRate: (rate) => set({ rate }),
+  setLoaded: (loaded) => set({ loaded }),
+}));
+
+// ── Pricing currency preferences (global/per-model + per-model overrides) ──
+type CurrencyMode = 'global' | 'per-model';
+
+interface PricingCurrencyState {
+  mode: CurrencyMode;
+  modelCurrency: Record<string, CurrencyCode>;
+  setMode: (mode: CurrencyMode) => void;
+  setModelCurrency: (id: string, currency: CurrencyCode) => void;
+  effectiveCurrency: (globalCurrency: CurrencyCode, modelId: string | null) => CurrencyCode;
+}
+
+export const usePricingCurrency = create<PricingCurrencyState>()(
+  persist(
+    (set, get) => ({
+      mode: 'global' as CurrencyMode,
+      modelCurrency: {},
+      setMode: (mode) => set({ mode }),
+      setModelCurrency: (id, currency) =>
+        set((state) => ({ modelCurrency: { ...state.modelCurrency, [id]: currency } })),
+      effectiveCurrency: (globalCurrency, modelId) => {
+        const { mode, modelCurrency } = get();
+        if (mode === 'global') return globalCurrency;
+        return modelId ? (modelCurrency[modelId] ?? 'usd') : 'usd';
+      },
+    }),
+    { name: 'pricing-currency' },
+  ),
+);

@@ -29,6 +29,12 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositorie
     apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=backend /app/target/release/fluxeme .
-COPY --from=frontend /web ./web
+COPY --from=frontend /app/packages/user-app/dist ./web
+# Copy shared public assets (fonts, icons) from the monorepo root
+COPY --from=frontend /app/public/fonts ./web/fonts
+COPY --from=frontend /app/public/icons ./web/icons
+COPY --from=frontend /app/public/favicon.svg ./web/favicon.svg
+COPY --from=frontend /app/public/icons.svg ./web/icons.svg
+COPY --from=frontend /app/packages/admin-app/dist ./web/admin
 EXPOSE 8080
 CMD ["./fluxeme"]
