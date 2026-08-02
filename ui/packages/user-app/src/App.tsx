@@ -27,12 +27,15 @@ function SessionBootstrapper() {
     }
   }, [currentSession.data, currentSession.isSuccess, setCurrentSession]);
 
-  // Load global currency settings on mount
-  useEffect(() => {
-    void loadCurrencySettings();
-  }, []);
-
   const isAuthed = useAuth((s) => s.isAuthenticated);
+
+  // Load global currency settings once authenticated
+  useEffect(() => {
+    if (isAuthed) {
+      void loadCurrencySettings();
+    }
+  }, [isAuthed]);
+
   const setPermissions = useAuth((s) => s.setPermissions);
   const { data: permsData } = useQuery({
     queryKey: ['auth', 'permissions'],
