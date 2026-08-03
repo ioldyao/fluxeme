@@ -5,11 +5,14 @@ import { api } from '@fluxeme/shared/src/api/client';
 import { fetchAppConfig, saveCurrencySettings } from '@fluxeme/shared/src/api/settings';
 import { CURRENCY_SYMBOL, useCurrency, type CurrencyCode } from '@fluxeme/shared/src/store/currency';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
+import { Guard, usePermission } from '@fluxeme/shared/src/permissions';
 import { Button } from '@fluxeme/shared/src/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@fluxeme/shared/src/components/ui/card';
 import { Input } from '@fluxeme/shared/src/components/ui/input';
 import { Label } from '@fluxeme/shared/src/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@fluxeme/shared/src/components/ui/select';
+import { Switch } from '@fluxeme/shared/src/components/ui/switch';
+import type { GatewayRuntimeConfig } from '@fluxeme/shared/src/types';
 
 const PROBE_INTERVAL_MIN = 10;
 const PROBE_INTERVAL_MAX = 3600;
@@ -17,11 +20,14 @@ const PROBE_INTERVAL_MAX = 3600;
 export default function AdminSettings() {
   const { t } = useTranslation();
   const { currency: globalCurrency, setCurrency: setGlobalCurrency } = useCurrency();
+  const canGateway = usePermission('admin:gateway');
   const [localCurrency, setLocalCurrency] = useState<string>(globalCurrency);
   const [intervalSecs, setIntervalSecs] = useState<number>(60);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [currencySaving, setCurrencySaving] = useState(false);
+  const [gatewayConfig, setGatewayConfig] = useState<GatewayRuntimeConfig | null>(null);
+  const [billingSaving, setBillingSaving] = useState(false);
 
   useEffect(() => {
     api<{ interval_secs: number }>('/settings/probe-interval')
@@ -33,6 +39,13 @@ export default function AdminSettings() {
       setLocalCurrency(r.currency);
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!canGateway) return;
+    api<GatewayRuntimeConfig>('/gateway/config')
+      .then(setGatewayConfig)
+      .catch(() => {});
+  }, [canGateway]);
 
   const save = async () => {
     const value = Math.round(intervalSecs);
@@ -78,6 +91,22 @@ export default function AdminSettings() {
     }
   };
 
+  const toggleBilling = async (checked: boolean) => {
+    if (!gatewayConfig) return;
+    const updated = { ...gatewayConfig, billing_enabled: checked };
+    setGatewayConfig(updated);
+    setBillingSaving(true);
+    try {
+      await api('/gateway/config', { method: 'PUT', body: updated });
+      toast.success(t('settings.gatewaySaved'));
+    } catch {
+      setGatewayConfig((prev) => (prev ? { ...prev, billing_enabled: !checked } : prev));
+      toast.error('Failed to save billing configuration');
+    } finally {
+      setBillingSaving(false);
+    }
+  };
+
   return (
     <div className="max-w-2xl space-y-6 animate-fade-in">
       <PageHeader title={t('settings.title')} description={t('settings.adminSubtitle')} />
@@ -111,6 +140,28 @@ export default function AdminSettings() {
           </div>
         </CardContent>
       </Card>
+
+      {/* ── Billing ───────────────────────────────────────────────── */}
+      <Guard perm="admin:gateway">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{t('settings.billing')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <Label className="text-sm">{t('settings.billingToggle')}</Label>
+                <p className="text-xs text-muted-foreground mt-0.5">{t('settings.billingToggleHint')}</p>
+              </div>
+              <Switch
+                checked={gatewayConfig?.billing_enabled ?? false}
+                onCheckedChange={toggleBilling}
+                disabled={!gatewayConfig || billingSaving}
+              />
+            </div>
+          </CardContent>
+        </Card>
+      </Guard>
 
       <Card>
         <CardHeader>

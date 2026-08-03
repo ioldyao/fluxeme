@@ -3,19 +3,25 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api } from '@/api/client';
 import { PageHeader } from '@/components/PageHeader';
+import { Guard, usePermission } from '@/permissions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import type { GatewayRuntimeConfig } from '@/types';
 
 const PROBE_INTERVAL_MIN = 10;
 const PROBE_INTERVAL_MAX = 3600;
 
 export default function AdminSettings() {
   const { t } = useTranslation();
+  const canGateway = usePermission('admin:gateway');
   const [intervalSecs, setIntervalSecs] = useState<number>(60);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [gatewayConfig, setGatewayConfig] = useState<GatewayRuntimeConfig | null>(null);
+  const [billingSaving, setBillingSaving] = useState(false);
 
   useEffect(() => {
     api<{ interval_secs: number }>('/settings/probe-interval')
@@ -23,6 +29,29 @@ export default function AdminSettings() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!canGateway) return;
+    api<GatewayRuntimeConfig>('/gateway/config')
+      .then(setGatewayConfig)
+      .catch(() => {});
+  }, [canGateway]);
+
+  const toggleBilling = async (checked: boolean) => {
+    if (!gatewayConfig) return;
+    const updated = { ...gatewayConfig, billing_enabled: checked };
+    setGatewayConfig(updated);
+    setBillingSaving(true);
+    try {
+      await api('/gateway/config', { method: 'PUT', body: updated });
+      toast.success(t('settings.gatewaySaved'));
+    } catch {
+      setGatewayConfig((prev) => (prev ? { ...prev, billing_enabled: !checked } : prev));
+      toast.error('Failed to save billing configuration');
+    } finally {
+      setBillingSaving(false);
+    }
+  };
 
   const save = async () => {
     const value = Math.round(intervalSecs);
@@ -53,6 +82,27 @@ export default function AdminSettings() {
   return (
     <div className="max-w-2xl space-y-6 animate-fade-in">
       <PageHeader title={t('settings.title')} description={t('settings.adminSubtitle')} />
+
+      <Guard perm="admin:gateway">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{t('settings.billing')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <Label className="text-sm">{t('settings.billingToggle')}</Label>
+                <p className="text-xs text-muted-foreground mt-0.5">{t('settings.billingToggleHint')}</p>
+              </div>
+              <Switch
+                checked={gatewayConfig?.billing_enabled ?? false}
+                onCheckedChange={toggleBilling}
+                disabled={!gatewayConfig || billingSaving}
+              />
+            </div>
+          </CardContent>
+        </Card>
+      </Guard>
 
       <Card>
         <CardHeader>
