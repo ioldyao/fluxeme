@@ -1,6 +1,8 @@
 /target
 gateway.log
 node_modules/
+**/node_modules/
+**/dist/
 config/config.yaml
 config.local.yaml
 .claude/

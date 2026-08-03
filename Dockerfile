@@ -13,7 +13,8 @@ COPY ui/packages/user-app/package.json  ./packages/user-app/package.json
 COPY ui/packages/admin-app/package.json ./packages/admin-app/package.json
 
 # 3. Install — now pnpm can link @fluxeme/shared → @fluxeme/user-app/admin-app
-RUN pnpm install --frozen-lockfile
+RUN pnpm config set registry https://registry.npmmirror.com && \
+    pnpm install --frozen-lockfile
 
 # 4. Source code
 COPY ui/ ./

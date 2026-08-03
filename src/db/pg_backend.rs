@@ -865,6 +865,7 @@ impl DbBackend for PgBackend {
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS response_body TEXT",
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS reasoning_body TEXT",
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS original_model TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS cache_write_tokens BIGINT NOT NULL DEFAULT 0",
         ] {
             let _ = raw_sql(alter).execute(&self.pool).await;
         }
@@ -2439,7 +2440,7 @@ impl DbBackend for PgBackend {
             "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              request_body, response_body, reasoning_body, api_key_name, api_format, stream, \
-             cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip, \
+             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, \
              original_model \
              FROM billing_events WHERE request_id = $1",
         )
@@ -2502,7 +2503,7 @@ impl DbBackend for PgBackend {
             query(
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-                 api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
+                 api_key_name, api_format, stream, cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, \
                  cache_read_price, client_ip \
                  FROM billing_events WHERE user_id = $1 AND timestamp >= $2 ORDER BY timestamp ASC",
             )
@@ -2514,7 +2515,7 @@ impl DbBackend for PgBackend {
             query(
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-                 api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
+                 api_key_name, api_format, stream, cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, \
                  cache_read_price, client_ip \
                  FROM billing_events WHERE timestamp >= $1 ORDER BY timestamp ASC",
             )
@@ -2540,7 +2541,7 @@ impl DbBackend for PgBackend {
             query(
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-                 api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
+                 api_key_name, api_format, stream, cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, \
                  cache_read_price, client_ip, original_model \
                  FROM billing_events WHERE user_id = $1 AND timestamp >= $2 ORDER BY timestamp ASC",
             )
@@ -2552,7 +2553,7 @@ impl DbBackend for PgBackend {
             query(
                 "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-                 api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
+                 api_key_name, api_format, stream, cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, \
                  cache_read_price, client_ip, original_model \
                  FROM billing_events WHERE timestamp >= $1 ORDER BY timestamp ASC",
             )
