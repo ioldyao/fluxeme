@@ -1,0 +1,1 @@
+import{n as e}from"./createLucideIcon-CUwlz_QC.js";import{t}from"./useQuery-DZZ4enL1.js";function n(){return t({queryKey:[`models`,`public`],queryFn:()=>e(`/models/public`)})}export{n as t};

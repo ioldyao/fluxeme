@@ -1,7 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useCurrency } from '@fluxeme/shared/src/store/currency';
 import { formatCost, getRecordPricing } from '@fluxeme/shared/src/lib/cost';
 import { useMyUsage, useMyUsageAggregate, useMyModelActivity } from '@fluxeme/shared/src/api/usage';
 import { UsageLogDetail } from '../components/UsageLogDetail';
@@ -120,7 +119,6 @@ export default function Usage() {
   const total = usage?.total ?? 0;
   const page = offset / limit + 1;
   const totalPages = Math.max(1, Math.ceil(total / limit));
-  const { currency, rate } = useCurrency();
   const [chartTab, setChartTab] = useState('list');
   const [chartDays, setChartDays] = useState(7);
   const { data: aggregate, isLoading: aggLoading } = useMyUsageAggregate(chartDays);
@@ -285,7 +283,7 @@ export default function Usage() {
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.cache_hit_input_tokens > 0 ? r.cache_hit_input_tokens : '—'}</td>
                           <td className="py-3 px-4 text-right">{r.completion_tokens}</td>
                           <td className="py-3 px-4 text-right font-medium">{r.total_tokens}</td>
-                          <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, r.cache_hit_input_tokens, getRecordPricing(r), currency, rate)}</td>
+                          <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, r.cache_hit_input_tokens, getRecordPricing(r))}</td>
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>
                           <td className="py-3 px-4 text-center">
                             {r.success ? (

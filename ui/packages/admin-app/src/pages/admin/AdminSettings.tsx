@@ -16,9 +16,8 @@ const PROBE_INTERVAL_MAX = 3600;
 
 export default function AdminSettings() {
   const { t } = useTranslation();
-  const { currency: globalCurrency, rate: globalRate, setCurrency: setGlobalCurrency, setRate: setGlobalRate } = useCurrency();
+  const { currency: globalCurrency, setCurrency: setGlobalCurrency } = useCurrency();
   const [localCurrency, setLocalCurrency] = useState<string>(globalCurrency);
-  const [localRate, setLocalRate] = useState<number>(globalRate);
   const [intervalSecs, setIntervalSecs] = useState<number>(60);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -32,7 +31,6 @@ export default function AdminSettings() {
     // Load currency settings into local state
     fetchAppConfig().then((r) => {
       setLocalCurrency(r.currency);
-      setLocalRate(r.rate);
     }).catch(() => {});
   }, []);
 
@@ -67,17 +65,11 @@ export default function AdminSettings() {
       toast.error('Invalid currency');
       return;
     }
-    if (Number.isNaN(localRate) || localRate <= 0) {
-      toast.error('Exchange rate must be positive');
-      return;
-    }
     setCurrencySaving(true);
     try {
-      const r = await saveCurrencySettings(localCurrency, localRate);
+      const r = await saveCurrencySettings(localCurrency);
       setLocalCurrency(r.currency);
-      setLocalRate(r.rate);
       setGlobalCurrency(r.currency as CurrencyCode);
-      setGlobalRate(r.rate);
       toast.success('Currency settings saved');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to save currency settings');
@@ -110,27 +102,6 @@ export default function AdminSettings() {
                 <SelectItem value="cny">{CURRENCY_SYMBOL.cny} CNY</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1 min-w-0">
-              <Label className="text-sm">{t('settings.rateLabel')}</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">{t('settings.rateHint')}</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Input
-                type="number"
-                step="0.01"
-                min="0"
-                className="w-24"
-                value={Number.isNaN(localRate) ? '' : localRate}
-                disabled={localCurrency !== 'cny'}
-                onChange={(e) => setLocalRate(parseFloat(e.target.value))}
-              />
-              <span className="text-xs text-muted-foreground whitespace-nowrap">
-                1 USD = {localRate} CNY
-              </span>
-            </div>
           </div>
 
           <div className="flex justify-end">

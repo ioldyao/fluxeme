@@ -44,30 +44,31 @@ impl PgBackend {
     // ── Private helpers ──────────────────────────────────────────────────────────
 
     #[allow(dead_code)]
-    async fn pricing_lookup(&self, model_name: &str) -> (Decimal, Decimal, Decimal) {
-        let result = query_as::<_, (f64, f64, f64)>(
-            "SELECT prompt_price, completion_price, cache_read_price FROM models WHERE name = $1",
+    async fn pricing_lookup(&self, model_name: &str) -> (Decimal, Decimal, Decimal, Decimal) {
+        let result = query_as::<_, (f64, f64, f64, f64)>(
+            "SELECT prompt_price, completion_price, cache_read_price, cache_write_price FROM models WHERE name = $1",
         )
         .bind(model_name)
         .fetch_optional(&self.pool)
         .await;
 
         match result {
-            Ok(Some((p, c, cr))) => (
+            Ok(Some((p, c, cr, cw))) => (
                 Decimal::try_from(p).unwrap_or(Decimal::ZERO),
                 Decimal::try_from(c).unwrap_or(Decimal::ZERO),
                 Decimal::try_from(cr).unwrap_or(Decimal::ZERO),
+                Decimal::try_from(cw).unwrap_or(Decimal::ZERO),
             ),
             _ => {
                 // Fall back to pattern matching
-                let rows = query_as::<_, (f64, f64, f64, String)>(
-                    "SELECT prompt_price, completion_price, cache_read_price, model_pattern FROM models",
+                let rows = query_as::<_, (f64, f64, f64, f64, String)>(
+                    "SELECT prompt_price, completion_price, cache_read_price, cache_write_price, model_pattern FROM models",
                 )
                 .fetch_all(&self.pool)
                 .await;
 
                 if let Ok(rows) = rows {
-                    for (p, c, cr, pattern) in rows {
+                    for (p, c, cr, cw, pattern) in rows {
                         if pattern.ends_with('*') {
                             let prefix = &pattern[..pattern.len() - 1];
                             if model_name.starts_with(prefix) {
@@ -75,6 +76,7 @@ impl PgBackend {
                                     Decimal::try_from(p).unwrap_or(Decimal::ZERO),
                                     Decimal::try_from(c).unwrap_or(Decimal::ZERO),
                                     Decimal::try_from(cr).unwrap_or(Decimal::ZERO),
+                                    Decimal::try_from(cw).unwrap_or(Decimal::ZERO),
                                 );
                             }
                         }
@@ -83,11 +85,12 @@ impl PgBackend {
                                 Decimal::try_from(p).unwrap_or(Decimal::ZERO),
                                 Decimal::try_from(c).unwrap_or(Decimal::ZERO),
                                 Decimal::try_from(cr).unwrap_or(Decimal::ZERO),
+                                Decimal::try_from(cw).unwrap_or(Decimal::ZERO),
                             );
                         }
                     }
                 }
-                (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO)
+                (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO, Decimal::ZERO)
             }
         }
     }
@@ -234,6 +237,8 @@ impl PgBackend {
         *idx += 1;
         let cache_hit_input_tokens: i64 = row.get(*idx);
         *idx += 1;
+        let cache_write_tokens: i64 = row.get(*idx);
+        *idx += 1;
         let prompt_price: f64 = row.get(*idx);
         *idx += 1;
         let completion_price: f64 = row.get(*idx);
@@ -268,6 +273,7 @@ impl PgBackend {
             api_format,
             stream,
             cache_hit_input_tokens: cache_hit_input_tokens as u64,
+            cache_write_tokens: cache_write_tokens as u64,
             prompt_price: Decimal::try_from(prompt_price).unwrap_or(Decimal::ZERO),
             completion_price: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
             cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
@@ -317,6 +323,8 @@ impl PgBackend {
         *idx += 1;
         let cache_hit_input_tokens: i64 = row.get(*idx);
         *idx += 1;
+        let cache_write_tokens: i64 = row.get(*idx);
+        *idx += 1;
         let prompt_price: f64 = row.get(*idx);
         *idx += 1;
         let completion_price: f64 = row.get(*idx);
@@ -351,6 +359,7 @@ impl PgBackend {
             api_format,
             stream,
             cache_hit_input_tokens: cache_hit_input_tokens as u64,
+            cache_write_tokens: cache_write_tokens as u64,
             prompt_price: Decimal::try_from(prompt_price).unwrap_or(Decimal::ZERO),
             completion_price: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
             cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
@@ -807,6 +816,7 @@ impl DbBackend for PgBackend {
         add_col!("ALTER TABLE usage_billing ADD COLUMN IF NOT EXISTS response_body TEXT");
         add_col!("ALTER TABLE usage_billing ADD COLUMN IF NOT EXISTS reasoning_body TEXT");
         add_col!("ALTER TABLE usage_billing ADD COLUMN IF NOT EXISTS original_model TEXT NOT NULL DEFAULT ''");
+        add_col!("ALTER TABLE usage_billing ADD COLUMN IF NOT EXISTS cache_write_tokens BIGINT NOT NULL DEFAULT 0");
 
         tracing::info!("usage_billing table ready");
 
@@ -2379,7 +2389,7 @@ impl DbBackend for PgBackend {
         let mut builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
             "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-             api_key_name, api_format, stream, cache_hit_input_tokens, prompt_price, completion_price, \
+             api_key_name, api_format, stream, cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, \
              cache_read_price, client_ip, original_model \
              FROM billing_events WHERE 1=1",
         );
@@ -2586,6 +2596,8 @@ impl DbBackend for PgBackend {
                 idx += 1;
                 let cache_hit_input_tokens: i64 = r.get(idx);
                 idx += 1;
+                let cache_write_tokens: i64 = r.get(idx);
+                idx += 1;
                 let prompt_price: f64 = r.get(idx);
                 idx += 1;
                 let completion_price: f64 = r.get(idx);
@@ -2611,6 +2623,7 @@ impl DbBackend for PgBackend {
                     api_format,
                     stream,
                     cache_hit_input_tokens: cache_hit_input_tokens as u64,
+            cache_write_tokens: cache_write_tokens as u64,
                     prompt_price: Decimal::try_from(prompt_price).unwrap_or(Decimal::ZERO),
                     completion_price: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
                     cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
@@ -3162,10 +3175,10 @@ impl DbBackend for PgBackend {
     async fn lookup_model_pricing(
         &self,
         model_name: &str,
-    ) -> Result<(Decimal, Decimal, Decimal), DbError> {
-        let (prompt_price, completion_price, cache_read_price) =
+    ) -> Result<(Decimal, Decimal, Decimal, Decimal), DbError> {
+        let (prompt_price, completion_price, cache_read_price, cache_write_price) =
             self.pricing_lookup(model_name).await;
-        Ok((prompt_price, completion_price, cache_read_price))
+        Ok((prompt_price, completion_price, cache_read_price, cache_write_price))
     }
 
     // ── Wallet ───────────────────────────────────────────────────────────

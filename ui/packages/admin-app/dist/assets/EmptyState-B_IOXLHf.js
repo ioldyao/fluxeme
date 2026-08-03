@@ -1,1 +1,0 @@
-import{t as e}from"./jsx-runtime-Bypl69v7.js";var t=e();function n({message:e,action:n}){return(0,t.jsxs)(`div`,{className:`flex flex-col items-center justify-center py-16 text-center`,children:[(0,t.jsx)(`p`,{className:`text-muted-foreground mb-4`,children:e}),n]})}export{n as t};

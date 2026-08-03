@@ -1,1 +1,0 @@
-import{t as e}from"./client-C4BuFkgr.js";import{S as t}from"./index-DDbUk7KH.js";function n(n){return t({queryKey:[`probe-results`,n?.modelId??`all`],queryFn:()=>e(n?.modelId?`/probe-results?model_id=${encodeURIComponent(n.modelId)}`:`/probe-results`),refetchInterval:3e4,enabled:n?.enabled!==!1})}export{n as t};

@@ -32,6 +32,7 @@ pub struct UsageRecord {
     pub api_format: String,
     pub stream: bool,
     pub cache_hit_input_tokens: u64,
+    pub cache_write_tokens: u64,
     #[serde(with = "rust_decimal::serde::float")]
     pub prompt_price: Decimal,
     #[serde(with = "rust_decimal::serde::float")]

@@ -421,10 +421,11 @@ fn extract_sse_content(data: &str) -> (String, String) {
 /// Scans forward, taking the max for each token type — handles both
 /// OpenAI (final chunk has all usage) and Anthropic (message_start has
 /// prompt_tokens, message_delta has completion_tokens).
-fn parse_sse_usage(data: &str) -> (u64, u64, u64) {
+fn parse_sse_usage(data: &str) -> (u64, u64, u64, u64) {
     let mut p_tokens = 0u64;
     let mut c_tokens = 0u64;
     let mut cache_hit = 0u64;
+    let mut cache_write = 0u64;
     for line in data.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed == "data: [DONE]" || trimmed.starts_with("event: ") {
@@ -457,6 +458,17 @@ fn parse_sse_usage(data: &str) -> (u64, u64, u64) {
                             cache_hit = cached;
                         }
                     }
+                    if let Some(write) = details.get("cache_write_tokens").and_then(|v| v.as_u64()) {
+                        if write > cache_write {
+                            cache_write = write;
+                        }
+                    }
+                }
+                // OpenAI prompt_tokens includes cached tokens; subtract them
+                // so prompt_tokens represents the billable input (matching
+                // new-api semantics).
+                if cache_hit > 0 || cache_write > 0 {
+                    p_tokens = p_tokens.saturating_sub(cache_hit + cache_write);
                 }
             }
             // Anthropic message_start: {type: "message_start", message: {usage: {input_tokens, output_tokens, cache_read_input_tokens}}}
@@ -479,6 +491,14 @@ fn parse_sse_usage(data: &str) -> (u64, u64, u64) {
                         {
                             if cached > cache_hit {
                                 cache_hit = cached;
+                            }
+                        }
+                        if let Some(create) = usage
+                            .get("cache_creation_input_tokens")
+                            .and_then(|v| v.as_u64())
+                        {
+                            if create > cache_write {
+                                cache_write = create;
                             }
                         }
                     }
@@ -507,11 +527,19 @@ fn parse_sse_usage(data: &str) -> (u64, u64, u64) {
                             cache_hit = cached;
                         }
                     }
+                    if let Some(create) = usage
+                        .get("cache_creation_input_tokens")
+                        .and_then(|v| v.as_u64())
+                    {
+                        if create > cache_write {
+                            cache_write = create;
+                        }
+                    }
                 }
             }
         }
     }
-    (p_tokens, c_tokens, cache_hit)
+    (p_tokens, c_tokens, cache_hit, cache_write)
 }
 
 // ── SSE buffering stream ────────────────────────────────────────────
@@ -684,7 +712,7 @@ impl<S> UsageTrackingStream<S> {
         }
 
         let latency_ms = self.start.elapsed().as_millis() as u64;
-        let (mut p_tokens, mut c_tokens, cache_hit) = parse_sse_usage(&self.resp_buf);
+        let (mut p_tokens, mut c_tokens, cache_hit, cache_write) = parse_sse_usage(&self.resp_buf);
 
         // If no token usage data was in the SSE stream (some upstream
         // providers omit usage in streaming mode), estimate from content
@@ -712,6 +740,7 @@ impl<S> UsageTrackingStream<S> {
                 completion_tokens: c_tokens,
                 total_tokens: p_tokens + c_tokens,
                 cache_hit_input_tokens: cache_hit,
+                cache_write_tokens: cache_write,
                 latency_ms,
                 status_code: if completed { 200 } else { 499 },
                 success: completed,
@@ -903,7 +932,7 @@ async fn handle_streaming(
             balancer.as_health_aware().record_failure(endpoint_idx);
             let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
             let latency_ms = start.elapsed().as_millis() as u64;
-            let (p_tokens, c_tokens, cache_hit) = parse_sse_usage("");
+            let (p_tokens, c_tokens, cache_hit, cache_write) = parse_sse_usage("");
             state.usage.record(UsageRecord {
                 timestamp: Utc::now().to_rfc3339(),
                 request_id,
@@ -915,6 +944,7 @@ async fn handle_streaming(
                 completion_tokens: c_tokens,
                 total_tokens: p_tokens + c_tokens,
                 cache_hit_input_tokens: cache_hit,
+                cache_write_tokens: cache_write,
                 latency_ms,
                 status_code: 502,
                 success: false,
@@ -1013,7 +1043,7 @@ async fn handle_messages_streaming(
             balancer.as_health_aware().record_failure(endpoint_idx);
             let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
             let latency_ms = start.elapsed().as_millis() as u64;
-            let (p_tokens, c_tokens, cache_hit) = parse_sse_usage("");
+            let (p_tokens, c_tokens, cache_hit, cache_write) = parse_sse_usage("");
             state.usage.record(UsageRecord {
                 timestamp: Utc::now().to_rfc3339(),
                 request_id,
@@ -1025,6 +1055,7 @@ async fn handle_messages_streaming(
                 completion_tokens: c_tokens,
                 total_tokens: p_tokens + c_tokens,
                 cache_hit_input_tokens: cache_hit,
+                cache_write_tokens: cache_write,
                 latency_ms,
                 status_code: 502,
                 success: false,
@@ -1082,11 +1113,16 @@ async fn handle_non_streaming(
             Ok(mut resp) => {
                 normalize_reasoning_inner(&mut resp);
 
-                let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
                 let completion_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0);
                 let cache_hit = resp["usage"]["prompt_tokens_details"]["cached_tokens"]
                     .as_u64()
                     .unwrap_or(0);
+                let cache_write = resp["usage"]["prompt_tokens_details"]["cache_write_tokens"]
+                    .as_u64()
+                    .unwrap_or(0);
+                // OpenAI prompt_tokens includes cached tokens; subtract them.
+                let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0)
+                    .saturating_sub(cache_hit + cache_write);
 
                 let reasoning = resp
                     .get("choices")
@@ -1111,6 +1147,7 @@ async fn handle_non_streaming(
                         completion_tokens,
                         total_tokens: prompt_tokens + completion_tokens,
                         cache_hit_input_tokens: cache_hit,
+                cache_write_tokens: cache_write,
                         latency_ms,
                         status_code: 200,
                         success: true,
@@ -1181,6 +1218,7 @@ async fn handle_non_streaming(
                     completion_tokens: 0,
                     total_tokens: 0,
                     cache_hit_input_tokens: 0,
+                    cache_write_tokens: 0,
                     latency_ms,
                     status_code: 502,
                     success: false,
@@ -1218,6 +1256,7 @@ async fn handle_non_streaming(
         completion_tokens: 0,
         total_tokens: 0,
         cache_hit_input_tokens: 0,
+        cache_write_tokens: 0,
         latency_ms,
         status_code: 502,
         success: false,
@@ -1273,6 +1312,9 @@ async fn handle_messages_non_streaming(
                 let cache_hit = resp["usage"]["cache_read_input_tokens"]
                     .as_u64()
                     .unwrap_or(0);
+                let cache_write = resp["usage"]["cache_creation_input_tokens"]
+                    .as_u64()
+                    .unwrap_or(0);
 
                 let reasoning = resp
                     .get("content")
@@ -1305,6 +1347,7 @@ async fn handle_messages_non_streaming(
                     completion_tokens,
                     total_tokens: prompt_tokens + completion_tokens,
                     cache_hit_input_tokens: cache_hit,
+                cache_write_tokens: cache_write,
                     latency_ms,
                     status_code: 200,
                     success: true,
@@ -1356,6 +1399,7 @@ async fn handle_messages_non_streaming(
                     completion_tokens: 0,
                     total_tokens: 0,
                     cache_hit_input_tokens: 0,
+                    cache_write_tokens: 0,
                     latency_ms,
                     status_code: 502,
                     success: false,
@@ -1392,6 +1436,7 @@ async fn handle_messages_non_streaming(
         completion_tokens: 0,
         total_tokens: 0,
         cache_hit_input_tokens: 0,
+        cache_write_tokens: 0,
         latency_ms,
         status_code: 502,
         success: false,
@@ -2266,11 +2311,16 @@ async fn relay_to_upstream(
             Ok(mut resp) => {
                 route.report_success();
                 normalize_reasoning_inner(&mut resp);
-                let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
                 let completion_tokens = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0);
                 let cache_hit = resp["usage"]["prompt_tokens_details"]["cached_tokens"]
                     .as_u64()
                     .unwrap_or(0);
+                let cache_write = resp["usage"]["prompt_tokens_details"]["cache_write_tokens"]
+                    .as_u64()
+                    .unwrap_or(0);
+                // OpenAI prompt_tokens includes cached tokens; subtract them.
+                let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0)
+                    .saturating_sub(cache_hit + cache_write);
 
                 let reasoning = resp
                     .get("choices")
@@ -2293,6 +2343,7 @@ async fn relay_to_upstream(
                     completion_tokens,
                     total_tokens: prompt_tokens + completion_tokens,
                     cache_hit_input_tokens: cache_hit,
+                cache_write_tokens: cache_write,
                     latency_ms,
                     status_code: 200,
                     success: true,
@@ -2343,6 +2394,7 @@ async fn relay_to_upstream(
                     completion_tokens: 0,
                     total_tokens: 0,
                     cache_hit_input_tokens: 0,
+                    cache_write_tokens: 0,
                     latency_ms,
                     status_code: 502,
                     success: false,
@@ -2378,6 +2430,7 @@ async fn relay_to_upstream(
         completion_tokens: 0,
         total_tokens: 0,
         cache_hit_input_tokens: 0,
+        cache_write_tokens: 0,
         latency_ms,
         status_code: 502,
         success: false,

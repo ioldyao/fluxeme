@@ -63,9 +63,9 @@ function formatResponse(val: string | null | undefined) {
 export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
   const { t } = useTranslation();
   const { data: record, isLoading, error } = useUsageDetail(requestId);
-  const { currency, rate } = useCurrency();
+  useCurrency();
 
-  const costStr = record ? formatCost(record.prompt_tokens, record.completion_tokens, record.cache_hit_input_tokens, getRecordPricing(record), currency, rate) : null;
+  const costStr = record ? formatCost(record.prompt_tokens, record.completion_tokens, record.cache_hit_input_tokens, getRecordPricing(record)) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

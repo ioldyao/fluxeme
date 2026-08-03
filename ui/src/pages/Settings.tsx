@@ -54,7 +54,7 @@ const DEFAULT_GATEWAY_CONFIG: GatewayRuntimeConfig = {
 
 export default function SettingsPage() {
   const { t } = useTranslation();
-  const { currency, rate, setCurrency, setRate } = useCurrency();
+  const { currency, setCurrency } = useCurrency();
   const { timezone, setTimezone } = useAuth();
   const updateTimezone = useUpdateTimezone();
   const updateCurrency = useUpdateCurrency();
@@ -165,30 +165,6 @@ export default function SettingsPage() {
                 </Select>
               </div>
 
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                  <Label className="text-sm">{t('settings.rateLabel')}</Label>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {t('settings.rateHint')}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    className="w-24"
-                    value={rate}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value);
-                      if (!isNaN(v) && v > 0) setRate(v);
-                    }}
-                  />
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">
-                    1 USD = {rate} CNY
-                  </span>
-                </div>
-              </div>
             </div>
           </div>
 

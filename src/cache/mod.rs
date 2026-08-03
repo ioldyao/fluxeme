@@ -551,25 +551,28 @@ pub async fn start_obs_consumer(
             let pricing = if r.prompt_price > Decimal::ZERO
                 || r.completion_price > Decimal::ZERO
                 || r.cache_read_price > Decimal::ZERO
+                || r.cache_write_tokens > 0
             {
-                Some((r.prompt_price, r.completion_price, r.cache_read_price))
+                Some((r.prompt_price, r.completion_price, r.cache_read_price, Decimal::ZERO))
             } else {
                 match db.lookup_model_pricing(&r.model).await {
-                    Ok((pp, cp, crp)) => Some((pp, cp, crp)),
+                    Ok((pp, cp, crp, cwp)) => Some((pp, cp, crp, cwp)),
                     Err(error) => {
                         tracing::warn!(request_id = r.request_id, model = r.model, error = %error.0, "Obs consumer: pricing lookup failed — leaving record pending");
                         None
                     }
                 }
             };
-            let Some((prompt_price, completion_price, cache_read_price)) = pricing else {
+            let Some((prompt_price, completion_price, cache_read_price, cache_write_price)) = pricing else {
                 continue;
             };
             let cost_amount = (Decimal::from(r.prompt_tokens) / Decimal::from(1000000)
                 * prompt_price
                 + Decimal::from(r.completion_tokens) / Decimal::from(1000000) * completion_price
                 + Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000)
-                    * cache_read_price)
+                    * cache_read_price
+                + Decimal::from(r.cache_write_tokens) / Decimal::from(1000000)
+                    * cache_write_price)
                 .to_f64()
                 .unwrap_or(0.0);
             events.push(crate::ch_backend::UsageEvent {
@@ -589,6 +592,7 @@ pub async fn start_obs_consumer(
                 api_format: r.api_format.clone(),
                 stream: if r.stream { 1 } else { 0 },
                 cache_hit_input_tokens: r.cache_hit_input_tokens,
+                cache_write_tokens: r.cache_write_tokens,
                 prompt_price: prompt_price.to_f64().unwrap_or(0.0),
                 completion_price: completion_price.to_f64().unwrap_or(0.0),
                 cache_read_price: cache_read_price.to_f64().unwrap_or(0.0),
