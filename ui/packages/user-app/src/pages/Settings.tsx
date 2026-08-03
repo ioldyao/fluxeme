@@ -97,17 +97,6 @@ export default function SettingsPage() {
     }
   };
 
-  const toggleBilling = async (checked: boolean) => {
-    const updated = { ...gatewayConfig, billing_enabled: checked };
-    setGatewayConfig(updated);
-    try {
-      await api('/gateway/config', { method: 'PUT', body: updated });
-    } catch {
-      setGatewayConfig((prev) => ({ ...prev, billing_enabled: !checked }));
-      toast.error('Failed to save billing configuration');
-    }
-  };
-
   const handleTimezoneChange = (tz: string) => {
     setTimezone(tz);
     updateTimezone.mutate(tz);
@@ -255,25 +244,6 @@ export default function SettingsPage() {
                 value={gw('cache_ttl_secs')}
                 disabled={gatewayLoading}
                 onChange={(v) => updateGw('cache_ttl_secs', v)}
-              />
-            </div>
-          </CardContent>
-        </Card>
-      </Guard>
-
-      <Guard perm="admin:gateway">
-        <Card>
-          <CardContent className="p-6 space-y-6">
-            <h2 className="text-sm font-semibold text-foreground">{t('settings.billing')}</h2>
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex-1 min-w-0">
-                <Label className="text-sm">{t('settings.billingToggle')}</Label>
-                <p className="text-xs text-muted-foreground mt-0.5">{t('settings.billingToggleHint')}</p>
-              </div>
-              <Switch
-                checked={gatewayConfig.billing_enabled}
-                onCheckedChange={toggleBilling}
-                disabled={gatewayLoading}
               />
             </div>
           </CardContent>
