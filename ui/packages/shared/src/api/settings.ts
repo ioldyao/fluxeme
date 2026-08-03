@@ -9,10 +9,10 @@ export function fetchAppConfig() {
 }
 
 /** Admin-only: save global currency settings. */
-export function saveCurrencySettings(currency: string, rate: number) {
+export function saveCurrencySettings(currency: string) {
   return api<{ currency: string; rate: number }>('/settings/currency', {
     method: 'PUT',
-    body: { currency, rate },
+    body: { currency },
   });
 }
 
@@ -21,7 +21,6 @@ export async function loadCurrencySettings() {
   try {
     const data = await fetchAppConfig();
     useCurrency.getState().setCurrency(data.currency as 'usd' | 'cny');
-    useCurrency.getState().setRate(data.rate);
     useCurrency.getState().setLoaded(true);
   } catch {
     useCurrency.getState().setLoaded(true);

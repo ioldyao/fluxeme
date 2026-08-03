@@ -5,9 +5,7 @@ export type CurrencyCode = 'cny' | 'usd';
 
 interface CurrencyState {
   currency: CurrencyCode;
-  rate: number;
   setCurrency: (c: CurrencyCode) => void;
-  setRate: (r: number) => void;
 }
 
 export const CURRENCY_SYMBOL: Record<CurrencyCode, string> = {
@@ -24,9 +22,7 @@ export const useCurrency = create<CurrencyState>()(
   persist(
     (set) => ({
       currency: 'usd',
-      rate: 7.2,
       setCurrency: (currency) => set({ currency }),
-      setRate: (rate) => set({ rate }),
     }),
     { name: 'currency' },
   ),

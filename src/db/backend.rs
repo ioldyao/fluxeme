@@ -189,7 +189,7 @@ pub trait DbBackend: Send + Sync {
     async fn lookup_model_pricing(
         &self,
         model_name: &str,
-    ) -> Result<(Decimal, Decimal, Decimal), DbError>;
+    ) -> Result<(Decimal, Decimal, Decimal, Decimal), DbError>;
 
     // ── Wallet ───────────────────────────────────────────────────────────
     async fn get_wallet_balance(&self, user_id: &str) -> Result<(Decimal, Decimal), DbError>;

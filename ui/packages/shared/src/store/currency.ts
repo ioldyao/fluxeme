@@ -5,10 +5,8 @@ export type CurrencyCode = 'cny' | 'usd';
 
 interface CurrencyState {
   currency: CurrencyCode;
-  rate: number;
   loaded: boolean;
   setCurrency: (c: CurrencyCode) => void;
-  setRate: (r: number) => void;
   setLoaded: (loaded: boolean) => void;
 }
 
@@ -24,10 +22,8 @@ export const CURRENCY_CODE: Record<CurrencyCode, string> = {
 
 export const useCurrency = create<CurrencyState>()((set) => ({
   currency: 'usd',
-  rate: 7.2,
   loaded: false,
   setCurrency: (currency) => set({ currency }),
-  setRate: (rate) => set({ rate }),
   setLoaded: (loaded) => set({ loaded }),
 }));
 

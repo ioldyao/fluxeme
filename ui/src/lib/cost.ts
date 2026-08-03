@@ -1,3 +1,5 @@
+import { useCurrency } from '@/store/currency';
+
 export function calculateCost(
   promptTokens: number,
   completionTokens: number,
@@ -15,13 +17,10 @@ export function formatCost(
   completionTokens: number,
   cacheHitTokens: number,
   pricing: { prompt_price: number; completion_price: number; cache_read_price: number } | undefined,
-  currency: 'usd' | 'cny',
-  rate: number,
 ): string {
-  const usd = calculateCost(promptTokens, completionTokens, cacheHitTokens, pricing);
-  if (usd === 0) return '—';
-  const value = currency === 'cny' ? usd * rate : usd;
-  const symbol = currency === 'cny' ? '¥' : '$';
+  const value = calculateCost(promptTokens, completionTokens, cacheHitTokens, pricing);
+  if (value === 0) return '—';
+  const symbol = useCurrency.getState().currency === 'cny' ? '¥' : '$';
   return `${symbol}${value.toFixed(6)}`;
 }
 

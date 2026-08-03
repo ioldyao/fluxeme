@@ -27,9 +27,9 @@ const RANGE_DAYS = [1, 7, 30] as const;
 const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
 const CHART_OPTS = ['token', '请求', '错误率'] as const;
 
-function fmt(sym: string, r: number, v?: number) {
+function fmt(sym: string, v?: number) {
   const a = v ?? 0;
-  return `${sym}${(sym === '¥' ? a * r : a).toFixed(2)}`;
+  return `${sym}${a.toFixed(2)}`;
 }
 
 function fmtLat(ms: number) {
@@ -75,7 +75,7 @@ export default function Dashboard() {
     isPlaceholderData: isFunnelPlaceholder,
     refetch: rfunnel,
   } = useMyUsageFunnel(days);
-  const { currency, rate } = useCurrency();
+  const { currency } = useCurrency();
   const sym = CURRENCY_SYMBOL[currency];
   const { data: announcements } = usePublishedAnnouncements();
 
@@ -193,7 +193,7 @@ export default function Dashboard() {
           { title: t('dash.requests'), val: isHealthStripLoading ? '—' : requests24h.toLocaleString(), icon: <Activity className="size-4" /> },
           { title: t('usage.totalTokens'), val: isHealthStripLoading ? '—' : totalTokens24h.toLocaleString(), icon: <Layers3 className="size-4" /> },
           { title: t('dash.avgLatency'), val: isHealthStripLoading ? '—' : fmtLat(avgLat), icon: <ShieldCheck className="size-4" /> },
-          { title: t('dash.cost24h'), val: isHealthStripLoading ? '—' : fmt(sym, rate, agg?.cost_24h), icon: <Wallet className="size-4" /> },
+          { title: t('dash.cost24h'), val: isHealthStripLoading ? '—' : fmt(sym, agg?.cost_24h), icon: <Wallet className="size-4" /> },
         ].map(m => (
           <div key={m.title} className="rounded-xl border bg-card p-4 shadow-sm">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -432,10 +432,10 @@ export default function Dashboard() {
             <CardContent>
               <div className="grid grid-cols-2 gap-3">
                 {[
-                  { label: t('wallet.currentBalance'), val: fmt(sym, rate, wo?.balance) },
+                  { label: t('wallet.currentBalance'), val: fmt(sym, wo?.balance) },
                   { label: t('wallet.estimatedDays'), val: ed?.days != null ? `${ed.days.toFixed(1)}d` : '—' },
                   { label: t('dash.totalRequests'), val: agg?.total_requests.toLocaleString() ?? '—' },
-                  { label: t('dash.totalCost'), val: fmt(sym, rate, agg?.total_cost) },
+                  { label: t('dash.totalCost'), val: fmt(sym, agg?.total_cost) },
                 ].map(m => (
                   <div key={m.label} className="rounded-lg border bg-muted/20 p-3">
                     <div className="text-xs text-muted-foreground">{m.label}</div>

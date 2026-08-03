@@ -471,7 +471,7 @@ impl Database {
     pub async fn lookup_model_pricing(
         &self,
         model_name: &str,
-    ) -> Result<(Decimal, Decimal, Decimal), DbError> {
+    ) -> Result<(Decimal, Decimal, Decimal, Decimal), DbError> {
         self.backend.lookup_model_pricing(model_name).await
     }
 

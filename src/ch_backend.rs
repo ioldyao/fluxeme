@@ -29,6 +29,7 @@ pub struct UsageEvent {
     pub api_format: String,
     pub stream: u8,
     pub cache_hit_input_tokens: u64,
+    pub cache_write_tokens: u64,
     pub prompt_price: f64,
     pub completion_price: f64,
     pub cache_read_price: f64,
@@ -66,6 +67,7 @@ struct UsageEventRow {
     api_format: String,
     stream: u8,
     cache_hit_input_tokens: u64,
+    cache_write_tokens: u64,
     prompt_price: f64,
     completion_price: f64,
     cache_read_price: f64,
@@ -95,6 +97,7 @@ struct UsageDetailRow {
     api_format: String,
     stream: u8,
     cache_hit_input_tokens: u64,
+    cache_write_tokens: u64,
     prompt_price: f64,
     completion_price: f64,
     cache_read_price: f64,
@@ -129,6 +132,7 @@ impl From<UsageEventRow> for crate::domain::usage::UsageRecord {
             api_format: row.api_format,
             stream: row.stream != 0,
             cache_hit_input_tokens: row.cache_hit_input_tokens,
+            cache_write_tokens: row.cache_write_tokens,
             prompt_price: Decimal::try_from(row.prompt_price).unwrap_or(Decimal::ZERO),
             completion_price: Decimal::try_from(row.completion_price).unwrap_or(Decimal::ZERO),
             cache_read_price: Decimal::try_from(row.cache_read_price).unwrap_or(Decimal::ZERO),
@@ -162,6 +166,7 @@ impl From<UsageDetailRow> for crate::domain::usage::UsageRecord {
             api_format: row.api_format,
             stream: row.stream != 0,
             cache_hit_input_tokens: row.cache_hit_input_tokens,
+            cache_write_tokens: row.cache_write_tokens,
             prompt_price: Decimal::try_from(row.prompt_price).unwrap_or(Decimal::ZERO),
             completion_price: Decimal::try_from(row.completion_price).unwrap_or(Decimal::ZERO),
             cache_read_price: Decimal::try_from(row.cache_read_price).unwrap_or(Decimal::ZERO),
@@ -252,6 +257,7 @@ impl ClickHouseBackend {
             api_format String,\
             stream UInt8,\
             cache_hit_input_tokens UInt64,\
+            cache_write_tokens UInt64,\
             prompt_price Float64,\
             completion_price Float64,\
             cache_read_price Float64,\
@@ -302,6 +308,7 @@ impl ClickHouseBackend {
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS reasoning_body Nullable(String)",
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS original_model String DEFAULT ''",
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS endpoint_url Nullable(String)",
+            "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cache_write_tokens UInt64 DEFAULT 0",
         ] {
             self.client
                 .query(alter)
@@ -988,7 +995,7 @@ impl ClickHouseBackend {
              toString(usage_events.timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
-             cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model \
+             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model \
              FROM usage_events \
              {} \
              ORDER BY usage_events.timestamp DESC \
@@ -1085,7 +1092,7 @@ impl ClickHouseBackend {
                  toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, \
-                 cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, \
+                 cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, \
                  request_body, response_body, reasoning_body \
                  FROM usage_events \
                  WHERE request_id = ? \
@@ -1108,14 +1115,14 @@ impl ClickHouseBackend {
              toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
-             cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model \
+             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model \
              FROM usage_events WHERE timestamp >= ? AND user_id = ? ORDER BY timestamp ASC"
         } else {
             "SELECT \
              toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
-             cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model \
+             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model \
              FROM usage_events WHERE timestamp >= ? ORDER BY timestamp ASC"
         };
         let mut query = self.client.query(sql).bind(since);

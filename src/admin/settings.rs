@@ -14,7 +14,7 @@ use super::*;
 // ── Global currency ─────────────────────────────────────────────────
 
 /// Public app config — no auth required. Returns global display settings
-/// such as currency and exchange rate that all frontends need.
+/// such as currency that all frontends need.
 pub(crate) async fn get_app_config(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Value>, AdminError> {
@@ -24,14 +24,7 @@ pub(crate) async fn get_app_config(
         .await
         .map_err(db_err)?
         .unwrap_or_else(|| "usd".to_string());
-    let rate: f64 = state
-        .db
-        .get_setting("exchange_rate")
-        .await
-        .map_err(db_err)?
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(7.2);
-    Ok(Json(serde_json::json!({ "currency": currency, "rate": rate })))
+    Ok(Json(serde_json::json!({ "currency": currency })))
 }
 
 pub(crate) async fn set_currency(
@@ -44,26 +37,17 @@ pub(crate) async fn set_currency(
     if !["usd", "cny"].contains(&req.currency.as_str()) {
         return Err(AdminError::bad_request("Invalid currency, must be 'usd' or 'cny'"));
     }
-    if req.rate <= 0.0 {
-        return Err(AdminError::bad_request("Exchange rate must be positive"));
-    }
     state
         .db
         .set_setting("site_currency", &req.currency)
         .await
         .map_err(db_err)?;
-    state
-        .db
-        .set_setting("exchange_rate", &req.rate.to_string())
-        .await
-        .map_err(db_err)?;
-    Ok(Json(serde_json::json!({ "currency": req.currency, "rate": req.rate })))
+    Ok(Json(serde_json::json!({ "currency": req.currency })))
 }
 
 #[derive(Deserialize)]
 pub(crate) struct CurrencyReq {
     currency: String,
-    rate: f64,
 }
 
 // ── Settings ──────────────────────────────────────────────────────
