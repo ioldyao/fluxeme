@@ -3,6 +3,8 @@
 target/
 web/
 node_modules/
+**/node_modules/
+**/dist/
 data/
 *.md
 .env*
