@@ -16,6 +16,7 @@ import { useCurrency, CURRENCY_SYMBOL } from '@fluxeme/shared/src/store/currency
 import { useSelfDashboard, useSelfDashboardAggregations } from '@fluxeme/shared/src/api/dashboard';
 import { useMyUsage, useMyUsageAggregate, useMyModelActivity, useMyUsageFunnel } from '@fluxeme/shared/src/api/usage';
 import { useEstimatedDays, useWalletOverview } from '@fluxeme/shared/src/api/wallet';
+import { formatTimestamp } from '@fluxeme/shared/src/lib/date';
 import { usePublishedAnnouncements } from '@fluxeme/shared/src/api/announcements';
 import { DashboardChartTooltip } from '@fluxeme/shared/src/components/dashboard/DashboardChartTooltip';
 import {
@@ -398,7 +399,7 @@ export default function Dashboard() {
                     <tbody>
                       {recent?.records.slice(0, 8).map(r => (
                         <tr key={r.request_id} className="border-b last:border-0">
-                          <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{new Date(r.timestamp).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{formatTimestamp(r.timestamp)}</td>
                           <td className="px-4 py-3">
                             <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${r.success ? 'bg-emerald-500/10 text-emerald-700' : 'bg-red-500/10 text-red-700'}`}>
                               <span className={`size-1.5 rounded-full ${r.success ? 'bg-emerald-500' : 'bg-red-500'}`} aria-hidden="true" />

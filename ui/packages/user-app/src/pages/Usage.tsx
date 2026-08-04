@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { formatCost, getRecordPricing } from '@fluxeme/shared/src/lib/cost';
+import { formatTimestamp } from '@fluxeme/shared/src/lib/date';
 import { useMyUsage, useMyUsageAggregate, useMyModelActivity } from '@fluxeme/shared/src/api/usage';
 import { UsageLogDetail } from '../components/UsageLogDetail';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
@@ -259,7 +260,7 @@ export default function Usage() {
                       {records.map((r) => (
                         <tr key={r.request_id} className="border-b last:border-0 hover:bg-muted/50 cursor-pointer" onClick={() => setDetailId(r.request_id)}>
                           <td className="py-3 px-4 text-muted-foreground whitespace-nowrap text-xs">
-                            {new Date(r.timestamp).toLocaleString()}
+                            {formatTimestamp(r.timestamp)}
                           </td>
                           <td className="py-3 px-4 font-mono text-xs">{r.request_id.substring(0, 8)}</td>
                           <td className="py-3 px-4">{r.user_name}</td>
