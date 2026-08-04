@@ -3,6 +3,7 @@ import { useUsageDetail } from '@fluxeme/shared/src/api/usage';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@fluxeme/shared/src/components/ui/dialog';
 import { useCurrency } from '@fluxeme/shared/src/store/currency';
 import { formatCost, getRecordPricing } from '@fluxeme/shared/src/lib/cost';
+import { parseTimestamp, formatTime } from '@fluxeme/shared/src/lib/date';
 import type { UsageRecord } from '@fluxeme/shared/src/types';
 
 interface Props {
@@ -14,24 +15,24 @@ interface Props {
 const COLORS: Record<string, string> = { ok: '#14966a', pending: '#87939e', streaming: '#2d7fb8', warn: '#c97800', fail: '#d84b4b' };
 
 function estimateEvents(record: UsageRecord) {
-  const ts = new Date(record.timestamp);
-  const tsStr = ts.toLocaleTimeString();
+  const ts = parseTimestamp(record.timestamp);
+  const tsStr = formatTime(ts);
   const events: { cls: string; title: string; time: string; detail: string }[] = [];
 
   events.push({ cls: 'ok', title: 'Gateway Accepted', time: tsStr, detail: '请求已进入网关' });
 
   if (record.latency_ms > 0) {
     const authTime = new Date(ts.getTime() + 50);
-    events.push({ cls: 'ok', title: 'Auth & Route', time: authTime.toLocaleTimeString(), detail: `${record.api_format ?? 'openai'} · ${record.channel_id}` });
+    events.push({ cls: 'ok', title: 'Auth & Route', time: formatTime(authTime), detail: `${record.api_format ?? 'openai'} · ${record.channel_id}` });
 
     if (record.success) {
       const startTs = new Date(ts.getTime() + record.latency_ms * 0.3);
-      events.push({ cls: record.stream ? 'streaming' : 'ok', title: record.stream ? 'Streaming Started' : 'Provider Processing', time: startTs.toLocaleTimeString(), detail: record.stream ? `Streaming ${record.completion_tokens} tokens` : `Processing ${record.total_tokens} tokens` });
+      events.push({ cls: record.stream ? 'streaming' : 'ok', title: record.stream ? 'Streaming Started' : 'Provider Processing', time: formatTime(startTs), detail: record.stream ? `Streaming ${record.completion_tokens} tokens` : `Processing ${record.total_tokens} tokens` });
       const endTs = new Date(ts.getTime() + record.latency_ms);
-      events.push({ cls: 'ok', title: record.stream ? 'Completed' : 'Response Received', time: endTs.toLocaleTimeString(), detail: `Status ${record.status_code} · ${record.latency_ms}ms` });
+      events.push({ cls: 'ok', title: record.stream ? 'Completed' : 'Response Received', time: formatTime(endTs), detail: `Status ${record.status_code} · ${record.latency_ms}ms` });
     } else {
       const failTs = new Date(ts.getTime() + record.latency_ms);
-      events.push({ cls: 'fail', title: 'Failed', time: failTs.toLocaleTimeString(), detail: `Status ${record.status_code} · ${record.latency_ms}ms` });
+      events.push({ cls: 'fail', title: 'Failed', time: formatTime(failTs), detail: `Status ${record.status_code} · ${record.latency_ms}ms` });
     }
   }
 
