@@ -38,6 +38,10 @@ pub struct RoutingRule {
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
+    /// Team scope. When set, this rule only applies to requests made with a
+    /// team-scoped key whose active team matches. `None` = not team-scoped.
+    #[serde(default)]
+    pub team_id: Option<String>,
 }
 
 fn default_enabled() -> bool {

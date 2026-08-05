@@ -60,6 +60,9 @@ pub struct ApiKey {
     pub spend_limit: Option<Decimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_models: Option<Vec<String>>,
+    /// Team scope for this key. `None` = personal key (existing behavior).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
 }
 
 fn default_enabled() -> bool {
@@ -76,6 +79,10 @@ pub struct AuthResult {
     pub api_key_name: String,
     #[allow(dead_code)]
     pub concurrency_limit: u32,
+    /// Active team context resolved from the request. `None` for personal accounts.
+    pub team_id: Option<String>,
+    /// Role within the active team. `None` for personal accounts.
+    pub team_role: Option<crate::domain::team::TeamRole>,
 }
 
 /// Session info for admin panel login

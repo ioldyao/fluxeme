@@ -28,6 +28,25 @@ export interface ApiKey {
   expires_at?: string | null;
   spend_limit?: number | null;
   allowed_models?: string[] | null;
+  /** Team scope. Present when this is a team-shared key. */
+  team_id?: string | null;
+}
+
+export type TeamRole = 'owner' | 'admin' | 'member';
+
+export interface Team {
+  id: string;
+  name: string;
+  owner_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TeamMember {
+  team_id: string;
+  user_id: string;
+  role: TeamRole;
+  joined_at: string;
 }
 
 export interface Endpoint {
@@ -93,6 +112,8 @@ export interface RoutingRule {
   description: string;
   created_at: string;
   updated_at: string;
+  /** Team scope. Present when the rule applies to a team. */
+  team_id?: string | null;
 }
 
 export interface UsageRecord {

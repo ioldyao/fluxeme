@@ -323,6 +323,7 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
                 expires_at: k.expires_at.clone(),
                 spend_limit: None,
                 allowed_models: None,
+                team_id: None,
             };
             if let Err(e) = db.create_api_key(&ak).await {
                 tracing::warn!("Seed api_key for {}: {}", t.id, e);
@@ -412,6 +413,7 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
                 description: r.description.clone(),
                 created_at: now.clone(),
                 updated_at: now,
+                team_id: None,
             };
             if let Err(e) = db.create_rule(&rule).await {
                 tracing::warn!("Seed rule {}: {}", r.name, e);

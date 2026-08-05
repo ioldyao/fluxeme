@@ -343,13 +343,16 @@ pub(crate) async fn list_user_keys(
 
 #[derive(Deserialize)]
 pub(crate) struct CreateKeyReq {
-    name: Option<String>,
-    enabled: Option<bool>,
-    expires_at: Option<String>,
+    pub(crate) name: Option<String>,
+    pub(crate) enabled: Option<bool>,
+    pub(crate) expires_at: Option<String>,
     #[serde(default, with = "rust_decimal::serde::float_option")]
-    spend_limit: Option<Decimal>,
+    pub(crate) spend_limit: Option<Decimal>,
     #[serde(default)]
-    allowed_models: Option<Vec<String>>,
+    pub(crate) allowed_models: Option<Vec<String>>,
+    /// Team scope for this key. `Some` = team-shared key, `None` = personal.
+    #[serde(default)]
+    pub(crate) team_id: Option<String>,
 }
 
 pub(crate) async fn create_user_key(
@@ -370,6 +373,7 @@ pub(crate) async fn create_user_key(
         expires_at: req.expires_at,
         spend_limit: req.spend_limit,
         allowed_models: req.allowed_models,
+        team_id: req.team_id,
     };
 
     state.db.create_api_key(&ak).await.map_err(db_err)?;
@@ -414,6 +418,7 @@ pub(crate) async fn update_user_key(
         expires_at: req.expires_at.or(existing.expires_at.clone()),
         spend_limit: req.spend_limit.or(existing.spend_limit),
         allowed_models: req.allowed_models.or(existing.allowed_models.clone()),
+        team_id: req.team_id.or(existing.team_id.clone()),
     };
 
     state.db.update_api_key(&ak).await.map_err(db_err)?;

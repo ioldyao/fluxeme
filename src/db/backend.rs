@@ -5,6 +5,7 @@ use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, Pricing};
 use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
+use crate::domain::team::{Team, TeamMember};
 use crate::domain::usage::UsageFilter;
 use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
@@ -367,4 +368,51 @@ pub trait DbBackend: Send + Sync {
         batch: &[UsageRecord],
         billing_enabled: bool,
     ) -> Result<Vec<(String, Decimal, Decimal)>, DbError>;
+
+    // ── Teams ─────────────────────────────────────────────────────────────
+    async fn create_team(&self, team: &Team, owner_id: &str) -> Result<(), DbError>;
+    async fn get_team(&self, team_id: &str) -> Result<Option<Team>, DbError>;
+    async fn list_teams_for_user(&self, user_id: &str) -> Result<Vec<Team>, DbError>;
+    async fn list_all_teams(&self) -> Result<Vec<Team>, DbError>;
+    async fn update_team(&self, team_id: &str, name: &str) -> Result<(), DbError>;
+    async fn delete_team(&self, team_id: &str) -> Result<(), DbError>;
+
+    async fn add_team_member(
+        &self,
+        team_id: &str,
+        user_id: &str,
+        role: &str,
+    ) -> Result<(), DbError>;
+    async fn remove_team_member(&self, team_id: &str, user_id: &str) -> Result<(), DbError>;
+    async fn set_team_member_role(
+        &self,
+        team_id: &str,
+        user_id: &str,
+        role: &str,
+    ) -> Result<(), DbError>;
+    async fn list_team_members(&self, team_id: &str) -> Result<Vec<TeamMember>, DbError>;
+    async fn get_team_member(
+        &self,
+        team_id: &str,
+        user_id: &str,
+    ) -> Result<Option<TeamMember>, DbError>;
+    /// All memberships across all teams, for cache loading. Returns
+    /// (team_id, user_id, role) triples.
+    async fn all_team_members(&self) -> Result<Vec<TeamMember>, DbError>;
+
+    /// Team wallet balance as (balance, frozen).
+    async fn get_team_wallet(&self, team_id: &str) -> Result<Option<(f64, f64)>, DbError>;
+    /// Add `amount` to the team wallet balance (admin credit / recharge).
+    async fn add_team_wallet_balance(&self, team_id: &str, amount: f64) -> Result<(), DbError>;
+    /// Team wallet transactions, newest first. Returns (rows, total_count).
+    async fn list_team_wallet_transactions(
+        &self,
+        team_id: &str,
+        page: usize,
+        size: usize,
+    ) -> Result<(Vec<WalletTransactionRow>, usize), DbError>;
+    /// Team-scoped API keys (api_keys where team_id = $1).
+    async fn list_team_api_keys(&self, team_id: &str) -> Result<Vec<ApiKey>, DbError>;
+    /// Team-scoped routing rules (scope='user' AND team_id = $1).
+    async fn list_team_rules(&self, team_id: &str) -> Result<Vec<RoutingRule>, DbError>;
 }

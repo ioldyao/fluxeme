@@ -224,6 +224,7 @@ pub(crate) async fn create_my_key(
         expires_at: req.expires_at,
         spend_limit: req.spend_limit,
         allowed_models: req.allowed_models,
+        team_id: None,
     };
 
     state.db.create_api_key(&ak).await.map_err(db_err)?;
@@ -275,6 +276,7 @@ pub(crate) async fn update_my_key(
         expires_at: req.expires_at.or(existing.expires_at.clone()),
         spend_limit: req.spend_limit.or(existing.spend_limit),
         allowed_models: req.allowed_models.or(existing.allowed_models.clone()),
+        team_id: existing.team_id.clone(),
     };
 
     state.db.update_api_key(&ak).await.map_err(db_err)?;
@@ -338,6 +340,7 @@ pub(crate) async fn toggle_my_key(
         expires_at: None,
         spend_limit: None,
         allowed_models: None,
+        team_id: None,
     };
     state.db.update_api_key(&ak).await.map_err(db_err)?;
     state.auth.reload().await;
@@ -370,6 +373,7 @@ pub(crate) async fn my_permissions(
         "admin:gateway",
         "admin:policies",
         "admin:announcements",
+        "admin:teams",
     ];
     let mut granted = Vec::new();
     for perm in &all_known {
@@ -378,6 +382,420 @@ pub(crate) async fn my_permissions(
         }
     }
     Ok(Json(granted))
+}
+
+// ── My Teams (self-service) ───────────────────────────────────────
+
+pub(crate) async fn my_teams(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::domain::team::Team>>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    let teams = state
+        .db
+        .list_teams_for_user(&session.user_id)
+        .await
+        .map_err(db_err)?;
+    Ok(Json(teams))
+}
+
+pub(crate) async fn my_team_detail(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(team_id): Path<String>,
+) -> Result<Json<crate::domain::team::Team>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    // Must be a member to view.
+    if state
+        .db
+        .get_team_member(&team_id, &session.user_id)
+        .await
+        .map_err(db_err)?
+        .is_none()
+    {
+        return Err(AdminError::not_found("Team not found"));
+    }
+    let team = state
+        .db
+        .get_team(&team_id)
+        .await
+        .map_err(db_err)?
+        .ok_or_else(|| AdminError::not_found("Team not found"))?;
+    Ok(Json(team))
+}
+
+pub(crate) async fn my_team_members(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(team_id): Path<String>,
+) -> Result<Json<Vec<crate::domain::team::TeamMember>>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    if state
+        .db
+        .get_team_member(&team_id, &session.user_id)
+        .await
+        .map_err(db_err)?
+        .is_none()
+    {
+        return Err(AdminError::not_found("Team not found"));
+    }
+    let members = state
+        .db
+        .list_team_members(&team_id)
+        .await
+        .map_err(db_err)?;
+    Ok(Json(members))
+}
+
+pub(crate) async fn my_team_wallet(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(team_id): Path<String>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    if state
+        .db
+        .get_team_member(&team_id, &session.user_id)
+        .await
+        .map_err(db_err)?
+        .is_none()
+    {
+        return Err(AdminError::not_found("Team not found"));
+    }
+    let (balance, frozen) = state
+        .db
+        .get_team_wallet(&team_id)
+        .await
+        .map_err(db_err)?
+        .unwrap_or((0.0, 0.0));
+    Ok(Json(serde_json::json!({
+        "team_id": team_id,
+        "balance": balance,
+        "frozen": frozen,
+    })))
+}
+
+// ── Team resources (self-service) ─────────────────────────────────
+
+/// Ensure the session user is a member of the team. Returns the member row.
+async fn require_team_member(
+    state: &AppState,
+    session: &SessionInfo,
+    team_id: &str,
+) -> Result<crate::domain::team::TeamMember, AdminError> {
+    state
+        .db
+        .get_team_member(team_id, &session.user_id)
+        .await
+        .map_err(db_err)?
+        .ok_or_else(|| AdminError::not_found("Team not found"))
+}
+
+pub(crate) async fn my_team_api_keys(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(team_id): Path<String>,
+) -> Result<Json<Vec<ApiKey>>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    require_team_member(&state, &session, &team_id).await?;
+    let keys = state
+        .db
+        .list_team_api_keys(&team_id)
+        .await
+        .map_err(db_err)?;
+    Ok(Json(keys))
+}
+
+pub(crate) async fn create_my_team_api_key(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(team_id): Path<String>,
+    Json(req): Json<CreateMyKeyReq>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    require_team_member(&state, &session, &team_id).await?;
+    // Only owner/admin can create team keys.
+    if !state
+        .team_authz
+        .enforce(&team_id, &session.user_id, "team:key:manage")
+        .await
+    {
+        return Err(AdminError::forbidden("Insufficient team permissions"));
+    }
+    let key_value = format!("sk-{}", uuid::Uuid::new_v4());
+    let ak = ApiKey {
+        key: key_value.clone(),
+        user_id: session.user_id.clone(),
+        name: req.name.unwrap_or_default(),
+        enabled: req.enabled.unwrap_or(true),
+        expires_at: req.expires_at,
+        spend_limit: req.spend_limit,
+        allowed_models: req.allowed_models,
+        team_id: Some(team_id.clone()),
+    };
+    state.db.create_api_key(&ak).await.map_err(db_err)?;
+    state.auth.reload().await;
+    notify_config_changed(&state).await;
+    Ok(Json(serde_json::json!({
+        "key": ak.key,
+        "team_id": team_id,
+        "name": ak.name,
+        "enabled": ak.enabled,
+    })))
+}
+
+pub(crate) async fn my_team_wallet_transactions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(team_id): Path<String>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    require_team_member(&state, &session, &team_id).await?;
+    let (items, total) = state
+        .db
+        .list_team_wallet_transactions(&team_id, 1, 50)
+        .await
+        .map_err(db_err)?;
+    let items: Vec<serde_json::Value> = items
+        .into_iter()
+        .map(|t| {
+            serde_json::json!({
+                "id": t.id,
+                "user_id": t.user_id,
+                "tx_type": t.tx_type,
+                "amount": t.amount,
+                "balance_before": t.balance_before,
+                "balance_after": t.balance_after,
+                "method": t.method,
+                "status": t.status,
+                "note": t.note,
+                "created_at": t.created_at,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "items": items, "total": total })))
+}
+
+pub(crate) async fn my_team_rules(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(team_id): Path<String>,
+) -> Result<Json<Vec<RoutingRule>>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    require_team_member(&state, &session, &team_id).await?;
+    let rules = state
+        .db
+        .list_team_rules(&team_id)
+        .await
+        .map_err(db_err)?;
+    Ok(Json(rules))
+}
+
+pub(crate) async fn create_my_team_rule(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(team_id): Path<String>,
+    Json(mut rule): Json<RoutingRule>,
+) -> Result<Json<RoutingRule>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    require_team_member(&state, &session, &team_id).await?;
+    if !state
+        .team_authz
+        .enforce(&team_id, &session.user_id, "team:rule:manage")
+        .await
+    {
+        return Err(AdminError::forbidden("Insufficient team permissions"));
+    }
+    if rule.source_model.is_empty() || rule.target_model.is_empty() {
+        return Err(AdminError::bad_request("source_model and target_model are required"));
+    }
+    rule.id = uuid::Uuid::new_v4().to_string();
+    rule.scope = "user".to_string();
+    rule.team_id = Some(team_id.clone());
+    rule.user_id = session.user_id.clone();
+    rule.channel_id.clear();
+    rule.upstream_model.clear();
+    let now = chrono::Utc::now().to_rfc3339();
+    rule.created_at = now.clone();
+    rule.updated_at = now;
+    state.db.create_rule(&rule).await.map_err(db_err)?;
+    state.routing.reload().await.map_err(AdminError::internal)?;
+    notify_config_changed(&state).await;
+    Ok(Json(rule))
+}
+
+pub(crate) async fn delete_my_team_rule(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((team_id, rule_id)): Path<(String, String)>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    require_team_member(&state, &session, &team_id).await?;
+    let rules = state
+        .db
+        .list_team_rules(&team_id)
+        .await
+        .map_err(db_err)?;
+    if !rules.iter().any(|r| r.id == rule_id) {
+        return Err(AdminError::not_found("Rule not found"));
+    }
+    state.db.delete_rule(&rule_id).await.map_err(db_err)?;
+    state.routing.reload().await.map_err(AdminError::internal)?;
+    notify_config_changed(&state).await;
+    Ok(Json(serde_json::json!({ "deleted": rule_id })))
+}
+
+// ── Team management (self-service, for team owner/admin) ──────────
+
+/// Require the session user to have `perm` within the team.
+async fn require_team_perm(
+    state: &AppState,
+    session: &SessionInfo,
+    team_id: &str,
+    perm: &str,
+) -> Result<(), AdminError> {
+    require_team_member(state, session, team_id).await?;
+    if !state.team_authz.enforce(team_id, &session.user_id, perm).await {
+        return Err(AdminError::forbidden("Insufficient team permissions"));
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AddMyTeamMemberReq {
+    user_id: String,
+    role: Option<String>,
+}
+
+pub(crate) async fn add_my_team_member(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(team_id): Path<String>,
+    Json(req): Json<AddMyTeamMemberReq>,
+) -> Result<Json<crate::domain::team::TeamMember>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    require_team_perm(&state, &session, &team_id, "team:member:manage").await?;
+    let role = match req.role.as_deref() {
+        Some("admin") => "admin",
+        Some("member") | None => "member",
+        _ => return Err(AdminError::bad_request("Invalid member role")),
+    };
+    state
+        .db
+        .add_team_member(&team_id, &req.user_id, role)
+        .await
+        .map_err(db_err)?;
+    let members = state
+        .db
+        .list_team_members(&team_id)
+        .await
+        .map_err(db_err)?;
+    state.team_authz.sync_team_roles(&team_id, &members).await;
+    let member = state
+        .db
+        .get_team_member(&team_id, &req.user_id)
+        .await
+        .map_err(db_err)?
+        .ok_or_else(|| AdminError::not_found("Member not found"))?;
+    Ok(Json(member))
+}
+
+pub(crate) async fn remove_my_team_member(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((team_id, user_id)): Path<(String, String)>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    require_team_perm(&state, &session, &team_id, "team:member:manage").await?;
+    state
+        .db
+        .remove_team_member(&team_id, &user_id)
+        .await
+        .map_err(db_err)?;
+    let members = state
+        .db
+        .list_team_members(&team_id)
+        .await
+        .map_err(db_err)?;
+    state.team_authz.sync_team_roles(&team_id, &members).await;
+    Ok(Json(serde_json::json!({ "removed": true })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SetMyTeamRoleReq {
+    role: String,
+}
+
+pub(crate) async fn set_my_team_member_role(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((team_id, user_id)): Path<(String, String)>,
+    Json(req): Json<SetMyTeamRoleReq>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    require_team_perm(&state, &session, &team_id, "team:member:manage").await?;
+    let role = match req.role.as_str() {
+        "admin" => "admin",
+        "member" => "member",
+        _ => return Err(AdminError::bad_request("Invalid member role")),
+    };
+    state
+        .db
+        .set_team_member_role(&team_id, &user_id, role)
+        .await
+        .map_err(db_err)?;
+    let members = state
+        .db
+        .list_team_members(&team_id)
+        .await
+        .map_err(db_err)?;
+    state.team_authz.sync_team_roles(&team_id, &members).await;
+    Ok(Json(serde_json::json!({ "updated": true })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CreditMyTeamWalletReq {
+    amount: f64,
+}
+
+pub(crate) async fn credit_my_team_wallet(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(team_id): Path<String>,
+    Json(req): Json<CreditMyTeamWalletReq>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    require_team_perm(&state, &session, &team_id, "team:wallet:manage").await?;
+    if req.amount <= 0.0 {
+        return Err(AdminError::bad_request("Amount must be positive"));
+    }
+    state
+        .db
+        .add_team_wallet_balance(&team_id, req.amount)
+        .await
+        .map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "credited": req.amount })))
+}
+
+pub(crate) async fn delete_my_team_api_key(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((team_id, key_val)): Path<(String, String)>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    require_team_perm(&state, &session, &team_id, "team:key:manage").await?;
+    let keys = state
+        .db
+        .list_team_api_keys(&team_id)
+        .await
+        .map_err(db_err)?;
+    if !keys.iter().any(|k| k.key == key_val) {
+        return Err(AdminError::not_found("Key not found"));
+    }
+    state.db.delete_api_key(&key_val).await.map_err(db_err)?;
+    state.auth.reload().await;
+    notify_config_changed(&state).await;
+    Ok(Json(serde_json::json!({ "deleted": key_val })))
 }
 
 // ── User-level routing rules (self-service) ────────────────────────

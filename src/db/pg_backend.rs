@@ -14,6 +14,7 @@ use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, ModelChannel, Pricing};
 use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
+use crate::domain::team::{Team, TeamMember};
 use crate::domain::usage::{UsageFilter, UsageRecord};
 use crate::domain::user::{ApiKey, User, USER_STATUS_ACTIVE, USER_STATUS_SUSPENDED};
 
@@ -281,6 +282,8 @@ impl PgBackend {
             endpoint_id: None,
             endpoint_url: None,
             original_model,
+            team_id: None,
+            account_type: None,
         }
     }
 
@@ -367,6 +370,8 @@ impl PgBackend {
             endpoint_id: None,
             endpoint_url: None,
             original_model,
+            team_id: None,
+            account_type: None,
         }
     }
 }
@@ -944,6 +949,95 @@ impl DbBackend for PgBackend {
         .await;
         tracing::info!("casbin_policies table ready");
 
+        // ── Teams ─────────────────────────────────────────────────────────
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS teams (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL DEFAULT (now() AT TIME ZONE 'utc'),
+                updated_at TEXT NOT NULL DEFAULT (now() AT TIME ZONE 'utc')
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create teams: {e}")))?;
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS team_members (
+                team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner','admin','member')),
+                joined_at TEXT NOT NULL DEFAULT (now() AT TIME ZONE 'utc'),
+                PRIMARY KEY (team_id, user_id)
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create team_members: {e}")))?;
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS team_wallets (
+                team_id TEXT PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
+                balance DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                frozen DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                updated_at TEXT NOT NULL DEFAULT (now() AT TIME ZONE 'utc')
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create team_wallets: {e}")))?;
+        let _ = raw_sql("CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id)")
+            .execute(&self.pool)
+            .await;
+        let _ = raw_sql("CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id)")
+            .execute(&self.pool)
+            .await;
+        // Team-scoped existing tables: nullable team_id FK columns.
+        let _ = raw_sql(
+            "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS team_id TEXT REFERENCES teams(id) ON DELETE CASCADE",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = raw_sql(
+            "ALTER TABLE routing_rules ADD COLUMN IF NOT EXISTS team_id TEXT REFERENCES teams(id) ON DELETE CASCADE",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = raw_sql(
+            "ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS team_id TEXT REFERENCES teams(id) ON DELETE CASCADE",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = raw_sql(
+            "ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS account_type TEXT NOT NULL DEFAULT 'user' CHECK (account_type IN ('user','team'))",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = raw_sql(
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS team_id TEXT REFERENCES teams(id) ON DELETE CASCADE",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = raw_sql(
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS account_type TEXT NOT NULL DEFAULT 'user' CHECK (account_type IN ('user','team'))",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = raw_sql("CREATE INDEX IF NOT EXISTS idx_api_keys_team ON api_keys(team_id)")
+            .execute(&self.pool)
+            .await;
+        let _ = raw_sql("CREATE INDEX IF NOT EXISTS idx_routing_rules_team ON routing_rules(team_id)")
+            .execute(&self.pool)
+            .await;
+        let _ = raw_sql(
+            "CREATE INDEX IF NOT EXISTS idx_wallet_transactions_team ON wallet_transactions(team_id)",
+        )
+        .execute(&self.pool)
+        .await;
+        let _ = raw_sql("CREATE INDEX IF NOT EXISTS idx_billing_events_team ON billing_events(team_id)")
+            .execute(&self.pool)
+            .await;
+        tracing::info!("teams tables ready");
+
         Ok(())
     }
 
@@ -1456,8 +1550,10 @@ impl DbBackend for PgBackend {
     // ── API Keys ─────────────────────────────────────────────────────────
 
     async fn list_api_keys(&self, user_id: &str) -> Result<Vec<ApiKey>, DbError> {
+        // Personal key list only: team-scoped keys (team_id NOT NULL) are
+        // managed via the team endpoints (list_team_api_keys).
         let rows = query(
-            "SELECT key, user_id, name, enabled, expires_at, spend_limit, allowed_models FROM api_keys WHERE user_id = $1 ORDER BY key",
+            "SELECT key, user_id, name, enabled, expires_at, spend_limit, allowed_models, team_id FROM api_keys WHERE user_id = $1 AND team_id IS NULL ORDER BY key",
         )
         .bind(user_id)
         .fetch_all(&self.pool)
@@ -1478,6 +1574,7 @@ impl DbBackend for PgBackend {
                     allowed_models: allowed_models_str
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
+                    team_id: r.get(7),
                 }
             })
             .collect())
@@ -1486,7 +1583,7 @@ impl DbBackend for PgBackend {
     async fn create_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
         let allowed = key.allowed_models.as_ref().map(|m| m.join(","));
         query(
-            "INSERT INTO api_keys (key, user_id, name, enabled, expires_at, spend_limit, allowed_models) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO api_keys (key, user_id, name, enabled, expires_at, spend_limit, allowed_models, team_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(&key.key)
         .bind(&key.user_id)
@@ -1495,6 +1592,7 @@ impl DbBackend for PgBackend {
         .bind(&key.expires_at)
         .bind(key.spend_limit.map(|v| v.to_f64().unwrap_or(0.0)))
         .bind(allowed)
+        .bind(&key.team_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1511,13 +1609,14 @@ impl DbBackend for PgBackend {
     async fn update_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
         let allowed = key.allowed_models.as_ref().map(|m| m.join(","));
         query(
-            "UPDATE api_keys SET name = $1, enabled = $2, expires_at = $3, spend_limit = $4, allowed_models = $5 WHERE key = $6",
+            "UPDATE api_keys SET name = $1, enabled = $2, expires_at = $3, spend_limit = $4, allowed_models = $5, team_id = $6 WHERE key = $7",
         )
         .bind(&key.name)
         .bind(key.enabled)
         .bind(&key.expires_at)
         .bind(key.spend_limit.map(|v| v.to_f64().unwrap_or(0.0)))
         .bind(allowed)
+        .bind(&key.team_id)
         .bind(&key.key)
         .execute(&self.pool)
         .await?;
@@ -1527,7 +1626,7 @@ impl DbBackend for PgBackend {
     async fn lookup_key(&self, key: &str) -> Result<Option<(User, ApiKey)>, DbError> {
         let rows = query(
             "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, u.concurrency_limit, u.currency, u.status, u.suspended_at, \
-             a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models \
+             a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models, a.team_id \
              FROM api_keys a JOIN users u ON u.id = a.user_id WHERE a.key = $1",
         )
         .bind(key)
@@ -1547,6 +1646,7 @@ impl DbBackend for PgBackend {
                 allowed_models: allowed_models_str
                     .filter(|s| !s.is_empty())
                     .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
+                team_id: r.get(18),
             };
             let user = {
                 let rpm: Option<i64> = r.get(2);
@@ -1582,7 +1682,7 @@ impl DbBackend for PgBackend {
     async fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError> {
         let rows = query(
             "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, u.concurrency_limit, u.currency, u.status, u.suspended_at, \
-             a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models \
+             a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models, a.team_id \
              FROM api_keys a JOIN users u ON u.id = a.user_id ORDER BY a.key",
         )
         .fetch_all(&self.pool)
@@ -1603,6 +1703,7 @@ impl DbBackend for PgBackend {
                     allowed_models: allowed_models_str
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
+                    team_id: r.get(18),
                 };
                 let user = {
                     let rpm: Option<i64> = r.get(2);
@@ -2178,7 +2279,7 @@ impl DbBackend for PgBackend {
         let rows = query(
             "SELECT id, name, scope, user_id, source_model, target_model, \
              channel_id, upstream_model, priority, enabled, description, \
-             created_at, updated_at \
+             created_at, updated_at, team_id \
              FROM routing_rules ORDER BY priority, name",
         )
         .fetch_all(&self.pool)
@@ -2199,6 +2300,7 @@ impl DbBackend for PgBackend {
                 description: r.get(10),
                 created_at: r.get(11),
                 updated_at: r.get(12),
+                team_id: r.get(13),
             })
             .collect())
     }
@@ -2212,8 +2314,8 @@ impl DbBackend for PgBackend {
         query(
             "INSERT INTO routing_rules \
              (id, name, scope, user_id, source_model, target_model, channel_id, \
-              upstream_model, priority, enabled, description, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+              upstream_model, priority, enabled, description, created_at, updated_at, team_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
         )
         .bind(&id)
         .bind(&r.name)
@@ -2228,6 +2330,7 @@ impl DbBackend for PgBackend {
         .bind(&r.description)
         .bind(&r.created_at)
         .bind(&r.updated_at)
+        .bind(&r.team_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -2237,7 +2340,7 @@ impl DbBackend for PgBackend {
         query(
             "UPDATE routing_rules SET name=$1, scope=$2, user_id=$3, source_model=$4, \
              target_model=$5, channel_id=$6, upstream_model=$7, priority=$8, enabled=$9, \
-             description=$10, updated_at=$11 WHERE id=$12",
+             description=$10, updated_at=$11, team_id=$12 WHERE id=$13",
         )
         .bind(&r.name)
         .bind(&r.scope)
@@ -2250,6 +2353,7 @@ impl DbBackend for PgBackend {
         .bind(r.enabled)
         .bind(&r.description)
         .bind(&r.updated_at)
+        .bind(&r.team_id)
         .bind(&r.id)
         .execute(&self.pool)
         .await?;
@@ -2268,7 +2372,7 @@ impl DbBackend for PgBackend {
         let rows = query(
             "SELECT id, name, scope, user_id, source_model, target_model, \
              channel_id, upstream_model, priority, enabled, description, \
-             created_at, updated_at \
+             created_at, updated_at, team_id \
              FROM routing_rules WHERE scope='user' AND user_id=$1 \
              ORDER BY priority, name",
         )
@@ -2291,6 +2395,7 @@ impl DbBackend for PgBackend {
                 description: r.get(10),
                 created_at: r.get(11),
                 updated_at: r.get(12),
+                team_id: r.get(13),
             })
             .collect())
     }
@@ -2632,6 +2737,8 @@ impl DbBackend for PgBackend {
                     endpoint_id: None,
                     endpoint_url: None,
                     original_model: String::new(),
+                    team_id: None,
+                    account_type: None,
                 }
             })
             .collect())
@@ -4310,11 +4417,20 @@ impl DbBackend for PgBackend {
             };
 
             // Compute cost_amount (always — used for observability even when billing is off)
-            let cost_amount = record.prompt_tokens as f64 / 1000000.0 * prompt_price
-                + record.completion_tokens as f64 / 1000000.0 * completion_price
-                + record.cache_hit_input_tokens as f64 / 1000000.0 * cache_read_price;
+            let cost_amount = compute_cost_amount(
+                record.prompt_tokens,
+                record.completion_tokens,
+                record.cache_hit_input_tokens,
+                prompt_price,
+                completion_price,
+                cache_read_price,
+            );
 
             // Insert only billing metadata into PostgreSQL.
+            let account_type = record
+                .account_type
+                .clone()
+                .unwrap_or_else(|| "user".to_string());
             query(
                 "INSERT INTO billing_events (\
                  timestamp, request_id, user_id, user_name, channel_id, model, \
@@ -4322,10 +4438,10 @@ impl DbBackend for PgBackend {
                  prompt_price, completion_price, cache_read_price, cost_amount, \
                  api_key_name, api_format, stream, client_ip, endpoint_id, \
                  request_body, response_body, reasoning_body, original_model, \
-                 success, status_code) \
+                 success, status_code, team_id, account_type) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, \
                  $12, $13, $14, $15, $16, $17, $18, $19, $20, \
-                 $21, $22, $23, $24, $25, $26) \
+                 $21, $22, $23, $24, $25, $26, $27, $28) \
                  ON CONFLICT (request_id) DO NOTHING",
             )
             .bind(&record.timestamp)
@@ -4354,64 +4470,524 @@ impl DbBackend for PgBackend {
             .bind(&record.original_model)
             .bind(record.success)
             .bind(record.status_code as i32)
+            .bind(&record.team_id)
+            .bind(&account_type)
             .execute(&mut *tx)
             .await?;
 
             if billing_enabled && cost_amount > 0.0 {
-                let (balance, frozen): (f64, f64) =
-                    query_as("SELECT balance, frozen FROM users WHERE id = $1 FOR UPDATE")
-                        .bind(&record.user_id)
-                        .fetch_one(&mut *tx)
+                // Team-scoped records charge the team wallet; personal records
+                // charge the user wallet. The personal path is preserved
+                // verbatim so existing behavior is unchanged.
+                if let Some(team_id) = &record.team_id {
+                    let (balance, frozen): (f64, f64) = query_as(
+                        "SELECT balance, frozen FROM team_wallets WHERE team_id = $1 FOR UPDATE",
+                    )
+                    .bind(team_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+
+                    let spendable = balance - frozen;
+                    if spendable < cost_amount {
+                        tracing::warn!(
+                            team_id,
+                            balance,
+                            frozen,
+                            cost_amount,
+                            "Insufficient team balance — skipping deduction"
+                        );
+                        continue;
+                    }
+
+                    let new_balance = balance - cost_amount;
+                    query("UPDATE team_wallets SET balance = $1, updated_at = $2 WHERE team_id = $3")
+                        .bind(new_balance)
+                        .bind(chrono::Utc::now().to_rfc3339())
+                        .bind(team_id)
+                        .execute(&mut *tx)
                         .await?;
 
-                let spendable = balance - frozen;
-                if spendable < cost_amount {
-                    tracing::warn!(
-                        user_id = &record.user_id,
-                        balance,
-                        frozen,
-                        cost_amount,
-                        "Insufficient balance — skipping deduction"
-                    );
-                    continue;
-                }
-
-                let new_balance = balance - cost_amount;
-                query("UPDATE users SET balance = $1 WHERE id = $2")
-                    .bind(new_balance)
+                    let now = chrono::Utc::now().to_rfc3339();
+                    query(
+                        "INSERT INTO wallet_transactions (id, user_id, type, amount, \
+                         balance_before, balance_after, method, status, note, created_at, \
+                         team_id, account_type) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                    )
+                    .bind(uuid::Uuid::new_v4().to_string())
                     .bind(&record.user_id)
+                    .bind("deduction")
+                    .bind(-cost_amount)
+                    .bind(balance)
+                    .bind(new_balance)
+                    .bind("usage")
+                    .bind("completed")
+                    .bind(format!("Usage: {}", record.model))
+                    .bind(&now)
+                    .bind(team_id)
+                    .bind("team")
                     .execute(&mut *tx)
                     .await?;
 
-                let now = chrono::Utc::now().to_rfc3339();
-                query(
-                    "INSERT INTO wallet_transactions (id, user_id, type, amount, \
-                     balance_before, balance_after, method, status, note, created_at) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-                )
-                .bind(uuid::Uuid::new_v4().to_string())
-                .bind(&record.user_id)
-                .bind("deduction")
-                .bind(-cost_amount)
-                .bind(balance)
-                .bind(new_balance)
-                .bind("usage")
-                .bind("completed")
-                .bind(format!("Usage: {}", record.model))
-                .bind(&now)
-                .execute(&mut *tx)
-                .await?;
+                    deductions.push((
+                        team_id.clone(),
+                        Decimal::try_from(new_balance).unwrap_or(Decimal::ZERO),
+                        Decimal::try_from(frozen).unwrap_or(Decimal::ZERO),
+                    ));
+                } else {
+                    let (balance, frozen): (f64, f64) =
+                        query_as("SELECT balance, frozen FROM users WHERE id = $1 FOR UPDATE")
+                            .bind(&record.user_id)
+                            .fetch_one(&mut *tx)
+                            .await?;
 
-                deductions.push((
-                    record.user_id.clone(),
-                    Decimal::try_from(new_balance).unwrap_or(Decimal::ZERO),
-                    Decimal::try_from(frozen).unwrap_or(Decimal::ZERO),
-                ));
+                    let spendable = balance - frozen;
+                    if spendable < cost_amount {
+                        tracing::warn!(
+                            user_id = &record.user_id,
+                            balance,
+                            frozen,
+                            cost_amount,
+                            "Insufficient balance — skipping deduction"
+                        );
+                        continue;
+                    }
+
+                    let new_balance = balance - cost_amount;
+                    query("UPDATE users SET balance = $1 WHERE id = $2")
+                        .bind(new_balance)
+                        .bind(&record.user_id)
+                        .execute(&mut *tx)
+                        .await?;
+
+                    let now = chrono::Utc::now().to_rfc3339();
+                    query(
+                        "INSERT INTO wallet_transactions (id, user_id, type, amount, \
+                         balance_before, balance_after, method, status, note, created_at, \
+                         team_id, account_type) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                    )
+                    .bind(uuid::Uuid::new_v4().to_string())
+                    .bind(&record.user_id)
+                    .bind("deduction")
+                    .bind(-cost_amount)
+                    .bind(balance)
+                    .bind(new_balance)
+                    .bind("usage")
+                    .bind("completed")
+                    .bind(format!("Usage: {}", record.model))
+                    .bind(&now)
+                    .bind(Option::<String>::None)
+                    .bind("user")
+                    .execute(&mut *tx)
+                    .await?;
+
+                    deductions.push((
+                        record.user_id.clone(),
+                        Decimal::try_from(new_balance).unwrap_or(Decimal::ZERO),
+                        Decimal::try_from(frozen).unwrap_or(Decimal::ZERO),
+                    ));
+                }
             }
         }
 
         tx.commit().await?;
         Ok(deductions)
+    }
+
+    // ── Teams ─────────────────────────────────────────────────────────────
+
+    async fn create_team(&self, team: &Team, owner_id: &str) -> Result<(), DbError> {
+        let mut tx = self.pool.begin().await?;
+        query(
+            "INSERT INTO teams (id, name, owner_id, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(&team.id)
+        .bind(&team.name)
+        .bind(&team.owner_id)
+        .bind(team.created_at.to_rfc3339())
+        .bind(team.updated_at.to_rfc3339())
+        .execute(&mut *tx)
+        .await?;
+        // Owner is a member with role 'owner'.
+        query(
+            "INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES ($1, $2, 'owner', $3)",
+        )
+        .bind(&team.id)
+        .bind(owner_id)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&mut *tx)
+        .await?;
+        // Initial zero-balance team wallet.
+        query(
+            "INSERT INTO team_wallets (team_id, balance, frozen, updated_at) \
+             VALUES ($1, 0.0, 0.0, $2)",
+        )
+        .bind(&team.id)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn get_team(&self, team_id: &str) -> Result<Option<Team>, DbError> {
+        let rows = query_as::<_, (String, String, String, String, String)>(
+            "SELECT id, name, owner_id, created_at, updated_at FROM teams WHERE id = $1",
+        )
+        .bind(team_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("get_team: {e}")))?;
+        Ok(rows.first().map(|(id, name, owner_id, created_at, updated_at)| Team {
+            id: id.clone(),
+            name: name.clone(),
+            owner_id: owner_id.clone(),
+            created_at: chrono::DateTime::parse_from_rfc3339(created_at)
+                .map(|d| d.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now()),
+            updated_at: chrono::DateTime::parse_from_rfc3339(updated_at)
+                .map(|d| d.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now()),
+        }))
+    }
+
+    async fn list_teams_for_user(&self, user_id: &str) -> Result<Vec<Team>, DbError> {
+        let rows = query_as::<_, (String, String, String, String, String)>(
+            "SELECT t.id, t.name, t.owner_id, t.created_at, t.updated_at \
+             FROM teams t \
+             JOIN team_members m ON m.team_id = t.id \
+             WHERE m.user_id = $1 \
+             ORDER BY t.created_at",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("list_teams_for_user: {e}")))?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, owner_id, created_at, updated_at)| Team {
+                id,
+                name,
+                owner_id,
+                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+                updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at)
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            })
+            .collect())
+    }
+
+    async fn list_all_teams(&self) -> Result<Vec<Team>, DbError> {
+        let rows = query_as::<_, (String, String, String, String, String)>(
+            "SELECT id, name, owner_id, created_at, updated_at FROM teams ORDER BY created_at",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("list_all_teams: {e}")))?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, owner_id, created_at, updated_at)| Team {
+                id,
+                name,
+                owner_id,
+                created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+                updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at)
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            })
+            .collect())
+    }
+
+    async fn update_team(&self, team_id: &str, name: &str) -> Result<(), DbError> {
+        query(
+            "UPDATE teams SET name = $1, updated_at = $2 WHERE id = $3",
+        )
+        .bind(name)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(team_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("update_team: {e}")))?;
+        Ok(())
+    }
+
+    async fn delete_team(&self, team_id: &str) -> Result<(), DbError> {
+        query("DELETE FROM teams WHERE id = $1")
+            .bind(team_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError(format!("delete_team: {e}")))?;
+        Ok(())
+    }
+
+    async fn add_team_member(
+        &self,
+        team_id: &str,
+        user_id: &str,
+        role: &str,
+    ) -> Result<(), DbError> {
+        query(
+            "INSERT INTO team_members (team_id, user_id, role, joined_at) \
+             VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (team_id, user_id) DO UPDATE SET role = EXCLUDED.role",
+        )
+        .bind(team_id)
+        .bind(user_id)
+        .bind(role)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("add_team_member: {e}")))?;
+        Ok(())
+    }
+
+    async fn remove_team_member(&self, team_id: &str, user_id: &str) -> Result<(), DbError> {
+        // Refuse to remove the owner.
+        let (current_role,): (String,) =
+            query_as("SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2")
+                .bind(team_id)
+                .bind(user_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| DbError(format!("remove_team_member: {e}")))?;
+        if current_role == "owner" {
+            return Err(DbError("Cannot remove the team owner".to_string()));
+        }
+        query("DELETE FROM team_members WHERE team_id = $1 AND user_id = $2")
+            .bind(team_id)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError(format!("remove_team_member: {e}")))?;
+        Ok(())
+    }
+
+    async fn set_team_member_role(
+        &self,
+        team_id: &str,
+        user_id: &str,
+        role: &str,
+    ) -> Result<(), DbError> {
+        // Forbid changing the owner's role away from owner.
+        let (current_role,): (String,) =
+            query_as("SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2")
+                .bind(team_id)
+                .bind(user_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| DbError(format!("set_team_member_role: {e}")))?;
+        if current_role == "owner" && role != "owner" {
+            return Err(DbError("Cannot demote the team owner".to_string()));
+        }
+        query(
+            "UPDATE team_members SET role = $1 WHERE team_id = $2 AND user_id = $3",
+        )
+        .bind(role)
+        .bind(team_id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("set_team_member_role: {e}")))?;
+        Ok(())
+    }
+
+    async fn list_team_members(&self, team_id: &str) -> Result<Vec<TeamMember>, DbError> {
+        let rows = query_as::<_, (String, String, String, String)>(
+            "SELECT team_id, user_id, role, joined_at FROM team_members \
+             WHERE team_id = $1 ORDER BY joined_at",
+        )
+        .bind(team_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("list_team_members: {e}")))?;
+        Ok(rows
+            .into_iter()
+            .map(|(team_id, user_id, role, joined_at)| TeamMember {
+                team_id,
+                user_id,
+                role,
+                joined_at: chrono::DateTime::parse_from_rfc3339(&joined_at)
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            })
+            .collect())
+    }
+
+    async fn get_team_member(
+        &self,
+        team_id: &str,
+        user_id: &str,
+    ) -> Result<Option<TeamMember>, DbError> {
+        let rows = query_as::<_, (String, String, String, String)>(
+            "SELECT team_id, user_id, role, joined_at FROM team_members \
+             WHERE team_id = $1 AND user_id = $2",
+        )
+        .bind(team_id)
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("get_team_member: {e}")))?;
+        Ok(rows.first().map(
+            |(team_id, user_id, role, joined_at)| TeamMember {
+                team_id: team_id.clone(),
+                user_id: user_id.clone(),
+                role: role.clone(),
+                joined_at: chrono::DateTime::parse_from_rfc3339(joined_at)
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            },
+        ))
+    }
+
+    async fn get_team_wallet(&self, team_id: &str) -> Result<Option<(f64, f64)>, DbError> {
+        let rows = query_as::<_, (f64, f64)>(
+            "SELECT balance, frozen FROM team_wallets WHERE team_id = $1",
+        )
+        .bind(team_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("get_team_wallet: {e}")))?;
+        Ok(rows.first().map(|(balance, frozen)| (*balance, *frozen)))
+    }
+
+    async fn all_team_members(&self) -> Result<Vec<TeamMember>, DbError> {
+        let rows = query_as::<_, (String, String, String, String)>(
+            "SELECT team_id, user_id, role, joined_at FROM team_members ORDER BY team_id, user_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("all_team_members: {e}")))?;
+        Ok(rows
+            .into_iter()
+            .map(|(team_id, user_id, role, joined_at)| TeamMember {
+                team_id,
+                user_id,
+                role,
+                joined_at: chrono::DateTime::parse_from_rfc3339(&joined_at)
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            })
+            .collect())
+    }
+
+    async fn add_team_wallet_balance(&self, team_id: &str, amount: f64) -> Result<(), DbError> {
+        query(
+            "UPDATE team_wallets SET balance = balance + $1, updated_at = $2 WHERE team_id = $3",
+        )
+        .bind(amount)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(team_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("add_team_wallet_balance: {e}")))?;
+        Ok(())
+    }
+
+    async fn list_team_wallet_transactions(
+        &self,
+        team_id: &str,
+        page: usize,
+        size: usize,
+    ) -> Result<(Vec<WalletTransactionRow>, usize), DbError> {
+        let offset = (page.saturating_sub(1)) * size;
+        let rows = query(
+            "SELECT id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at \
+             FROM wallet_transactions WHERE team_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+        )
+        .bind(team_id)
+        .bind(size as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        let items = rows
+            .iter()
+            .map(|r| WalletTransactionRow {
+                id: r.get(0),
+                user_id: r.get(1),
+                tx_type: r.get(2),
+                amount: Decimal::try_from(r.get::<f64, _>(3)).unwrap_or(Decimal::ZERO),
+                balance_before: Decimal::try_from(r.get::<f64, _>(4)).unwrap_or(Decimal::ZERO),
+                balance_after: Decimal::try_from(r.get::<f64, _>(5)).unwrap_or(Decimal::ZERO),
+                method: r.get(6),
+                status: r.get(7),
+                note: r.get(8),
+                created_at: r.get(9),
+            })
+            .collect::<Vec<_>>();
+        let (count,): (i64,) =
+            query_as("SELECT COUNT(*) FROM wallet_transactions WHERE team_id = $1")
+                .bind(team_id)
+                .fetch_one(&self.pool)
+                .await?;
+        Ok((items, count as usize))
+    }
+
+    async fn list_team_api_keys(&self, team_id: &str) -> Result<Vec<ApiKey>, DbError> {
+        let rows = query(
+            "SELECT key, user_id, name, enabled, expires_at, spend_limit, allowed_models, team_id \
+             FROM api_keys WHERE team_id = $1 ORDER BY key",
+        )
+        .bind(team_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let allowed_models_str: Option<String> = r.get(6);
+                ApiKey {
+                    key: r.get(0),
+                    user_id: r.get(1),
+                    name: r.get(2),
+                    enabled: r.get(3),
+                    expires_at: r.get(4),
+                    spend_limit: r
+                        .get::<Option<f64>, _>(5)
+                        .map(|v| Decimal::try_from(v).unwrap_or(Decimal::ZERO)),
+                    allowed_models: allowed_models_str
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
+                    team_id: r.get(7),
+                }
+            })
+            .collect())
+    }
+
+    async fn list_team_rules(&self, team_id: &str) -> Result<Vec<RoutingRule>, DbError> {
+        let rows = query(
+            "SELECT id, name, scope, user_id, source_model, target_model, \
+             channel_id, upstream_model, priority, enabled, description, \
+             created_at, updated_at, team_id \
+             FROM routing_rules WHERE scope='user' AND team_id=$1 \
+             ORDER BY priority, name",
+        )
+        .bind(team_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| RoutingRule {
+                id: r.get(0),
+                name: r.get(1),
+                scope: r.get(2),
+                user_id: r.get(3),
+                source_model: r.get(4),
+                target_model: r.get(5),
+                channel_id: r.get(6),
+                upstream_model: r.get(7),
+                priority: r.get(8),
+                enabled: r.get(9),
+                description: r.get(10),
+                created_at: r.get(11),
+                updated_at: r.get(12),
+                team_id: r.get(13),
+            })
+            .collect())
     }
 }
 
@@ -4457,5 +5033,115 @@ impl PgBackend {
             }
             _ => {}
         }
+    }
+}
+
+/// Compute usage cost from token counts and per-1M prices.
+/// Pure helper extracted from the billing path so it is unit-testable.
+fn compute_cost_amount(
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    cache_hit_input_tokens: u64,
+    prompt_price: f64,
+    completion_price: f64,
+    cache_read_price: f64,
+) -> f64 {
+    prompt_tokens as f64 / 1000000.0 * prompt_price
+        + completion_tokens as f64 / 1000000.0 * completion_price
+        + cache_hit_input_tokens as f64 / 1000000.0 * cache_read_price
+}
+
+/// Resolve which account a usage record charges.
+/// Returns (account_id, account_type) where account_type is "user" or "team".
+/// Personal records charge the user's wallet; team records charge the team wallet.
+fn usage_account(record: &UsageRecord) -> (String, &'static str) {
+    match &record.team_id {
+        Some(team_id) => (team_id.clone(), "team"),
+        None => (record.user_id.clone(), "user"),
+    }
+}
+
+#[cfg(test)]
+mod billing_tests {
+    use super::{compute_cost_amount, usage_account};
+    use crate::domain::usage::UsageRecord;
+
+    fn record(user_id: &str, team_id: Option<&str>) -> UsageRecord {
+        let mut r = UsageRecord {
+            timestamp: String::new(),
+            request_id: String::new(),
+            user_id: user_id.to_string(),
+            user_name: String::new(),
+            channel_id: String::new(),
+            model: String::new(),
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            latency_ms: 0,
+            status_code: 0,
+            success: true,
+            request_body: None,
+            response_body: None,
+            reasoning_body: None,
+            api_key_name: None,
+            api_format: String::new(),
+            stream: false,
+            cache_hit_input_tokens: 0,
+            cache_write_tokens: 0,
+            prompt_price: rust_decimal::Decimal::ZERO,
+            completion_price: rust_decimal::Decimal::ZERO,
+            cache_read_price: rust_decimal::Decimal::ZERO,
+            client_ip: None,
+            endpoint_id: None,
+            endpoint_url: None,
+            original_model: String::new(),
+            team_id: team_id.map(|s| s.to_string()),
+            account_type: None,
+        };
+        r.prompt_tokens = 1_000_000; // $1 at $1/1M
+        r.prompt_price = rust_decimal::Decimal::ONE;
+        r.completion_tokens = 2_000_000;
+        r.completion_price = rust_decimal::Decimal::from(2);
+        r.cache_hit_input_tokens = 500_000;
+        r.cache_read_price = rust_decimal::Decimal::from(1);
+        r
+    }
+
+    #[test]
+    fn cost_amount_matches_tokens_times_prices() {
+        let r = record("user-1", None);
+        // 1M*$1 + 2M*$2 + 0.5M*$1 = 1 + 4 + 0.5
+        let cost = compute_cost_amount(
+            r.prompt_tokens,
+            r.completion_tokens,
+            r.cache_hit_input_tokens,
+            1.0,
+            2.0,
+            1.0,
+        );
+        assert!((cost - 5.5).abs() < 1e-9, "expected 5.5, got {}", cost);
+    }
+
+    #[test]
+    fn zero_cost_when_no_tokens() {
+        let r = record("user-1", None);
+        let cost = compute_cost_amount(0, 0, 0, 1.0, 1.0, 1.0);
+        assert_eq!(cost, 0.0);
+    }
+
+    #[test]
+    fn personal_record_charges_user_wallet() {
+        let r = record("user-1", None);
+        let (account, ty) = usage_account(&r);
+        assert_eq!(account, "user-1");
+        assert_eq!(ty, "user");
+    }
+
+    #[test]
+    fn team_record_charges_team_wallet() {
+        let r = record("user-1", Some("team-9"));
+        let (account, ty) = usage_account(&r);
+        assert_eq!(account, "team-9");
+        assert_eq!(ty, "team");
     }
 }

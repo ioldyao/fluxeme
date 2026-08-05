@@ -187,25 +187,39 @@ fn normalize_messages_body(body: &mut Value) {
 
 /// Check whether the user's wallet balance is sufficient for this request.
 ///
+/// The wallet account to check. A request charges either the personal user
+/// wallet or a team wallet, depending on its team context.
+enum WalletAccount<'a> {
+    User(&'a str),
+    Team(&'a str),
+}
+
 /// Three-tier check:
 ///   1. Redis gate_status (fast path)
 ///   2. In-memory gate cache (populated by the inspection task)
-///   3. PostgreSQL `get_wallet_balance` (source of truth, final fallback)
-async fn check_wallet_balance(state: &AppState, user_id: &str) -> Result<(), GatewayError> {
-    match state.cache.get_gate_status(user_id).await {
+///   3. PostgreSQL `get_wallet_balance` / `get_team_wallet` (source of truth, final fallback)
+async fn check_wallet_balance(
+    state: &AppState,
+    account: WalletAccount<'_>,
+) -> Result<(), GatewayError> {
+    let key = match &account {
+        WalletAccount::User(id) => (*id).to_string(),
+        WalletAccount::Team(id) => format!("team:{}", id),
+    };
+    match state.cache.get_gate_status(&key).await {
         Ok(Some(GateStatus::Blocked)) => {
             return Err(GatewayError::PaymentRequired("Insufficient balance".into()));
         }
         Ok(Some(_)) => return Ok(()), // ok or low — pass through
         Ok(None) => {}                // fall through to local cache
         Err(e) => {
-            tracing::warn!(user_id, "Gate status read error, trying local cache: {}", e);
+            tracing::warn!(user_id = %key, "Gate status read error, trying local cache: {}", e);
         }
     }
     // Second fallback — in-memory gate cache (no Redis or database query)
     {
         let guard = state.gate_cache.read().await;
-        if let Some(status) = guard.get(user_id) {
+        if let Some(status) = guard.get(&key) {
             return match status {
                 GateStatus::Blocked => {
                     Err(GatewayError::PaymentRequired("Insufficient balance".into()))
@@ -215,11 +229,25 @@ async fn check_wallet_balance(state: &AppState, user_id: &str) -> Result<(), Gat
         }
     }
     // Final fallback — read from PostgreSQL directly
-    let (balance, frozen) = state
-        .db
-        .get_wallet_balance(user_id)
-        .await
-        .map_err(|e| GatewayError::Internal(e.0))?;
+    let (balance, frozen) = match &account {
+        WalletAccount::User(id) => state
+            .db
+            .get_wallet_balance(id)
+            .await
+            .map_err(|e| GatewayError::Internal(e.0))?,
+        WalletAccount::Team(id) => {
+            let (b, f) = state
+                .db
+                .get_team_wallet(id)
+                .await
+                .map_err(|e| GatewayError::Internal(e.0))?
+                .unwrap_or((0.0, 0.0));
+            (
+                Decimal::try_from(b).unwrap_or(Decimal::ZERO),
+                Decimal::try_from(f).unwrap_or(Decimal::ZERO),
+            )
+        }
+    };
     if balance - frozen <= Decimal::ZERO {
         return Err(GatewayError::PaymentRequired("Insufficient balance".into()));
     }
@@ -662,6 +690,8 @@ struct UsageTrackingStream<S> {
     client_ip: String,
     endpoint_id: Option<i64>,
     endpoint_url: Option<String>,
+    /// Team scope of the request. None = personal.
+    team_id: Option<String>,
     /// Circuit-breaker feedback for the streaming request: record_success
     /// when the stream completes cleanly. Client disconnects / mid-stream
     /// drops are not fed into the breaker — they aren't upstream failures.
@@ -776,6 +806,8 @@ impl<S> UsageTrackingStream<S> {
                 endpoint_id: self.endpoint_id,
                 endpoint_url: self.endpoint_url.clone(),
                 original_model: self.original_model.clone(),
+                team_id: self.team_id.clone(),
+                account_type: self.team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
             },
             self.endpoint_id,
         );
@@ -874,6 +906,7 @@ async fn handle_streaming(
     orig_model: String,
     start: Instant,
     client_ip: String,
+    team_id: Option<String>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     let stream_result = adapter.chat_complete_stream(&endpoint, body).await;
@@ -912,6 +945,7 @@ async fn handle_streaming(
                 recorded: false,
                 client_ip,
                 endpoint_id: endpoint.id,
+                team_id,
                 endpoint_url: Some(endpoint.url.clone()),
                 original_model: orig_model.clone(),
                 balancer: Some(balancer),
@@ -961,6 +995,8 @@ async fn handle_streaming(
                 endpoint_id: endpoint.id,
                 endpoint_url: Some(endpoint.url.clone()),
                 original_model: orig_model.clone(),
+                team_id: team_id.clone(),
+                account_type: team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -986,6 +1022,7 @@ async fn handle_messages_streaming(
     orig_model: String,
     start: Instant,
     client_ip: String,
+    team_id: Option<String>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     let stream_result = adapter.messages_stream(&endpoint, body).await;
@@ -1026,6 +1063,7 @@ async fn handle_messages_streaming(
                 endpoint_url: Some(endpoint.url.clone()),
                 original_model: orig_model.clone(),
                 balancer: Some(balancer),
+                team_id,
                 endpoint_idx,
             };
 
@@ -1072,6 +1110,8 @@ async fn handle_messages_streaming(
                 endpoint_id: endpoint.id,
                 endpoint_url: Some(endpoint.url.clone()),
                 original_model: orig_model.clone(),
+                team_id: team_id.clone(),
+                account_type: team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -1095,6 +1135,7 @@ async fn handle_non_streaming(
     start: Instant,
     cache_key: Option<String>,
     client_ip: String,
+    team_id: Option<String>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     let max_retries = {
@@ -1164,6 +1205,8 @@ async fn handle_non_streaming(
                         endpoint_id: route.endpoint.id,
                         endpoint_url: Some(route.endpoint.url.clone()),
                         original_model: orig_model.clone(),
+                        team_id: team_id.clone(),
+                        account_type: team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
                     },
                     route.endpoint.id,
                 );
@@ -1235,6 +1278,8 @@ async fn handle_non_streaming(
                     endpoint_id: route.endpoint.id,
                     endpoint_url: Some(route.endpoint.url.clone()),
                     original_model: orig_model.clone(),
+                    team_id: team_id.clone(),
+                    account_type: team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Upstream request failed");
                 return Err(GatewayError::Upstream(e.0));
@@ -1273,6 +1318,8 @@ async fn handle_non_streaming(
         endpoint_id: route.endpoint.id,
         endpoint_url: Some(route.endpoint.url.clone()),
         original_model: orig_model.clone(),
+        team_id: team_id.clone(),
+        account_type: team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -1293,6 +1340,7 @@ async fn handle_messages_non_streaming(
     orig_model: String,
     start: Instant,
     client_ip: String,
+    team_id: Option<String>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     let max_retries = {
@@ -1364,6 +1412,8 @@ async fn handle_messages_non_streaming(
                     endpoint_id: route.endpoint.id,
                     endpoint_url: Some(route.endpoint.url.clone()),
                     original_model: orig_model.clone(),
+                    team_id: team_id.clone(),
+                    account_type: team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
                 });
 
                 return Ok(Json(resp).into_response());
@@ -1416,6 +1466,8 @@ async fn handle_messages_non_streaming(
                     endpoint_id: route.endpoint.id,
                     endpoint_url: Some(route.endpoint.url.clone()),
                     original_model: orig_model.clone(),
+                    team_id: team_id.clone(),
+                    account_type: team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Messages upstream request failed");
                 return Err(GatewayError::Upstream(e.0));
@@ -1453,6 +1505,8 @@ async fn handle_messages_non_streaming(
         endpoint_id: route.endpoint.id,
         endpoint_url: Some(route.endpoint.url.clone()),
         original_model: orig_model.clone(),
+        team_id: team_id.clone(),
+        account_type: team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -1624,11 +1678,21 @@ pub async fn chat_completions(
 
     // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
     if gw_cfg.billing_enabled {
-        check_wallet_balance(&state, &user.user_id).await?;
+        check_wallet_balance(
+            &state,
+            match &user.team_id {
+                Some(tid) => WalletAccount::Team(tid),
+                None => WalletAccount::User(&user.user_id),
+            },
+        )
+        .await?;
     }
 
     let (channel_id, resolved_model, upstream_model) =
-        state.routing.route(&user.user_id, &model).await?;
+        state
+            .routing
+            .route(&user.user_id, &model, user.team_id.as_deref())
+            .await?;
     let orig_model = if model != resolved_model {
         model.clone()
     } else {
@@ -1746,6 +1810,7 @@ pub async fn chat_completions(
                 orig_model,
                 start,
                 client_ip,
+                user.team_id.clone(),
             )
             .await
         } else {
@@ -1764,6 +1829,7 @@ pub async fn chat_completions(
                 start,
                 cache_key,
                 client_ip_clone,
+                user.team_id.clone(),
             )
             .await
         }
@@ -1830,11 +1896,21 @@ pub async fn messages_count_tokens(
     }
 
     if gw_cfg.billing_enabled {
-        check_wallet_balance(&state, &user.user_id).await?;
+        check_wallet_balance(
+            &state,
+            match &user.team_id {
+                Some(tid) => WalletAccount::Team(tid),
+                None => WalletAccount::User(&user.user_id),
+            },
+        )
+        .await?;
     }
 
     let (channel_id, resolved_model, upstream_model) =
-        state.routing.route(&user.user_id, &model).await?;
+        state
+            .routing
+            .route(&user.user_id, &model, user.team_id.as_deref())
+            .await?;
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
@@ -1953,7 +2029,10 @@ pub async fn responses_input_tokens(
     }
 
     let (channel_id, resolved_model, upstream_model) =
-        state.routing.route(&user.user_id, &model).await?;
+        state
+            .routing
+            .route(&user.user_id, &model, user.team_id.as_deref())
+            .await?;
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
@@ -2067,11 +2146,21 @@ pub async fn messages(
 
     // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
     if gw_cfg.billing_enabled {
-        check_wallet_balance(&state, &user.user_id).await?;
+        check_wallet_balance(
+            &state,
+            match &user.team_id {
+                Some(tid) => WalletAccount::Team(tid),
+                None => WalletAccount::User(&user.user_id),
+            },
+        )
+        .await?;
     }
 
     let (channel_id, resolved_model, upstream_model) =
-        state.routing.route(&user.user_id, &model).await?;
+        state
+            .routing
+            .route(&user.user_id, &model, user.team_id.as_deref())
+            .await?;
     let orig_model = if model != resolved_model {
         model.clone()
     } else {
@@ -2167,6 +2256,7 @@ pub async fn messages(
                 orig_model,
                 start,
                 client_ip,
+                user.team_id.clone(),
             )
             .await
         } else {
@@ -2184,6 +2274,7 @@ pub async fn messages(
                 orig_model,
                 start,
                 client_ip_clone,
+                user.team_id.clone(),
             )
             .await
         }
@@ -2246,11 +2337,21 @@ async fn relay_to_upstream(
     // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
     let gw_cfg = state.gateway_config.read().unwrap().clone();
     if gw_cfg.billing_enabled {
-        check_wallet_balance(state, &user.user_id).await?;
+        check_wallet_balance(
+            state,
+            match &user.team_id {
+                Some(tid) => WalletAccount::Team(tid),
+                None => WalletAccount::User(&user.user_id),
+            },
+        )
+        .await?;
     }
 
     let (channel_id, resolved_model, upstream_model) =
-        state.routing.route(&user.user_id, &model).await?;
+        state
+            .routing
+            .route(&user.user_id, &model, user.team_id.as_deref())
+            .await?;
     let orig_model = if model != resolved_model {
         model.clone()
     } else {
@@ -2360,6 +2461,8 @@ async fn relay_to_upstream(
                     endpoint_id: route.endpoint.id,
                     endpoint_url: Some(route.endpoint.url.clone()),
                     original_model: orig_model.clone(),
+                    team_id: user.team_id.clone(),
+                    account_type: user.team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
                 });
 
                 return Ok(Json(resp).into_response());
@@ -2411,6 +2514,8 @@ async fn relay_to_upstream(
                     endpoint_id: route.endpoint.id,
                     endpoint_url: Some(route.endpoint.url.clone()),
                     original_model: orig_model.clone(),
+                    team_id: user.team_id.clone(),
+                    account_type: user.team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
                 });
                 return Err(GatewayError::from(e));
             }
@@ -2447,6 +2552,8 @@ async fn relay_to_upstream(
         endpoint_id: route.endpoint.id,
         endpoint_url: Some(route.endpoint.url.clone()),
         original_model: orig_model.clone(),
+        team_id: user.team_id.clone(),
+        account_type: user.team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
     });
     Err(GatewayError::Upstream(err_msg))
 }

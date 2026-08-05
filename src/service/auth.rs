@@ -10,6 +10,9 @@ pub struct AuthService {
     db: Arc<Database>,
     users: RwLock<HashMap<String, User>>,
     api_keys: RwLock<HashMap<String, (User, ApiKey)>>,
+    /// team_id -> (user_id -> role). Loaded on reload() so `authenticate`
+    /// can resolve team membership synchronously (it has no await).
+    team_memberships: RwLock<HashMap<String, HashMap<String, String>>>,
 }
 
 impl AuthService {
@@ -18,6 +21,7 @@ impl AuthService {
             db,
             users: RwLock::new(HashMap::new()),
             api_keys: RwLock::new(HashMap::new()),
+            team_memberships: RwLock::new(HashMap::new()),
         };
         svc.reload().await;
         svc
@@ -42,6 +46,19 @@ impl AuthService {
                 *self.users.write().unwrap() = map;
             }
             Err(e) => tracing::error!("Failed to load users: {}", e),
+        }
+
+        match self.db.all_team_members().await {
+            Ok(members) => {
+                let mut map: HashMap<String, HashMap<String, String>> = HashMap::new();
+                for m in &members {
+                    map.entry(m.team_id.clone())
+                        .or_default()
+                        .insert(m.user_id.clone(), m.role.clone());
+                }
+                *self.team_memberships.write().unwrap() = map;
+            }
+            Err(e) => tracing::error!("Failed to load team memberships: {}", e),
         }
     }
 
@@ -72,6 +89,19 @@ impl AuthService {
                 if user.status != USER_STATUS_ACTIVE {
                     return Err(AuthError("Unknown or disabled API key".into()));
                 }
+                // Team-scoped keys carry an active team context. For personal
+                // keys (team_id = None) the fields stay None (existing behavior).
+                let team_id = api_key.team_id.clone();
+                let team_role = match &team_id {
+                    Some(tid) => self
+                        .team_memberships
+                        .read()
+                        .unwrap()
+                        .get(tid)
+                        .and_then(|by_user| by_user.get(&user.id))
+                        .and_then(|role| crate::domain::team::TeamRole::from_str(role)),
+                    None => None,
+                };
                 return Ok(AuthResult {
                     user_id: user.id.clone(),
                     user_name: user.name.clone(),
@@ -82,6 +112,8 @@ impl AuthService {
                     allowed_models: api_key.allowed_models.clone(),
                     api_key_name: api_key.name.clone(),
                     concurrency_limit: user.concurrency_limit,
+                    team_id,
+                    team_role,
                 });
             }
         }
