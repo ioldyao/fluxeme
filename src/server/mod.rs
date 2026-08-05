@@ -18,7 +18,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::authz::AuthzModule;
+use crate::authz::{AuthzModule, TeamAuthzModule};
 use crate::cache::{GateStatus, RedisCache};
 use crate::ch_backend::ClickHouseBackend;
 use crate::config::types::{AppConfig, GatewayRuntimeConfig};
@@ -41,6 +41,8 @@ pub struct AppState {
     pub db: Arc<crate::db::Database>,
     pub admin: Arc<crate::admin::AdminModule>,
     pub authz: Arc<AuthzModule>,
+    /// Team-scoped RBAC enforcer (domain-aware). Independent of `authz`.
+    pub team_authz: Arc<TeamAuthzModule>,
     pub health: Arc<HealthService>,
     pub sso: Arc<SsoModule>,
     /// Runtime-adjustable timeout config. Read on every request, updated by

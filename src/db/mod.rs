@@ -10,6 +10,7 @@ use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, Pricing};
 use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
+use crate::domain::team::{Team, TeamMember};
 use crate::domain::usage::{UsageFilter, UsageRecord};
 use crate::domain::user::{ApiKey, User};
 
@@ -771,5 +772,81 @@ impl Database {
         self.backend
             .batch_insert_usage_with_billing(batch, billing_enabled)
             .await
+    }
+
+    // ── Teams ────────────────────────────────────────────────────────────
+    pub async fn create_team(&self, team: &Team, owner_id: &str) -> Result<(), DbError> {
+        self.backend.create_team(team, owner_id).await
+    }
+    pub async fn get_team(&self, team_id: &str) -> Result<Option<Team>, DbError> {
+        self.backend.get_team(team_id).await
+    }
+    pub async fn list_teams_for_user(&self, user_id: &str) -> Result<Vec<Team>, DbError> {
+        self.backend.list_teams_for_user(user_id).await
+    }
+    pub async fn list_all_teams(&self) -> Result<Vec<Team>, DbError> {
+        self.backend.list_all_teams().await
+    }
+    pub async fn update_team(&self, team_id: &str, name: &str) -> Result<(), DbError> {
+        self.backend.update_team(team_id, name).await
+    }
+    pub async fn delete_team(&self, team_id: &str) -> Result<(), DbError> {
+        self.backend.delete_team(team_id).await
+    }
+    pub async fn add_team_member(
+        &self,
+        team_id: &str,
+        user_id: &str,
+        role: &str,
+    ) -> Result<(), DbError> {
+        self.backend.add_team_member(team_id, user_id, role).await
+    }
+    pub async fn remove_team_member(&self, team_id: &str, user_id: &str) -> Result<(), DbError> {
+        self.backend.remove_team_member(team_id, user_id).await
+    }
+    pub async fn set_team_member_role(
+        &self,
+        team_id: &str,
+        user_id: &str,
+        role: &str,
+    ) -> Result<(), DbError> {
+        self.backend
+            .set_team_member_role(team_id, user_id, role)
+            .await
+    }
+    pub async fn list_team_members(&self, team_id: &str) -> Result<Vec<TeamMember>, DbError> {
+        self.backend.list_team_members(team_id).await
+    }
+    pub async fn get_team_member(
+        &self,
+        team_id: &str,
+        user_id: &str,
+    ) -> Result<Option<TeamMember>, DbError> {
+        self.backend.get_team_member(team_id, user_id).await
+    }
+    pub async fn get_team_wallet(&self, team_id: &str) -> Result<Option<(f64, f64)>, DbError> {
+        self.backend.get_team_wallet(team_id).await
+    }
+    pub async fn all_team_members(&self) -> Result<Vec<TeamMember>, DbError> {
+        self.backend.all_team_members().await
+    }
+    pub async fn add_team_wallet_balance(&self, team_id: &str, amount: f64) -> Result<(), DbError> {
+        self.backend.add_team_wallet_balance(team_id, amount).await
+    }
+    pub async fn list_team_wallet_transactions(
+        &self,
+        team_id: &str,
+        page: usize,
+        size: usize,
+    ) -> Result<(Vec<WalletTransactionRow>, usize), DbError> {
+        self.backend
+            .list_team_wallet_transactions(team_id, page, size)
+            .await
+    }
+    pub async fn list_team_api_keys(&self, team_id: &str) -> Result<Vec<ApiKey>, DbError> {
+        self.backend.list_team_api_keys(team_id).await
+    }
+    pub async fn list_team_rules(&self, team_id: &str) -> Result<Vec<RoutingRule>, DbError> {
+        self.backend.list_team_rules(team_id).await
     }
 }

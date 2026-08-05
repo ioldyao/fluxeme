@@ -4,6 +4,7 @@ use casbin::{CoreApi, DefaultModel, Enforcer, MemoryAdapter, MgmtApi};
 use tokio::sync::RwLock;
 
 use crate::db::Database;
+use crate::domain::team::TeamMember;
 
 /// Default policies seeded on first run when the casbin_policies table is empty.
 const DEFAULT_POLICIES: &[(&str, &str)] = &[
@@ -22,6 +23,7 @@ const DEFAULT_POLICIES: &[(&str, &str)] = &[
     ("admin", "admin:gateway"),
     ("admin", "admin:policies"),
     ("admin", "admin:announcements"),
+    ("admin", "admin:teams"),
 ];
 
 /// Wraps a Casbin enforcer behind an RwLock for thread-safe access.
@@ -103,5 +105,216 @@ impl Clone for AuthzModule {
         Self {
             enforcer: self.enforcer.clone(),
         }
+    }
+}
+
+/// Team-role → team-permission mapping.
+///
+/// These permissions are bound to a team via the domain dimension in
+/// `casbin_team_model.conf`: `g(<user_id>, <perm>, <team_id>)`.
+pub const TEAM_ROLE_PERMISSIONS: &[(&str, &[&str])] = &[
+    ("owner", &["team:*"]),
+    (
+        "admin",
+        &[
+            "team:member:manage",
+            "team:key:manage",
+            "team:wallet:manage",
+            "team:rule:manage",
+            "team:usage:view",
+            "team:billing:view",
+        ],
+    ),
+    (
+        "member",
+        &[
+            "team:key:use",
+            "team:wallet:view",
+            "team:rule:view",
+            "team:usage:view",
+            "team:billing:view",
+        ],
+    ),
+];
+
+/// Domain-aware RBAC enforcer for team-scoped permissions.
+///
+/// Uses a separate model (`config/casbin_team_model.conf`) and a separate
+/// in-memory enforcer so the global admin `AuthzModule` stays untouched.
+/// Team role assignments are stored in `casbin_policies` as `g` rows:
+/// `g(<user_id>, <perm>, <team_id>)`.
+pub struct TeamAuthzModule {
+    enforcer: Arc<RwLock<Enforcer>>,
+}
+
+impl TeamAuthzModule {
+    pub async fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        let m = DefaultModel::from_file("config/casbin_team_model.conf").await?;
+        let e = Enforcer::new(m, MemoryAdapter::default()).await?;
+        Ok(Self {
+            enforcer: Arc::new(RwLock::new(e)),
+        })
+    }
+
+    /// Clear all team role bindings for a team and rebuild them from the
+    /// given members' roles.
+    ///
+    /// Writes the standard RBAC-with-domains shape:
+    /// - `g(user_id, role, team_id)` — user's role within the team
+    /// - `p(role, team_id, perm)` — role's permission within the team
+    /// `enforce` then matches `g(r.sub, p.sub, r.dom) && r.dom == p.dom && keyMatch(r.obj, p.obj)`.
+    pub async fn sync_team_roles(&self, team_id: &str, members: &[TeamMember]) {
+        let mut e = self.enforcer.write().await;
+
+        // Clear existing g rows for this team: g = [user_id, role, team_id]
+        let existing_g = e.get_grouping_policy();
+        for row in &existing_g {
+            if row.len() == 3 && row[2] == team_id {
+                let _ = e.remove_grouping_policy(row.clone()).await;
+            }
+        }
+
+        // Clear existing p rows for this team: p = [role, team_id, perm]
+        let existing_p = e.get_policy();
+        for row in &existing_p {
+            if row.len() == 3 && row[1] == team_id {
+                let _ = e.remove_policy(row.clone()).await;
+            }
+        }
+
+        // Rebuild g (user → role) and p (role → perms) from members.
+        let mut roles_in_team: Vec<&str> = Vec::new();
+        for member in members {
+            let _ = e
+                .add_grouping_policy(vec![
+                    member.user_id.clone(),
+                    member.role.clone(),
+                    team_id.to_string(),
+                ])
+                .await;
+            if !roles_in_team.contains(&member.role.as_str()) {
+                roles_in_team.push(member.role.as_str());
+            }
+        }
+        for role in roles_in_team {
+            let perms = TEAM_ROLE_PERMISSIONS
+                .iter()
+                .find(|(r, _)| *r == role)
+                .map(|(_, perms)| *perms)
+                .unwrap_or(&[]);
+            for perm in perms {
+                let _ = e
+                    .add_policy(vec![role.to_string(), team_id.to_string(), perm.to_string()])
+                    .await;
+            }
+        }
+    }
+
+    /// Check whether `user_id` has `perm` within `team_id`.
+    pub async fn enforce(&self, team_id: &str, user_id: &str, perm: &str) -> bool {
+        let e = self.enforcer.read().await;
+        e.enforce((user_id.to_owned(), team_id.to_owned(), perm.to_owned()))
+            .unwrap_or(false)
+    }
+
+    /// Rebuild all team role bindings from the database. Called on startup so
+    /// team Casbin permissions survive a restart (the enforcer is in-memory).
+    pub async fn reload_all(&self, db: &Database) {
+        let members = match db.all_team_members().await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::error!("Team authz reload: failed to load members: {}", e);
+                return;
+            }
+        };
+        // Group members by team_id, then sync each team's roles.
+        let mut by_team: std::collections::HashMap<String, Vec<TeamMember>> =
+            std::collections::HashMap::new();
+        for m in &members {
+            by_team.entry(m.team_id.clone()).or_default().push(m.clone());
+        }
+        for (team_id, team_members) in &by_team {
+            self.sync_team_roles(team_id, team_members).await;
+        }
+        tracing::info!("Team authz reloaded roles for {} teams", by_team.len());
+    }
+}
+
+impl Clone for TeamAuthzModule {
+    fn clone(&self) -> Self {
+        Self {
+            enforcer: self.enforcer.clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod team_authz_tests {
+    use super::{TEAM_ROLE_PERMISSIONS, TeamAuthzModule};
+    use crate::domain::team::TeamMember;
+
+    fn member(user_id: &str, role: &str) -> TeamMember {
+        TeamMember {
+            team_id: "team-1".to_string(),
+            user_id: user_id.to_string(),
+            role: role.to_string(),
+            joined_at: chrono::Utc::now(),
+        }
+    }
+
+    async fn setup() -> TeamAuthzModule {
+        let m = TeamAuthzModule::new().await.expect("team authz init");
+        let members = vec![
+            member("owner-u", "owner"),
+            member("admin-u", "admin"),
+            member("member-u", "member"),
+        ];
+        m.sync_team_roles("team-1", &members).await;
+        m
+    }
+
+    #[tokio::test]
+    async fn owner_has_all_permissions() {
+        let m = setup().await;
+        // Owner gets team:* which covers all team perms via keyMatch.
+        assert!(m.enforce("team-1", "owner-u", "team:key:manage").await);
+        assert!(m.enforce("team-1", "owner-u", "team:member:manage").await);
+        assert!(m.enforce("team-1", "owner-u", "team:wallet:manage").await);
+        assert!(m.enforce("team-1", "owner-u", "team:rule:manage").await);
+    }
+
+    #[tokio::test]
+    async fn admin_has_manage_permissions_but_not_all() {
+        let m = setup().await;
+        assert!(m.enforce("team-1", "admin-u", "team:key:manage").await);
+        assert!(m.enforce("team-1", "admin-u", "team:member:manage").await);
+        assert!(m.enforce("team-1", "admin-u", "team:wallet:manage").await);
+        // admin does NOT have owner-level team:* — only explicit perms.
+        assert!(!m.enforce("team-1", "admin-u", "team:delete-team").await);
+    }
+
+    #[tokio::test]
+    async fn member_only_has_view_permissions() {
+        let m = setup().await;
+        assert!(m.enforce("team-1", "member-u", "team:wallet:view").await);
+        assert!(!m.enforce("team-1", "member-u", "team:key:manage").await);
+        assert!(!m.enforce("team-1", "member-u", "team:wallet:manage").await);
+    }
+
+    #[tokio::test]
+    async fn permissions_are_team_scoped() {
+        let m = setup().await;
+        // admin-u has perms in team-1, but not in another team.
+        assert!(!m.enforce("team-other", "admin-u", "team:key:manage").await);
+    }
+
+    #[test]
+    fn role_permissions_map_is_valid() {
+        // Every role referenced must have a permission list.
+        for (role, _) in TEAM_ROLE_PERMISSIONS {
+            assert!(["owner", "admin", "member"].contains(role));
+        }
+        // owner maps to team:* so all perms are covered.
+        assert_eq!(TEAM_ROLE_PERMISSIONS[0].0, "owner");
     }
 }

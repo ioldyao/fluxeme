@@ -15,7 +15,17 @@ export type Permission =
   | 'admin:gateway'
   | 'admin:moderation'
   | 'admin:policies'
-  | 'admin:announcements';
+  | 'admin:announcements'
+  | 'admin:teams'
+  | 'team:*'
+  | 'team:member:manage'
+  | 'team:key:manage'
+  | 'team:wallet:view'
+  | 'team:rule:manage'
+  | 'team:usage:view'
+  | 'team:billing:view'
+  | 'team:key:use'
+  | 'team:rule:view';
 
 /** Known permission strings for use in route configs. */
 export const PERMISSIONS = {
@@ -34,6 +44,12 @@ export const PERMISSIONS = {
   GATEWAY: 'admin:gateway' as Permission,
   POLICIES: 'admin:policies' as Permission,
   ANNOUNCEMENTS: 'admin:announcements' as Permission,
+  TEAMS: 'admin:teams' as Permission,
+  TEAM_ALL: 'team:*' as Permission,
+  TEAM_MEMBER_MANAGE: 'team:member:manage' as Permission,
+  TEAM_KEY_MANAGE: 'team:key:manage' as Permission,
+  TEAM_WALLET_VIEW: 'team:wallet:view' as Permission,
+  TEAM_RULE_MANAGE: 'team:rule:manage' as Permission,
 } as const;
 
 /** Check if the current user has a specific permission.

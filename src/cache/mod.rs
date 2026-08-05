@@ -604,6 +604,7 @@ pub async fn start_obs_consumer(
                 response_body: r.response_body.clone(),
                 reasoning_body: r.reasoning_body.clone(),
                 original_model: r.original_model.clone(),
+                team_id: String::new(),
             });
             entry_ids.push(eid.clone());
         }

@@ -8,6 +8,7 @@ import {
   Route,
   ScrollText,
   User,
+  Users,
   Wallet,
 } from 'lucide-react';
 
@@ -39,6 +40,7 @@ export const authRoutes: RouteConfig[] = [
   { path: '/models/marketplace', Component: lazy(() => import('../pages/ModelsMarketplace')), guard: 'auth', label: 'nav.modelMarketplace', icon: Braces, nav: true },
   { path: '/models/routes', Component: lazy(() => import('../pages/MyRules')), guard: 'auth', label: 'nav.myRules', icon: Route, nav: true },
   { path: '/api-keys', Component: lazy(() => import('../pages/ApiKeys')), guard: 'auth', label: 'nav.apiKeys', icon: Key, nav: true },
+  { path: '/teams', Component: lazy(() => import('../pages/MyTeams')), guard: 'auth', label: 'nav.myTeams', icon: Users, nav: true },
   { path: '/usage', Component: lazy(() => import('../pages/Usage')), guard: 'auth', label: 'nav.usage', icon: ScrollText, nav: true },
   { path: '/wallet', Component: lazy(() => import('../pages/Wallet')), guard: 'auth', label: 'nav.wallet', icon: Wallet, nav: true },
   { path: '/bills', Component: lazy(() => import('../pages/Bills')), guard: 'auth', label: 'nav.bills', icon: Receipt, nav: true },

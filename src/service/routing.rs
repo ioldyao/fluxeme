@@ -225,20 +225,40 @@ impl RoutingService {
     }
 
     /// Returns (channel_id, resolved_model_name, upstream_model_override).
+    /// `team_id` is the active team of the request (None for personal accounts);
+    /// user rules scoped to that team apply.
     pub async fn route(
         &self,
         user_id: &str,
         model: &str,
+        team_id: Option<&str>,
     ) -> Result<(String, String, Option<String>), RouteError> {
         let mut model_name = model.to_string();
         let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
         let rules = self.rules.read().unwrap_or_else(|e| e.into_inner());
 
-        // Step 1: User-level rules — model name rewrite (self-service)
+        // Step 1: User/team-level rules — model name rewrite (self-service)
         // Exact match on source_model, rewrite to target_model if set.
+        // A rule is either personal (team_id None, matched by user_id) or
+        // team-scoped (team_id Some, matched by the request's active team).
         for rule in rules.iter() {
-            if rule.scope != "user" || rule.user_id != user_id || !rule.enabled {
+            if rule.scope != "user" || !rule.enabled {
                 continue;
+            }
+            match &rule.team_id {
+                Some(rid) => {
+                    // Team-scoped rule: apply only when the request carries
+                    // the same active team.
+                    if team_id != Some(rid.as_str()) {
+                        continue;
+                    }
+                }
+                None => {
+                    // Personal rule: apply only to the owning user.
+                    if rule.user_id != user_id {
+                        continue;
+                    }
+                }
             }
             if !rule.target_model.is_empty() && match_pattern(&model_name, &rule.source_model) {
                 model_name = rule.target_model.clone();

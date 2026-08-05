@@ -35,6 +35,7 @@ pub mod policies;
 pub mod routing;
 pub mod rules;
 pub mod settings;
+pub mod teams;
 pub mod usage;
 pub mod users;
 pub mod wallet;
@@ -535,6 +536,68 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         .route(
             "/api/me/permissions",
             axum::routing::get(me::my_permissions),
+        )
+        // My teams (self-service)
+        .route("/api/teams", axum::routing::get(me::my_teams))
+        .route("/api/teams/{team_id}", axum::routing::get(me::my_team_detail))
+        .route(
+            "/api/teams/{team_id}/members",
+            axum::routing::get(me::my_team_members).post(me::add_my_team_member),
+        )
+        .route(
+            "/api/teams/{team_id}/members/{user_id}",
+            axum::routing::put(me::set_my_team_member_role).delete(me::remove_my_team_member),
+        )
+        .route(
+            "/api/teams/{team_id}/wallet",
+            axum::routing::get(me::my_team_wallet).post(me::credit_my_team_wallet),
+        )
+        .route(
+            "/api/teams/{team_id}/wallet/transactions",
+            axum::routing::get(me::my_team_wallet_transactions),
+        )
+        .route(
+            "/api/teams/{team_id}/keys",
+            axum::routing::get(me::my_team_api_keys).post(me::create_my_team_api_key),
+        )
+        .route(
+            "/api/teams/{team_id}/keys/{key_val}",
+            axum::routing::delete(me::delete_my_team_api_key),
+        )
+        .route(
+            "/api/teams/{team_id}/rules",
+            axum::routing::get(me::my_team_rules).post(me::create_my_team_rule),
+        )
+        .route(
+            "/api/teams/{team_id}/rules/{rule_id}",
+            axum::routing::delete(me::delete_my_team_rule),
+        )
+        // Admin team management
+        .route(
+            "/api/admin/teams",
+            axum::routing::get(teams::list_all_teams).post(teams::create_team),
+        )
+        .route(
+            "/api/admin/teams/{team_id}",
+            axum::routing::get(teams::get_team_detail)
+                .put(teams::update_team)
+                .delete(teams::delete_team),
+        )
+        .route(
+            "/api/admin/teams/{team_id}/members",
+            axum::routing::get(teams::list_team_members).post(teams::add_team_member),
+        )
+        .route(
+            "/api/admin/teams/{team_id}/members/{user_id}",
+            axum::routing::put(teams::set_team_member_role).delete(teams::remove_team_member),
+        )
+        .route(
+            "/api/admin/teams/{team_id}/wallet",
+            axum::routing::get(teams::get_team_wallet_detail).post(teams::credit_team_wallet),
+        )
+        .route(
+            "/api/admin/teams/{team_id}/wallet/transactions",
+            axum::routing::get(teams::list_team_wallet_transactions),
         )
         // Users
         .route(

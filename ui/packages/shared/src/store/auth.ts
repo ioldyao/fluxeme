@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { queryClient } from '../lib/query';
-import type { CurrentSessionResponse, LoginResponse, UserRole } from '../types';
+import type { CurrentSessionResponse, LoginResponse, Team, UserRole } from '../types';
 
 interface AuthState {
   role: UserRole | null;
@@ -9,12 +9,18 @@ interface AuthState {
   userName: string | null;
   timezone: string;
   permissions: string[];
+  /** Teams the user belongs to (self-service list). */
+  teams: Team[];
+  /** The currently active team, or null for personal context. */
+  activeTeamId: string | null;
   isAuthenticated: boolean;
   isSessionResolved: boolean;
   setSession: (res: LoginResponse) => void;
   setCurrentSession: (res: CurrentSessionResponse) => void;
   setPermissions: (perms: string[]) => void;
   setTimezone: (tz: string) => void;
+  setTeams: (teams: Team[]) => void;
+  setActiveTeam: (teamId: string | null) => void;
   clear: () => void;
 }
 
@@ -26,6 +32,8 @@ export const useAuth = create<AuthState>()(
       userName: null,
       timezone: 'UTC',
       permissions: [],
+      teams: [],
+      activeTeamId: null,
       isAuthenticated: false,
       isSessionResolved: false,
       setSession: (res) => {
@@ -51,6 +59,8 @@ export const useAuth = create<AuthState>()(
       },
       setPermissions: (perms) => set({ permissions: perms }),
       setTimezone: (timezone) => set({ timezone }),
+      setTeams: (teams) => set({ teams }),
+      setActiveTeam: (activeTeamId) => set({ activeTeamId }),
       clear: () => {
         queryClient.clear();
         set({
@@ -59,6 +69,8 @@ export const useAuth = create<AuthState>()(
           userName: null,
           timezone: 'UTC',
           permissions: [],
+          teams: [],
+          activeTeamId: null,
           isAuthenticated: false,
           isSessionResolved: true,
         });
@@ -73,6 +85,8 @@ export const useAuth = create<AuthState>()(
         userName: state.userName,
         timezone: state.timezone,
         permissions: state.permissions,
+        teams: state.teams,
+        activeTeamId: state.activeTeamId,
       }),
     },
   ),

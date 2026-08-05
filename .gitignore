@@ -25,3 +25,6 @@ outputs/
 test/
 web/assets/
 .claude/commands/
+
+# TypeScript incremental build cache
+*.tsbuildinfo

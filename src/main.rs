@@ -24,7 +24,7 @@ use crate::cache::GateStatus;
 use crate::ch_backend::ClickHouseBackend;
 
 use crate::admin::AdminModule;
-use crate::authz::AuthzModule;
+use crate::authz::{AuthzModule, TeamAuthzModule};
 use crate::cache::RedisCache;
 use crate::config::loader;
 use crate::db::Database;
@@ -411,6 +411,18 @@ async fn main() {
         .await
         .expect("Failed to load Casbin policies from DB");
 
+    // Initialize team-scoped Casbin enforcer (domain-aware team RBAC).
+    let team_authz = Arc::new(
+        TeamAuthzModule::new()
+            .await
+            .expect("Failed to initialize team Casbin module"),
+    );
+    // Rebuild team role bindings from the DB so team permissions survive a
+    // restart (the enforcer is in-memory).
+    team_authz
+        .reload_all(&db)
+        .await;
+
     // Initialize content filter service
     let content_filter = Arc::new(ContentFilterService::new(db.clone()).await);
 
@@ -483,6 +495,7 @@ async fn main() {
         db,
         admin,
         authz,
+        team_authz,
         health,
         sso,
         gateway_config,

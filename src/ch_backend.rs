@@ -41,6 +41,9 @@ pub struct UsageEvent {
     pub response_body: Option<String>,
     pub reasoning_body: Option<String>,
     pub original_model: String,
+    /// Team scope for this usage event. Empty string = personal (non-team).
+    #[serde(default)]
+    pub team_id: String,
 }
 
 /// ClickHouse backend for observability data.
@@ -140,6 +143,8 @@ impl From<UsageEventRow> for crate::domain::usage::UsageRecord {
             endpoint_id: row.endpoint_id,
             endpoint_url: row.endpoint_url,
             original_model: row.original_model,
+            team_id: None,
+            account_type: None,
         }
     }
 }
@@ -174,6 +179,8 @@ impl From<UsageDetailRow> for crate::domain::usage::UsageRecord {
             endpoint_id: row.endpoint_id,
             endpoint_url: row.endpoint_url,
             original_model: row.original_model,
+            team_id: None,
+            account_type: None,
         }
     }
 }
@@ -267,7 +274,8 @@ impl ClickHouseBackend {
             request_body Nullable(String),\
             response_body Nullable(String),\
             reasoning_body Nullable(String),\
-            original_model String\
+            original_model String,\
+            team_id String DEFAULT ''\
         ) ENGINE = MergeTree()\
         PARTITION BY toYYYYMM(timestamp)\
         ORDER BY (model, channel_id, timestamp)\
@@ -309,6 +317,7 @@ impl ClickHouseBackend {
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS original_model String DEFAULT ''",
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS endpoint_url Nullable(String)",
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cache_write_tokens UInt64 DEFAULT 0",
+            "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS team_id String DEFAULT ''",
         ] {
             self.client
                 .query(alter)

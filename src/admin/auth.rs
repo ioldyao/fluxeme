@@ -166,7 +166,7 @@ pub(crate) async fn auth_session(
         "admin:dashboard", "admin:users", "admin:channels", "admin:models",
         "admin:model-pricing", "admin:rules", "admin:moderation", "admin:usage",
         "admin:bills", "admin:recharge-keys", "admin:health", "admin:settings",
-        "admin:gateway", "admin:policies", "admin:announcements",
+        "admin:gateway", "admin:policies", "admin:announcements", "admin:teams",
     ];
     let mut permissions = Vec::new();
     for perm in &all_known {
@@ -174,6 +174,12 @@ pub(crate) async fn auth_session(
             permissions.push(perm.to_string());
         }
     }
+
+    let teams = state
+        .db
+        .list_teams_for_user(&info.user_id)
+        .await
+        .unwrap_or_default();
 
     Ok(Json(serde_json::json!({
         "authenticated": true,
@@ -187,6 +193,7 @@ pub(crate) async fn auth_session(
             "user": true,
             "admin": info.role == "admin",
         },
+        "teams": teams,
     })))
 }
 
