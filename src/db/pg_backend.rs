@@ -588,6 +588,7 @@ impl DbBackend for PgBackend {
         add_col!("ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TEXT");
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS expires_at TEXT");
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS revoked BOOLEAN NOT NULL DEFAULT false");
+        add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS team_id TEXT REFERENCES teams(id) ON DELETE CASCADE");
         add_col!("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS client_ip TEXT");
         add_col!("ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS upstream_model TEXT");
         add_col!("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS cache_read_price DOUBLE PRECISION NOT NULL DEFAULT 0.0");
@@ -3547,17 +3548,19 @@ impl DbBackend for PgBackend {
         amount: Decimal,
         created_by: &str,
         expires_at: Option<&str>,
+        team_id: Option<&str>,
     ) -> Result<(), DbError> {
         let now = chrono::Utc::now().to_rfc3339();
         query(
-            "INSERT INTO recharge_keys (key, amount, created_by, created_at, expires_at) \
-             VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO recharge_keys (key, amount, created_by, created_at, expires_at, team_id) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(key)
         .bind(amount.to_f64().unwrap_or(0.0))
         .bind(created_by)
         .bind(&now)
         .bind(expires_at)
+        .bind(team_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -3616,44 +3619,80 @@ impl DbBackend for PgBackend {
             return Err(DbError(msg));
         }
 
-        // Get amount from the key
-        let (amount,): (f64,) = query_as("SELECT amount FROM recharge_keys WHERE key = $1")
-            .bind(key)
-            .fetch_one(&mut *tx)
-            .await?;
+        // Get amount & team_id from the key
+        let (amount, team_id): (f64, Option<String>) =
+            query_as("SELECT amount, team_id FROM recharge_keys WHERE key = $1")
+                .bind(key)
+                .fetch_one(&mut *tx)
+                .await?;
 
-        // Get current balance
-        let (balance,): (f64,) = query_as("SELECT balance FROM users WHERE id = $1")
+        if let Some(ref tid) = team_id {
+            // ── Team wallet branch ──
+            let (balance,): (f64,) =
+                query_as("SELECT balance FROM team_wallets WHERE team_id = $1")
+                    .bind(tid)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            let new_balance = balance + amount;
+            query("UPDATE team_wallets SET balance = $1, updated_at = $2 WHERE team_id = $3")
+                .bind(new_balance)
+                .bind(&now)
+                .bind(tid)
+                .execute(&mut *tx)
+                .await?;
+            // Record team wallet transaction
+            query(
+                "INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, \
+                 balance_after, method, status, note, created_at, team_id, account_type) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
             .bind(user_id)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|_| DbError("User not found".to_string()))?;
-
-        let new_balance = balance + amount;
-        query("UPDATE users SET balance = $1 WHERE id = $2")
+            .bind("recharge")
+            .bind(amount)
+            .bind(balance)
             .bind(new_balance)
-            .bind(user_id)
+            .bind("recharge_key")
+            .bind("completed")
+            .bind(format!("Key recharge: {} for team: {}", key, tid))
+            .bind(&now)
+            .bind(tid)
+            .bind("team")
             .execute(&mut *tx)
             .await?;
-
-        // Record transaction
-        query(
-            "INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, \
-             balance_after, method, status, note, created_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(user_id)
-        .bind("recharge")
-        .bind(amount)
-        .bind(balance)
-        .bind(new_balance)
-        .bind("recharge_key")
-        .bind("completed")
-        .bind(format!("Key recharge: {}", key))
-        .bind(&now)
-        .execute(&mut *tx)
-        .await?;
+        } else {
+            // ── Personal wallet branch (existing behavior) ──
+            let (balance,): (f64,) = query_as("SELECT balance FROM users WHERE id = $1")
+                .bind(user_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|_| DbError("User not found".to_string()))?;
+            let new_balance = balance + amount;
+            query("UPDATE users SET balance = $1 WHERE id = $2")
+                .bind(new_balance)
+                .bind(user_id)
+                .execute(&mut *tx)
+                .await?;
+            query(
+                "INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, \
+                 balance_after, method, status, note, created_at, team_id, account_type) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(user_id)
+            .bind("recharge")
+            .bind(amount)
+            .bind(balance)
+            .bind(new_balance)
+            .bind("recharge_key")
+            .bind("completed")
+            .bind(format!("Key recharge: {}", key))
+            .bind(&now)
+            .bind(Option::<String>::None)
+            .bind("user")
+            .execute(&mut *tx)
+            .await?;
+        }
 
         tx.commit().await?;
         Ok(Decimal::try_from(amount).unwrap_or(Decimal::ZERO))
@@ -3675,7 +3714,7 @@ impl DbBackend for PgBackend {
 
     async fn list_recharge_keys(&self) -> Result<Vec<RechargeKeyRow>, DbError> {
         let rows = query(
-            "SELECT key, amount, used_by, used_at, created_by, created_at, expires_at, revoked \
+            "SELECT key, amount, used_by, used_at, created_by, created_at, expires_at, revoked, team_id \
              FROM recharge_keys ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
@@ -3691,6 +3730,7 @@ impl DbBackend for PgBackend {
                 created_at: r.get(5),
                 expires_at: r.get(6),
                 revoked: r.get::<bool, _>(7),
+                team_id: r.get(8),
             })
             .collect())
     }
@@ -3701,7 +3741,7 @@ impl DbBackend for PgBackend {
         offset: usize,
     ) -> Result<Vec<RechargeKeyRow>, DbError> {
         let rows = query(
-            "SELECT key, amount, used_by, used_at, created_by, created_at, expires_at, revoked \
+            "SELECT key, amount, used_by, used_at, created_by, created_at, expires_at, revoked, team_id \
              FROM recharge_keys ORDER BY created_at DESC LIMIT $1 OFFSET $2",
         )
         .bind(limit as i64)
@@ -3719,6 +3759,7 @@ impl DbBackend for PgBackend {
                 created_at: r.get(5),
                 expires_at: r.get(6),
                 revoked: r.get::<bool, _>(7),
+                team_id: r.get(8),
             })
             .collect())
     }
@@ -3749,7 +3790,7 @@ impl DbBackend for PgBackend {
     ) -> Result<Vec<RechargeKeyRow>, DbError> {
         let now = chrono::Utc::now().to_rfc3339();
         let mut builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
-            "SELECT key, amount, used_by, used_at, created_by, created_at, expires_at, revoked \
+            "SELECT key, amount, used_by, used_at, created_by, created_at, expires_at, revoked, team_id \
              FROM recharge_keys WHERE 1=1",
         );
 
@@ -3772,6 +3813,7 @@ impl DbBackend for PgBackend {
                 created_at: r.get(5),
                 expires_at: r.get(6),
                 revoked: r.get::<bool, _>(7),
+                team_id: r.get(8),
             })
             .collect())
     }

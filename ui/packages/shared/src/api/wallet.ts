@@ -112,8 +112,8 @@ export function useRecharge() {
 export function useCreateRechargeKey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { amount: number; expires_at?: string }) =>
-      api<{ key: string; amount: number; expires_at?: string }>('/wallet/create-key', {
+    mutationFn: (data: { amount: number; expires_at?: string; team_id?: string }) =>
+      api<{ key: string; amount: number; expires_at?: string; team_id?: string }>('/wallet/create-key', {
         method: 'POST',
         body: data,
       }),
@@ -140,10 +140,10 @@ export function useRevokeKey() {
 export function useRedeemKey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (key: string) =>
-      api<{ amount: number; balance: number }>('/wallet/redeem-key', {
+    mutationFn: (data: { key: string; team_id?: string }) =>
+      api<{ amount: number; balance: number; team_id?: string }>('/wallet/redeem-key', {
         method: 'POST',
-        body: { key },
+        body: data,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['wallet'] });
