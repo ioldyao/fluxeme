@@ -74,6 +74,9 @@ pub(crate) struct WalletCreateKeyReq {
     #[serde(with = "rust_decimal::serde::float")]
     amount: Decimal,
     expires_at: Option<String>,
+    /// Team scope. None = personal recharge key, Some = team recharge key.
+    #[serde(default)]
+    team_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -82,11 +85,17 @@ pub(crate) struct CreateKeyResp {
     #[serde(with = "rust_decimal::serde::float")]
     amount: Decimal,
     expires_at: Option<String>,
+    #[serde(default)]
+    team_id: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub(crate) struct RedeemKeyReq {
     key: String,
+    /// Team scope. When set, the redeemed amount is credited to the
+    /// team wallet instead of the personal wallet (the key must match).
+    #[serde(default)]
+    team_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -95,6 +104,8 @@ pub(crate) struct RedeemKeyResp {
     amount: Decimal,
     #[serde(with = "rust_decimal::serde::float")]
     balance: Decimal,
+    #[serde(default)]
+    team_id: Option<String>,
 }
 
 pub(crate) async fn wallet_recharge(
@@ -126,6 +137,7 @@ pub(crate) async fn wallet_create_key(
             req.amount,
             &session.user_id,
             req.expires_at.as_deref(),
+            req.team_id.as_deref(),
         )
         .await
         .map_err(db_err)?;
@@ -133,6 +145,7 @@ pub(crate) async fn wallet_create_key(
         key,
         amount: req.amount,
         expires_at: req.expires_at,
+        team_id: req.team_id,
     }))
 }
 
@@ -147,27 +160,45 @@ pub(crate) async fn wallet_redeem_key(
         .redeem_recharge_key(&req.key, &session.user_id)
         .await
         .map_err(db_err_bad_request)?;
-    let (balance, frozen) = state
-        .db
-        .get_wallet_balance(&session.user_id)
-        .await
-        .map_err(db_err)?;
-
-    // Sync to Redis gate cache
-    let status = compute_gate_status(balance, frozen);
-    if let Err(e) = state
-        .cache
-        .set_gate_and_balance(&session.user_id, status, balance)
-        .await
-    {
-        tracing::warn!(
-            user_id = &session.user_id,
-            "Failed to sync redeem to Redis: {}",
-            e
-        );
+    let team_id = req.team_id.as_deref();
+    if let Some(tid) = team_id {
+        // Team wallet: sync gate status (no user balance change)
+        let (balance, frozen) = state
+            .db
+            .get_team_wallet(tid)
+            .await
+            .map_err(db_err)?
+            .unwrap_or((0.0, 0.0));
+        let balance_decimal = Decimal::try_from(balance).unwrap_or(Decimal::ZERO);
+        let frozen_decimal = Decimal::try_from(frozen).unwrap_or(Decimal::ZERO);
+        let status = compute_gate_status(balance_decimal, frozen_decimal);
+        let _ = state
+            .cache
+            .set_gate_and_balance(&format!("team:{}", tid), status, balance_decimal)
+            .await;
+        Ok(Json(RedeemKeyResp {
+            amount,
+            balance: balance_decimal,
+            team_id: Some(tid.to_string()),
+        }))
+    } else {
+        // Personal wallet: existing behavior
+        let (balance, frozen) = state
+            .db
+            .get_wallet_balance(&session.user_id)
+            .await
+            .map_err(db_err)?;
+        let status = compute_gate_status(balance, frozen);
+        let _ = state
+            .cache
+            .set_gate_and_balance(&session.user_id, status, balance)
+            .await;
+        Ok(Json(RedeemKeyResp {
+            amount,
+            balance,
+            team_id: None,
+        }))
     }
-
-    Ok(Json(RedeemKeyResp { amount, balance }))
 }
 
 #[derive(Deserialize)]

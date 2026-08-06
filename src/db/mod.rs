@@ -73,6 +73,9 @@ pub struct RechargeKeyRow {
     pub created_at: String,
     pub expires_at: Option<String>,
     pub revoked: bool,
+    /// Team scope. None = personal recharge, Some = team recharge.
+    #[serde(default)]
+    pub team_id: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -560,9 +563,10 @@ impl Database {
         amount: Decimal,
         created_by: &str,
         expires_at: Option<&str>,
+        team_id: Option<&str>,
     ) -> Result<(), DbError> {
         self.backend
-            .create_recharge_key(key, amount, created_by, expires_at)
+            .create_recharge_key(key, amount, created_by, expires_at, team_id)
             .await
     }
     pub async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<Decimal, DbError> {
