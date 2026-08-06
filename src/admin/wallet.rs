@@ -92,10 +92,6 @@ pub(crate) struct CreateKeyResp {
 #[derive(Deserialize)]
 pub(crate) struct RedeemKeyReq {
     key: String,
-    /// Team scope. When set, the redeemed amount is credited to the
-    /// team wallet instead of the personal wallet (the key must match).
-    #[serde(default)]
-    team_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -155,14 +151,14 @@ pub(crate) async fn wallet_redeem_key(
     Json(req): Json<RedeemKeyReq>,
 ) -> Result<Json<RedeemKeyResp>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    let amount = state
+    let (amount, team_id) = state
         .db
         .redeem_recharge_key(&req.key, &session.user_id)
         .await
         .map_err(db_err_bad_request)?;
-    let team_id = req.team_id.as_deref();
-    if let Some(tid) = team_id {
-        // Team wallet: sync gate status (no user balance change)
+
+    if let Some(ref tid) = team_id {
+        // Team wallet: sync gate status
         let (balance, frozen) = state
             .db
             .get_team_wallet(tid)

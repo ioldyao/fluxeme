@@ -34,6 +34,8 @@ export interface RechargeKeyRow {
   created_at: string;
   expires_at: string | null;
   revoked: boolean;
+  /** Team scope. Present when the key is for team recharge. */
+  team_id?: string | null;
 }
 
 export function useWalletOverview() {
@@ -140,10 +142,10 @@ export function useRevokeKey() {
 export function useRedeemKey() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { key: string; team_id?: string }) =>
+    mutationFn: (key: string) =>
       api<{ amount: number; balance: number; team_id?: string }>('/wallet/redeem-key', {
         method: 'POST',
-        body: data,
+        body: { key },
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['wallet'] });

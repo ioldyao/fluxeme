@@ -293,7 +293,7 @@ function TeamWalletView({ teamId }: { teamId: string }) {
       return;
     }
     redeem.mutate(
-      { key, team_id: teamId },
+      key,
       {
         onSuccess: () => {
           toast.success(t('wallet.redeemSuccess'));

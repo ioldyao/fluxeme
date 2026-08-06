@@ -3566,7 +3566,7 @@ impl DbBackend for PgBackend {
         Ok(())
     }
 
-    async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<Decimal, DbError> {
+    async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<(Decimal, Option<String>), DbError> {
         let now = chrono::Utc::now().to_rfc3339();
         let mut tx = self.pool.begin().await?;
 
@@ -3695,7 +3695,7 @@ impl DbBackend for PgBackend {
         }
 
         tx.commit().await?;
-        Ok(Decimal::try_from(amount).unwrap_or(Decimal::ZERO))
+        Ok((Decimal::try_from(amount).unwrap_or(Decimal::ZERO), team_id))
     }
 
     async fn revoke_recharge_key(&self, key: &str) -> Result<(), DbError> {

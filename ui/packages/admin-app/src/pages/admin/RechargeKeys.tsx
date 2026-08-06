@@ -21,6 +21,8 @@ export default function RechargeKeys() {
   // ── Create key ──
   const [createKeyAmt, setCreateKeyAmt] = useState('');
   const [createKeyExpiry, setCreateKeyExpiry] = useState('');
+  const [createKeyType, setCreateKeyType] = useState<'personal' | 'team'>('personal');
+  const [createKeyTeamId, setCreateKeyTeamId] = useState('');
   const [newKey, setNewKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const createKey = useCreateRechargeKey();
@@ -28,12 +30,19 @@ export default function RechargeKeys() {
   const handleCreateKey = () => {
     const amt = Number(createKeyAmt);
     if (!amt || amt <= 0) return;
+    if (createKeyType === 'team' && !createKeyTeamId.trim()) {
+      toast.error(t('common.required'));
+      return;
+    }
     const expires_at = createKeyExpiry ? new Date(createKeyExpiry).toISOString() : undefined;
-    createKey.mutate({ amount: amt, expires_at }, {
+    const team_id = createKeyType === 'team' ? createKeyTeamId.trim() : undefined;
+    createKey.mutate({ amount: amt, expires_at, team_id }, {
       onSuccess: (res) => {
         setNewKey(res.key);
         setCreateKeyAmt('');
         setCreateKeyExpiry('');
+        setCreateKeyType('personal');
+        setCreateKeyTeamId('');
         toast.success(t('wallet.createKeySuccess'));
       },
       onError: (err: Error) => {
@@ -112,6 +121,29 @@ export default function RechargeKeys() {
                 className="h-9 w-full rounded-md border bg-background px-3 text-sm"
               />
             </div>
+            <div className="w-32">
+              <label className="text-xs text-muted-foreground mb-1 block">{t('wallet.keyOwnership')}</label>
+              <select
+                value={createKeyType}
+                onChange={(e) => setCreateKeyType(e.target.value as 'personal' | 'team')}
+                className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+              >
+                <option value="personal">{t('wallet.keyTypePersonal')}</option>
+                <option value="team">{t('wallet.keyTypeTeam')}</option>
+              </select>
+            </div>
+            {createKeyType === 'team' && (
+              <div className="flex-1">
+                <label className="text-xs text-muted-foreground mb-1 block">{t('wallet.keyTeamIdPlaceholder')}</label>
+                <input
+                  type="text"
+                  placeholder={t('wallet.keyTeamIdPlaceholder')}
+                  value={createKeyTeamId}
+                  onChange={(e) => setCreateKeyTeamId(e.target.value)}
+                  className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                />
+              </div>
+            )}
             <Button
               variant="default"
               size="sm"
@@ -183,6 +215,7 @@ export default function RechargeKeys() {
               <tr className="border-b text-xs text-muted-foreground">
                 <th className="text-left px-5 py-3 font-medium">Key</th>
                 <th className="text-left px-5 py-3 font-medium">{t('wallet.keyStatus')}</th>
+                <th className="text-left px-5 py-3 font-medium">{t('wallet.keyOwnership')}</th>
                 <th className="text-right px-5 py-3 font-medium">{t('wallet.txAmount')}</th>
                 <th className="text-left px-5 py-3 font-medium">{t('wallet.usedBy')}</th>
                 <th className="text-left px-5 py-3 font-medium">{t('wallet.usedAt')}</th>
@@ -221,6 +254,15 @@ export default function RechargeKeys() {
                         {statusLabel}
                       </span>
                     </td>
+                    <td className="px-5 py-3 text-xs">
+                      {k.team_id ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-brand/10 px-2 py-0.5 text-xs font-medium text-brand">
+                          {t('wallet.keyTypeTeam')}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">{t('wallet.keyTypePersonal')}</span>
+                      )}
+                    </td>
                     <td className="px-5 py-3 text-right font-mono text-sm">{k.amount.toFixed(6)}</td>
                     <td className="px-5 py-3">{k.used_by || '—'}</td>
                     <td className="px-5 py-3 text-muted-foreground text-xs">
@@ -250,7 +292,7 @@ export default function RechargeKeys() {
                 );
               }) : (
                 <tr>
-                  <td colSpan={9} className="px-5 py-8 text-center text-muted-foreground text-sm">
+                  <td colSpan={10} className="px-5 py-8 text-center text-muted-foreground text-sm">
                     {t('wallet.empty')}
                   </td>
                 </tr>
