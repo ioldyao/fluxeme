@@ -9,9 +9,9 @@ import {
   useAdminSetTeamMemberRole,
   useAdminRemoveTeamMember,
   useAdminTeamWallet,
-  useCreditTeamWallet,
   useTeamWalletTransactions,
 } from '@fluxeme/shared/src/api/teams';
+import { useRedeemKey } from '@fluxeme/shared/src/api/wallet';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { EmptyState } from '@fluxeme/shared/src/components/EmptyState';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
@@ -335,21 +335,23 @@ function WalletTab({ teamId }: { teamId: string }) {
   const { t } = useTranslation();
   const walletQuery = useAdminTeamWallet(teamId);
   const txQuery = useTeamWalletTransactions(teamId);
-  const credit = useCreditTeamWallet();
-  const [amount, setAmount] = useState('');
+  const redeem = useRedeemKey();
+  const [redeemKeyInput, setRedeemKeyInput] = useState('');
 
-  const handleCredit = () => {
-    const v = Number(amount);
-    if (!v || v <= 0) {
+  const handleRedeem = () => {
+    const key = redeemKeyInput.trim();
+    if (!key) {
       toast.error(t('common.required'));
       return;
     }
-    credit.mutate(
-      { teamId, amount: v },
+    redeem.mutate(
+      { key, team_id: teamId },
       {
         onSuccess: () => {
-          toast.success(t('toast.updated'));
-          setAmount('');
+          toast.success(t('wallet.redeemSuccess'));
+          setRedeemKeyInput('');
+          walletQuery.refetch();
+          txQuery.refetch();
         },
         onError: (e) => toast.error(e.message),
       },
@@ -371,14 +373,15 @@ function WalletTab({ teamId }: { teamId: string }) {
       </div>
       <div className="flex items-center gap-2">
         <Input
-          type="number"
-          min="0"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          placeholder={t('team.creditAmount')}
-          className="max-w-[160px]"
+          value={redeemKeyInput}
+          onChange={(e) => setRedeemKeyInput(e.target.value)}
+          placeholder={t('wallet.keyInput')}
+          className="flex-1"
+          onKeyDown={(e) => e.key === 'Enter' && handleRedeem()}
         />
-        <Button onClick={handleCredit}>{t('team.credit')}</Button>
+        <Button onClick={handleRedeem} disabled={redeem.isPending}>
+          {t('wallet.redeemBtn')}
+        </Button>
       </div>
       <div className="space-y-1">
         <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
