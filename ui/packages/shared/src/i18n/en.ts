@@ -595,6 +595,8 @@ const en: Record<string, string> = {
   'wallet.keyInput': 'Enter recharge key',
   'wallet.redeemBtn': 'Redeem',
   'wallet.redeemSuccess': 'Redeemed {{amount}} from key',
+  'wallet.redeemKeyPlaceholder': 'Enter recharge key to credit the team',
+  'wallet.redeemKeyBtn': 'Redeem to Team',
   'wallet.createKey': 'Create Recharge Key',
   'wallet.createKeySub': 'Generate a new recharge key (admin)',
   'wallet.createKeyBtn': 'Generate Key',

@@ -595,6 +595,8 @@ const zh: Record<string, string> = {
   'wallet.keyInput': '请输入充值 Key',
   'wallet.redeemBtn': '兑换',
   'wallet.redeemSuccess': '成功兑换 {{amount}}',
+  'wallet.redeemKeyPlaceholder': '输入充值 Key 为团队充值',
+  'wallet.redeemKeyBtn': '兑换到团队',
   'wallet.createKey': '创建充值 Key',
   'wallet.createKeySub': '生成新的充值 Key（管理员）',
   'wallet.createKeyBtn': '生成 Key',
