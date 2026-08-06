@@ -125,6 +125,18 @@ pub(crate) async fn wallet_create_key(
         chrono::DateTime::parse_from_rfc3339(exp)
             .map_err(|_| AdminError::bad_request("expires_at must be a valid RFC3339 timestamp"))?;
     }
+    // Validate team_id if provided: must be a non-empty string and exist
+    if let Some(ref tid) = req.team_id {
+        if tid.trim().is_empty() {
+            return Err(AdminError::bad_request("team_id must not be empty"));
+        }
+        state
+            .db
+            .get_team(tid.trim())
+            .await
+            .map_err(db_err)?
+            .ok_or_else(|| AdminError::bad_request(format!("Team not found: {}", tid)))?;
+    }
     let key = uuid::Uuid::new_v4().to_string();
     state
         .db
