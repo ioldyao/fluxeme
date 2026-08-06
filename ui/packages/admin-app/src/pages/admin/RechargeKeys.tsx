@@ -5,6 +5,13 @@ import { Copy, Check, Loader2, KeyRound, Search } from 'lucide-react';
 import { useRechargeKeys, useCreateRechargeKey, useRevokeKey } from '@fluxeme/shared/src/api/wallet';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
 import { Button } from '@fluxeme/shared/src/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@fluxeme/shared/src/components/ui/select';
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -123,14 +130,18 @@ export default function RechargeKeys() {
             </div>
             <div className="w-32">
               <label className="text-xs text-muted-foreground mb-1 block">{t('wallet.keyOwnership')}</label>
-              <select
+              <Select
                 value={createKeyType}
-                onChange={(e) => setCreateKeyType(e.target.value as 'personal' | 'team')}
-                className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                onValueChange={(v) => setCreateKeyType(v as 'personal' | 'team')}
               >
-                <option value="personal">{t('wallet.keyTypePersonal')}</option>
-                <option value="team">{t('wallet.keyTypeTeam')}</option>
-              </select>
+                <SelectTrigger className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="personal">{t('wallet.keyTypePersonal')}</SelectItem>
+                  <SelectItem value="team">{t('wallet.keyTypeTeam')}</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             {createKeyType === 'team' && (
               <div className="flex-1">
@@ -195,17 +206,21 @@ export default function RechargeKeys() {
               className="h-7 w-40 rounded-md border bg-background pl-8 pr-2 text-xs"
             />
           </div>
-          <select
+          <Select
             value={keyStatus}
-            onChange={(e) => { setKeyStatus(e.target.value); setKeyPage(1); }}
-            className="h-7 rounded-md border bg-background px-2 text-xs"
+            onValueChange={(v) => { setKeyStatus(v); setKeyPage(1); }}
           >
-            <option value="">{t('wallet.filterAllTypes')}</option>
-            <option value="active">{t('wallet.statusActive')}</option>
-            <option value="used">{t('wallet.statusUsed')}</option>
-            <option value="expired">{t('wallet.statusExpired')}</option>
-            <option value="revoked">{t('wallet.statusRevoked')}</option>
-          </select>
+            <SelectTrigger className="h-7 w-32 text-xs">
+              <SelectValue placeholder={t('wallet.filterAllTypes')} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">{t('wallet.filterAllTypes')}</SelectItem>
+              <SelectItem value="active">{t('wallet.statusActive')}</SelectItem>
+              <SelectItem value="used">{t('wallet.statusUsed')}</SelectItem>
+              <SelectItem value="expired">{t('wallet.statusExpired')}</SelectItem>
+              <SelectItem value="revoked">{t('wallet.statusRevoked')}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {/* Table */}
