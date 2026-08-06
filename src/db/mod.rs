@@ -569,7 +569,7 @@ impl Database {
             .create_recharge_key(key, amount, created_by, expires_at, team_id)
             .await
     }
-    pub async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<Decimal, DbError> {
+    pub async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<(Decimal, Option<String>), DbError> {
         self.backend.redeem_recharge_key(key, user_id).await
     }
     pub async fn revoke_recharge_key(&self, key: &str) -> Result<(), DbError> {

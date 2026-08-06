@@ -236,7 +236,7 @@ pub trait DbBackend: Send + Sync {
         expires_at: Option<&str>,
         team_id: Option<&str>,
     ) -> Result<(), DbError>;
-    async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<Decimal, DbError>;
+    async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<(Decimal, Option<String>), DbError>;
     async fn revoke_recharge_key(&self, key: &str) -> Result<(), DbError>;
     async fn list_recharge_keys(&self) -> Result<Vec<RechargeKeyRow>, DbError>;
     async fn list_recharge_keys_paginated(

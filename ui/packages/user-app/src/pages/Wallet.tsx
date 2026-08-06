@@ -103,7 +103,7 @@ export default function WalletPage() {
 
   const handleRedeem = () => {
     if (!keyInput.trim()) return;
-    redeem.mutate({ key: keyInput.trim() }, {
+    redeem.mutate(keyInput.trim(), {
       onSuccess: (res) => {
         toast.success(t('wallet.redeemSuccess', { amount: fmt(res.amount) }));
         setKeyInput('');
