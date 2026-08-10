@@ -396,6 +396,14 @@ pub(crate) struct FlowMetricsClientIp {
 }
 
 #[derive(Serialize)]
+pub(crate) struct FlowMetricsTrend {
+    pub(crate) bucket_unit: &'static str,
+    pub(crate) buckets: Vec<String>,
+    pub(crate) success_completed: Vec<u64>,
+    pub(crate) failed_completed: Vec<u64>,
+}
+
+#[derive(Serialize)]
 pub(crate) struct FlowMetricsHistorical {
     pub(crate) total_completed: u64,
     pub(crate) success_completed: u64,
@@ -404,6 +412,7 @@ pub(crate) struct FlowMetricsHistorical {
     pub(crate) client_ips: Vec<FlowMetricsClientIp>,
     pub(crate) latency_ms: FlowMetricsPercentiles,
     pub(crate) ttft_ms: FlowMetricsPercentiles,
+    pub(crate) trend: FlowMetricsTrend,
 }
 
 #[derive(Serialize)]
