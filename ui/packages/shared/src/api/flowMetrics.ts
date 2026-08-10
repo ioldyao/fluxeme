@@ -8,6 +8,11 @@ export interface FlowMetricsParams {
   model?: string;
 }
 
+export interface FlowMetricsQueryOptions {
+  enabled?: boolean;
+  refetchInterval?: number | false;
+}
+
 function buildFlowMetricsSearchParams(params: FlowMetricsParams = {}) {
   const searchParams = new URLSearchParams();
   if (params.start) searchParams.set('start', params.start);
@@ -16,13 +21,17 @@ function buildFlowMetricsSearchParams(params: FlowMetricsParams = {}) {
   return searchParams;
 }
 
-export function useFlowMetrics(params: FlowMetricsParams = {}) {
+export function useFlowMetrics(
+  params: FlowMetricsParams = {},
+  options: FlowMetricsQueryOptions = {},
+) {
   const qs = buildFlowMetricsSearchParams(params).toString();
   const stableKey = JSON.stringify(params);
 
   return useQuery({
     queryKey: ['flow-metrics', stableKey],
     queryFn: () => api<FlowMetricsResponse>(`/health/flow-metrics${qs ? `?${qs}` : ''}`),
-    refetchInterval: 30_000,
+    refetchInterval: options.refetchInterval ?? 30_000,
+    enabled: options.enabled !== false,
   });
 }

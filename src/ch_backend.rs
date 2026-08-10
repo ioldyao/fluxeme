@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Timelike};
 use clickhouse::Client;
 use clickhouse::Row;
 use rust_decimal::Decimal;
@@ -9,6 +9,7 @@ use serde::Serialize;
 use crate::config::types::ClickHouseConfig;
 use crate::admin::routing::{
     FlowMetricsClientIp, FlowMetricsHistorical, FlowMetricsModelShare, FlowMetricsPercentiles,
+    FlowMetricsTrend,
 };
 
 /// Row type for the `usage_events` ClickHouse table.
@@ -215,6 +216,17 @@ pub(crate) fn normalize_clickhouse_datetime(value: &str) -> Result<String, Strin
     }
 
     Err("invalid datetime filter".to_string())
+}
+
+fn flow_metrics_bucket_granularity(start: &str, end: &str) -> Result<(&'static str, i64), String> {
+    let start_dt = DateTime::parse_from_rfc3339(start).map_err(|_| "invalid start datetime".to_string())?;
+    let end_dt = DateTime::parse_from_rfc3339(end).map_err(|_| "invalid end datetime".to_string())?;
+    let seconds = (end_dt - start_dt).num_seconds();
+    if seconds <= 3600 {
+        Ok(("minute", 60))
+    } else {
+        Ok(("hour", 3600))
+    }
 }
 
 impl ClickHouseBackend {
@@ -1315,6 +1327,12 @@ impl ClickHouseBackend {
             ip: String,
             requests: u64,
         }
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct TrendRow {
+            bucket: String,
+            success_completed: u64,
+            failed_completed: u64,
+        }
 
         let completion_sql = if model.is_some() {
             "SELECT count()::UInt64 AS total_completed, countIf(success = 1)::UInt64 AS success_completed, countIf(success = 0)::UInt64 AS failed_completed, quantileExact(0.50)(latency_ms)::Nullable(Float64) AS latency_p50, quantileExact(0.90)(latency_ms)::Nullable(Float64) AS latency_p90, quantileExact(0.99)(latency_ms)::Nullable(Float64) AS latency_p99, count()::UInt64 AS latency_samples, quantileExactIf(0.50)(ttft_ms, ttft_ms IS NOT NULL)::Nullable(Float64) AS ttft_p50, quantileExactIf(0.90)(ttft_ms, ttft_ms IS NOT NULL)::Nullable(Float64) AS ttft_p90, quantileExactIf(0.99)(ttft_ms, ttft_ms IS NOT NULL)::Nullable(Float64) AS ttft_p99, countIf(ttft_ms IS NOT NULL)::UInt64 AS ttft_samples FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) AND timestamp <= parseDateTimeBestEffort(?) AND model = ?"
@@ -1373,6 +1391,65 @@ impl ClickHouseBackend {
             })
             .collect();
 
+        let (bucket_unit, bucket_seconds) = flow_metrics_bucket_granularity(start, end)?;
+        let bucket_expr = if bucket_unit == "minute" {
+            "formatDateTime(toTimeZone(toStartOfMinute(timestamp), 'UTC'), '%Y-%m-%dT%H:%i:%SZ')"
+        } else {
+            "formatDateTime(toTimeZone(toStartOfHour(timestamp), 'UTC'), '%Y-%m-%dT%H:%i:%SZ')"
+        };
+        let trend_sql = if model.is_some() {
+            format!(
+                "SELECT {bucket_expr} AS bucket, countIf(success = 1)::UInt64 AS success_completed, countIf(success = 0)::UInt64 AS failed_completed FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) AND timestamp <= parseDateTimeBestEffort(?) AND model = ? GROUP BY bucket ORDER BY bucket ASC"
+            )
+        } else {
+            format!(
+                "SELECT {bucket_expr} AS bucket, countIf(success = 1)::UInt64 AS success_completed, countIf(success = 0)::UInt64 AS failed_completed FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) AND timestamp <= parseDateTimeBestEffort(?) GROUP BY bucket ORDER BY bucket ASC"
+            )
+        };
+        let mut trend_query = self.client.query(&trend_sql).bind(start).bind(end);
+        if let Some(model) = model {
+            trend_query = trend_query.bind(model);
+        }
+        let trend_rows = trend_query
+            .fetch_all::<TrendRow>()
+            .await
+            .map_err(|e| format!("CH flow_metrics trend: {e}"))?;
+        let trend_map = trend_rows
+            .into_iter()
+            .map(|row| (row.bucket, (row.success_completed, row.failed_completed)))
+            .collect::<std::collections::HashMap<_, _>>();
+
+        let start_dt = DateTime::parse_from_rfc3339(start)
+            .map_err(|_| "invalid start datetime".to_string())?
+            .with_timezone(&chrono::Utc);
+        let end_dt = DateTime::parse_from_rfc3339(end)
+            .map_err(|_| "invalid end datetime".to_string())?
+            .with_timezone(&chrono::Utc);
+        let mut cursor = if bucket_unit == "minute" {
+            start_dt
+                .with_second(0)
+                .and_then(|dt| dt.with_nanosecond(0))
+                .expect("valid minute alignment")
+        } else {
+            start_dt
+                .with_minute(0)
+                .and_then(|dt| dt.with_second(0))
+                .and_then(|dt| dt.with_nanosecond(0))
+                .expect("valid hour alignment")
+        };
+
+        let mut buckets = Vec::new();
+        let mut success_completed = Vec::new();
+        let mut failed_completed = Vec::new();
+        while cursor <= end_dt {
+            let bucket = cursor.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+            let (succ, fail) = trend_map.get(&bucket).copied().unwrap_or((0, 0));
+            buckets.push(bucket);
+            success_completed.push(succ);
+            failed_completed.push(fail);
+            cursor += chrono::Duration::seconds(bucket_seconds);
+        }
+
         Ok(FlowMetricsHistorical {
             total_completed: completion.total_completed,
             success_completed: completion.success_completed,
@@ -1390,6 +1467,12 @@ impl ClickHouseBackend {
                 p90: completion.ttft_p90,
                 p99: completion.ttft_p99,
                 sample_count: completion.ttft_samples,
+            },
+            trend: FlowMetricsTrend {
+                bucket_unit,
+                buckets,
+                success_completed,
+                failed_completed,
             },
         })
     }

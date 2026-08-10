@@ -216,6 +216,13 @@ export interface FlowMetricsClientIp {
   requests: number;
 }
 
+export interface FlowMetricsTrend {
+  bucket_unit: 'minute' | 'hour';
+  buckets: string[];
+  success_completed: number[];
+  failed_completed: number[];
+}
+
 export interface FlowMetricsHistorical {
   total_completed: number;
   success_completed: number;
@@ -224,6 +231,7 @@ export interface FlowMetricsHistorical {
   client_ips: FlowMetricsClientIp[];
   latency_ms: FlowMetricsPercentiles;
   ttft_ms: FlowMetricsPercentiles;
+  trend: FlowMetricsTrend;
 }
 
 export interface FlowMetricsRealtimeQueue {
