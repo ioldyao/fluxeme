@@ -44,7 +44,14 @@ pub(crate) async fn admin_dashboard(
         let rules = state.db.list_rules().await.map_err(db_err)?;
 
         let endpoint_count: usize = channels.iter().map(|c| c.endpoints.len()).sum();
-        let total_requests = state.usage.count().await.unwrap_or(0);
+        let ch = state
+            .ch
+            .as_ref()
+            .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+        let total_requests = ch
+            .count_usage(&crate::domain::usage::UsageFilter::default())
+            .await
+            .map_err(AdminError::internal)?;
         let api_key_count = state.db.all_api_keys().await.map(|k| k.len()).unwrap_or(0);
 
         Ok(Json(DashboardResp {
@@ -62,11 +69,17 @@ pub(crate) async fn admin_dashboard(
             .list_api_keys(&session.user_id)
             .await
             .map_err(db_err)?;
-        let user_requests = state
-            .usage
-            .count_by_user(&session.user_id)
+        let ch = state
+            .ch
+            .as_ref()
+            .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+        let user_requests = ch
+            .count_usage(&crate::domain::usage::UsageFilter {
+                user_id: Some(session.user_id.clone()),
+                ..Default::default()
+            })
             .await
-            .unwrap_or(0);
+            .map_err(AdminError::internal)?;
 
         Ok(Json(DashboardResp {
             users: 0,
@@ -102,11 +115,17 @@ pub(crate) async fn self_dashboard(
         .list_api_keys(&session.user_id)
         .await
         .map_err(db_err)?;
-    let user_requests = state
-        .usage
-        .count_by_user(&session.user_id)
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let user_requests = ch
+        .count_usage(&crate::domain::usage::UsageFilter {
+            user_id: Some(session.user_id.clone()),
+            ..Default::default()
+        })
         .await
-        .map_err(|e| AdminError::internal(e.to_string()))?;
+        .map_err(AdminError::internal)?;
 
     Ok(Json(SelfDashboardResp {
         api_keys: api_keys.len(),
@@ -200,25 +219,34 @@ pub(crate) async fn dashboard_aggregations(
         (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO)
     }
 
-    // All-time totals must remain on PG metadata because ClickHouse data is TTL-limited.
-    let total_requests = match user_filter {
-        Some(uid) => state.usage.count_by_user(uid).await.unwrap_or(0),
-        None => state.usage.count().await.unwrap_or(0),
-    } as u64;
+    // All-time totals remain on PostgreSQL billing metadata because ClickHouse
+    // data is TTL-limited. This does not read the PostgreSQL observability API.
+    let billing_months = if let Some(uid) = user_filter {
+        state
+            .db
+            .period_summary_for_user(uid)
+            .await
+            .map_err(db_err)?
+    } else {
+        state.db.period_summary_all().await.map_err(db_err)?
+    };
+    let total_requests = billing_months
+        .iter()
+        .map(|(_, _, requests, _)| *requests)
+        .sum();
+    let total_cost = billing_months
+        .iter()
+        .map(|(_, cost, _, _)| *cost)
+        .fold(Decimal::ZERO, |acc, cost| acc + cost);
 
-    // 24h stats: prefer ClickHouse, fallback to PG only when CH is absent.
-    let (requests_24h, success_count, total_latency, total_tokens_24h) =
-        if let Some(ref ch) = state.ch {
-            ch.query_usage_stats_since(&since_24h, user_filter)
-                .await
-                .unwrap_or((0, 0, 0, 0))
-        } else {
-            state
-                .usage
-                .stats_since(&since_24h, user_filter)
-                .await
-                .unwrap_or((0, 0, 0, 0))
-        };
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let (requests_24h, success_count, total_latency, total_tokens_24h) = ch
+        .query_usage_stats_since(&since_24h, user_filter)
+        .await
+        .map_err(AdminError::internal)?;
 
     if requests_24h == 0 {
         return Ok(Json(DashboardAggregations {
@@ -233,18 +261,11 @@ pub(crate) async fn dashboard_aggregations(
         }));
     }
 
-    // Compute cost from 24h records (loads only token + model columns)
-    let records = if let Some(ref ch) = state.ch {
-        ch.query_usage_since(&since_24h, user_filter)
-            .await
-            .map_err(AdminError::internal)?
-    } else {
-        state
-            .usage
-            .cost_rows_since(&since_24h, user_filter)
-            .await
-            .map_err(AdminError::internal)?
-    };
+    // Compute cost from 24h records (loads only token + model columns).
+    let records = ch
+        .query_usage_since(&since_24h, user_filter)
+        .await
+        .map_err(AdminError::internal)?;
     let mut total_cost_24h = Decimal::ZERO;
     let mut model_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for r in &records {
@@ -260,24 +281,6 @@ pub(crate) async fn dashboard_aggregations(
         total_cost_24h += cost;
         *model_counts.entry(r.model.clone()).or_default() += 1;
     }
-
-    // All-time cost must remain on PG metadata because ClickHouse data is TTL-limited.
-    let all_records = state
-        .usage
-        .cost_rows_since("1970-01-01T00:00:00", user_filter)
-        .await
-        .map_err(AdminError::internal)?;
-    let total_cost = all_records.iter().fold(Decimal::ZERO, |acc, r| {
-        let (pp, cp, crp) = if r.prompt_price > Decimal::ZERO || r.completion_price > Decimal::ZERO
-        {
-            (r.prompt_price, r.completion_price, r.cache_read_price)
-        } else {
-            lookup_price(&r.model, &pricing, &prefix_prices)
-        };
-        acc + (Decimal::from(r.prompt_tokens) / Decimal::from(1000000) * pp)
-            + (Decimal::from(r.completion_tokens) / Decimal::from(1000000) * cp)
-            + (Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000) * crp)
-    });
 
     let success_rate = if requests_24h > 0 {
         success_count as f64 / requests_24h as f64 * 100.0
@@ -376,41 +379,28 @@ pub(crate) async fn self_dashboard_aggregations(
         (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO)
     }
 
-    let total_requests = state
-        .usage
-        .count_by_user(&session.user_id)
+    let billing_months = state
+        .db
+        .period_summary_for_user(&session.user_id)
         .await
-        .map_err(|e| AdminError::internal(e.to_string()))? as u64;
+        .map_err(db_err)?;
+    let total_requests = billing_months
+        .iter()
+        .map(|(_, _, requests, _)| *requests)
+        .sum();
+    let total_cost = billing_months
+        .iter()
+        .map(|(_, cost, _, _)| *cost)
+        .fold(Decimal::ZERO, |acc, cost| acc + cost);
 
-    let (requests_24h, success_count, total_latency, total_tokens_24h) =
-        if let Some(ref ch) = state.ch {
-            ch.query_usage_stats_since(&since_24h, user_filter)
-                .await
-                .unwrap_or((0, 0, 0, 0))
-        } else {
-            state
-                .usage
-                .stats_since(&since_24h, user_filter)
-                .await
-                .unwrap_or((0, 0, 0, 0))
-        };
-
-    let all_records = state
-        .usage
-        .cost_rows_since("1970-01-01T00:00:00", user_filter)
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let (requests_24h, success_count, total_latency, total_tokens_24h) = ch
+        .query_usage_stats_since(&since_24h, user_filter)
         .await
         .map_err(AdminError::internal)?;
-    let total_cost = all_records.iter().fold(Decimal::ZERO, |acc, r| {
-        let (pp, cp, crp) = if r.prompt_price > Decimal::ZERO || r.completion_price > Decimal::ZERO
-        {
-            (r.prompt_price, r.completion_price, r.cache_read_price)
-        } else {
-            lookup_price(&r.model, &pricing, &prefix_prices)
-        };
-        acc + (Decimal::from(r.prompt_tokens) / Decimal::from(1000000) * pp)
-            + (Decimal::from(r.completion_tokens) / Decimal::from(1000000) * cp)
-            + (Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000) * crp)
-    });
 
     if requests_24h == 0 {
         return Ok(Json(DashboardAggregations {
@@ -425,17 +415,10 @@ pub(crate) async fn self_dashboard_aggregations(
         }));
     }
 
-    let records = if let Some(ref ch) = state.ch {
-        ch.query_usage_since(&since_24h, user_filter)
-            .await
-            .map_err(AdminError::internal)?
-    } else {
-        state
-            .usage
-            .cost_rows_since(&since_24h, user_filter)
-            .await
-            .map_err(AdminError::internal)?
-    };
+    let records = ch
+        .query_usage_since(&since_24h, user_filter)
+        .await
+        .map_err(AdminError::internal)?;
     let mut total_cost_24h = Decimal::ZERO;
     let mut model_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for r in &records {

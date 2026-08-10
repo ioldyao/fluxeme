@@ -86,33 +86,19 @@ pub(crate) async fn get_usage(
 
     let filter = build_usage_filter(user_filter, q)?;
 
-    let total = if let Some(ref ch) = state.ch {
-        ch.count_usage(&filter).await.map_err(|e| {
-            tracing::error!("CH usage count failed: {}", e);
-            AdminError::internal("Internal server error")
-        })?
-    } else {
-        state.usage.count_filtered(&filter).await.map_err(|e| {
-            tracing::error!("Usage count failed: {}", e);
-            AdminError::internal("Internal server error")
-        })?
-    };
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let total = ch.count_usage(&filter).await.map_err(|e| {
+        tracing::error!("CH usage count failed: {}", e);
+        AdminError::internal("Internal server error")
+    })?;
 
-    let records = if let Some(ref ch) = state.ch {
-        ch.query_usage(limit, offset, &filter).await.map_err(|e| {
-            tracing::error!("CH usage query failed: {}", e);
-            AdminError::internal("Internal server error")
-        })?
-    } else {
-        state
-            .usage
-            .query(limit, offset, &filter)
-            .await
-            .map_err(|e| {
-                tracing::error!("Usage query failed: {}", e);
-                AdminError::internal("Internal server error")
-            })?
-    };
+    let records = ch.query_usage(limit, offset, &filter).await.map_err(|e| {
+        tracing::error!("CH usage query failed: {}", e);
+        AdminError::internal("Internal server error")
+    })?;
 
     Ok(Json(UsageResponse { records, total }))
 }
@@ -128,33 +114,19 @@ pub(crate) async fn get_my_usage(
     let offset = q.offset.unwrap_or(0);
     let filter = build_usage_filter(Some(session.user_id.clone()), q)?;
 
-    let total = if let Some(ref ch) = state.ch {
-        ch.count_usage(&filter).await.map_err(|e| {
-            tracing::error!("CH self usage count failed: {}", e);
-            AdminError::internal("Internal server error")
-        })?
-    } else {
-        state.usage.count_filtered(&filter).await.map_err(|e| {
-            tracing::error!("Self usage count failed: {}", e);
-            AdminError::internal("Internal server error")
-        })?
-    };
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let total = ch.count_usage(&filter).await.map_err(|e| {
+        tracing::error!("CH self usage count failed: {}", e);
+        AdminError::internal("Internal server error")
+    })?;
 
-    let records = if let Some(ref ch) = state.ch {
-        ch.query_usage(limit, offset, &filter).await.map_err(|e| {
-            tracing::error!("CH self usage query failed: {}", e);
-            AdminError::internal("Internal server error")
-        })?
-    } else {
-        state
-            .usage
-            .query(limit, offset, &filter)
-            .await
-            .map_err(|e| {
-                tracing::error!("Self usage query failed: {}", e);
-                AdminError::internal("Internal server error")
-            })?
-    };
+    let records = ch.query_usage(limit, offset, &filter).await.map_err(|e| {
+        tracing::error!("CH self usage query failed: {}", e);
+        AdminError::internal("Internal server error")
+    })?;
 
     Ok(Json(UsageResponse { records, total }))
 }
@@ -166,18 +138,18 @@ pub(crate) async fn get_usage_detail(
 ) -> Result<Json<crate::domain::usage::UsageRecord>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
 
-    let record = if let Some(ref ch) = state.ch {
-        ch.get_usage_detail(&request_id).await.map_err(|e| {
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let record = ch
+        .get_usage_detail(&request_id)
+        .await
+        .map_err(|e| {
             tracing::error!("CH usage detail query failed: {}", e);
             AdminError::internal("Internal server error")
         })?
-    } else {
-        state.usage.get_detail(&request_id).await.map_err(|e| {
-            tracing::error!("Usage detail query failed: {}", e);
-            AdminError::internal("Internal server error")
-        })?
-    }
-    .ok_or_else(|| AdminError::not_found("Usage record not found"))?;
+        .ok_or_else(|| AdminError::not_found("Usage record not found"))?;
 
     if !state.authz.enforce(&session.role, "admin:usage").await && record.user_id != session.user_id
     {
@@ -216,26 +188,20 @@ pub(crate) async fn daily_usage(
         Some(&session.user_id)
     };
 
-    let records: Vec<DailyUsage> = if let Some(ref ch) = state.ch {
-        ch.query_daily_usage_counts(&since, user_filter, offset)
-            .await
-            .map_err(AdminError::internal)?
-            .into_iter()
-            .map(|(date, count)| DailyUsage {
-                date,
-                count: i64::try_from(count).unwrap_or(i64::MAX),
-            })
-            .collect()
-    } else {
-        state
-            .usage
-            .daily_counts(&since, user_filter, offset)
-            .await
-            .map_err(AdminError::internal)?
-            .into_iter()
-            .map(|(date, count)| DailyUsage { date, count })
-            .collect()
-    };
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let records: Vec<DailyUsage> = ch
+        .query_daily_usage_counts(&since, user_filter, offset)
+        .await
+        .map_err(AdminError::internal)?
+        .into_iter()
+        .map(|(date, count)| DailyUsage {
+            date,
+            count: i64::try_from(count).unwrap_or(i64::MAX),
+        })
+        .collect();
 
     Ok(Json(records))
 }
@@ -283,45 +249,28 @@ pub(crate) async fn usage_aggregate(
         Some(&session.user_id)
     };
 
-    let records: Vec<DailyAggregate> = if let Some(ref ch) = state.ch {
-        ch.query_daily_usage_stats(&since, user_filter, offset)
-            .await
-            .map_err(AdminError::internal)?
-            .into_iter()
-            .map(
-                |(date, count, pt, ct, tt, sc, lat, ch_tok)| DailyAggregate {
-                    date,
-                    count,
-                    prompt_tokens: pt,
-                    completion_tokens: ct,
-                    total_tokens: tt,
-                    success_count: sc,
-                    latency_ms: lat,
-                    cache_hit_tokens: ch_tok,
-                },
-            )
-            .collect()
-    } else {
-        state
-            .usage
-            .daily_stats(&since, user_filter, offset)
-            .await
-            .map_err(AdminError::internal)?
-            .into_iter()
-            .map(
-                |(date, count, pt, ct, tt, sc, lat, ch_tok)| DailyAggregate {
-                    date,
-                    count,
-                    prompt_tokens: pt,
-                    completion_tokens: ct,
-                    total_tokens: tt,
-                    success_count: sc,
-                    latency_ms: lat,
-                    cache_hit_tokens: ch_tok,
-                },
-            )
-            .collect()
-    };
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let records: Vec<DailyAggregate> = ch
+        .query_daily_usage_stats(&since, user_filter, offset)
+        .await
+        .map_err(AdminError::internal)?
+        .into_iter()
+        .map(
+            |(date, count, pt, ct, tt, sc, lat, ch_tok)| DailyAggregate {
+                date,
+                count,
+                prompt_tokens: pt,
+                completion_tokens: ct,
+                total_tokens: tt,
+                success_count: sc,
+                latency_ms: lat,
+                cache_hit_tokens: ch_tok,
+            },
+        )
+        .collect();
 
     Ok(Json(records))
 }
@@ -343,45 +292,28 @@ pub(crate) async fn my_usage_aggregate(
     let since = since_local_days_ago(days, offset);
     let user_filter: Option<&str> = Some(&session.user_id);
 
-    let records: Vec<DailyAggregate> = if let Some(ref ch) = state.ch {
-        ch.query_daily_usage_stats(&since, user_filter, offset)
-            .await
-            .map_err(AdminError::internal)?
-            .into_iter()
-            .map(
-                |(date, count, pt, ct, tt, sc, lat, ch_tok)| DailyAggregate {
-                    date,
-                    count,
-                    prompt_tokens: pt,
-                    completion_tokens: ct,
-                    total_tokens: tt,
-                    success_count: sc,
-                    latency_ms: lat,
-                    cache_hit_tokens: ch_tok,
-                },
-            )
-            .collect()
-    } else {
-        state
-            .usage
-            .daily_stats(&since, user_filter, offset)
-            .await
-            .map_err(AdminError::internal)?
-            .into_iter()
-            .map(
-                |(date, count, pt, ct, tt, sc, lat, ch_tok)| DailyAggregate {
-                    date,
-                    count,
-                    prompt_tokens: pt,
-                    completion_tokens: ct,
-                    total_tokens: tt,
-                    success_count: sc,
-                    latency_ms: lat,
-                    cache_hit_tokens: ch_tok,
-                },
-            )
-            .collect()
-    };
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let records: Vec<DailyAggregate> = ch
+        .query_daily_usage_stats(&since, user_filter, offset)
+        .await
+        .map_err(AdminError::internal)?
+        .into_iter()
+        .map(
+            |(date, count, pt, ct, tt, sc, lat, ch_tok)| DailyAggregate {
+                date,
+                count,
+                prompt_tokens: pt,
+                completion_tokens: ct,
+                total_tokens: tt,
+                success_count: sc,
+                latency_ms: lat,
+                cache_hit_tokens: ch_tok,
+            },
+        )
+        .collect();
 
     Ok(Json(records))
 }
@@ -419,39 +351,25 @@ pub(crate) async fn model_activity(
     } else {
         Some(&session.user_id)
     };
-    let records: Vec<ModelActivity> = if let Some(ref ch) = state.ch {
-        ch.query_model_activity(&since, user_filter)
-            .await
-            .map_err(AdminError::internal)?
-            .into_iter()
-            .map(|(model, total, pt, ct, sc, fc, ch_tok)| ModelActivity {
-                model,
-                total_requests: total,
-                prompt_tokens: pt,
-                completion_tokens: ct,
-                cache_hit_tokens: ch_tok,
-                success_count: sc,
-                failure_count: fc,
-            })
-            .collect()
-    } else {
-        state
-            .db
-            .model_activity(&since, user_filter)
-            .await
-            .map_err(|e| AdminError::internal(e.to_string()))?
-            .into_iter()
-            .map(|(model, total, pt, ct, sc, fc, ch_tok)| ModelActivity {
-                model,
-                total_requests: total,
-                prompt_tokens: pt,
-                completion_tokens: ct,
-                cache_hit_tokens: ch_tok,
-                success_count: sc,
-                failure_count: fc,
-            })
-            .collect()
-    };
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let records: Vec<ModelActivity> = ch
+        .query_model_activity(&since, user_filter)
+        .await
+        .map_err(AdminError::internal)?
+        .into_iter()
+        .map(|(model, total, pt, ct, sc, fc, ch_tok)| ModelActivity {
+            model,
+            total_requests: total,
+            prompt_tokens: pt,
+            completion_tokens: ct,
+            cache_hit_tokens: ch_tok,
+            success_count: sc,
+            failure_count: fc,
+        })
+        .collect();
 
     Ok(Json(records))
 }
@@ -471,39 +389,25 @@ pub(crate) async fn my_model_activity(
     let offset = tz_offset_seconds(Some(&tz));
     let since = since_local_days_ago(days, offset);
     let user_filter: Option<&str> = Some(&session.user_id);
-    let records: Vec<ModelActivity> = if let Some(ref ch) = state.ch {
-        ch.query_model_activity(&since, user_filter)
-            .await
-            .map_err(AdminError::internal)?
-            .into_iter()
-            .map(|(model, total, pt, ct, sc, fc, ch_tok)| ModelActivity {
-                model,
-                total_requests: total,
-                prompt_tokens: pt,
-                completion_tokens: ct,
-                cache_hit_tokens: ch_tok,
-                success_count: sc,
-                failure_count: fc,
-            })
-            .collect()
-    } else {
-        state
-            .db
-            .model_activity(&since, user_filter)
-            .await
-            .map_err(|e| AdminError::internal(e.to_string()))?
-            .into_iter()
-            .map(|(model, total, pt, ct, sc, fc, ch_tok)| ModelActivity {
-                model,
-                total_requests: total,
-                prompt_tokens: pt,
-                completion_tokens: ct,
-                cache_hit_tokens: ch_tok,
-                success_count: sc,
-                failure_count: fc,
-            })
-            .collect()
-    };
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let records: Vec<ModelActivity> = ch
+        .query_model_activity(&since, user_filter)
+        .await
+        .map_err(AdminError::internal)?
+        .into_iter()
+        .map(|(model, total, pt, ct, sc, fc, ch_tok)| ModelActivity {
+            model,
+            total_requests: total,
+            prompt_tokens: pt,
+            completion_tokens: ct,
+            cache_hit_tokens: ch_tok,
+            success_count: sc,
+            failure_count: fc,
+        })
+        .collect();
 
     Ok(Json(records))
 }
@@ -544,17 +448,14 @@ pub(crate) async fn usage_funnel(
     } else {
         Some(&session.user_id)
     };
-    let stats = if let Some(ref ch) = state.ch {
-        ch.query_funnel_stats(&since, user_filter)
-            .await
-            .map_err(AdminError::internal)?
-    } else {
-        state
-            .usage
-            .funnel_stats(&since, user_filter)
-            .await
-            .map_err(AdminError::internal)?
-    };
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let stats = ch
+        .query_funnel_stats(&since, user_filter)
+        .await
+        .map_err(AdminError::internal)?;
     Ok(Json(FunnelResponse {
         total: stats.total,
         success_count: stats.success_count,
@@ -586,17 +487,14 @@ pub(crate) async fn my_usage_funnel(
     let offset = tz_offset_seconds(Some(&tz));
     let since = since_local_days_ago(days, offset);
     let user_filter: Option<&str> = Some(&session.user_id);
-    let stats = if let Some(ref ch) = state.ch {
-        ch.query_funnel_stats(&since, user_filter)
-            .await
-            .map_err(AdminError::internal)?
-    } else {
-        state
-            .usage
-            .funnel_stats(&since, user_filter)
-            .await
-            .map_err(AdminError::internal)?
-    };
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let stats = ch
+        .query_funnel_stats(&since, user_filter)
+        .await
+        .map_err(AdminError::internal)?;
     Ok(Json(FunnelResponse {
         total: stats.total,
         success_count: stats.success_count,

@@ -141,6 +141,8 @@ export interface UsageRecord {
   cache_read_price?: number;
   original_model?: string;
   client_ip?: string | null;
+  /** Team scope. Null means the request used a personal API key. */
+  team_id?: string | null;
 }
 
 export interface DashboardStats {
@@ -194,6 +196,61 @@ export interface DailyAggregate {
   success_count: number;
   latency_ms: number;
   cache_hit_tokens: number;
+}
+
+export interface FlowMetricsPercentiles {
+  p50: number | null;
+  p90: number | null;
+  p99: number | null;
+  sample_count: number;
+}
+
+export interface FlowMetricsModelShare {
+  model: string;
+  requests: number;
+  share: number;
+}
+
+export interface FlowMetricsClientIp {
+  ip: string;
+  requests: number;
+}
+
+export interface FlowMetricsHistorical {
+  total_completed: number;
+  success_completed: number;
+  failed_completed: number;
+  model_share: FlowMetricsModelShare[];
+  client_ips: FlowMetricsClientIp[];
+  latency_ms: FlowMetricsPercentiles;
+  ttft_ms: FlowMetricsPercentiles;
+}
+
+export interface FlowMetricsRealtimeQueue {
+  status: string;
+  count: number | null;
+  reason: string;
+}
+
+export interface FlowMetricsRealtime {
+  as_of: string;
+  in_flight: number;
+  upstream_generating: number;
+  upstream_outputting: number;
+  queue: FlowMetricsRealtimeQueue;
+  consistency: string;
+  source: string;
+}
+
+export interface FlowMetricsResponse {
+  schema_version: number;
+  range: {
+    start: string;
+    end: string;
+    model?: string | null;
+  };
+  historical: FlowMetricsHistorical;
+  realtime: FlowMetricsRealtime;
 }
 
 export interface LoginResponse {
