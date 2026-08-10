@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import FlowTowerContent from './FlowTowerContent';
 import RoutingFlow from './RoutingFlow';
 import RoutingHistory from './RoutingHistory';
-import FlowTowerContent from './FlowTowerContent';
 
 type Tab = 'tower' | 'routing' | 'history';
 
@@ -18,12 +18,15 @@ export default function FlowControlTower() {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      {/* Tab bar */}
-      <div className="flex items-center gap-1 border-b pb-0">
-        {TAB_KEYS.map(tk => (
+      <div className="flex items-center gap-1 border-b pb-0" role="tablist" aria-label="流控台主标签页">
+        {TAB_KEYS.map((tk) => (
           <button
             key={tk.key}
+            id={`flow-control-tab-${tk.key}`}
             type="button"
+            role="tab"
+            aria-selected={tab === tk.key}
+            aria-controls={`flow-control-panel-${tk.key}`}
             onClick={() => setTab(tk.key)}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${
               tab === tk.key
@@ -36,11 +39,22 @@ export default function FlowControlTower() {
         ))}
       </div>
 
-      {/* Tab content */}
       <div>
-        {tab === 'tower' && <FlowTowerContent />}
-        {tab === 'routing' && <RoutingFlow />}
-        {tab === 'history' && <RoutingHistory />}
+        {tab === 'tower' && (
+          <div id="flow-control-panel-tower" role="tabpanel" aria-labelledby="flow-control-tab-tower">
+            <FlowTowerContent />
+          </div>
+        )}
+        {tab === 'routing' && (
+          <div id="flow-control-panel-routing" role="tabpanel" aria-labelledby="flow-control-tab-routing">
+            <RoutingFlow />
+          </div>
+        )}
+        {tab === 'history' && (
+          <div id="flow-control-panel-history" role="tabpanel" aria-labelledby="flow-control-tab-history">
+            <RoutingHistory />
+          </div>
+        )}
       </div>
     </div>
   );

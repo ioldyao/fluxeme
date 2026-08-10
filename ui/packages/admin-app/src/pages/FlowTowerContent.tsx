@@ -1,1492 +1,1089 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Search } from 'lucide-react';
-import { cn } from '@fluxeme/shared/src/lib/utils';
-import { api } from '@fluxeme/shared/src/api/client';
-import { useModels } from '@fluxeme/shared/src/api/models';
-import { useChannels } from '@fluxeme/shared/src/api/channels';
-import { useProbeResults } from '@fluxeme/shared/src/api/probe';
-import { useUsageFunnel, useUsageAggregate, useModelActivity } from '@fluxeme/shared/src/api/usage';
-import { useDashboardAggregations } from '@fluxeme/shared/src/api/dashboard';
-import { fetchRoutingFlowSnapshot, useRoutingHealth } from '@fluxeme/shared/src/api/routing';
-import type { Model, ModelActivity, ProbeResult } from '@fluxeme/shared/src/types';
-import type { RoutingHealthChannel, RoutingHealthModel, RoutingHealthResponse } from '@fluxeme/shared/src/api/routing';
+import { useEffect, useMemo, useState } from 'react';
 
-// ── formatters ─────────────────────────────────────────────────────
+type RangeKey = '5m' | '15m' | '1h' | '6h' | '24h';
+type FlowTabKey = 'flow' | 'endpoint' | 'compare';
+type Tone = 'blue' | 'cyan' | 'green' | 'yellow' | 'red';
 
-function fmtCount(n: number) {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-function fmtTokens(n: number) {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-function fmtLat(ms: number) {
-  if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
-  return `${Math.round(ms)}ms`;
-}
-function fmtHour(iso: string) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return `${String(d.getHours()).padStart(2, '0')}:00`;
-}
-
-type Health = 'good' | 'warn' | 'bad' | 'none';
-
-/**
- * Real-time health from the circuit breaker state (fed by live traffic and
- * the 60s auto-probe task), NOT from historical probe records or 24h
- * aggregates:
- * - all enabled endpoints available  → good
- * - some enabled endpoints down      → warn (degraded)
- * - no enabled endpoint available    → bad (unavailable)
- * - channel has no enabled endpoint  → none
- */
-function channelHealth(ch: RoutingHealthChannel): Health {
-  const enabled = ch.endpoints.filter((e) => e.enabled);
-  if (enabled.length === 0) return 'none';
-  const available = enabled.filter((e) => e.available).length;
-  if (available === enabled.length) return 'good';
-  if (available > 0) return 'warn';
-  return 'bad';
-}
-
-function modelHealth(channels: RoutingHealthChannel[]): Health {
-  const states = channels.map(channelHealth);
-  if (states.length === 0) return 'none';
-  if (states.some((s) => s === 'bad')) return 'bad';
-  if (states.some((s) => s === 'warn')) return 'warn';
-  return 'good';
-}
-
-interface ModelRow {
-  id: string;
+type ModelCatalogItem = {
   name: string;
-  pattern: string;
-  published: boolean;
-  contextLength: number | null;
-  channelNames: string;
-  requests: number; // 24h
-  successRate: number; // 0..1, weighted by requests
-  avgLatency: number;
-  p95: number;
-  cacheHitPct: number | null;
-  health: Health;
-  availableEps: number;
-  enabledEps: number;
-  brokenChannels: number;
-  channels: RoutingHealthChannel[];
-}
+  channels: number;
+  successRate: string;
+  rpm: string;
+  status: 'healthy' | 'warn' | 'error' | 'offline';
+  currentRps: string;
+  inflight: string;
+  queued: string;
+  p95Latency: string;
+  p95Ttft: string;
+  activeChannels: string;
+};
 
-/**
- * Keep only the probe rows that represent the current health of a model:
- * per channel, prefer rows carrying an endpoint_url (real endpoint probes);
- * a synthetic failure row (endpoint_url = NULL, e.g. "Route not available")
- * is only considered when the channel has no endpoint probes at all. This
- * mirrors the backend's get_channel_health logic and prevents stale
- * NULL-url failures from flagging a model that now passes checks.
- */
-function effectiveProbes(probeRows: ProbeResult[]): ProbeResult[] {
-  const byChannel = new Map<string, ProbeResult[]>();
-  for (const p of probeRows) {
-    const arr = byChannel.get(p.channel_id) ?? [];
-    arr.push(p);
-    byChannel.set(p.channel_id, arr);
-  }
-  const out: ProbeResult[] = [];
-  for (const rows of byChannel.values()) {
-    const withUrl = rows.filter((r) => !!r.endpoint_url);
-    out.push(...(withUrl.length > 0 ? withUrl : rows));
-  }
-  return out;
-}
-
-function buildRows(
-  models: Model[] | undefined,
-  rh: RoutingHealthResponse | undefined,
-  ma: ModelActivity[] | undefined,
-  channelName: Map<string, string>,
-): ModelRow[] {
-  if (!models) return [];
-  const rhByName = new Map((rh?.models ?? []).map((m) => [m.name, m]));
-  const maByName = new Map((ma ?? []).map((m) => [m.model, m]));
-
-  const rows: ModelRow[] = [];
-  for (const m of models) {
-    const rhm: RoutingHealthModel | undefined = rhByName.get(m.name);
-    const rhs = rhm?.channels ?? [];
-    let totalReq = 0;
-    let totalSuc = 0;
-    let wLat = 0;
-    let p95 = 0;
-    let avail = 0;
-    let enabled = 0;
-    let broken = 0;
-    for (const ch of rhs) {
-      totalReq += ch.requests;
-      totalSuc += ch.requests * ch.success_rate;
-      wLat += ch.requests * ch.avg_latency_ms;
-      if (ch.p95_latency_ms > p95) p95 = ch.p95_latency_ms;
-      for (const ep of ch.endpoints) {
-        if (ep.enabled) enabled++;
-        if (ep.enabled && ep.available) avail++;
-      }
-      if (ch.requests > 0 && !ch.circuit_ok && ch.circuit_enabled) broken++;
-    }
-    const maRow = maByName.get(m.name);
-    const inTokens = (maRow?.prompt_tokens ?? 0) + (maRow?.cache_hit_tokens ?? 0);
-    const cacheHitPct = inTokens > 0 ? +(((maRow?.cache_hit_tokens ?? 0) / inTokens) * 100).toFixed(1) : null;
-    const successRate = totalReq > 0 ? totalSuc / totalReq : 0;
-
-    rows.push({
-      id: m.id,
-      name: m.name,
-      pattern: m.model_pattern,
-      published: !!m.published,
-      contextLength: m.context_length ?? null,
-      channelNames: m.channels
-        .map((b) => channelName.get(b.channel_id) ?? b.channel_id)
-        .join(' · '),
-      requests: totalReq,
-      successRate,
-      avgLatency: totalReq > 0 ? wLat / totalReq : 0,
-      p95,
-      cacheHitPct,
-      health: modelHealth(rhs),
-      availableEps: avail,
-      enabledEps: enabled,
-      brokenChannels: broken,
-      channels: rhs,
-    });
-  }
-  return rows.sort((a, b) => b.requests - a.requests);
-}
-
-// ── live total (24h snapshot baseline + WS increments) ─────────────
-
-export interface TimelineEntry {
-  id: string;
-  model: string;
+type EndpointRow = {
   channel: string;
-  endpointId?: number | null;
-  /** Endpoint URL at request time — stable across endpoint re-creation,
-   *  so the timeline can still match requests to current endpoints even
-   *  when the endpoint row (and its DB id) has been re-created. */
-  endpointUrl?: string;
-  acceptedTs: number;
-  completedTs?: number;
-  latency?: number;
-  success?: boolean;
+  path: string;
+  protocol: string;
+  statusLabel: string;
+  statusTone: 'healthy' | 'warn' | 'error';
+  latency: string;
+  timeline: Array<'healthy' | 'warn' | 'error' | 'idle'>;
+};
+
+type IncidentItem = {
+  title: string;
+  severity: 'WARN' | 'HIGH';
+  description: string;
+  time: string;
+  model: string;
+};
+
+type KpiValues = {
+  inflight: number;
+  generating: number;
+  streaming: number;
+  queued: number;
+  success: number;
+  failed: number;
+};
+
+const RANGE_OPTIONS: Array<{ key: RangeKey; short: string; long: string; label: string }> = [
+  { key: '5m', short: '5M', long: '5 分钟', label: '5 分钟' },
+  { key: '15m', short: '15M', long: '15 分钟', label: '15 分钟' },
+  { key: '1h', short: '1H', long: '1 小时', label: '1 小时' },
+  { key: '6h', short: '6H', long: '6 小时', label: '6 小时' },
+  { key: '24h', short: '24H', long: '24 小时', label: '24 小时' },
+];
+
+const BASE_KPIS: KpiValues = {
+  inflight: 52,
+  generating: 37,
+  streaming: 29,
+  queued: 11,
+  success: 2846,
+  failed: 24,
+};
+
+const SUCCESS_HISTORY_BASE = [127, 148, 140, 154, 165, 175, 158, 148, 178, 186, 172, 160, 181, 193, 184];
+const FAILURE_HISTORY_BASE = [9, 13, 8, 16, 12, 10, 21, 15, 9, 12, 18, 23, 13, 19, 15];
+
+const IP_ROWS = [
+  { ip: '10.12.8.41', count: 628, ratio: 100 },
+  { ip: '10.12.8.73', count: 491, ratio: 78 },
+  { ip: '10.233.45.216', count: 414, ratio: 66 },
+  { ip: '172.19.0.14', count: 332, ratio: 53 },
+  { ip: '10.121.18.20', count: 270, ratio: 43 },
+  { ip: '10.12.9.12', count: 204, ratio: 32 },
+  { ip: '172.19.0.27', count: 171, ratio: 27 },
+  { ip: '10.12.11.93', count: 119, ratio: 19 },
+] as const;
+
+const MODEL_SHARE_ROWS = [
+  { name: 'DeepSeek-V4-Flash', percent: 36.8, width: 100 },
+  { name: 'GPT-5.6-Luna', percent: 27.4, width: 75 },
+  { name: 'Claude-Sonnet-4.6', percent: 20.1, width: 55 },
+  { name: 'Qwen3.5-Plus', percent: 9.8, width: 27 },
+  { name: 'GPT-5.4', percent: 4.2, width: 12 },
+  { name: 'Other', percent: 1.7, width: 5 },
+] as const;
+
+const MODEL_CATALOG: ModelCatalogItem[] = [
+  {
+    name: 'DeepSeek-V4-Flash',
+    channels: 3,
+    successRate: '99.6%',
+    rpm: '12.8K rpm',
+    status: 'healthy',
+    currentRps: '71.2',
+    inflight: '22',
+    queued: '7',
+    p95Latency: '41.8 s',
+    p95Ttft: '3.6 s',
+    activeChannels: '3 / 3',
+  },
+  {
+    name: 'GPT-5.6-Luna',
+    channels: 2,
+    successRate: '99.9%',
+    rpm: '9.4K rpm',
+    status: 'healthy',
+    currentRps: '52.4',
+    inflight: '14',
+    queued: '2',
+    p95Latency: '17.2 s',
+    p95Ttft: '1.1 s',
+    activeChannels: '2 / 2',
+  },
+  {
+    name: 'Claude-Sonnet-4.6',
+    channels: 2,
+    successRate: '97.8%',
+    rpm: '7.2K rpm',
+    status: 'warn',
+    currentRps: '38.5',
+    inflight: '10',
+    queued: '4',
+    p95Latency: '28.7 s',
+    p95Ttft: '2.4 s',
+    activeChannels: '2 / 2',
+  },
+  {
+    name: 'Qwen3.5-Plus',
+    channels: 2,
+    successRate: '99.5%',
+    rpm: '3.5K rpm',
+    status: 'healthy',
+    currentRps: '18.7',
+    inflight: '6',
+    queued: '1',
+    p95Latency: '21.4 s',
+    p95Ttft: '1.9 s',
+    activeChannels: '2 / 2',
+  },
+  {
+    name: 'GPT-5.4',
+    channels: 1,
+    successRate: '99.7%',
+    rpm: '1.9K rpm',
+    status: 'healthy',
+    currentRps: '9.1',
+    inflight: '3',
+    queued: '0',
+    p95Latency: '16.9 s',
+    p95Ttft: '0.9 s',
+    activeChannels: '1 / 1',
+  },
+  {
+    name: 'Legacy-Fallback',
+    channels: 1,
+    successRate: 'unavailable',
+    rpm: '0 rpm',
+    status: 'offline',
+    currentRps: '0.0',
+    inflight: '0',
+    queued: '0',
+    p95Latency: '—',
+    p95Ttft: '—',
+    activeChannels: '0 / 1',
+  },
+];
+
+const ENDPOINT_ROWS: EndpointRow[] = [
+  {
+    channel: 'channel-a',
+    path: '/v1/chat/completions',
+    protocol: 'OpenAI',
+    statusLabel: '200 OK',
+    statusTone: 'healthy',
+    latency: '31 ms',
+    timeline: ['healthy', 'healthy', 'healthy', 'healthy', 'healthy', 'healthy', 'healthy', 'healthy', 'healthy', 'healthy'],
+  },
+  {
+    channel: 'channel-b',
+    path: '/v1/messages',
+    protocol: 'Anthropic',
+    statusLabel: '200 OK',
+    statusTone: 'healthy',
+    latency: '46 ms',
+    timeline: ['healthy', 'healthy', 'healthy', 'healthy', 'healthy', 'healthy', 'healthy', 'healthy', 'healthy', 'healthy'],
+  },
+  {
+    channel: 'channel-c',
+    path: '/v1/chat/completions',
+    protocol: 'vLLM',
+    statusLabel: '429 WARN',
+    statusTone: 'warn',
+    latency: '118 ms',
+    timeline: ['healthy', 'healthy', 'warn', 'healthy', 'warn', 'healthy', 'healthy', 'warn', 'healthy', 'healthy'],
+  },
+  {
+    channel: 'fallback-us',
+    path: '/v1/responses',
+    protocol: 'OpenAI',
+    statusLabel: '503 ERR',
+    statusTone: 'error',
+    latency: '—',
+    timeline: ['healthy', 'healthy', 'healthy', 'error', 'error', 'error', 'error', 'error', 'idle', 'idle'],
+  },
+];
+
+const COMPARE_ROWS = [
+  { model: 'DeepSeek-V4-Flash', rps: '71.2', successRate: '99.6%', latency: '41.8s', ttft: '3.6s', errors: '4' },
+  { model: 'GPT-5.6-Luna', rps: '52.4', successRate: '99.9%', latency: '17.2s', ttft: '1.1s', errors: '1' },
+  { model: 'Claude-Sonnet-4.6', rps: '38.5', successRate: '97.8%', latency: '28.7s', ttft: '2.4s', errors: '14' },
+  { model: 'Qwen3.5-Plus', rps: '18.7', successRate: '99.5%', latency: '21.4s', ttft: '1.9s', errors: '3' },
+] as const;
+
+const INCIDENTS: IncidentItem[] = [
+  {
+    title: 'channel-c 触发限流',
+    severity: 'WARN',
+    description: '上游连续返回 429，路由权重已从 28% 自动降至 17%。',
+    time: '03:49:12',
+    model: 'DeepSeek-V4-Flash',
+  },
+  {
+    title: 'Claude Sonnet 错误率抬升',
+    severity: 'HIGH',
+    description: '5 分钟错误率达到 2.2%，主要为 upstream_timeout。',
+    time: '03:44:37',
+    model: 'Claude-Sonnet-4.6',
+  },
+  {
+    title: 'fallback-us 探测失败',
+    severity: 'HIGH',
+    description: '连续 5 次健康检查失败，端点已进入熔断状态。',
+    time: '03:39:02',
+    model: 'GPT-5.4',
+  },
+  {
+    title: 'TTFT P99 短时升高',
+    severity: 'WARN',
+    description: 'P99 一度达到 12.3s，目前已恢复至 9.4s。',
+    time: '03:31:18',
+    model: 'all models',
+  },
+];
+
+const FLOW_METRICS = [
+  { label: 'Gateway RPS', value: '191.3' },
+  { label: 'Route P95', value: '13 ms' },
+  { label: 'Upstream TTFT', value: '3.9 s' },
+  { label: 'Retry Rate', value: '0.42%' },
+] as const;
+
+const FLOW_TABS: Array<{ key: FlowTabKey; label: string }> = [
+  { key: 'flow', label: '请求流' },
+  { key: 'endpoint', label: '端点状态' },
+  { key: 'compare', label: '模型对比' },
+];
+
+const SHARE_FILTER_OPTIONS = MODEL_SHARE_ROWS.filter((item) => item.name !== 'Other');
+
+const RANGE_TOTAL_MINUTES: Record<RangeKey, number> = {
+  '5m': 5,
+  '15m': 15,
+  '1h': 60,
+  '6h': 360,
+  '24h': 1440,
+};
+
+function buildRangeLabels(range: RangeKey) {
+  const totalMinutes = RANGE_TOTAL_MINUTES[range];
+  const now = new Date();
+
+  return Array.from({ length: 5 }, (_, index) => {
+    const offsetMinutes = totalMinutes - (totalMinutes / 4) * index;
+    const point = new Date(now.getTime() - offsetMinutes * 60_000);
+    const month = String(point.getMonth() + 1).padStart(2, '0');
+    const day = String(point.getDate()).padStart(2, '0');
+    const hours = String(point.getHours()).padStart(2, '0');
+    const minutes = String(point.getMinutes()).padStart(2, '0');
+
+    return totalMinutes >= 1440 ? `${month}-${day}` : `${hours}:${minutes}`;
+  });
 }
 
-const TIMELINE_CAP = 15;
-
-function useLiveTotal() {
-  const [totalCount, setTotalCount] = useState(0);
-  const [connected, setConnected] = useState(false);
-  const [reconnectIn, setReconnectIn] = useState(0);
-  const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
-
-  useEffect(() => {
-    fetchRoutingFlowSnapshot()
-      .then((snap) => {
-        const total = Object.entries(snap)
-          .filter(([k]) => k.split('>').length === 1)
-          .reduce((s, [, v]) => s + v, 0);
-        setTotalCount(total);
-      })
-      .catch(() => {});
-  }, []);
-
-  // Seed the state timeline from ClickHouse so the grid isn't empty after
-  // a page refresh — the endpoint status grid shows recent real traffic.
-  // Live WS events then append on top (newer requests win the display).
-  useEffect(() => {
-    api<{ paths: { timestamp: string; model: string; channel_id: string; endpoint_id: number | null; endpoint_url: string | null; latency_ms: number; success: boolean }[] }>(
-      '/health/recent-paths',
-    )
-      .then((r) => {
-        const seeded: TimelineEntry[] = (r.paths ?? [])
-          .filter((p) => p && typeof p.model === 'string' && typeof p.channel_id === 'string')
-          .reverse() // CH returns newest-first; store oldest-first so display stays newest-first
-          .map((p, i) => {
-            const ts = Date.parse(p.timestamp);
-            const tsNum = Number.isNaN(ts) ? Date.now() : ts;
-            return {
-              id: `seed-${i}-${p.endpoint_id ?? 'n'}`,
-              model: p.model,
-              channel: p.channel_id,
-              endpointId: p.endpoint_id ?? null,
-              endpointUrl: p.endpoint_url ?? undefined,
-              acceptedTs: tsNum - p.latency_ms,
-              completedTs: tsNum,
-              latency: p.latency_ms,
-              success: p.success,
-            };
-          });
-        if (seeded.length === 0) return;
-        setTimeline((prev) => {
-          const merged = [...seeded, ...prev];
-          return merged.length > TIMELINE_CAP ? merged.slice(merged.length - TIMELINE_CAP) : merged;
-        });
-      })
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    let ws: WebSocket | null = null;
-    let closed = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
-    function connect() {
-      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      ws = new WebSocket(`${proto}://${window.location.host}/api/health/ws`);
-      ws.onopen = () => {
-        setConnected(true);
-        setReconnectIn(0);
-        if (timer) {
-          clearInterval(timer);
-          timer = null;
-        }
-      };
-      ws.onmessage = (e) => {
-        let ev: {
-          model?: string;
-          channel_id?: string;
-          request_id?: string;
-          endpoint_id?: number | null;
-          latency_ms?: number;
-          success?: boolean;
-          timestamp?: string;
-        };
-        try {
-          ev = JSON.parse(e.data) as typeof ev;
-        } catch {
-          return;
-        }
-        if (typeof ev.model !== 'string' || typeof ev.channel_id !== 'string') return;
-        setTotalCount((c) => c + 1);
-
-        // State timeline: RouteDecided (no latency) opens a request row;
-        // RequestCompleted (latency_ms) closes it.
-        if (typeof ev.request_id === 'string') {
-          const ts = Date.parse(ev.timestamp ?? '');
-          const tsNum = Number.isNaN(ts) ? Date.now() : ts;
-          setTimeline((prev) => {
-            let next = prev.slice();
-            if (ev.latency_ms != null) {
-              const idx = next.findIndex((e) => e.id === ev.request_id);
-              const entry = {
-                id: ev.request_id!,
-                model: ev.model!,
-                channel: ev.channel_id!,
-                endpointId: ev.endpoint_id ?? null,
-                acceptedTs: tsNum - ev.latency_ms,
-                completedTs: tsNum,
-                latency: ev.latency_ms,
-                success: ev.success,
-              };
-              if (idx >= 0) next[idx] = entry;
-              else next.push(entry);
-            } else if (!next.some((e) => e.id === ev.request_id)) {
-              next.push({
-                id: ev.request_id!,
-                model: ev.model!,
-                channel: ev.channel_id!,
-                endpointId: ev.endpoint_id ?? null,
-                acceptedTs: tsNum,
-              });
-            }
-            if (next.length > TIMELINE_CAP) next = next.slice(next.length - TIMELINE_CAP);
-            return next;
-          });
-        }
-      };
-      ws.onclose = () => {
-        setConnected(false);
-        if (!closed) {
-          let c = 3;
-          setReconnectIn(c);
-          timer = setInterval(() => {
-            c--;
-            if (c <= 0) {
-              if (timer) {
-                clearInterval(timer);
-                timer = null;
-              }
-              setTimeout(connect, 500);
-            } else {
-              setReconnectIn(c);
-            }
-          }, 1000);
-        }
-      };
-      ws.onerror = () => {
-        try {
-          ws?.close();
-        } catch {
-          // ignore
-        }
-      };
-    }
-    connect();
-    return () => {
-      closed = true;
-      if (timer) clearInterval(timer);
-      try {
-        ws?.close();
-      } catch {
-        // ignore
-      }
-    };
-  }, []);
-
-  return { totalCount, connected, reconnectIn, timeline };
+function matchesChannelFilter(row: EndpointRow, selectedChannel: string) {
+  if (selectedChannel === '全部渠道') return true;
+  if (selectedChannel === 'vLLM Cluster') return row.protocol === 'vLLM';
+  return row.protocol === selectedChannel;
 }
 
-// ── top status strip ───────────────────────────────────────────────
+function randomInt(min: number, max: number) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
 
-function StatusCell({ label, value, foot, tone }: {
+function mutateHistory(values: number[], min: number, max: number) {
+  return values.map((value) => Math.max(min, Math.min(max, value + randomInt(-12, 12))));
+}
+
+function formatNumber(value: number) {
+  return value.toLocaleString('zh-CN');
+}
+
+function toneClasses(tone: Tone) {
+  switch (tone) {
+    case 'blue':
+      return {
+        card: 'border-[#dce7ff] bg-[linear-gradient(180deg,#ffffff_0%,#f6f9ff_100%)]',
+        badge: 'bg-[#edf4ff] text-[#3276e8]',
+        value: 'text-[#3276e8]',
+        glow: 'bg-[#edf4ff]',
+      };
+    case 'cyan':
+      return {
+        card: 'border-[#d8f0f5] bg-[linear-gradient(180deg,#ffffff_0%,#f3fcfe_100%)]',
+        badge: 'bg-[#eafafb] text-[#0ca8bd]',
+        value: 'text-[#0ca8bd]',
+        glow: 'bg-[#eafafb]',
+      };
+    case 'green':
+      return {
+        card: 'border-[#d7f0e3] bg-[linear-gradient(180deg,#ffffff_0%,#f5fcf8_100%)]',
+        badge: 'bg-[#ecfbf4] text-[#16a36a]',
+        value: 'text-[#16a36a]',
+        glow: 'bg-[#ecfbf4]',
+      };
+    case 'yellow':
+      return {
+        card: 'border-[#f3e4bc] bg-[linear-gradient(180deg,#ffffff_0%,#fffaf0_100%)]',
+        badge: 'bg-[#fff8e8] text-[#d99a18]',
+        value: 'text-[#d99a18]',
+        glow: 'bg-[#fff8e8]',
+      };
+    case 'red':
+      return {
+        card: 'border-[#f2d8d8] bg-[linear-gradient(180deg,#ffffff_0%,#fff6f6_100%)]',
+        badge: 'bg-[#fff0f0] text-[#e24f4f]',
+        value: 'text-[#e24f4f]',
+        glow: 'bg-[#fff0f0]',
+      };
+  }
+}
+
+function statusSquareClasses(status: ModelCatalogItem['status']) {
+  switch (status) {
+    case 'healthy':
+      return 'bg-[#16a36a]';
+    case 'warn':
+      return 'bg-[#d99a18]';
+    case 'error':
+      return 'bg-[#e24f4f]';
+    case 'offline':
+      return 'bg-[#c4cad3]';
+  }
+}
+
+function endpointStatusClasses(tone: EndpointRow['statusTone']) {
+  switch (tone) {
+    case 'healthy':
+      return 'text-[#179767]';
+    case 'warn':
+      return 'text-[#bd7c10]';
+    case 'error':
+      return 'text-[#d14848]';
+  }
+}
+
+function timelineSquareClasses(state: EndpointRow['timeline'][number]) {
+  switch (state) {
+    case 'healthy':
+      return 'bg-[#28b477]';
+    case 'warn':
+      return 'bg-[#e3aa37]';
+    case 'error':
+      return 'bg-[#e46262]';
+    case 'idle':
+      return 'bg-[#cbd2dc]';
+  }
+}
+
+function Panel({
+  title,
+  subtitle,
+  right,
+  children,
+  className = '',
+}: {
+  title: string;
+  subtitle?: string;
+  right?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <article className={`overflow-hidden rounded-2xl border border-border bg-card shadow-sm ${className}`}>
+      <div className="flex min-h-13 items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div>
+          <div className="text-[13px] font-semibold text-foreground">{title}</div>
+          {subtitle ? <div className="mt-1 text-[11px] text-muted-foreground">{subtitle}</div> : null}
+        </div>
+        {right}
+      </div>
+      <div className="p-4">{children}</div>
+    </article>
+  );
+}
+
+function KpiCard({
+  label,
+  badge,
+  value,
+  subtext,
+  tone,
+}: {
   label: string;
+  badge: string;
   value: string;
-  foot?: string;
-  tone?: 'good' | 'warn' | 'bad';
+  subtext: React.ReactNode;
+  tone: Tone;
 }) {
-  return (
-    <div className="border-t lg:border-t-0 lg:border-l border-border/60 px-5 py-4 min-w-0">
-      <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-        {label}
-      </div>
-      <div
-        className={cn(
-          'mt-1.5 text-2xl font-bold tracking-tight tabular-nums',
-          tone === 'good' && 'text-emerald-600 dark:text-emerald-400',
-          tone === 'warn' && 'text-amber-600 dark:text-amber-400',
-          tone === 'bad' && 'text-destructive',
-        )}
-      >
-        {value}
-      </div>
-      {foot && <div className="mt-0.5 text-[11px] text-muted-foreground">{foot}</div>}
-    </div>
-  );
-}
-
-function StatusStrip({
-  leadTitle, leadCopy, availability, currentRequests, p95, totalTokens, cachePct, connected,
-}: {
-  leadTitle: string;
-  leadCopy: string;
-  availability: number;
-  currentRequests: number;
-  p95: number;
-  totalTokens: number;
-  cachePct: number | null;
-  connected: boolean;
-}) {
-  const { t } = useTranslation();
-  return (
-    <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
-      <div className="grid grid-cols-2 lg:grid-cols-[1.25fr_repeat(4,minmax(0,1fr))]">
-        <div className="col-span-2 lg:col-span-1 flex items-center gap-4 px-5 py-4 min-w-0">
-          <div className="relative size-11 shrink-0 rounded-full bg-gradient-to-br from-emerald-300 via-emerald-500 to-emerald-900 grid place-items-center shadow-[0_0_0_8px_rgba(16,185,129,0.07),0_0_28px_rgba(16,185,129,0.18)]">
-            <span className="absolute inset-0 rounded-full border border-emerald-400/40 animate-ping opacity-60" />
-          </div>
-          <div className="min-w-0">
-            <div className="text-base font-bold truncate">{leadTitle}</div>
-            <div className="text-xs text-muted-foreground truncate">{leadCopy}</div>
-          </div>
-        </div>
-        <StatusCell
-          label={t('monitor.globalAvailability')}
-          value={`${availability.toFixed(2)}%`}
-          foot={t('monitor.sloFoot')}
-          tone={availability >= 99 ? 'good' : 'warn'}
-        />
-        <StatusCell
-          label={t('monitor.currentRequests')}
-          value={fmtCount(currentRequests)}
-          foot={connected ? t('monitor.live') : t('monitor.liveOffline')}
-        />
-        <StatusCell
-          label={t('monitor.p95Latency')}
-          value={fmtLat(p95)}
-          tone={p95 > 5000 ? 'warn' : undefined}
-        />
-        <StatusCell
-          label={t('monitor.todayTokens')}
-          value={fmtTokens(totalTokens)}
-          foot={cachePct !== null ? t('monitor.cacheHit', { pct: cachePct }) : undefined}
-        />
-      </div>
-    </section>
-  );
-}
-
-// ── left: model catalog ────────────────────────────────────────────
-
-const HEALTH_DOT: Record<Health, string> = {
-  good: 'bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.12)]',
-  warn: 'bg-amber-500 shadow-[0_0_0_4px_rgba(245,158,11,0.12)]',
-  bad: 'bg-red-500 shadow-[0_0_0_4px_rgba(239,68,68,0.12)]',
-  none: 'bg-muted-foreground/40',
-};
-
-function ModelCatalog({
-  rows, search, onSearch, selectedName, onSelect,
-}: {
-  rows: ModelRow[];
-  search: string;
-  onSearch: (v: string) => void;
-  selectedName: string | null;
-  onSelect: (name: string) => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
-      <div className="flex items-center justify-between px-4 min-h-[52px] border-b border-border/60">
-        <div className="text-sm font-bold">{t('monitor.modelCatalog')}</div>
-        <div className="text-[11px] text-muted-foreground">
-          {t('monitor.modelsCount', { n: rows.length })}
-        </div>
-      </div>
-      <div className="p-2.5 border-b border-border/60">
-        <div className="flex items-center gap-2 h-9 rounded-lg border bg-muted/40 px-2.5 text-muted-foreground">
-          <Search className="size-3.5 shrink-0" />
-          <input
-            value={search}
-            onChange={(e) => onSearch(e.target.value)}
-            placeholder={t('monitor.searchPlaceholder')}
-            className="w-full bg-transparent text-sm outline-none text-foreground placeholder:text-muted-foreground"
-          />
-        </div>
-      </div>
-      <div className="max-h-[620px] overflow-y-auto p-1.5">
-        {rows.length === 0 ? (
-          <div className="py-10 text-center text-xs text-muted-foreground">
-            {t('monitor.emptyModels')}
-          </div>
-        ) : (
-          rows.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              onClick={() => onSelect(r.name)}
-              className={cn(
-                'w-full text-left grid grid-cols-[8px_1fr_auto] gap-2 items-start rounded-lg px-2.5 py-2.5 mb-0.5 border border-transparent transition-colors cursor-pointer',
-                r.name === selectedName
-                  ? 'bg-brand/10 border-brand/20'
-                  : 'hover:bg-muted/50',
-              )}
-            >
-              <span className={cn('size-2 rounded-full mt-1.5', HEALTH_DOT[r.health])} />
-              <span className="min-w-0">
-                <span className="block text-xs font-semibold truncate">{r.name}</span>
-                <span className="block text-[10px] text-muted-foreground mt-0.5 truncate">
-                  {r.channelNames || '—'}
-                </span>
-              </span>
-              <span className="text-[11px] text-muted-foreground tabular-nums pt-0.5">
-                {fmtCount(r.requests)}
-              </span>
-            </button>
-          ))
-        )}
-      </div>
-    </section>
-  );
-}
-
-// ── center: performance chart ──────────────────────────────────────
-
-type MetricKey = 'requests' | 'tokens' | 'latency' | 'error';
-
-function PerformanceChart({ data }: {
-  data: { time: string; count: number; tokens: number; latency: number; error: number }[];
-}) {
-  const { t } = useTranslation();
-  const [metric, setMetric] = useState<MetricKey>('requests');
-
-  const METRICS: { key: MetricKey; label: string; dataKey: string; unit: string }[] = [
-    { key: 'requests', label: t('monitor.metricRequests'), dataKey: 'count', unit: '' },
-    { key: 'tokens', label: t('monitor.metricTokens'), dataKey: 'tokens', unit: '' },
-    { key: 'latency', label: t('monitor.metricLatency'), dataKey: 'latency', unit: 'ms' },
-    { key: 'error', label: t('monitor.metricErrors'), dataKey: 'error', unit: '%' },
-  ];
-  const active = METRICS.find((m) => m.key === metric)!;
-
-  const main = useMemo(() => {
-    if (data.length === 0) return null;
-    switch (metric) {
-      case 'requests':
-        return { v: data.reduce((s, d) => s + d.count, 0), unit: t('monitor.req24h') };
-      case 'tokens':
-        return { v: data.reduce((s, d) => s + d.tokens, 0), unit: '' };
-      case 'latency': {
-        const last = [...data].reverse().find((d) => d.latency > 0);
-        return last ? { v: last.latency, unit: 'ms' } : null;
-      }
-      case 'error': {
-        const last = [...data].reverse().find((d) => d.count > 0);
-        return last ? { v: last.error, unit: '%' } : null;
-      }
-    }
-  }, [data, metric, t]);
-
-  const yFmt = (v: number) => {
-    if (metric === 'latency') return fmtLat(v);
-    if (metric === 'error') return `${v}%`;
-    if (metric === 'tokens') return fmtTokens(v);
-    return fmtCount(v);
-  };
+  const palette = toneClasses(tone);
 
   return (
-    <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-2 px-4 min-h-[52px] border-b border-border/60">
-        <div>
-          <div className="text-sm font-bold">{t('monitor.realtimePerf')}</div>
-          <div className="text-[11px] text-muted-foreground">{t('monitor.recent24h')}</div>
-        </div>
-        <div className="flex gap-0.5">
-          {METRICS.map((m) => (
-            <button
-              key={m.key}
-              type="button"
-              onClick={() => setMetric(m.key)}
-              className={cn(
-                'px-2.5 py-1 rounded-md text-xs cursor-pointer transition-colors',
-                metric === m.key
-                  ? 'bg-muted text-foreground font-semibold'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
+    <article className={`relative min-h-30 overflow-hidden rounded-2xl border p-4 shadow-sm ${palette.card}`}>
+      <div className={`pointer-events-none absolute -right-7 -bottom-8 h-22 w-22 rounded-full ${palette.glow}`} />
+      <div className="relative flex items-center justify-between gap-2">
+        <div className="text-xs font-semibold text-muted-foreground">{label}</div>
+        <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold ${palette.badge}`}>{badge}</span>
       </div>
-      <div className="px-4 pt-3 pb-2">
-        <div className="flex items-baseline gap-2">
-          {main ? (
-            <>
-              <span className="text-[26px] font-extrabold tracking-tight tabular-nums">
-                {metric === 'latency' ? fmtLat(main.v) : metric === 'error' ? `${main.v}%` : fmtCount(main.v)}
-              </span>
-              <span className="text-[11px] text-muted-foreground">{main.unit}</span>
-            </>
-          ) : (
-            <span className="text-sm text-muted-foreground">{t('common.loading')}</span>
-          )}
-        </div>
-      </div>
-      <div className="px-3 pb-3">
-        {data.length > 0 ? (
-          <ResponsiveContainer width="100%" height={210}>
-            <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
-              <defs>
-                <linearGradient id="monArea" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.25} />
-                  <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-              <XAxis
-                dataKey="time"
-                tickLine={false}
-                axisLine={false}
-                tick={{ fill: 'var(--muted-foreground)', fontSize: 10 }}
-                minTickGap={48}
-              />
-              <YAxis
-                tickLine={false}
-                axisLine={false}
-                tick={{ fill: 'var(--muted-foreground)', fontSize: 10 }}
-                tickFormatter={yFmt}
-                width={52}
-              />
-              <Tooltip
-                formatter={(value, name) => [yFmt(Number(value ?? 0)), String(name)]}
-                labelFormatter={(label) => String(label)}
-              />
-              <Area
-                type="monotone"
-                dataKey={active.dataKey}
-                stroke="var(--chart-1)"
-                strokeWidth={2}
-                fill="url(#monArea)"
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        ) : (
-          <div className="h-[210px] grid place-items-center text-xs text-muted-foreground">
-            {t('monitor.noChartData')}
-          </div>
-        )}
-      </div>
-    </section>
+      <div className={`relative mt-4 text-3xl font-semibold tracking-[-0.04em] ${palette.value}`}>{value}</div>
+      <div className="relative mt-3 text-[11px] text-[#98a2b3]">{subtext}</div>
+    </article>
   );
 }
-
-// ── center: request flow ───────────────────────────────────────────
-
-function FlowLink({ delay }: { delay?: string }) {
-  return (
-    <div className="mon-link relative h-px bg-gradient-to-r from-border via-brand to-border mx-1 flex-1 min-w-[20px]">
-      <i style={delay ? { animationDelay: delay } : undefined} />
-    </div>
-  );
-}
-
-// ── center: request state timeline ─────────────────────────────────
-
-function StateTimeline({ timeline }: { timeline: TimelineEntry[] }) {
-  const { t } = useTranslation();
-  if (timeline.length === 0) {
-    return (
-      <div className="px-4 pb-4">
-        <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">
-          {t('monitor.stateTimeline')}
-        </div>
-        <div className="py-3 text-center text-xs text-muted-foreground">{t('monitor.noLiveData')}</div>
-      </div>
-    );
-  }
-  const now = Date.now();
-  const entries = [...timeline].reverse(); // newest first
-  const minTs = Math.min(...entries.map((e) => e.acceptedTs));
-  const maxTs = Math.max(...entries.map((e) => e.completedTs ?? now));
-  const span = Math.max(maxTs - minTs, 1);
-  const pct = (v: number) => `${Math.min(100, Math.max(0, (v / span) * 100))}%`;
-  return (
-    <div className="px-4 pb-4">
-      <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">
-        <span>{t('monitor.stateTimeline')}</span>
-        <span className="tabular-nums">{entries.length}</span>
-      </div>
-      <div className="space-y-1.5">
-        {entries.map((e) => {
-          const start = pct(e.acceptedTs - minTs);
-          const width = e.completedTs ? pct(e.completedTs - e.acceptedTs) : undefined;
-          const label = e.model || e.id.slice(0, 8);
-          return (
-            <div key={e.id} className="flex items-center gap-2 text-[10px]">
-              <span
-                className="w-24 truncate text-muted-foreground shrink-0"
-                title={`${e.model} · ${e.channel} · ${e.id}`}
-              >
-                {label.length > 12 ? `${label.slice(0, 11)}…` : label}
-              </span>
-              <div className="relative flex-1 h-4 rounded bg-muted/30 overflow-hidden">
-                <span className="absolute top-0 bottom-0 w-px bg-border/80" style={{ left: start }} />
-                {e.completedTs ? (
-                  <span
-                    className={cn(
-                      'absolute top-1 bottom-1 rounded-sm',
-                      e.success === false ? 'bg-red-500/60' : 'bg-emerald-500/60',
-                    )}
-                    style={{ left: start, width }}
-                  />
-                ) : (
-                  <span
-                    className="absolute top-1 bottom-1 w-1.5 rounded-full bg-blue-500 animate-pulse"
-                    style={{ left: start }}
-                  />
-                )}
-              </div>
-              <span className="w-16 text-right tabular-nums text-muted-foreground shrink-0">
-                {e.completedTs ? `${e.latency ?? 0}ms` : t('monitor.inFlight')}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function RequestFlow({
-  ingress, directPass, upstream, rl, af, cachePct, p95, timeout, timeline,
-}: {
-  ingress: number;
-  directPass: number;
-  upstream: number;
-  rl: number;
-  af: number;
-  cachePct: number | null;
-  p95: number;
-  timeout: number;
-  timeline: TimelineEntry[];
-}) {
-  const { t } = useTranslation();
-  const node = (kicker: string, value: string, valueUnit: string, detail: string, gateway = false) => (
-    <div className={cn('relative min-h-[84px] rounded-lg border p-3 bg-muted/20 overflow-hidden', gateway && 'border-brand/40')}>
-      <span className={cn('absolute inset-y-0 left-0 w-0.5', gateway ? 'bg-brand shadow-[0_0_14px_var(--brand)]' : 'bg-border')} />
-      <div className="text-[9px] uppercase tracking-widest text-muted-foreground">{kicker}</div>
-      <div className="mt-1.5 text-lg font-bold tabular-nums leading-none">
-        {value}
-        {valueUnit && <span className="ml-1 text-[10px] font-medium text-muted-foreground">{valueUnit}</span>}
-      </div>
-      <div className="mt-1.5 text-[10px] text-muted-foreground leading-snug">{detail}</div>
-    </div>
-  );
-
-  return (
-    <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
-      <div className="flex items-center justify-between px-4 min-h-[52px] border-b border-border/60">
-        <div className="text-sm font-bold">{t('monitor.reqFlow')}</div>
-        <div className="text-[11px] text-muted-foreground">{t('monitor.recent24h')}</div>
-      </div>
-      <div className="p-4 flex items-center">
-        <div className="flex-1 min-w-0">
-          {node(
-            t('monitor.ingress'),
-            fmtCount(ingress),
-            'req',
-            t('monitor.ingressDetail', { n: fmtCount(ingress) }),
-          )}
-        </div>
-        <FlowLink />
-        <div className="flex-1 min-w-0">
-          {node(
-            t('monitor.gateway'),
-            `${directPass.toFixed(1)}%`,
-            t('monitor.directPass'),
-            t('monitor.gatewayDetail', { rl: fmtCount(rl), af: fmtCount(af), cache: cachePct ?? 0 }),
-            true,
-          )}
-        </div>
-        <FlowLink delay="-0.9s" />
-        <div className="flex-1 min-w-0">
-          {node(
-            t('monitor.upstream'),
-            fmtCount(upstream),
-            'req',
-            t('monitor.upstreamDetail', { p95: fmtLat(p95), to: fmtCount(timeout) }),
-          )}
-        </div>
-      </div>
-
-      {/* State timeline: recent requests accepted → completed */}
-      <div className="border-t border-border/60">
-        <StateTimeline timeline={timeline} />
-      </div>
-    </section>
-  );
-}
-
-// ── center: channel endpoint status ────────────────────────────────
-
-const EP_BADGE: Record<'good' | 'bad' | 'none', string> = {
-  good: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
-  bad: 'bg-red-500/10 text-red-700 dark:text-red-400',
-  none: 'bg-muted text-muted-foreground',
-};
-
-// ── endpoint state timeline grid ────────────────────────────────────
-// One row per endpoint with 18 time-bucket cells. Cell width = probe
-// interval from gateway settings. Hover a cell for timestamp + status.
-// The probe-poll window is a fixed 30 minutes (stable, not tied to
-// interval) so the grid doesn't jitter when the settings load later.
-
-const EP_TIMELINE_COLS = 18;
-const EP_TIMELINE_MINUTES = 30;
-
-/** Read the configured probe interval from settings. */
-function useProbeInterval(): number {
-  const [intervalSecs, setIntervalSecs] = useState(60);
-  useEffect(() => {
-    api<{ interval_secs: number }>('/settings/probe-interval')
-      .then((r) => setIntervalSecs(r.interval_secs))
-      .catch(() => {});
-  }, []);
-  return intervalSecs;
-}
-
-/** Poll recent raw probe results (fixed window, not tied to interval). */
-function useRecentProbes() {
-  const [probes, setProbes] = useState<ProbeResult[]>([]);
-  useEffect(() => {
-    let active = true;
-    const load = () => {
-      api<ProbeResult[]>(`/probe-results/recent?minutes=${EP_TIMELINE_MINUTES}`)
-        .then((r) => {
-          if (active) setProbes(r ?? []);
-        })
-        .catch(() => {});
-    };
-    load();
-    const t = setInterval(load, 5000);
-    return () => {
-      active = false;
-      clearInterval(t);
-    };
-  }, []);
-  return probes;
-}
-
-function EndpointTimeline({
-  row, endpointUrl, channelName,
-}: {
-  row: ModelRow | null;
-  endpointUrl: Map<string, Map<number, string>>;
-  channelName: Map<string, string>;
-}) {
-  const { t } = useTranslation();
-  const intervalSecs = useProbeInterval();
-  const probes = useRecentProbes();
-
-  const endpoints = useMemo(() => {
-    if (!row) return [];
-    const list: { channelId: string; channelName: string; url: string }[] = [];
-    for (const ch of row.channels) {
-      const chUrlMap = endpointUrl.get(ch.channel_id);
-      for (const ep of ch.endpoints) {
-        const url =
-          (ep.endpoint_id != null && chUrlMap?.get(ep.endpoint_id)) || '';
-        list.push({
-          channelId: ch.channel_id,
-          channelName: channelName.get(ch.channel_id) || ch.channel_name || ch.channel_id,
-          url,
-        });
-      }
-    }
-    return list;
-  }, [row, endpointUrl, channelName]);
-
-  // Cell width = probe interval from settings. The timeline anchor is
-  // aligned to the bucketMs boundary so grid cells are stable across
-  // re-renders — otherwise changing now shifts all cell boundaries and
-  // makes probe data hop between cells on every 5s poll.
-  const bucketMs = Math.max(1000, intervalSecs * 1000);
-  const nowAligned = Math.floor(Date.now() / bucketMs) * bucketMs;
-  const windowStart = nowAligned - EP_TIMELINE_COLS * bucketMs;
-
-  const hitsForCell = useCallback(
-    (ep: { channelId: string; url: string }, i: number): { n: number; ok: number; fail: number; times: string[] } => {
-      const start = windowStart + i * bucketMs;
-      const end = start + bucketMs;
-      let ok = 0, fail = 0;
-      const times: string[] = [];
-      for (const p of probes) {
-        if (p.channel_id !== ep.channelId) continue;
-        if (ep.url && p.endpoint_url !== ep.url) continue;
-        const ts = Date.parse(p.probed_at);
-        if (Number.isNaN(ts) || ts < start || ts >= end) continue;
-        const d = new Date(ts);
-        times.push(d.toLocaleTimeString());
-        if (p.success) ok++; else fail++;
-      }
-      return { n: ok + fail, ok, fail, times };
-    },
-    [probes, windowStart, bucketMs],
-  );
-
-  const cellClass = (ok: number, fail: number) => {
-    if (fail > 0) return 'bg-red-500';
-    if (ok > 0) return 'bg-emerald-500';
-    return 'bg-muted-foreground/20';
-  };
-
-  if (!row || endpoints.length === 0) return null;
-
-  return (
-    <div className="border-t border-border/60 px-4 py-3">
-      <style>{`
-        .ep-cell { position: relative; }
-        .ep-cell:hover { outline: 2px solid #fff; }
-        .ep-cell:hover::after {
-          content: attr(data-tip);
-          position: absolute;
-          bottom: 28px;
-          left: 50%;
-          transform: translateX(-50%);
-          background: hsl(var(--popover));
-          border: 1px solid hsl(var(--border));
-          padding: 6px 8px;
-          border-radius: 6px;
-          font-size: 11px;
-          white-space: pre;
-          line-height: 1.5;
-          z-index: 30;
-          pointer-events: none;
-        }
-      `}</style>
-      <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">
-        {t('monitor.endpointTimeline')}
-      </div>
-      <div className="overflow-x-auto relative">
-        {endpoints.map((ep, ri) => (
-          <div key={`${ep.channelId}-${ri}`} className="flex items-start gap-4 mb-5">
-            <div className="w-44 shrink-0 min-w-0 pt-0.5">
-              <div className="text-xs font-semibold truncate">{ep.channelName}</div>
-              <div className="text-[11px] text-muted-foreground truncate">{ep.url || '—'}</div>
-            </div>
-            <div className="flex gap-1.5 flex-wrap">
-              {Array.from({ length: EP_TIMELINE_COLS }, (_, i) => {
-                const h = hitsForCell(ep, i);
-                const cellTs = windowStart + i * bucketMs;
-                const cls = cellClass(h.ok, h.fail);
-                const ago = Math.floor((nowAligned - cellTs) / 60000);
-                const tooltipLines = [
-                  `${ago}m ago · ${h.fail > 0 ? 'FAIL' : h.ok > 0 ? 'OK' : 'NO DATA'}`,
-                  h.n > 0 ? `probes ${h.n} · ${h.ok} ok / ${h.fail} fail` : '',
-                ]
-                  .filter(Boolean)
-                  .join('\n');
-                return (
-                  <span
-                    key={i}
-                    className={`ep-cell inline-block w-[22px] h-[22px] rounded-sm ${cls}`}
-                    data-tip={tooltipLines}
-                  />
-                );
-              })}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ChannelEndpointStatus({
-  row, channelName, endpointUrl,
-}: {
-  row: ModelRow | null;
-  channelName: Map<string, string>;
-  endpointUrl: Map<string, Map<number, string>>;
-}) {
-  const { t } = useTranslation();
-
-  if (!row) {
-    return (
-      <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
-        <div className="px-4 min-h-[52px] flex items-center border-b border-border/60">
-          <div className="text-sm font-bold">{t('monitor.channelEndpoints')}</div>
-        </div>
-        <div className="p-6 text-center text-xs text-muted-foreground">{t('monitor.noSelection')}</div>
-      </section>
-    );
-  }
-
-  return (
-    <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
-      <div className="flex items-center justify-between px-4 min-h-[52px] border-b border-border/60">
-        <div className="text-sm font-bold">{t('monitor.channelEndpoints')}</div>
-        <div className="text-[11px] text-muted-foreground">{row.name}</div>
-      </div>
-      <div className="divide-y divide-border/40">
-        {row.channels.length === 0 ? (
-          <div className="p-6 text-center text-xs text-muted-foreground">
-            {t('monitor.noChannelData')}
-          </div>
-        ) : (
-          row.channels.map((ch) => {
-            const enabled = ch.endpoints.filter((e) => e.enabled);
-            const available = enabled.filter((e) => e.available);
-            const state: 'good' | 'bad' | 'none' =
-              enabled.length === 0 ? 'none' : available.length === enabled.length ? 'good' : 'bad';
-            const label =
-              state === 'good'
-                ? `${available.length}/${enabled.length} ${t('monitor.epAvailable')}`
-                : state === 'none'
-                  ? t('monitor.epDisabled')
-                  : `${available.length}/${enabled.length} ${t('monitor.epUnavailable')}`;
-            return (
-              <div key={ch.channel_id} className="px-4 py-3">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div className="min-w-0">
-                    <span className="text-xs font-semibold">
-                      {ch.channel_name || channelName.get(ch.channel_id) || ch.channel_id}
-                    </span>
-                    <span className="text-[10px] text-muted-foreground font-mono ml-2">{ch.channel_id}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-[10px] text-muted-foreground tabular-nums">
-                    <span>{fmtCount(ch.requests)} req</span>
-                    <span>{ch.requests > 0 ? `${(ch.success_rate * 100).toFixed(1)}%` : '—'}</span>
-                    <span>P95 {fmtLat(ch.p95_latency_ms)}</span>
-                    <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 font-medium', EP_BADGE[state])}>
-                      {label}
-                    </span>
-                  </div>
-                </div>
-                <div className="mt-2 space-y-1">
-                  {ch.endpoints.map((ep, i) => {
-                    const url =
-                      (ep.endpoint_id != null && endpointUrl.get(ch.channel_id)?.get(ep.endpoint_id)) ??
-                      `#${i + 1}`;
-                    const epState = !ep.enabled ? 'none' : ep.available ? 'good' : 'bad';
-                    const epLabel = !ep.enabled
-                      ? t('monitor.epDisabled')
-                      : ep.available
-                        ? t('monitor.epAvailable')
-                        : t('monitor.epUnavailable');
-                    return (
-                      <div key={ep.endpoint_id ?? i} className="flex items-center justify-between gap-3 text-xs">
-                        <span className="font-mono text-muted-foreground truncate">{url}</span>
-                        <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium shrink-0', EP_BADGE[epState])}>
-                          {epLabel}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
-      <EndpointTimeline row={row} endpointUrl={endpointUrl} channelName={channelName} />
-    </section>
-  );
-}
-
-// ── center: model compare table ────────────────────────────────────
-
-const HEALTH_BADGE: Record<Health, string> = {
-  good: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
-  warn: 'bg-amber-500/10 text-amber-700 dark:text-amber-400',
-  bad: 'bg-red-500/10 text-red-700 dark:text-red-400',
-  none: 'bg-muted text-muted-foreground',
-};
-
-function ModelCompareTable({
-  rows, selectedName, onSelect,
-}: {
-  rows: ModelRow[];
-  selectedName: string | null;
-  onSelect: (name: string) => void;
-}) {
-  const { t } = useTranslation();
-  const statusLabel = (h: Health) =>
-    h === 'good'
-      ? t('monitor.statusHealthy')
-      : h === 'warn'
-        ? t('monitor.statusDegraded')
-        : h === 'bad'
-          ? t('monitor.statusMaintenance')
-          : t('monitor.statusUntested');
-
-  return (
-    <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
-      <div className="flex items-center justify-between px-4 min-h-[52px] border-b border-border/60">
-        <div>
-          <div className="text-sm font-bold">{t('monitor.modelCompare')}</div>
-          <div className="text-[11px] text-muted-foreground">{t('monitor.compareSubtitle')}</div>
-        </div>
-        <div className="text-[11px] text-muted-foreground">{t('monitor.byRequests')}</div>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs min-w-[760px]">
-          <thead>
-            <tr className="border-b border-border/60 text-muted-foreground">
-              <th className="text-left font-semibold uppercase tracking-wider px-4 py-2.5">{t('monitor.colModel')}</th>
-              <th className="text-right font-semibold uppercase tracking-wider px-3 py-2.5">{t('monitor.colStatus')}</th>
-              <th className="text-right font-semibold uppercase tracking-wider px-3 py-2.5">{t('monitor.colRps')}</th>
-              <th className="text-right font-semibold uppercase tracking-wider px-3 py-2.5">{t('monitor.colP95')}</th>
-              <th className="text-right font-semibold uppercase tracking-wider px-3 py-2.5">{t('monitor.colAvgLat')}</th>
-              <th className="text-right font-semibold uppercase tracking-wider px-3 py-2.5">{t('monitor.colError')}</th>
-              <th className="text-right font-semibold uppercase tracking-wider px-3 py-2.5">{t('monitor.colCache')}</th>
-              <th className="text-right font-semibold uppercase tracking-wider px-4 py-2.5">{t('monitor.colCost')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr
-                key={r.id}
-                onClick={() => onSelect(r.name)}
-                className={cn(
-                  'border-b border-border/40 last:border-0 cursor-pointer transition-colors',
-                  r.name === selectedName ? 'bg-brand/5' : 'hover:bg-muted/40',
-                )}
-              >
-                <td className="px-4 py-2.5">
-                  <span className="flex items-center gap-2 font-semibold">
-                    <span className={cn('size-1.5 rounded-full', HEALTH_DOT[r.health])} />
-                    {r.name}
-                  </span>
-                </td>
-                <td className="px-3 py-2.5 text-right">
-                  <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium', HEALTH_BADGE[r.health])}>
-                    {statusLabel(r.health)}
-                  </span>
-                </td>
-                <td className="px-3 py-2.5 text-right tabular-nums">{fmtCount(r.requests)}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums">{r.p95 > 0 ? fmtLat(r.p95) : '—'}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums">{r.avgLatency > 0 ? fmtLat(r.avgLatency) : '—'}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums">
-                  {r.requests > 0 ? `${((1 - r.successRate) * 100).toFixed(2)}%` : '—'}
-                </td>
-                <td className="px-3 py-2.5 text-right tabular-nums">
-                  {r.cacheHitPct !== null ? `${r.cacheHitPct}%` : '—'}
-                </td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">—</td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={8} className="py-10 text-center text-muted-foreground">
-                  {t('monitor.emptyModels')}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-// ── right: inspector ───────────────────────────────────────────────
-
-function AvailabilityRing({ pct, tone }: { pct: number; tone: Health }) {
-  const { t } = useTranslation();
-  const color = tone === 'bad' ? 'hsl(var(--destructive))' : tone === 'warn' ? '#f59e0b' : 'hsl(var(--primary))';
-  return (
-    <div
-      className="relative size-[92px] shrink-0 rounded-full grid place-items-center"
-      style={{ background: `conic-gradient(${color} ${pct * 3.6}deg, hsl(var(--border)) 0deg)` }}
-    >
-      <div className="absolute inset-2 rounded-full bg-card border border-border" />
-      <div className="relative z-10 text-center">
-        <b className="block text-lg font-bold tabular-nums">{pct.toFixed(2)}%</b>
-        <span className="text-[9px] text-muted-foreground">{t('monitor.availability')}</span>
-      </div>
-    </div>
-  );
-}
-
-function ModelInspector({ row }: { row: ModelRow | null }) {
-  const { t } = useTranslation();
-  if (!row) {
-    return (
-      <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
-        <div className="px-4 min-h-[52px] flex items-center justify-between border-b border-border/60">
-          <div className="text-sm font-bold">{t('monitor.inspector')}</div>
-        </div>
-        <div className="p-6 text-center text-xs text-muted-foreground">{t('monitor.noSelection')}</div>
-      </section>
-    );
-  }
-
-  const availability = row.requests > 0 ? row.successRate * 100 : 0;
-  const tone: Health = row.health;
-  const kv = (label: string, value: string) => (
-    <div className="rounded-lg border border-border/60 bg-muted/20 p-2.5 min-w-0">
-      <div className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">{label}</div>
-      <b className="block mt-1 text-sm tabular-nums truncate">{value}</b>
-    </div>
-  );
-  const progress = (label: string, pct: number, color: 'brand' | 'amber' | 'blue') => (
-    <div>
-      <div className="flex justify-between text-[10px] text-muted-foreground mb-1">
-        <span>{label}</span>
-        <span className="tabular-nums">{pct.toFixed(1)}%</span>
-      </div>
-      <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-        <i
-          className={cn(
-            'block h-full rounded-full transition-all',
-            color === 'brand' && 'bg-brand',
-            color === 'amber' && 'bg-amber-500',
-            color === 'blue' && 'bg-blue-500',
-          )}
-          style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
-        />
-      </div>
-    </div>
-  );
-
-  return (
-    <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
-      <div className="px-4 min-h-[52px] flex items-center justify-between border-b border-border/60">
-        <div className="text-sm font-bold">{t('monitor.inspector')}</div>
-        <div className="text-[11px] text-muted-foreground">{t('monitor.live')}</div>
-      </div>
-      <div className="p-4 space-y-4">
-        <div className="min-w-0">
-          <div className="text-[17px] font-extrabold tracking-tight truncate">{row.name}</div>
-          <div className="text-[10px] text-muted-foreground mt-0.5 font-mono truncate">{row.id}</div>
-        </div>
-
-        <div className="flex items-center gap-4">
-          <AvailabilityRing pct={availability} tone={tone} />
-          <div className="grid gap-1.5 text-[10px] min-w-0">
-            <div className="flex justify-between gap-6">
-              <span className="text-muted-foreground">{t('monitor.published')}</span>
-              <span className="text-foreground">{row.published ? t('monitor.yes') : t('monitor.no')}</span>
-            </div>
-            <div className="flex justify-between gap-6">
-              <span className="text-muted-foreground">{t('monitor.channels')}</span>
-              <span className="text-foreground tabular-nums">{row.channels.length || 0}</span>
-            </div>
-            <div className="flex justify-between gap-6">
-              <span className="text-muted-foreground">{t('monitor.contextLength')}</span>
-              <span className="text-foreground tabular-nums">
-                {row.contextLength ? fmtTokens(row.contextLength) : '—'}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div className="h-px bg-border/60" />
-
-        <div className="grid grid-cols-2 gap-2">
-          {kv(
-            t('monitor.activeInstances'),
-            row.enabledEps > 0 ? `${row.availableEps} / ${row.enabledEps}` : '—',
-          )}
-          {kv(t('monitor.requests24h'), fmtCount(row.requests))}
-          {kv(t('monitor.cacheHitRate'), row.cacheHitPct !== null ? `${row.cacheHitPct}%` : '—')}
-          {kv(t('monitor.avgLatency'), row.avgLatency > 0 ? fmtLat(row.avgLatency) : '—')}
-        </div>
-
-        <div className="grid gap-3">
-          {progress(t('monitor.cacheHitRate'), row.cacheHitPct ?? 0, 'blue')}
-          {progress(t('monitor.successRate'), row.requests > 0 ? row.successRate * 100 : 0, 'brand')}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-// ── right: incidents ───────────────────────────────────────────────
-
-function IncidentList({ incidents }: {
-  incidents: { key: string; kind: 'red' | 'amber' | 'blue'; title: string; meta: string }[];
-}) {
-  const { t } = useTranslation();
-  return (
-    <section className="rounded-xl border bg-card/80 shadow-sm overflow-hidden">
-      <div className="flex items-center justify-between px-4 min-h-[52px] border-b border-border/60">
-        <div className="text-sm font-bold">{t('monitor.incidents')}</div>
-        <div className="text-[11px] text-muted-foreground">
-          {t('monitor.incidentsCount', { n: incidents.length })}
-        </div>
-      </div>
-      <div className="px-4 pb-2">
-        {incidents.length === 0 ? (
-          <div className="py-8 text-center text-xs text-muted-foreground">{t('monitor.noIncidents')}</div>
-        ) : (
-          incidents.map((inc) => (
-            <div key={inc.key} className="grid grid-cols-[8px_1fr] gap-2.5 py-3 border-b border-border/40 last:border-0">
-              <span
-                className={cn(
-                  'size-1.5 rounded-full mt-1.5',
-                  inc.kind === 'red' && 'bg-red-500 shadow-[0_0_0_4px_rgba(239,68,68,0.1)]',
-                  inc.kind === 'amber' && 'bg-amber-500 shadow-[0_0_0_4px_rgba(245,158,11,0.1)]',
-                  inc.kind === 'blue' && 'bg-blue-500 shadow-[0_0_0_4px_rgba(59,130,246,0.1)]',
-                )}
-              />
-              <div className="min-w-0">
-                <div className="text-[11px] leading-snug">{inc.title}</div>
-                <div className="text-[9px] text-muted-foreground mt-1">{inc.meta}</div>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    </section>
-  );
-}
-
-// ── page ───────────────────────────────────────────────────────────
 
 export default function FlowTowerContent() {
-  const { t } = useTranslation();
-  const [selectedName, setSelectedName] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
+  const [selectedRange, setSelectedRange] = useState<RangeKey>('15m');
+  const [selectedFilter, setSelectedFilter] = useState<string>('all');
+  const [selectedModelName, setSelectedModelName] = useState<string>(MODEL_CATALOG[0].name);
+  const [selectedChannel, setSelectedChannel] = useState<string>('全部渠道');
+  const [modelSearch, setModelSearch] = useState('');
+  const [activeTab, setActiveTab] = useState<FlowTabKey>('flow');
+  const [kpis, setKpis] = useState<KpiValues>(BASE_KPIS);
+  const [successHistory, setSuccessHistory] = useState<number[]>(SUCCESS_HISTORY_BASE);
+  const [failureHistory, setFailureHistory] = useState<number[]>(FAILURE_HISTORY_BASE);
 
-  const { data: models } = useModels();
-  const { data: channels } = useChannels();
-  const { data: rh } = useRoutingHealth();
-  const { data: agg } = useDashboardAggregations();
-  const { data: funnel } = useUsageFunnel(1);
-  const { data: ua } = useUsageAggregate(1);
-  const { data: ma } = useModelActivity(1);
-  const { data: probes } = useProbeResults();
-  const { totalCount, connected, timeline } = useLiveTotal();
-
-  const channelName = useMemo(
-    () => new Map((channels ?? []).map((c) => [c.id, c.name || c.id])),
-    [channels],
+  const rangeMeta = useMemo(
+    () => RANGE_OPTIONS.find((item) => item.key === selectedRange) ?? RANGE_OPTIONS[1],
+    [selectedRange],
   );
 
-  // channelId → endpointId → url (for the endpoint status panel)
-  const endpointUrl = useMemo(() => {
-    const map = new Map<string, Map<number, string>>();
-    for (const c of channels ?? []) {
-      const byId = new Map<number, string>();
-      for (const ep of c.endpoints) {
-        if (ep.id != null) byId.set(ep.id, ep.url);
-      }
-      map.set(c.id, byId);
-    }
-    return map;
-  }, [channels]);
-
-  const probeByName = useMemo(() => {
-    const map = new Map<string, ProbeResult[]>();
-    for (const p of probes ?? []) {
-      const arr = map.get(p.model_id) ?? [];
-      arr.push(p);
-      map.set(p.model_id, arr);
-    }
-    return map;
-  }, [probes]);
-
-  // Per model, keep only current-health probe rows (see effectiveProbes).
-  const effectiveProbesByModel = useMemo(() => {
-    const map = new Map<string, ProbeResult[]>();
-    for (const [id, rows] of probeByName) map.set(id, effectiveProbes(rows));
-    return map;
-  }, [probeByName]);
-
-  const rows = useMemo(
-    () => buildRows(models, rh, ma, channelName),
-    [models, rh, ma, channelName],
+  const selectedModel = useMemo(
+    () => MODEL_CATALOG.find((item) => item.name === selectedModelName) ?? MODEL_CATALOG[0],
+    [selectedModelName],
   );
 
-  const firstWithTraffic = rows.find((r) => r.requests > 0)?.name ?? rows[0]?.name ?? null;
+  const filteredShareRows = useMemo(() => {
+    if (selectedFilter === 'all') return MODEL_SHARE_ROWS;
+    return MODEL_SHARE_ROWS.filter((item) => item.name === selectedFilter);
+  }, [selectedFilter]);
+
+  const visibleModels = useMemo(() => {
+    const keyword = modelSearch.trim().toLowerCase();
+    if (!keyword) return MODEL_CATALOG;
+    return MODEL_CATALOG.filter((model) => model.name.toLowerCase().includes(keyword));
+  }, [modelSearch]);
+
+  const visibleEndpointRows = useMemo(
+    () => ENDPOINT_ROWS.filter((row) => matchesChannelFilter(row, selectedChannel)),
+    [selectedChannel],
+  );
+
+  const rangeAxisLabels = useMemo(() => buildRangeLabels(selectedRange), [selectedRange]);
+
+  const refreshMetrics = () => {
+    setKpis({
+      inflight: randomInt(48, 61),
+      generating: randomInt(33, 44),
+      streaming: randomInt(24, 35),
+      queued: randomInt(7, 16),
+      success: randomInt(2825, 2915),
+      failed: randomInt(20, 31),
+    });
+    setSuccessHistory(mutateHistory(SUCCESS_HISTORY_BASE, 130, 198));
+    setFailureHistory(mutateHistory(FAILURE_HISTORY_BASE, 7, 25));
+  };
+
   useEffect(() => {
-    if (selectedName === null && firstWithTraffic) setSelectedName(firstWithTraffic);
-  }, [selectedName, firstWithTraffic]);
-  const selected = rows.find((r) => r.name === selectedName) ?? rows[0] ?? null;
+    const timer = window.setInterval(refreshMetrics, 10_000);
 
-  const filtered = useMemo(
-    () =>
-      rows.filter(
-        (r) =>
-          !search ||
-          r.name.toLowerCase().includes(search.toLowerCase()) ||
-          r.channelNames.toLowerCase().includes(search.toLowerCase()),
-      ),
-    [rows, search],
-  );
+    return () => window.clearInterval(timer);
+  }, []);
 
-  // 24h cache hit ratio (input tokens served from cache)
-  const cachePct = useMemo(() => {
-    const inTok = (ma ?? []).reduce((s, m) => s + m.prompt_tokens + m.cache_hit_tokens, 0);
-    const hit = (ma ?? []).reduce((s, m) => s + m.cache_hit_tokens, 0);
-    return inTok > 0 ? +((hit / inTok) * 100).toFixed(1) : null;
-  }, [ma]);
+  useEffect(() => {
+    refreshMetrics();
+  }, [selectedRange]);
 
-  const totalTokens24h = agg?.total_tokens_24h ?? 0;
-  const successRate24h = agg?.success_rate_24h ?? 0;
-  const p95 = funnel?.p95_latency ?? agg?.avg_latency_ms_24h ?? 0;
-  const healthyCount = rows.filter((r) => r.health === 'good').length;
-  const leadTitle = rows.some((r) => r.health === 'bad')
-    ? t('monitor.overallDown')
-    : rows.some((r) => r.health === 'warn')
-      ? t('monitor.overallDegraded')
-      : t('monitor.overallStable');
-
-  const blocked = (funnel?.auth_fail_count ?? 0) + (funnel?.rate_limit_count ?? 0);
-  const upstreamTotal = Math.max(
-    0,
-    (funnel?.total ?? 0) - blocked - (funnel?.bad_request_count ?? 0) - (funnel?.other_error_count ?? 0),
-  );
-
-  const incidents = useMemo(() => {
-    const list: { key: string; kind: 'red' | 'amber' | 'blue'; title: string; meta: string }[] = [];
-    for (const r of rows) {
-      for (const ch of r.channels) {
-        if (ch.requests > 0 && !ch.circuit_ok && ch.circuit_enabled) {
-          list.push({
-            key: `cb-${r.name}-${ch.channel_id}`,
-            kind: 'red',
-            title: `${r.name} · ${ch.channel_name || ch.channel_id}`,
-            meta: t('monitor.circuitBroken'),
-          });
-        }
-      }
-    }
-    for (const r of rows) {
-      for (const p of effectiveProbesByModel.get(r.id) ?? []) {
-        if (p.success) continue;
-        list.push({
-          key: `pf-${p.id}`,
-          kind: 'amber',
-          title: `${r.name} · ${channelName.get(p.channel_id) ?? p.channel_id}`,
-          meta: `${t('monitor.probeFailed')} · ${new Date(p.probed_at).toLocaleString()}`,
-        });
-      }
-    }
-    return list.slice(0, 8);
-  }, [rows, effectiveProbesByModel, channelName, t]);
-
-  const chartData = useMemo(
-    () =>
-      (ua ?? []).map((d) => ({
-        time: fmtHour(d.date),
-        count: d.count,
-        tokens: d.total_tokens,
-        latency: d.latency_ms,
-        error: d.count > 0 ? +((1 - d.success_count / d.count) * 100).toFixed(2) : 0,
-      })),
-    [ua],
-  );
+  const handleRefresh = () => {
+    refreshMetrics();
+  };
 
   return (
-    <div className="space-y-4">
-      <style>{`
-        .mon-link i {
-          position: absolute; top: -2.5px; left: 0; width: 6px; height: 6px;
-          border-radius: 50%; background: hsl(var(--primary));
-          box-shadow: 0 0 8px hsl(var(--primary));
-          animation: mon-travel 2.2s linear infinite;
-        }
-        @keyframes mon-travel {
-          from { left: 0; }
-          to { left: calc(100% - 6px); }
-        }
-      `}</style>
-
-      <StatusStrip
-        leadTitle={leadTitle}
-        leadCopy={t('monitor.leadCopy', { total: rows.length, healthy: healthyCount })}
-        availability={successRate24h}
-        currentRequests={totalCount || funnel?.total || 0}
-        p95={p95}
-        totalTokens={totalTokens24h}
-        cachePct={cachePct}
-        connected={connected}
-      />
-
-      <div className="grid gap-4 lg:grid-cols-[238px_minmax(0,1fr)_300px] items-start">
-        <ModelCatalog
-          rows={filtered}
-          search={search}
-          onSearch={setSearch}
-          selectedName={selectedName}
-          onSelect={setSelectedName}
-        />
-
-        <div className="grid gap-4 min-w-0">
-          <PerformanceChart data={chartData} />
-          <RequestFlow
-            ingress={totalCount || funnel?.total || 0}
-            directPass={successRate24h}
-            upstream={upstreamTotal}
-            rl={funnel?.rate_limit_count ?? 0}
-            af={funnel?.auth_fail_count ?? 0}
-            cachePct={cachePct}
-            p95={p95}
-            timeout={funnel?.timeout_count ?? 0}
-            timeline={timeline}
-          />
-          <ChannelEndpointStatus row={selected} channelName={channelName} endpointUrl={endpointUrl} />
-          <ModelCompareTable rows={rows} selectedName={selectedName} onSelect={setSelectedName} />
+    <div className="space-y-4 animate-fade-in">
+      <section className="overflow-hidden rounded-2xl border border-border bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.96)_100%)] shadow-sm">
+        <div className="flex flex-col gap-4 border-b border-border px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">模型监控</h2>
+            <p className="mt-1 text-sm text-muted-foreground">实时请求态势、模型流量、端点健康与异常定位</p>
+            <p className="mt-2 text-xs text-[#98a2b3]">演示用 mock 页面，当前展示的是静态/随机模拟数据，不代表真实线上状态。</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <div className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3 text-[#475467]">
+              <span className="h-2 w-2 rounded-full bg-[#16a36a] shadow-[0_0_0_4px_rgba(22,163,106,0.12)]" />
+              Mock Live
+            </div>
+            <div className="inline-flex h-9 items-center rounded-lg border border-border bg-background px-3 text-[#475467]">
+              自动刷新 · 10s
+            </div>
+          </div>
         </div>
 
-        <div className="grid gap-4">
-          <ModelInspector row={selected} />
-          <IncidentList incidents={incidents} />
+        <div className="space-y-4 px-5 py-5">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-xl bg-[#eaf0f7] p-1">
+                {RANGE_OPTIONS.map((option) => (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => setSelectedRange(option.key)}
+                    className={`rounded-lg px-3 py-1.5 text-xs transition ${
+                      selectedRange === option.key
+                        ? 'bg-white text-[#1f2937] shadow-sm'
+                        : 'text-[#697586] hover:text-[#1f2937]'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <select
+                aria-label="模型筛选"
+                className="h-9 rounded-lg border border-border bg-background px-3 text-xs text-[#475467]"
+                value={selectedFilter}
+                onChange={(event) => setSelectedFilter(event.target.value)}
+              >
+                <option value="all">全部模型</option>
+                {SHARE_FILTER_OPTIONS.map((model) => (
+                  <option key={model.name} value={model.name}>
+                    {model.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                aria-label="渠道筛选"
+                className="h-9 rounded-lg border border-border bg-background px-3 text-xs text-[#475467]"
+                value={selectedChannel}
+                onChange={(event) => setSelectedChannel(event.target.value)}
+              >
+                <option>全部渠道</option>
+                <option>OpenAI</option>
+                <option>Anthropic</option>
+                <option>vLLM Cluster</option>
+              </select>
+              <button
+                type="button"
+                onClick={handleRefresh}
+                className="inline-flex h-9 items-center rounded-lg border border-border bg-background px-3 text-xs text-[#475467] transition hover:bg-muted"
+              >
+                ↻ 刷新
+              </button>
+            </div>
+          </div>
+
+          <section className="grid gap-3 md:grid-cols-2 2xl:grid-cols-6">
+            <KpiCard
+              label="当前在途请求数"
+              badge="LIVE"
+              value={formatNumber(kpis.inflight)}
+              tone="blue"
+              subtext={
+                <>
+                  较 5 分钟均值 <span className="font-semibold text-[#16a36a]">+4.2%</span>
+                </>
+              }
+            />
+            <KpiCard
+              label="上游生成中"
+              badge="LIVE"
+              value={formatNumber(kpis.generating)}
+              tone="cyan"
+              subtext="71.2% 的在途请求正在推理"
+            />
+            <KpiCard
+              label="上游输出中"
+              badge="LIVE"
+              value={formatNumber(kpis.streaming)}
+              tone="green"
+              subtext="当前活跃 Streaming 连接"
+            />
+            <KpiCard
+              label="排队请求数"
+              badge="APPROX"
+              value={formatNumber(kpis.queued)}
+              tone="yellow"
+              subtext={
+                <>
+                  队列压力 <span className="font-semibold text-[#b67c0c]">中等</span> · P95 1.8s
+                </>
+              }
+            />
+            <KpiCard
+              label="成功完成"
+              badge={rangeMeta.short}
+              value={formatNumber(kpis.success)}
+              tone="green"
+              subtext={
+                <>
+                  成功率 <span className="font-semibold text-[#16a36a]">99.18%</span>
+                </>
+              }
+            />
+            <KpiCard
+              label="失败完成"
+              badge={rangeMeta.short}
+              value={formatNumber(kpis.failed)}
+              tone="red"
+              subtext={
+                <>
+                  错误率 <span className="font-semibold text-[#e24f4f]">0.82%</span> · +0.17%
+                </>
+              }
+            />
+          </section>
+
+          <section className="grid gap-4 2xl:grid-cols-[minmax(0,1.2fr)_minmax(380px,0.8fr)]">
+            <div className="grid gap-4">
+              <Panel
+                title="成功 / 失败完成量趋势"
+                subtitle={`按 1 分钟聚合 · 最近 ${rangeMeta.long}`}
+                right={
+                  <div className="flex gap-3 text-[11px] text-[#667085]">
+                    <span className="inline-flex items-center gap-1.5">
+                      <i className="h-2 w-2 rounded-sm bg-[#27ad74]" />成功
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <i className="h-2 w-2 rounded-sm bg-[#e45d5d]" />失败
+                    </span>
+                  </div>
+                }
+              >
+                <div className="h-[240px] w-full">
+                  <svg viewBox="0 0 760 240" preserveAspectRatio="none" className="h-full w-full">
+                    {[20, 70, 120, 170, 220].map((y) => (
+                      <line key={y} x1="45" y1={y} x2="742" y2={y} className="stroke-[#edf1f6]" strokeWidth="1" />
+                    ))}
+                    <text x="7" y="23" className="fill-[#98a2b3] text-[10px]">300</text>
+                    <text x="7" y="73" className="fill-[#98a2b3] text-[10px]">225</text>
+                    <text x="7" y="123" className="fill-[#98a2b3] text-[10px]">150</text>
+                    <text x="12" y="173" className="fill-[#98a2b3] text-[10px]">75</text>
+                    <text x="17" y="223" className="fill-[#98a2b3] text-[10px]">0</text>
+
+                    {successHistory.map((height, index) => (
+                      <rect
+                        key={`success-${index}`}
+                        x={65 + index * 42}
+                        y={220 - height}
+                        width="28"
+                        height={height}
+                        rx="3"
+                        fill="#54bd8b"
+                      />
+                    ))}
+
+                    {failureHistory.map((height, index) => (
+                      <rect
+                        key={`failure-${index}`}
+                        x={94 + index * 42}
+                        y={220 - height}
+                        width="7"
+                        height={height}
+                        rx="2"
+                        fill="#e45d5d"
+                      />
+                    ))}
+
+                    {rangeAxisLabels.map((label, index) => {
+                      const xPositions = [52, 211, 374, 535, 690];
+                      return (
+                        <text key={`${label}-${index}`} x={xPositions[index]} y="237" className="fill-[#98a2b3] text-[10px]">
+                          {label}
+                        </text>
+                      );
+                    })}
+                  </svg>
+                </div>
+              </Panel>
+
+              <Panel
+                title="客户端 IP Top N"
+                subtitle="请求来源排行 · Top 8"
+                right={
+                  <div className="inline-flex h-7 items-center rounded-md border border-border bg-background px-2.5 text-[11px] text-[#475467]">
+                    按请求数
+                  </div>
+                }
+              >
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[520px] border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="pb-2 text-left text-[10px] font-semibold text-[#98a2b3]">客户端 IP</th>
+                        <th className="pb-2 text-left text-[10px] font-semibold text-[#98a2b3]">请求占比</th>
+                        <th className="pb-2 text-right text-[10px] font-semibold text-[#98a2b3]">请求</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {IP_ROWS.map((row) => (
+                        <tr key={row.ip}>
+                          <td className="border-t border-[#f2f4f7] py-2.5 font-mono text-[11px] text-[#475467]">{row.ip}</td>
+                          <td className="border-t border-[#f2f4f7] py-2.5">
+                            <div className="h-1.5 overflow-hidden rounded-full bg-[#eef2f7]">
+                              <div
+                                className="h-full rounded-full bg-[linear-gradient(90deg,#9683ed,#5f7fe5)]"
+                                style={{ width: `${row.ratio}%` }}
+                              />
+                            </div>
+                          </td>
+                          <td className="border-t border-[#f2f4f7] py-2.5 text-right text-[11px] text-[#475467]">{row.count}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+            </div>
+
+            <div className="grid gap-4">
+              <Panel
+                title="模型请求占比"
+                subtitle="成功 + 失败请求总量"
+                right={<div className="text-[11px] text-[#98a2b3]">2,870 requests</div>}
+              >
+                <div className="flex flex-col gap-3">
+                  {filteredShareRows.map((row) => (
+                    <div key={row.name} className="grid grid-cols-[minmax(120px,145px)_minmax(0,1fr)_52px] items-center gap-3">
+                      <div className="truncate text-[11px] text-[#475467]">{row.name}</div>
+                      <div className="h-2 overflow-hidden rounded-full bg-[#eef2f7]">
+                        <div
+                          className="h-full rounded-full bg-[linear-gradient(90deg,#7eb0ff,#3678e8)]"
+                          style={{ width: `${row.width}%` }}
+                        />
+                      </div>
+                      <div className="text-right text-[11px] text-[#667085]">{row.percent.toFixed(1)}%</div>
+                    </div>
+                  ))}
+                </div>
+              </Panel>
+
+              <Panel
+                title="延迟 / TTFT 分位数"
+                subtitle={`全模型汇总 · 最近 ${rangeMeta.long}`}
+                right={
+                  <div className="inline-flex h-7 items-center rounded-md border border-border bg-background px-2.5 text-[11px] text-[#475467]">
+                    ms
+                  </div>
+                }
+              >
+                <div className="grid gap-3">
+                  <div className="rounded-xl border border-[#edf0f4] bg-[#fbfcfe] p-4">
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <div className="text-[11px] font-semibold text-[#475467]">请求延迟</div>
+                      <div className="text-[10px] text-[#98a2b3]">tail latency ↑</div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                      {[
+                        { label: 'P50', value: '8,482' },
+                        { label: 'P90', value: '33,552' },
+                        { label: 'P99', value: '158,537' },
+                      ].map((item, index) => (
+                        <div key={item.label} className={index < 2 ? 'border-r border-[#e9edf2]' : ''}>
+                          <small className="block text-[10px] text-[#98a2b3]">{item.label}</small>
+                          <strong className="mt-1 block text-lg tracking-[-0.02em] text-[#f08b32]">{item.value}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-[#edf0f4] bg-[#fbfcfe] p-4">
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <div className="text-[11px] font-semibold text-[#475467]">TTFT</div>
+                      <div className="text-[10px] text-[#98a2b3]">first token stable</div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                      {[
+                        { label: 'P50', value: '1,326' },
+                        { label: 'P90', value: '3,904' },
+                        { label: 'P99', value: '9,411' },
+                      ].map((item, index) => (
+                        <div key={item.label} className={index < 2 ? 'border-r border-[#e9edf2]' : ''}>
+                          <small className="block text-[10px] text-[#98a2b3]">{item.label}</small>
+                          <strong className="mt-1 block text-lg tracking-[-0.02em] text-[#0ca8bd]">{item.value}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </Panel>
+            </div>
+          </section>
+
+          <section className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)] 2xl:grid-cols-[240px_minmax(0,1fr)_310px]">
+            <Panel title="模型目录" subtitle="6 个模型 · 5 可用" className="min-h-[580px]">
+              <div className="-mt-1">
+                <div className="mb-3">
+                  <input
+                    aria-label="搜索模型"
+                    value={modelSearch}
+                    onChange={(event) => setModelSearch(event.target.value)}
+                    placeholder="搜索模型"
+                    className="h-9 w-full rounded-lg border border-[#e1e7ef] bg-[#fbfcfe] px-3 text-[11px] text-[#475467] outline-none placeholder:text-[#98a2b3]"
+                  />
+                </div>
+                <div className="space-y-1">
+                  {visibleModels.length > 0 ? (
+                    visibleModels.map((model) => (
+                      <button
+                        key={model.name}
+                        type="button"
+                        onClick={() => {
+                          setSelectedModelName(model.name);
+                          setSelectedFilter(
+                            SHARE_FILTER_OPTIONS.some((item) => item.name === model.name) ? model.name : 'all',
+                          );
+                        }}
+                        className={`w-full rounded-xl border px-3 py-3 text-left transition ${
+                          selectedModel.name === model.name
+                            ? 'border-[#d8e6ff] bg-[#eff5ff]'
+                            : 'border-transparent hover:bg-[#f7f9fc]'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-[11px] font-semibold text-[#344054]">{model.name}</div>
+                          <span className={`h-2 w-2 rounded-sm ${statusSquareClasses(model.status)}`} />
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-[#98a2b3]">
+                          <span>{model.channels} channels</span>
+                          <span>{model.successRate}</span>
+                          <span>{model.rpm}</span>
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-[#d8dee7] px-3 py-6 text-center text-[11px] text-[#98a2b3]">
+                      没有匹配的模型
+                    </div>
+                  )}
+                </div>
+              </div>
+            </Panel>
+
+            <article className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+              <div className="flex gap-4 border-b border-border px-4 pt-3" role="tablist" aria-label="流控台详情标签页">
+                {FLOW_TABS.map((tab) => (
+                  <button
+                    key={tab.key}
+                    id={`flowtower-tab-${tab.key}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === tab.key}
+                    aria-controls={`flowtower-panel-${tab.key}`}
+                    onClick={() => setActiveTab(tab.key)}
+                    className={`border-b-2 pb-3 text-[11px] transition ${
+                      activeTab === tab.key
+                        ? 'border-[#2f6edb] text-[#2f6edb] font-semibold'
+                        : 'border-transparent text-[#667085] hover:text-[#2f6edb]'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {activeTab === 'flow' ? (
+                <div
+                  id="flowtower-panel-flow"
+                  role="tabpanel"
+                  aria-labelledby="flowtower-tab-flow"
+                  className="space-y-5 p-4"
+                >
+                  <div className="grid gap-2 px-2 py-2 md:grid-cols-[130px_1fr_170px_1fr_170px_1fr_140px] md:items-center">
+                    {[
+                      { label: 'Client / SDK', sub: `${kpis.inflight} in-flight`, classes: 'border-[#d6e5ff] bg-[#f6f9ff]' },
+                      { label: 'Fluxeme Gateway', sub: 'auth · quota · route', classes: 'border-[#dfe5ed] bg-[#fbfcfe]' },
+                      { label: 'Model Router', sub: 'healthy · 3 targets', classes: 'border-[#cfeedd] bg-[#f5fcf8]' },
+                      { label: 'Upstream', sub: `${kpis.queued} queued`, classes: 'border-[#f3dfae] bg-[#fffaf0]' },
+                    ].map((node, index, array) => (
+                      <div key={node.label} className="contents md:contents">
+                        <div className={`flex min-h-[86px] flex-col justify-center rounded-xl border px-3 py-4 text-center ${node.classes}`}>
+                          <strong className="text-xs text-[#344054]">{node.label}</strong>
+                          <span className="mt-1.5 text-[10px] text-[#98a2b3]">{node.sub}</span>
+                        </div>
+                        {index < array.length - 1 ? (
+                          <div className="mx-auto h-6 w-0.5 bg-[#cdd6e1] md:h-0.5 md:w-full md:self-center" />
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                    {FLOW_METRICS.map((metric) => (
+                      <div key={metric.label} className="rounded-xl border border-[#edf0f4] bg-white p-3">
+                        <small className="text-[10px] text-[#98a2b3]">{metric.label}</small>
+                        <strong className="mt-1 block text-sm text-[#182230]">{metric.value}</strong>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="border-t border-[#edf0f4] pt-4">
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <div className="text-[11px] font-semibold text-[#475467]">{selectedModel.name} · Channel Flow</div>
+                      <div className="text-[10px] text-[#98a2b3]">动态权重路由</div>
+                    </div>
+                    <svg viewBox="0 0 760 190" preserveAspectRatio="none" className="h-[190px] w-full">
+                      <path d="M110 95 C210 95,230 42,330 42" fill="none" stroke="#8ab1f1" strokeWidth="4" />
+                      <path d="M110 95 C210 95,230 95,330 95" fill="none" stroke="#73c99d" strokeWidth="5" />
+                      <path d="M110 95 C210 95,230 148,330 148" fill="none" stroke="#e1b85e" strokeWidth="2.5" />
+                      <path d="M430 42 C535 42,545 65,650 65" fill="none" stroke="#8ab1f1" strokeWidth="4" />
+                      <path d="M430 95 C535 95,545 95,650 95" fill="none" stroke="#73c99d" strokeWidth="5" />
+                      <path d="M430 148 C535 148,545 125,650 125" fill="none" stroke="#e1b85e" strokeWidth="2.5" />
+                      <rect x="35" y="65" width="75" height="60" rx="10" fill="#f6f9ff" stroke="#d6e5ff" />
+                      <text x="72" y="91" textAnchor="middle" fontSize="11" fill="#344054" fontWeight="700">Router</text>
+                      <text x="72" y="109" textAnchor="middle" fontSize="9" fill="#98a2b3">191 rps</text>
+                      <rect x="330" y="20" width="100" height="44" rx="9" fill="#fff" stroke="#dfe5ed" />
+                      <text x="380" y="47" textAnchor="middle" fontSize="10" fill="#475467">channel-a · 44%</text>
+                      <rect x="330" y="73" width="100" height="44" rx="9" fill="#fff" stroke="#cfeedd" />
+                      <text x="380" y="100" textAnchor="middle" fontSize="10" fill="#475467">channel-b · 39%</text>
+                      <rect x="330" y="126" width="100" height="44" rx="9" fill="#fffaf0" stroke="#f3dfae" />
+                      <text x="380" y="153" textAnchor="middle" fontSize="10" fill="#475467">channel-c · 17%</text>
+                      <rect x="650" y="43" width="80" height="44" rx="9" fill="#f5fcf8" stroke="#cfeedd" />
+                      <text x="690" y="69" textAnchor="middle" fontSize="10" fill="#475467">P Cluster</text>
+                      <rect x="650" y="103" width="80" height="44" rx="9" fill="#f5fcf8" stroke="#cfeedd" />
+                      <text x="690" y="129" textAnchor="middle" fontSize="10" fill="#475467">D Cluster</text>
+                    </svg>
+                  </div>
+                </div>
+              ) : null}
+
+              {activeTab === 'endpoint' ? (
+                <div
+                  id="flowtower-panel-endpoint"
+                  role="tabpanel"
+                  aria-labelledby="flowtower-tab-endpoint"
+                  className="overflow-x-auto p-4"
+                >
+                  <table className="w-full min-w-[760px] border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="border-b border-[#eef1f5] px-2 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">渠道 / 端点</th>
+                        <th className="border-b border-[#eef1f5] px-2 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">协议</th>
+                        <th className="border-b border-[#eef1f5] px-2 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">最近探测</th>
+                        <th className="border-b border-[#eef1f5] px-2 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">耗时</th>
+                        <th className="border-b border-[#eef1f5] px-2 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">状态时间线</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleEndpointRows.map((row) => (
+                        <tr key={row.channel}>
+                          <td className="border-b border-[#eef1f5] px-2 py-2.5 text-[10.5px] text-[#475467]">
+                            <div className="font-semibold">{row.channel}</div>
+                            <div className="font-mono text-[10px] text-[#98a2b3]">{row.path}</div>
+                          </td>
+                          <td className="border-b border-[#eef1f5] px-2 py-2.5 text-[10.5px] text-[#475467]">{row.protocol}</td>
+                          <td className={`border-b border-[#eef1f5] px-2 py-2.5 text-[10.5px] ${endpointStatusClasses(row.statusTone)}`}>
+                            {row.statusLabel}
+                          </td>
+                          <td className="border-b border-[#eef1f5] px-2 py-2.5 text-[10.5px] text-[#475467]">{row.latency}</td>
+                          <td className="border-b border-[#eef1f5] px-2 py-2.5">
+                            <div className="flex gap-1">
+                              {row.timeline.map((state, index) => (
+                                <i key={`${row.channel}-${index}`} className={`h-2.5 w-2.5 rounded-sm ${timelineSquareClasses(state)}`} />
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+
+              {activeTab === 'compare' ? (
+                <div
+                  id="flowtower-panel-compare"
+                  role="tabpanel"
+                  aria-labelledby="flowtower-tab-compare"
+                  className="overflow-x-auto p-4"
+                >
+                  <table className="w-full min-w-[680px] border-collapse">
+                    <thead>
+                      <tr>
+                        {['模型', 'RPS', '成功率', 'P95 延迟', 'TTFT P95', '错误'].map((header) => (
+                          <th key={header} className="border-b border-[#eef1f5] px-2 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3] first:text-left">
+                            {header}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {COMPARE_ROWS.map((row) => (
+                        <tr key={row.model}>
+                          <td className="border-b border-[#eef1f5] px-2 py-2.5 text-left text-[10.5px] font-semibold text-[#475467]">{row.model}</td>
+                          <td className="border-b border-[#eef1f5] px-2 py-2.5 text-right text-[10.5px] text-[#475467]">{row.rps}</td>
+                          <td className={`border-b border-[#eef1f5] px-2 py-2.5 text-right text-[10.5px] ${row.model === 'Claude-Sonnet-4.6' ? 'text-[#c98616]' : 'text-[#475467]'}`}>
+                            {row.successRate}
+                          </td>
+                          <td className="border-b border-[#eef1f5] px-2 py-2.5 text-right text-[10.5px] text-[#475467]">{row.latency}</td>
+                          <td className="border-b border-[#eef1f5] px-2 py-2.5 text-right text-[10.5px] text-[#475467]">{row.ttft}</td>
+                          <td className={`border-b border-[#eef1f5] px-2 py-2.5 text-right text-[10.5px] ${row.model === 'Claude-Sonnet-4.6' ? 'text-[#d14848]' : 'text-[#475467]'}`}>
+                            {row.errors}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </article>
+
+            <Panel title="模型检查器" subtitle="快速定位当前选中模型" className="min-h-[580px]">
+              <div className="rounded-xl border border-[#dfe7f3] bg-[#f8fbff] p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <strong className="text-sm text-[#182230]">{selectedModel.name}</strong>
+                  <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${
+                    selectedModel.status === 'warn'
+                      ? 'bg-[#fff5dc] text-[#ad7411]'
+                      : selectedModel.status === 'offline'
+                        ? 'bg-[#f1f3f6] text-[#667085]'
+                        : 'bg-[#eaf8f1] text-[#15865a]'
+                  }`}>
+                    {selectedModel.status === 'warn'
+                      ? 'Warning'
+                      : selectedModel.status === 'offline'
+                        ? 'Offline'
+                        : 'Healthy'}
+                  </span>
+                </div>
+                <div className="mt-4 grid grid-cols-[1fr_auto] gap-x-4 gap-y-2 text-[10.5px]">
+                  <span className="text-[#98a2b3]">当前 RPS</span><span className="text-right text-[#475467]">{selectedModel.currentRps}</span>
+                  <span className="text-[#98a2b3]">在途请求</span><span className="text-right text-[#475467]">{selectedModel.inflight}</span>
+                  <span className="text-[#98a2b3]">排队请求</span><span className="text-right text-[#b37b19]">{selectedModel.queued}</span>
+                  <span className="text-[#98a2b3]">成功率</span><span className="text-right text-[#475467]">{selectedModel.successRate}</span>
+                  <span className="text-[#98a2b3]">P95 延迟</span><span className="text-right text-[#475467]">{selectedModel.p95Latency}</span>
+                  <span className="text-[#98a2b3]">TTFT P95</span><span className="text-right text-[#475467]">{selectedModel.p95Ttft}</span>
+                  <span className="text-[#98a2b3]">活跃渠道</span><span className="text-right text-[#475467]">{selectedModel.activeChannels}</span>
+                </div>
+              </div>
+
+              <div className="mt-4 border-t border-border pt-4">
+                <div className="mb-3 text-[11px] font-semibold text-[#475467]">异常事件 · 最近 30 分钟</div>
+                <div className="space-y-2">
+                  {INCIDENTS.map((incident) => (
+                    <div key={`${incident.title}-${incident.time}`} className="rounded-xl border border-[#edf0f4] bg-white p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[10.5px] font-semibold text-[#344054]">{incident.title}</div>
+                        <span className={`rounded-md px-1.5 py-0.5 text-[9px] font-bold ${
+                          incident.severity === 'HIGH'
+                            ? 'bg-[#ffecec] text-[#c83333]'
+                            : 'bg-[#fff5dc] text-[#ad7411]'
+                        }`}>
+                          {incident.severity}
+                        </span>
+                      </div>
+                      <p className="mt-1.5 text-[9.8px] leading-6 text-[#7a8697]">{incident.description}</p>
+                      <time className="mt-2 block text-[9px] text-[#b0b8c4]">{incident.time} · {incident.model}</time>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Panel>
+          </section>
+
+          <div className="text-right text-[10px] text-[#98a2b3]">Mock data · Fluxeme Model Observability Console</div>
         </div>
-      </div>
+      </section>
     </div>
   );
 }
