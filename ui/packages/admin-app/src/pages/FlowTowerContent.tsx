@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Area,
   AreaChart,
@@ -256,6 +256,7 @@ export default function FlowTowerContent() {
   const [modelSearch, setModelSearch] = useState('');
   const [activeTab, setActiveTab] = useState<FlowTabKey>('flow');
   const [queryNowMs, setQueryNowMs] = useState(() => Date.now());
+  const [displayedData, setDisplayedData] = useState<ReturnType<typeof useFlowMetrics>['data']>(undefined);
 
   const rangeMeta = useMemo(
     () => RANGE_OPTIONS.find((item) => item.key === selectedRange) ?? RANGE_OPTIONS[1],
@@ -263,6 +264,8 @@ export default function FlowTowerContent() {
   );
   const rangeBounds = useMemo(() => formatRangeBounds(selectedRange, queryNowMs), [selectedRange, queryNowMs]);
   const modelParam = selectedModelName !== 'all' ? selectedModelName : undefined;
+
+  const lastFlowMetricsDataRef = useRef<ReturnType<typeof useFlowMetrics>['data']>(undefined);
 
   const flowMetrics = useFlowMetrics(
     {
@@ -284,6 +287,13 @@ export default function FlowTowerContent() {
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (flowMetrics.data) {
+      lastFlowMetricsDataRef.current = flowMetrics.data;
+      setDisplayedData(flowMetrics.data);
+    }
+  }, [flowMetrics.data]);
+
   const modelOptions = useMemo(() => {
     const names = Array.from(new Set((modelsQuery.data ?? []).map((model) => model.name)));
     names.sort((left, right) => left.localeCompare(right));
@@ -296,8 +306,10 @@ export default function FlowTowerContent() {
     return modelOptions.filter((name) => name.toLowerCase().includes(keyword));
   }, [modelOptions, modelSearch]);
 
-  const historical = flowMetrics.data?.historical;
-  const realtime = flowMetrics.data?.realtime;
+  const effectiveFlowMetricsData = flowMetrics.data ?? displayedData ?? lastFlowMetricsDataRef.current;
+
+  const historical = effectiveFlowMetricsData?.historical;
+  const realtime = effectiveFlowMetricsData?.realtime;
   const totalCompleted = historical?.total_completed ?? 0;
   const successRate = totalCompleted > 0
     ? (historical?.success_completed ?? 0) / totalCompleted * 100
@@ -342,7 +354,7 @@ export default function FlowTowerContent() {
     ? new Date(realtime.as_of).toLocaleTimeString('zh-CN', { hour12: false })
     : '—';
 
-  if (flowMetrics.isLoading && !flowMetrics.data) {
+  if (flowMetrics.isLoading && !effectiveFlowMetricsData) {
     return (
       <div className="space-y-4 animate-fade-in">
         <section className="rounded-2xl border border-border bg-card px-6 py-12 text-center shadow-sm">
@@ -353,7 +365,7 @@ export default function FlowTowerContent() {
     );
   }
 
-  if (flowMetrics.isError && !flowMetrics.data) {
+  if (flowMetrics.isError && !effectiveFlowMetricsData) {
     return (
       <div className="space-y-4 animate-fade-in">
         <section className="rounded-2xl border border-border bg-card px-6 py-12 text-center shadow-sm">
