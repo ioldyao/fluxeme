@@ -9,13 +9,13 @@ use sqlx_postgres::{PgPool, PgRow, Postgres};
 
 use crate::config::types::GatewayRuntimeConfig;
 use crate::db::backend::DbBackend;
-use crate::db::{AnnouncementRow, DbError, ProbeResultRow, RechargeKeyRow, WalletTransactionRow};
+use crate::db::{AnnouncementRow, DbError, RechargeKeyRow, WalletTransactionRow};
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, ModelChannel, Pricing};
 use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
 use crate::domain::team::{Team, TeamMember};
-use crate::domain::usage::{UsageFilter, UsageRecord};
+use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User, USER_STATUS_ACTIVE, USER_STATUS_SUSPENDED};
 
 pub struct PgBackend {
@@ -93,21 +93,6 @@ impl PgBackend {
                 }
                 (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO, Decimal::ZERO)
             }
-        }
-    }
-
-    /// Build helper for tz-aware day expression.
-    fn day_expr(tz_offset_seconds: i64) -> String {
-        if tz_offset_seconds >= 0 {
-            format!(
-                "LEFT((timestamp::timestamp + INTERVAL '{} seconds')::text, 10) AS day",
-                tz_offset_seconds
-            )
-        } else {
-            format!(
-                "LEFT((timestamp::timestamp - INTERVAL '{} seconds')::text, 10) AS day",
-                -tz_offset_seconds
-            )
         }
     }
 
@@ -205,6 +190,7 @@ impl PgBackend {
         }
     }
 
+    #[allow(dead_code)]
     fn map_usage_record(row: &PgRow, idx: &mut usize) -> UsageRecord {
         let timestamp: String = row.get(*idx);
         *idx += 1;
@@ -283,10 +269,12 @@ impl PgBackend {
             endpoint_url: None,
             original_model,
             team_id: None,
+            ttft_ms: None,
             account_type: None,
         }
     }
 
+    #[allow(dead_code)]
     fn map_usage_with_bodies(row: &PgRow, idx: &mut usize) -> UsageRecord {
         let timestamp: String = row.get(*idx);
         *idx += 1;
@@ -371,6 +359,7 @@ impl PgBackend {
             endpoint_url: None,
             original_model,
             team_id: None,
+            ttft_ms: None,
             account_type: None,
         }
     }
@@ -482,32 +471,6 @@ impl DbBackend for PgBackend {
                 END IF;
             END $$;
 
-            CREATE TABLE IF NOT EXISTS usage_logs (
-                id BIGSERIAL PRIMARY KEY,
-                timestamp TEXT NOT NULL,
-                request_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                user_name TEXT NOT NULL,
-                channel_id TEXT NOT NULL,
-                model TEXT NOT NULL,
-                prompt_tokens BIGINT NOT NULL,
-                completion_tokens BIGINT NOT NULL,
-                total_tokens BIGINT NOT NULL,
-                latency_ms BIGINT NOT NULL,
-                status_code INTEGER NOT NULL,
-                success BOOLEAN NOT NULL,
-                request_body TEXT,
-                response_body TEXT,
-                reasoning_body TEXT,
-                api_key_name TEXT,
-                api_format TEXT NOT NULL DEFAULT '',
-                stream BOOLEAN NOT NULL DEFAULT false,
-                cache_hit_input_tokens BIGINT NOT NULL DEFAULT 0,
-                prompt_price DOUBLE PRECISION NOT NULL DEFAULT 0.0,
-                completion_price DOUBLE PRECISION NOT NULL DEFAULT 0.0,
-                client_ip TEXT
-            );
-
             CREATE TABLE IF NOT EXISTS user_subscriptions (
                 user_id TEXT NOT NULL,
                 model_id TEXT NOT NULL REFERENCES models(id) ON DELETE CASCADE,
@@ -589,10 +552,7 @@ impl DbBackend for PgBackend {
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS expires_at TEXT");
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS revoked BOOLEAN NOT NULL DEFAULT false");
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS team_id TEXT REFERENCES teams(id) ON DELETE CASCADE");
-        add_col!("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS client_ip TEXT");
         add_col!("ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS upstream_model TEXT");
-        add_col!("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS cache_read_price DOUBLE PRECISION NOT NULL DEFAULT 0.0");
-        add_col!("ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS endpoint_id BIGINT");
 
         // Indexes
         macro_rules! add_idx {
@@ -603,11 +563,6 @@ impl DbBackend for PgBackend {
                     .map_err(|e| DbError(format!("Migration index error: {}", e)));
             };
         }
-        add_idx!("CREATE INDEX IF NOT EXISTS idx_usage_user_id ON usage_logs(user_id)");
-        add_idx!("CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_logs(timestamp)");
-        add_idx!(
-            "CREATE INDEX IF NOT EXISTS idx_usage_user_timestamp ON usage_logs(user_id, timestamp)"
-        );
         add_idx!("CREATE INDEX IF NOT EXISTS idx_wallet_tx_user ON wallet_transactions(user_id)");
         add_idx!(
             "CREATE INDEX IF NOT EXISTS idx_wallet_tx_created ON wallet_transactions(created_at)"
@@ -633,33 +588,6 @@ impl DbBackend for PgBackend {
         .execute(&self.pool)
         .await
         .map_err(|e| DbError(format!("Migration error: {}", e)))?;
-
-        // Create probe_results table
-        let _ = raw_sql(
-            "CREATE TABLE IF NOT EXISTS probe_results (
-                id TEXT PRIMARY KEY,
-                channel_id TEXT NOT NULL,
-                model_id TEXT NOT NULL,
-                success BOOLEAN NOT NULL,
-                latency_ms BIGINT NOT NULL,
-                error TEXT,
-                probed_at TEXT NOT NULL,
-                endpoint_url TEXT
-            )",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DbError(format!("Migration error: {}", e)))?;
-        let _ = raw_sql("ALTER TABLE probe_results ADD COLUMN IF NOT EXISTS endpoint_url TEXT")
-            .execute(&self.pool)
-            .await;
-        let _ =
-            raw_sql("CREATE INDEX IF NOT EXISTS idx_probe_channel ON probe_results(channel_id)")
-                .execute(&self.pool)
-                .await;
-        let _ = raw_sql("CREATE INDEX IF NOT EXISTS idx_probe_model ON probe_results(model_id)")
-            .execute(&self.pool)
-            .await;
 
         // Set admin role for any user who was historically created as 'admin'
         let _ = raw_sql("UPDATE users SET role='admin' WHERE id='admin' AND role='user'")
@@ -986,12 +914,14 @@ impl DbBackend for PgBackend {
         .execute(&self.pool)
         .await
         .map_err(|e| DbError(format!("Migration create team_wallets: {e}")))?;
-        let _ = raw_sql("CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id)")
-            .execute(&self.pool)
-            .await;
-        let _ = raw_sql("CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id)")
-            .execute(&self.pool)
-            .await;
+        let _ =
+            raw_sql("CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id)")
+                .execute(&self.pool)
+                .await;
+        let _ =
+            raw_sql("CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id)")
+                .execute(&self.pool)
+                .await;
         // Team-scoped existing tables: nullable team_id FK columns.
         let _ = raw_sql(
             "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS team_id TEXT REFERENCES teams(id) ON DELETE CASCADE",
@@ -1026,17 +956,20 @@ impl DbBackend for PgBackend {
         let _ = raw_sql("CREATE INDEX IF NOT EXISTS idx_api_keys_team ON api_keys(team_id)")
             .execute(&self.pool)
             .await;
-        let _ = raw_sql("CREATE INDEX IF NOT EXISTS idx_routing_rules_team ON routing_rules(team_id)")
-            .execute(&self.pool)
-            .await;
+        let _ =
+            raw_sql("CREATE INDEX IF NOT EXISTS idx_routing_rules_team ON routing_rules(team_id)")
+                .execute(&self.pool)
+                .await;
         let _ = raw_sql(
             "CREATE INDEX IF NOT EXISTS idx_wallet_transactions_team ON wallet_transactions(team_id)",
         )
         .execute(&self.pool)
         .await;
-        let _ = raw_sql("CREATE INDEX IF NOT EXISTS idx_billing_events_team ON billing_events(team_id)")
-            .execute(&self.pool)
-            .await;
+        let _ = raw_sql(
+            "CREATE INDEX IF NOT EXISTS idx_billing_events_team ON billing_events(team_id)",
+        )
+        .execute(&self.pool)
+        .await;
         tracing::info!("teams tables ready");
 
         Ok(())
@@ -2403,541 +2336,6 @@ impl DbBackend for PgBackend {
 
     // ── Usage Logs ───────────────────────────────────────────────────────
 
-    async fn insert_usage(&self, record: &UsageRecord) -> Result<(), DbError> {
-        query(
-            "INSERT INTO usage_logs (timestamp, request_id, user_id, user_name, channel_id, model, \
-             prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-             request_body, response_body, reasoning_body, api_key_name, api_format, stream, \
-             cache_hit_input_tokens, prompt_price, completion_price, cache_read_price, client_ip) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)",
-        )
-        .bind(&record.timestamp)
-        .bind(&record.request_id)
-        .bind(&record.user_id)
-        .bind(&record.user_name)
-        .bind(&record.channel_id)
-        .bind(&record.model)
-        .bind(record.prompt_tokens as i64)
-        .bind(record.completion_tokens as i64)
-        .bind(record.total_tokens as i64)
-        .bind(record.latency_ms as i64)
-        .bind(record.status_code as i32)
-        .bind(record.success)
-        .bind(&record.request_body)
-        .bind(&record.response_body)
-        .bind(&record.reasoning_body)
-        .bind(&record.api_key_name)
-        .bind(&record.api_format)
-        .bind(record.stream)
-        .bind(record.cache_hit_input_tokens as i64)
-        .bind(record.prompt_price.to_f64().unwrap_or(0.0))
-        .bind(record.completion_price.to_f64().unwrap_or(0.0))
-        .bind(record.cache_read_price.to_f64().unwrap_or(0.0))
-        .bind(&record.client_ip)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    async fn count_usage(&self) -> Result<usize, DbError> {
-        let (count,): (i64,) = query_as("SELECT COUNT(*) FROM billing_events")
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(count as usize)
-    }
-
-    async fn count_usage_by_user(&self, user_id: &str) -> Result<usize, DbError> {
-        let (count,): (i64,) = query_as("SELECT COUNT(*) FROM billing_events WHERE user_id = $1")
-            .bind(user_id)
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(count as usize)
-    }
-
-    async fn count_usage_filtered(&self, filter: &UsageFilter) -> Result<usize, DbError> {
-        let mut builder: QueryBuilder<'_, Postgres> =
-            QueryBuilder::new("SELECT COUNT(*) FROM billing_events WHERE 1=1");
-
-        if let Some(ref uid) = filter.user_id {
-            builder.push(" AND user_id = ");
-            builder.push_bind(uid);
-        }
-        if let Some(ref m) = filter.model {
-            builder.push(" AND model LIKE ");
-            builder.push_bind(format!("%{}%", m));
-        }
-        if let Some(ref k) = filter.api_key_name {
-            builder.push(" AND api_key_name LIKE ");
-            builder.push_bind(format!("%{}%", k));
-        }
-        if let Some(ref f) = filter.api_format {
-            builder.push(" AND api_format = ");
-            builder.push_bind(f);
-        }
-        if let Some(ref sd) = filter.start_date {
-            builder.push(" AND timestamp >= ");
-            builder.push_bind(sd);
-        }
-        if let Some(ref ed) = filter.end_date {
-            builder.push(" AND timestamp <= ");
-            builder.push_bind(ed);
-        }
-
-        let (count,): (i64,) = builder.build_query_as().fetch_one(&self.pool).await?;
-        Ok(count as usize)
-    }
-
-    async fn query_usage(
-        &self,
-        limit: usize,
-        offset: usize,
-        filter: &UsageFilter,
-    ) -> Result<Vec<UsageRecord>, DbError> {
-        let mut builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
-            "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
-             prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-             api_key_name, api_format, stream, cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, \
-             cache_read_price, client_ip, original_model \
-             FROM billing_events WHERE 1=1",
-        );
-
-        if let Some(ref uid) = filter.user_id {
-            builder.push(" AND user_id = ");
-            builder.push_bind(uid);
-        }
-        if let Some(ref m) = filter.model {
-            builder.push(" AND model LIKE ");
-            builder.push_bind(format!("%{}%", m));
-        }
-        if let Some(ref k) = filter.api_key_name {
-            builder.push(" AND api_key_name LIKE ");
-            builder.push_bind(format!("%{}%", k));
-        }
-        if let Some(ref f) = filter.api_format {
-            builder.push(" AND api_format = ");
-            builder.push_bind(f);
-        }
-        if let Some(ref sd) = filter.start_date {
-            builder.push(" AND timestamp >= ");
-            builder.push_bind(sd);
-        }
-        if let Some(ref ed) = filter.end_date {
-            builder.push(" AND timestamp <= ");
-            builder.push_bind(ed);
-        }
-
-        builder.push(" ORDER BY timestamp DESC LIMIT ");
-        builder.push_bind(limit as i64);
-        builder.push(" OFFSET ");
-        builder.push_bind(offset as i64);
-
-        let rows = builder.build().fetch_all(&self.pool).await?;
-        Ok(rows
-            .iter()
-            .map(|r| {
-                let mut idx = 0usize;
-                Self::map_usage_record(r, &mut idx)
-            })
-            .collect())
-    }
-
-    async fn get_usage_detail(&self, request_id: &str) -> Result<Option<UsageRecord>, DbError> {
-        let rows = query(
-            "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
-             prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-             request_body, response_body, reasoning_body, api_key_name, api_format, stream, \
-             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, \
-             original_model \
-             FROM billing_events WHERE request_id = $1",
-        )
-        .bind(request_id)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows.first().map(|r| {
-            let mut idx = 0usize;
-            Self::map_usage_with_bodies(r, &mut idx)
-        }))
-    }
-
-    async fn purge_usage_logs(&self, cutoff: &str) -> Result<usize, DbError> {
-        let result = query("DELETE FROM billing_events WHERE timestamp < $1")
-            .bind(cutoff)
-            .execute(&self.pool)
-            .await?;
-        Ok(result.rows_affected() as usize)
-    }
-
-    async fn usage_stats_since(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<(u64, u64, u64, u64), DbError> {
-        if let Some(uid) = user_id {
-            let row: (i64, i64, i64, i64) = query_as(
-                "SELECT COUNT(*), \
-                 COALESCE(SUM(CASE WHEN success = true THEN 1 ELSE 0 END),0), \
-                 COALESCE(SUM(latency_ms)::bigint,0), \
-                 COALESCE(SUM(total_tokens)::bigint,0) \
-                 FROM billing_events WHERE user_id = $1 AND timestamp >= $2",
-            )
-            .bind(uid)
-            .bind(since)
-            .fetch_one(&self.pool)
-            .await?;
-            Ok((row.0 as u64, row.1 as u64, row.2 as u64, row.3 as u64))
-        } else {
-            let row: (i64, i64, i64, i64) = query_as(
-                "SELECT COUNT(*), \
-                 COALESCE(SUM(CASE WHEN success = true THEN 1 ELSE 0 END),0), \
-                 COALESCE(SUM(latency_ms)::bigint,0), \
-                 COALESCE(SUM(total_tokens)::bigint,0) \
-                 FROM billing_events WHERE timestamp >= $1",
-            )
-            .bind(since)
-            .fetch_one(&self.pool)
-            .await?;
-            Ok((row.0 as u64, row.1 as u64, row.2 as u64, row.3 as u64))
-        }
-    }
-
-    async fn usage_cost_rows_since(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<Vec<UsageRecord>, DbError> {
-        let rows = if let Some(uid) = user_id {
-            query(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
-                 prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-                 api_key_name, api_format, stream, cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, \
-                 cache_read_price, client_ip \
-                 FROM billing_events WHERE user_id = $1 AND timestamp >= $2 ORDER BY timestamp ASC",
-            )
-            .bind(uid)
-            .bind(since)
-            .fetch_all(&self.pool)
-            .await?
-        } else {
-            query(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
-                 prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-                 api_key_name, api_format, stream, cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, \
-                 cache_read_price, client_ip \
-                 FROM billing_events WHERE timestamp >= $1 ORDER BY timestamp ASC",
-            )
-            .bind(since)
-            .fetch_all(&self.pool)
-            .await?
-        };
-        Ok(rows
-            .iter()
-            .map(|r| {
-                let mut idx = 0usize;
-                Self::map_usage_record(r, &mut idx)
-            })
-            .collect())
-    }
-
-    async fn query_usage_since(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<Vec<UsageRecord>, DbError> {
-        let rows = if let Some(uid) = user_id {
-            query(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
-                 prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-                 api_key_name, api_format, stream, cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, \
-                 cache_read_price, client_ip, original_model \
-                 FROM billing_events WHERE user_id = $1 AND timestamp >= $2 ORDER BY timestamp ASC",
-            )
-            .bind(uid)
-            .bind(since)
-            .fetch_all(&self.pool)
-            .await?
-        } else {
-            query(
-                "SELECT timestamp, request_id, user_id, user_name, channel_id, model, \
-                 prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
-                 api_key_name, api_format, stream, cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, \
-                 cache_read_price, client_ip, original_model \
-                 FROM billing_events WHERE timestamp >= $1 ORDER BY timestamp ASC",
-            )
-            .bind(since)
-            .fetch_all(&self.pool)
-            .await?
-        };
-        Ok(rows
-            .iter()
-            .map(|r| {
-                let mut idx = 0usize;
-                let timestamp: String = r.get(idx);
-                idx += 1;
-                let request_id: String = r.get(idx);
-                idx += 1;
-                let user_id: String = r.get(idx);
-                idx += 1;
-                let user_name: String = r.get(idx);
-                idx += 1;
-                let channel_id: String = r.get(idx);
-                idx += 1;
-                let model: String = r.get(idx);
-                idx += 1;
-                let prompt_tokens: i64 = r.get(idx);
-                idx += 1;
-                let completion_tokens: i64 = r.get(idx);
-                idx += 1;
-                let total_tokens: i64 = r.get(idx);
-                idx += 1;
-                let latency_ms: i64 = r.get(idx);
-                idx += 1;
-                let status_code: i32 = r.get(idx);
-                idx += 1;
-                let success: bool = r.get(idx);
-                idx += 1;
-                let api_key_name: Option<String> = r.get(idx);
-                idx += 1;
-                let api_format: String = r.get(idx);
-                idx += 1;
-                let stream: bool = r.get(idx);
-                idx += 1;
-                let cache_hit_input_tokens: i64 = r.get(idx);
-                idx += 1;
-                let cache_write_tokens: i64 = r.get(idx);
-                idx += 1;
-                let prompt_price: f64 = r.get(idx);
-                idx += 1;
-                let completion_price: f64 = r.get(idx);
-                idx += 1;
-                let cache_read_price: f64 = r.get(idx);
-                UsageRecord {
-                    timestamp,
-                    request_id,
-                    user_id,
-                    user_name,
-                    channel_id,
-                    model,
-                    prompt_tokens: prompt_tokens as u64,
-                    completion_tokens: completion_tokens as u64,
-                    total_tokens: total_tokens as u64,
-                    latency_ms: latency_ms as u64,
-                    status_code: status_code as u16,
-                    success,
-                    request_body: None,
-                    response_body: None,
-                    reasoning_body: None,
-                    api_key_name,
-                    api_format,
-                    stream,
-                    cache_hit_input_tokens: cache_hit_input_tokens as u64,
-            cache_write_tokens: cache_write_tokens as u64,
-                    prompt_price: Decimal::try_from(prompt_price).unwrap_or(Decimal::ZERO),
-                    completion_price: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
-                    cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
-                    client_ip: None,
-                    endpoint_id: None,
-                    endpoint_url: None,
-                    original_model: String::new(),
-                    team_id: None,
-                    account_type: None,
-                }
-            })
-            .collect())
-    }
-
-    async fn daily_usage_counts(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-        tz_offset_seconds: i64,
-    ) -> Result<Vec<(String, i64)>, DbError> {
-        let day_expr = Self::day_expr(tz_offset_seconds);
-        if let Some(uid) = user_id {
-            let sql = format!(
-                "SELECT {}, COUNT(*) FROM billing_events WHERE user_id = $1 AND timestamp >= $2 \
-                 GROUP BY day ORDER BY day ASC",
-                day_expr
-            );
-            let rows = query_as::<_, (String, i64)>(&sql)
-                .bind(uid)
-                .bind(since)
-                .fetch_all(&self.pool)
-                .await?;
-            Ok(rows)
-        } else {
-            let sql = format!(
-                "SELECT {}, COUNT(*) FROM billing_events WHERE timestamp >= $1 GROUP BY day ORDER BY day ASC",
-                day_expr
-            );
-            let rows = query_as::<_, (String, i64)>(&sql)
-                .bind(since)
-                .fetch_all(&self.pool)
-                .await?;
-            Ok(rows)
-        }
-    }
-
-    async fn daily_usage_stats(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-        tz_offset_seconds: i64,
-    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64, u64)>, DbError> {
-        let day_expr = Self::day_expr(tz_offset_seconds);
-        if let Some(uid) = user_id {
-            let sql = format!(
-                "SELECT {}, COUNT(*)::bigint, COALESCE(SUM(prompt_tokens),0)::bigint, \
-                 COALESCE(SUM(completion_tokens),0)::bigint, COALESCE(SUM(total_tokens),0)::bigint, \
-                 COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
-                 COALESCE(SUM(latency_ms),0)::bigint, \
-                 COALESCE(SUM(cache_hit_input_tokens),0)::bigint \
-                 FROM billing_events WHERE user_id = $1 AND timestamp >= $2 \
-                 GROUP BY day ORDER BY day ASC",
-                day_expr
-            );
-            let rows = query_as::<_, (String, i64, i64, i64, i64, i64, i64, i64)>(&sql)
-                .bind(uid)
-                .bind(since)
-                .fetch_all(&self.pool)
-                .await?;
-            Ok(rows
-                .into_iter()
-                .map(|r| {
-                    (
-                        r.0, r.1 as u64, r.2 as u64, r.3 as u64, r.4 as u64, r.5 as u64,
-                        r.6 as u64, r.7 as u64,
-                    )
-                })
-                .collect())
-        } else {
-            let sql = format!(
-                "SELECT {}, COUNT(*)::bigint, COALESCE(SUM(prompt_tokens),0)::bigint, \
-                 COALESCE(SUM(completion_tokens),0)::bigint, COALESCE(SUM(total_tokens),0)::bigint, \
-                 COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
-                 COALESCE(SUM(latency_ms),0)::bigint, \
-                 COALESCE(SUM(cache_hit_input_tokens),0)::bigint \
-                 FROM billing_events WHERE timestamp >= $1 \
-                 GROUP BY day ORDER BY day ASC",
-                day_expr
-            );
-            let rows = query_as::<_, (String, i64, i64, i64, i64, i64, i64, i64)>(&sql)
-                .bind(since)
-                .fetch_all(&self.pool)
-                .await?;
-            Ok(rows
-                .into_iter()
-                .map(|r| {
-                    (
-                        r.0, r.1 as u64, r.2 as u64, r.3 as u64, r.4 as u64, r.5 as u64,
-                        r.6 as u64, r.7 as u64,
-                    )
-                })
-                .collect())
-        }
-    }
-
-    async fn model_activity(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError> {
-        let rows = if let Some(uid) = user_id {
-            query_as::<_, (String, i64, i64, i64, i64, i64, i64)>(
-                "SELECT model, COUNT(*)::bigint, COALESCE(SUM(prompt_tokens),0)::bigint, \
-                 COALESCE(SUM(completion_tokens),0)::bigint, \
-                 COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
-                 COALESCE(SUM(CASE WHEN success=false THEN 1 ELSE 0 END),0)::bigint, \
-                 COALESCE(SUM(cache_hit_input_tokens)::bigint,0) \
-                 FROM billing_events WHERE timestamp >= $1 AND user_id = $2 \
-                 GROUP BY model ORDER BY COUNT(*) DESC",
-            )
-            .bind(since)
-            .bind(uid)
-            .fetch_all(&self.pool)
-            .await?
-        } else {
-            query_as::<_, (String, i64, i64, i64, i64, i64, i64)>(
-                "SELECT model, COUNT(*)::bigint, COALESCE(SUM(prompt_tokens),0)::bigint, \
-                 COALESCE(SUM(completion_tokens),0)::bigint, \
-                 COALESCE(SUM(CASE WHEN success=true THEN 1 ELSE 0 END),0)::bigint, \
-                 COALESCE(SUM(CASE WHEN success=false THEN 1 ELSE 0 END),0)::bigint, \
-                 COALESCE(SUM(cache_hit_input_tokens)::bigint,0) \
-                 FROM billing_events WHERE timestamp >= $1 \
-                 GROUP BY model ORDER BY COUNT(*) DESC",
-            )
-            .bind(since)
-            .fetch_all(&self.pool)
-            .await?
-        };
-        Ok(rows
-            .into_iter()
-            .map(|r| {
-                (
-                    r.0, r.1 as u64, r.2 as u64, r.3 as u64, r.4 as u64, r.5 as u64, r.6 as u64,
-                )
-            })
-            .collect())
-    }
-
-    async fn funnel_stats(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<crate::db::FunnelStats, crate::db::DbError> {
-        let sql = "\
-            SELECT \
-              COUNT(*)::bigint, \
-              COUNT(*) FILTER (WHERE success = true)::bigint, \
-              COUNT(*) FILTER (WHERE success = false AND status_code IN (401,403))::bigint, \
-              COUNT(*) FILTER (WHERE success = false AND status_code = 429)::bigint, \
-              COUNT(*) FILTER (WHERE success = false AND status_code = 400)::bigint, \
-              COUNT(*) FILTER (WHERE success = false AND status_code IN (502,503))::bigint, \
-              COUNT(*) FILTER (WHERE success = false AND status_code = 504)::bigint, \
-              COUNT(*) FILTER (WHERE success = false AND status_code NOT IN (400,401,403,429,502,503,504))::bigint, \
-              percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms), \
-              percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms), \
-              percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms), \
-              COALESCE(AVG(latency_ms)::double precision,0) \
-            FROM billing_events WHERE timestamp >= $1";
-        let row: (
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            Option<f64>,
-            Option<f64>,
-            Option<f64>,
-            f64,
-        ) = if let Some(uid) = user_id {
-            let q = format!("{} AND user_id = $2", sql);
-            query_as(&q)
-                .bind(since)
-                .bind(uid)
-                .fetch_one(&self.pool)
-                .await?
-        } else {
-            query_as(sql).bind(since).fetch_one(&self.pool).await?
-        };
-        Ok(crate::db::FunnelStats {
-            total: row.0 as u64,
-            success_count: row.1 as u64,
-            auth_fail_count: row.2 as u64,
-            rate_limit_count: row.3 as u64,
-            bad_request_count: row.4 as u64,
-            upstream_error_count: row.5 as u64,
-            timeout_count: row.6 as u64,
-            other_error_count: row.7 as u64,
-            p50_latency: row.8.unwrap_or(0.0),
-            p95_latency: row.9.unwrap_or(0.0),
-            p99_latency: row.10.unwrap_or(0.0),
-            avg_latency: row.11,
-        })
-    }
-
     async fn period_summary(
         &self,
         year: i32,
@@ -3287,7 +2685,12 @@ impl DbBackend for PgBackend {
     ) -> Result<(Decimal, Decimal, Decimal, Decimal), DbError> {
         let (prompt_price, completion_price, cache_read_price, cache_write_price) =
             self.pricing_lookup(model_name).await;
-        Ok((prompt_price, completion_price, cache_read_price, cache_write_price))
+        Ok((
+            prompt_price,
+            completion_price,
+            cache_read_price,
+            cache_write_price,
+        ))
     }
 
     // ── Wallet ───────────────────────────────────────────────────────────
@@ -3566,7 +2969,11 @@ impl DbBackend for PgBackend {
         Ok(())
     }
 
-    async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<(Decimal, Option<String>), DbError> {
+    async fn redeem_recharge_key(
+        &self,
+        key: &str,
+        user_id: &str,
+    ) -> Result<(Decimal, Option<String>), DbError> {
         let now = chrono::Utc::now().to_rfc3339();
         let mut tx = self.pool.begin().await?;
 
@@ -3953,121 +3360,6 @@ impl DbBackend for PgBackend {
     }
 
     // ── Health Probe Results ─────────────────────────────────────────
-
-    async fn insert_probe_result(&self, row: &ProbeResultRow) -> Result<(), DbError> {
-        query(
-            "INSERT INTO probe_results (id, channel_id, model_id, success, latency_ms, error, probed_at, endpoint_url) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-        )
-        .bind(&row.id)
-        .bind(&row.channel_id)
-        .bind(&row.model_id)
-        .bind(row.success)
-        .bind(row.latency_ms as i64)
-        .bind(&row.error)
-        .bind(&row.probed_at)
-        .bind(&row.endpoint_url)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DbError(format!("Failed to insert probe result: {}", e)))?;
-        Ok(())
-    }
-
-    async fn all_latest_probe_results(&self) -> Result<Vec<ProbeResultRow>, DbError> {
-        let rows = query_as::<_, (String, String, String, bool, i64, Option<String>, String, Option<String>)>(
-            "SELECT p.id, p.channel_id, p.model_id, p.success, p.latency_ms, p.error, p.probed_at, p.endpoint_url
-             FROM probe_results p
-             INNER JOIN (
-                 SELECT model_id, channel_id, COALESCE(endpoint_url, '') AS endpoint_key, MAX(probed_at) AS max_ts
-                 FROM probe_results
-                 GROUP BY model_id, channel_id, COALESCE(endpoint_url, '')
-             ) latest
-               ON p.model_id = latest.model_id
-              AND p.channel_id = latest.channel_id
-              AND COALESCE(p.endpoint_url, '') = latest.endpoint_key
-              AND p.probed_at = latest.max_ts
-             ORDER BY p.model_id, p.channel_id, p.endpoint_url NULLS FIRST"
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DbError(format!("Failed to list probe results: {}", e)))?;
-
-        Ok(rows
-            .into_iter()
-            .map(
-                |(
-                    id,
-                    channel_id,
-                    model_id,
-                    success,
-                    latency_ms,
-                    error,
-                    probed_at,
-                    endpoint_url,
-                )| {
-                    ProbeResultRow {
-                        id,
-                        channel_id,
-                        model_id,
-                        success,
-                        latency_ms: latency_ms as u64,
-                        error,
-                        probed_at,
-                        endpoint_url,
-                    }
-                },
-            )
-            .collect())
-    }
-
-    async fn recent_probe_results(&self, minutes: i64) -> Result<Vec<ProbeResultRow>, DbError> {
-        let rows = query_as::<
-            _,
-            (
-                String,
-                String,
-                String,
-                bool,
-                i64,
-                Option<String>,
-                String,
-                Option<String>,
-            ),
-        >(
-            "SELECT id, channel_id, model_id, success, latency_ms, error, probed_at, endpoint_url \
-             FROM probe_results \
-             WHERE probed_at::timestamptz > NOW() - make_interval(mins => $1) \
-             ORDER BY probed_at DESC LIMIT 1000",
-        )
-        .bind(minutes)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DbError(format!("Failed to query recent probe results: {}", e)))?;
-
-        Ok(rows
-            .into_iter()
-            .map(
-                |(
-                    id,
-                    channel_id,
-                    model_id,
-                    success,
-                    latency_ms,
-                    error,
-                    probed_at,
-                    endpoint_url,
-                )| ProbeResultRow {
-                    id,
-                    channel_id,
-                    model_id,
-                    success,
-                    latency_ms: latency_ms as u64,
-                    error,
-                    probed_at,
-                    endpoint_url,
-                },
-            )
-            .collect())
-    }
 
     async fn channel_usage_24h(
         &self,
@@ -4542,12 +3834,14 @@ impl DbBackend for PgBackend {
                     }
 
                     let new_balance = balance - cost_amount;
-                    query("UPDATE team_wallets SET balance = $1, updated_at = $2 WHERE team_id = $3")
-                        .bind(new_balance)
-                        .bind(chrono::Utc::now().to_rfc3339())
-                        .bind(team_id)
-                        .execute(&mut *tx)
-                        .await?;
+                    query(
+                        "UPDATE team_wallets SET balance = $1, updated_at = $2 WHERE team_id = $3",
+                    )
+                    .bind(new_balance)
+                    .bind(chrono::Utc::now().to_rfc3339())
+                    .bind(team_id)
+                    .execute(&mut *tx)
+                    .await?;
 
                     let now = chrono::Utc::now().to_rfc3339();
                     query(
@@ -4682,17 +3976,19 @@ impl DbBackend for PgBackend {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| DbError(format!("get_team: {e}")))?;
-        Ok(rows.first().map(|(id, name, owner_id, created_at, updated_at)| Team {
-            id: id.clone(),
-            name: name.clone(),
-            owner_id: owner_id.clone(),
-            created_at: chrono::DateTime::parse_from_rfc3339(created_at)
-                .map(|d| d.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
-            updated_at: chrono::DateTime::parse_from_rfc3339(updated_at)
-                .map(|d| d.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
-        }))
+        Ok(rows
+            .first()
+            .map(|(id, name, owner_id, created_at, updated_at)| Team {
+                id: id.clone(),
+                name: name.clone(),
+                owner_id: owner_id.clone(),
+                created_at: chrono::DateTime::parse_from_rfc3339(created_at)
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+                updated_at: chrono::DateTime::parse_from_rfc3339(updated_at)
+                    .map(|d| d.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            }))
     }
 
     async fn list_teams_for_user(&self, user_id: &str) -> Result<Vec<Team>, DbError> {
@@ -4747,15 +4043,13 @@ impl DbBackend for PgBackend {
     }
 
     async fn update_team(&self, team_id: &str, name: &str) -> Result<(), DbError> {
-        query(
-            "UPDATE teams SET name = $1, updated_at = $2 WHERE id = $3",
-        )
-        .bind(name)
-        .bind(chrono::Utc::now().to_rfc3339())
-        .bind(team_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DbError(format!("update_team: {e}")))?;
+        query("UPDATE teams SET name = $1, updated_at = $2 WHERE id = $3")
+            .bind(name)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(team_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError(format!("update_team: {e}")))?;
         Ok(())
     }
 
@@ -4827,15 +4121,13 @@ impl DbBackend for PgBackend {
         if current_role == "owner" && role != "owner" {
             return Err(DbError("Cannot demote the team owner".to_string()));
         }
-        query(
-            "UPDATE team_members SET role = $1 WHERE team_id = $2 AND user_id = $3",
-        )
-        .bind(role)
-        .bind(team_id)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DbError(format!("set_team_member_role: {e}")))?;
+        query("UPDATE team_members SET role = $1 WHERE team_id = $2 AND user_id = $3")
+            .bind(role)
+            .bind(team_id)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError(format!("set_team_member_role: {e}")))?;
         Ok(())
     }
 
@@ -4875,16 +4167,16 @@ impl DbBackend for PgBackend {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| DbError(format!("get_team_member: {e}")))?;
-        Ok(rows.first().map(
-            |(team_id, user_id, role, joined_at)| TeamMember {
+        Ok(rows
+            .first()
+            .map(|(team_id, user_id, role, joined_at)| TeamMember {
                 team_id: team_id.clone(),
                 user_id: user_id.clone(),
                 role: role.clone(),
                 joined_at: chrono::DateTime::parse_from_rfc3339(joined_at)
                     .map(|d| d.with_timezone(&chrono::Utc))
                     .unwrap_or_else(|_| chrono::Utc::now()),
-            },
-        ))
+            }))
     }
 
     async fn get_team_wallet(&self, team_id: &str) -> Result<Option<(f64, f64)>, DbError> {
@@ -4919,15 +4211,13 @@ impl DbBackend for PgBackend {
     }
 
     async fn add_team_wallet_balance(&self, team_id: &str, amount: f64) -> Result<(), DbError> {
-        query(
-            "UPDATE team_wallets SET balance = balance + $1, updated_at = $2 WHERE team_id = $3",
-        )
-        .bind(amount)
-        .bind(chrono::Utc::now().to_rfc3339())
-        .bind(team_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DbError(format!("add_team_wallet_balance: {e}")))?;
+        query("UPDATE team_wallets SET balance = balance + $1, updated_at = $2 WHERE team_id = $3")
+            .bind(amount)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(team_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError(format!("add_team_wallet_balance: {e}")))?;
         Ok(())
     }
 
@@ -5138,6 +4428,7 @@ mod billing_tests {
             endpoint_url: None,
             original_model: String::new(),
             team_id: team_id.map(|s| s.to_string()),
+            ttft_ms: None,
             account_type: None,
         };
         r.prompt_tokens = 1_000_000; // $1 at $1/1M

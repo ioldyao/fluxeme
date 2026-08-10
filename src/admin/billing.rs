@@ -39,28 +39,16 @@ pub(crate) async fn billing_summary(
     headers: HeaderMap,
 ) -> Result<Json<BillingSummary>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    let records = state
-        .usage
-        .cost_rows_since("1970-01-01T00:00:00", Some(&session.user_id))
+    let summaries = state
+        .db
+        .period_summary_for_user(&session.user_id)
         .await
-        .map_err(AdminError::internal)?;
-    let total_cost = records.iter().fold(Decimal::ZERO, |acc, r| {
-        let pp = if r.prompt_price > Decimal::ZERO {
-            r.prompt_price
-        } else {
-            Decimal::ZERO
-        };
-        let cp = if r.completion_price > Decimal::ZERO {
-            r.completion_price
-        } else {
-            Decimal::ZERO
-        };
-        acc + (Decimal::from(r.prompt_tokens) / Decimal::from(1000000) * pp)
-            + (Decimal::from(r.completion_tokens) / Decimal::from(1000000) * cp)
-            + (Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000)
-                * r.cache_read_price)
-    });
-    let total_requests = records.len() as u64;
+        .map_err(db_err)?;
+    let total_cost = summaries
+        .iter()
+        .map(|(_, cost, _, _)| *cost)
+        .fold(Decimal::ZERO, |acc, cost| acc + cost);
+    let total_requests = summaries.iter().map(|(_, _, requests, _)| *requests).sum();
     let (balance, _) = state
         .db
         .get_wallet_balance(&session.user_id)

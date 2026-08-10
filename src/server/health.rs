@@ -41,22 +41,18 @@ pub async fn readiness(State(state): State<Arc<AppState>>) -> (StatusCode, Json<
         }
     }
 
-    // Redis (skip when disabled)
-    if state.cache.is_enabled() {
-        match state.cache.ping().await {
-            Ok(()) => {
-                checks.insert("redis".to_string(), json!({ "status": "ok" }));
-            }
-            Err(e) => {
-                ok = false;
-                checks.insert(
-                    "redis".to_string(),
-                    json!({ "status": "error", "error": e }),
-                );
-            }
+    // Redis is mandatory.
+    match state.cache.ping().await {
+        Ok(()) => {
+            checks.insert("redis".to_string(), json!({ "status": "ok" }));
         }
-    } else {
-        checks.insert("redis".to_string(), json!({ "status": "disabled" }));
+        Err(e) => {
+            ok = false;
+            checks.insert(
+                "redis".to_string(),
+                json!({ "status": "error", "error": e }),
+            );
+        }
     }
 
     let status_code = if ok {

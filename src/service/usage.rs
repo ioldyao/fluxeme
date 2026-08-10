@@ -8,10 +8,10 @@ use tokio::task::JoinHandle;
 
 use crate::cache::{compute_gate_status, RedisCache};
 use crate::db::Database;
-use crate::domain::usage::UsageFilter;
 use crate::domain::usage::UsageRecord;
 use crate::observability::event::RequestCompleted;
 use crate::observability::event_bus::EventBus;
+use crate::observability::flow_tracker::FlowTracker;
 
 const N_BILLING_WORKERS: usize = 4;
 const BILLING_CHANNEL_CAP: usize = 16384;
@@ -34,6 +34,7 @@ pub struct UsageService {
     #[allow(dead_code)]
     cache: Arc<RedisCache>,
     event_bus: EventBus,
+    flow_tracker: FlowTracker,
 }
 
 impl UsageService {
@@ -41,6 +42,7 @@ impl UsageService {
         db: Arc<Database>,
         cache: Arc<RedisCache>,
         event_bus: EventBus,
+        flow_tracker: FlowTracker,
     ) -> (Self, Vec<JoinHandle<()>>) {
         let mut senders = Vec::with_capacity(N_BILLING_WORKERS);
         let mut handles = Vec::with_capacity(N_BILLING_WORKERS);
@@ -58,6 +60,7 @@ impl UsageService {
                 db,
                 cache,
                 event_bus,
+                flow_tracker,
             },
             handles,
         )
@@ -66,6 +69,11 @@ impl UsageService {
     /// Record usage (no endpoint_id). Shorthand for `record_with_endpoint(record, None)`.
     pub fn record(&self, record: UsageRecord) {
         self.record_with_endpoint(record, None);
+    }
+
+    pub fn mark_first_byte(&self, request_id: &str) {
+        self.flow_tracker
+            .mark_first_byte(request_id, chrono::Utc::now().to_rfc3339());
     }
 
     /// Record usage with an optional endpoint_id.
@@ -88,6 +96,7 @@ impl UsageService {
             completion_tokens: Some(record.completion_tokens),
         };
         self.event_bus.request_completed(event);
+        self.flow_tracker.mark_completed(&record.request_id);
 
         // 2. Preserve full billing fallback detail, but strip client IP from the CH/Redis usage stream.
         let billing_record = record.clone();
@@ -117,90 +126,6 @@ impl UsageService {
                 tracing::warn!("Obs event XADD failed: {e}");
             }
         });
-    }
-
-    // ── Read-through query methods (unchanged, still hit PG) ──────────
-
-    pub async fn query(
-        &self,
-        limit: usize,
-        offset: usize,
-        filter: &UsageFilter,
-    ) -> Result<Vec<UsageRecord>, String> {
-        self.db
-            .query_usage(limit, offset, filter)
-            .await
-            .map_err(|e| e.0)
-    }
-
-    pub async fn count(&self) -> Result<usize, String> {
-        self.db.count_usage().await.map_err(|e| e.0)
-    }
-
-    pub async fn count_by_user(&self, user_id: &str) -> Result<usize, String> {
-        self.db.count_usage_by_user(user_id).await.map_err(|e| e.0)
-    }
-
-    pub async fn count_filtered(&self, filter: &UsageFilter) -> Result<usize, String> {
-        self.db.count_usage_filtered(filter).await.map_err(|e| e.0)
-    }
-
-    pub async fn get_detail(&self, request_id: &str) -> Result<Option<UsageRecord>, String> {
-        self.db.get_usage_detail(request_id).await.map_err(|e| e.0)
-    }
-
-    pub async fn daily_counts(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-        tz_offset_seconds: i64,
-    ) -> Result<Vec<(String, i64)>, String> {
-        self.db
-            .daily_usage_counts(since, user_id, tz_offset_seconds)
-            .await
-            .map_err(|e| e.0)
-    }
-
-    pub async fn stats_since(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<(u64, u64, u64, u64), String> {
-        self.db
-            .usage_stats_since(since, user_id)
-            .await
-            .map_err(|e| e.0)
-    }
-
-    pub async fn cost_rows_since(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<Vec<UsageRecord>, String> {
-        self.db
-            .usage_cost_rows_since(since, user_id)
-            .await
-            .map_err(|e| e.0)
-    }
-
-    pub async fn daily_stats(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-        tz_offset_seconds: i64,
-    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64, u64)>, String> {
-        self.db
-            .daily_usage_stats(since, user_id, tz_offset_seconds)
-            .await
-            .map_err(|e| e.0)
-    }
-
-    pub async fn funnel_stats(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<crate::db::FunnelStats, String> {
-        self.db.funnel_stats(since, user_id).await.map_err(|e| e.0)
     }
 }
 

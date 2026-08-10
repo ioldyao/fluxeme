@@ -6,14 +6,11 @@ use crate::domain::model::{Model, Pricing};
 use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
 use crate::domain::team::{Team, TeamMember};
-use crate::domain::usage::UsageFilter;
 use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
 use chrono::{DateTime, Utc};
 
-use super::{
-    AnnouncementRow, DbError, FunnelStats, ProbeResultRow, RechargeKeyRow, WalletTransactionRow,
-};
+use super::{AnnouncementRow, DbError, RechargeKeyRow, WalletTransactionRow};
 
 /// PostgreSQL persistence contract used by application services.
 ///
@@ -91,56 +88,6 @@ pub trait DbBackend: Send + Sync {
     async fn list_user_rules(&self, user_id: &str) -> Result<Vec<RoutingRule>, DbError>;
 
     // ── Usage Logs ───────────────────────────────────────────────────────
-    async fn insert_usage(&self, record: &UsageRecord) -> Result<(), DbError>;
-    async fn count_usage(&self) -> Result<usize, DbError>;
-    async fn count_usage_by_user(&self, user_id: &str) -> Result<usize, DbError>;
-    async fn count_usage_filtered(&self, filter: &UsageFilter) -> Result<usize, DbError>;
-    async fn query_usage(
-        &self,
-        limit: usize,
-        offset: usize,
-        filter: &UsageFilter,
-    ) -> Result<Vec<UsageRecord>, DbError>;
-    async fn get_usage_detail(&self, request_id: &str) -> Result<Option<UsageRecord>, DbError>;
-    async fn purge_usage_logs(&self, cutoff: &str) -> Result<usize, DbError>;
-    async fn usage_stats_since(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<(u64, u64, u64, u64), DbError>;
-    async fn usage_cost_rows_since(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<Vec<UsageRecord>, DbError>;
-    async fn query_usage_since(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<Vec<UsageRecord>, DbError>;
-    async fn daily_usage_counts(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-        tz_offset_seconds: i64,
-    ) -> Result<Vec<(String, i64)>, DbError>;
-    async fn daily_usage_stats(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-        tz_offset_seconds: i64,
-    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64, u64)>, DbError>;
-    async fn model_activity(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError>;
-    async fn funnel_stats(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<FunnelStats, DbError>;
-
     // ── Billing / Period ─────────────────────────────────────────────────
     async fn period_summary(
         &self,
@@ -236,7 +183,11 @@ pub trait DbBackend: Send + Sync {
         expires_at: Option<&str>,
         team_id: Option<&str>,
     ) -> Result<(), DbError>;
-    async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<(Decimal, Option<String>), DbError>;
+    async fn redeem_recharge_key(
+        &self,
+        key: &str,
+        user_id: &str,
+    ) -> Result<(Decimal, Option<String>), DbError>;
     async fn revoke_recharge_key(&self, key: &str) -> Result<(), DbError>;
     async fn list_recharge_keys(&self) -> Result<Vec<RechargeKeyRow>, DbError>;
     async fn list_recharge_keys_paginated(
@@ -290,16 +241,11 @@ pub trait DbBackend: Send + Sync {
     async fn delete_filter_rule(&self, id: &str) -> Result<(), DbError>;
 
     // ── Health Probe Results ──────────────────────────────────────────────
-    async fn insert_probe_result(&self, row: &ProbeResultRow) -> Result<(), DbError>;
     /// Returns the most recent probe result for each (channel, endpoint_url)
     /// target. Channel-scoped failures with no endpoint URL are preserved as a
     /// separate latest record.
-    async fn all_latest_probe_results(&self) -> Result<Vec<ProbeResultRow>, DbError>;
-
     /// Raw probe results from the last `minutes` minutes, newest first.
     /// Used by the flow-control endpoint state timeline (probe-driven grid).
-    async fn recent_probe_results(&self, minutes: i64) -> Result<Vec<ProbeResultRow>, DbError>;
-
     /// Per-model per-channel usage stats for the health/routing dashboard.
     /// Returns Vec<(channel_id, model, requests_count, success_count, avg_latency, p95_latency)>.
     async fn channel_usage_24h(&self)

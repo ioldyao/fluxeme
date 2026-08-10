@@ -41,14 +41,14 @@ pub const BUS_CHANNEL: &str = "obs:bus";
 #[derive(Clone)]
 pub struct EventBus {
     tx: broadcast::Sender<BusMessage>,
-    redis: Option<Arc<RedisCache>>,
+    redis: Arc<RedisCache>,
     instance_id: String,
 }
 
 impl EventBus {
     /// Create a new bus with room for `capacity` unread events.
     /// `redis` is `Some` when the shared Redis cache is enabled.
-    pub fn new(capacity: usize, redis: Option<Arc<RedisCache>>, instance_id: String) -> Self {
+    pub fn new(capacity: usize, redis: Arc<RedisCache>, instance_id: String) -> Self {
         let (tx, _) = broadcast::channel(capacity);
         Self {
             tx,
@@ -74,7 +74,7 @@ impl EventBus {
     /// Push an event to the shared Redis channel (if enabled), wrapped with
     /// the origin instance id so remote subscribers can skip their own echoes.
     fn publish_remote(&self, msg: BusMessage) {
-        let Some(redis) = &self.redis else { return };
+        let redis = &self.redis;
         let payload = serde_json::to_string(&RemoteEnvelope {
             instance_id: self.instance_id.clone(),
             event: msg,

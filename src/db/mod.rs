@@ -11,7 +11,7 @@ use crate::domain::model::{Model, Pricing};
 use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
 use crate::domain::team::{Team, TeamMember};
-use crate::domain::usage::{UsageFilter, UsageRecord};
+use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
 
 #[derive(Debug)]
@@ -317,88 +317,6 @@ impl Database {
     }
 
     // ── Usage Logs ───────────────────────────────────────────────────────
-    pub async fn insert_usage(&self, record: &UsageRecord) -> Result<(), DbError> {
-        self.backend.insert_usage(record).await
-    }
-    pub async fn count_usage(&self) -> Result<usize, DbError> {
-        self.backend.count_usage().await
-    }
-    pub async fn count_usage_by_user(&self, user_id: &str) -> Result<usize, DbError> {
-        self.backend.count_usage_by_user(user_id).await
-    }
-    pub async fn count_usage_filtered(&self, filter: &UsageFilter) -> Result<usize, DbError> {
-        self.backend.count_usage_filtered(filter).await
-    }
-    pub async fn query_usage(
-        &self,
-        limit: usize,
-        offset: usize,
-        filter: &UsageFilter,
-    ) -> Result<Vec<UsageRecord>, DbError> {
-        self.backend.query_usage(limit, offset, filter).await
-    }
-    pub async fn get_usage_detail(&self, request_id: &str) -> Result<Option<UsageRecord>, DbError> {
-        self.backend.get_usage_detail(request_id).await
-    }
-    pub async fn purge_usage_logs(&self, cutoff: &str) -> Result<usize, DbError> {
-        self.backend.purge_usage_logs(cutoff).await
-    }
-    pub async fn usage_stats_since(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<(u64, u64, u64, u64), DbError> {
-        self.backend.usage_stats_since(since, user_id).await
-    }
-    pub async fn usage_cost_rows_since(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<Vec<UsageRecord>, DbError> {
-        self.backend.usage_cost_rows_since(since, user_id).await
-    }
-    pub async fn query_usage_since(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<Vec<UsageRecord>, DbError> {
-        self.backend.query_usage_since(since, user_id).await
-    }
-    pub async fn daily_usage_counts(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-        tz_offset_seconds: i64,
-    ) -> Result<Vec<(String, i64)>, DbError> {
-        self.backend
-            .daily_usage_counts(since, user_id, tz_offset_seconds)
-            .await
-    }
-    pub async fn daily_usage_stats(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-        tz_offset_seconds: i64,
-    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64, u64)>, DbError> {
-        self.backend
-            .daily_usage_stats(since, user_id, tz_offset_seconds)
-            .await
-    }
-    pub async fn model_activity(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, DbError> {
-        self.backend.model_activity(since, user_id).await
-    }
-    pub async fn funnel_stats(
-        &self,
-        since: &str,
-        user_id: Option<&str>,
-    ) -> Result<FunnelStats, DbError> {
-        self.backend.funnel_stats(since, user_id).await
-    }
-
     pub async fn period_summary(
         &self,
         year: i32,
@@ -569,7 +487,11 @@ impl Database {
             .create_recharge_key(key, amount, created_by, expires_at, team_id)
             .await
     }
-    pub async fn redeem_recharge_key(&self, key: &str, user_id: &str) -> Result<(Decimal, Option<String>), DbError> {
+    pub async fn redeem_recharge_key(
+        &self,
+        key: &str,
+        user_id: &str,
+    ) -> Result<(Decimal, Option<String>), DbError> {
         self.backend.redeem_recharge_key(key, user_id).await
     }
     pub async fn revoke_recharge_key(&self, key: &str) -> Result<(), DbError> {
@@ -704,16 +626,6 @@ impl Database {
     }
 
     // ── Health Probe Results ─────────────────────────────────────────────
-    pub async fn insert_probe_result(&self, row: &ProbeResultRow) -> Result<(), DbError> {
-        self.backend.insert_probe_result(row).await
-    }
-    pub async fn all_latest_probe_results(&self) -> Result<Vec<ProbeResultRow>, DbError> {
-        self.backend.all_latest_probe_results().await
-    }
-    pub async fn recent_probe_results(&self, minutes: i64) -> Result<Vec<ProbeResultRow>, DbError> {
-        self.backend.recent_probe_results(minutes).await
-    }
-
     pub async fn channel_usage_24h(
         &self,
     ) -> Result<Vec<(String, String, u64, u64, f64, f64)>, DbError> {

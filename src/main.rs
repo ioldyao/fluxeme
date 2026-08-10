@@ -14,14 +14,9 @@ mod server;
 mod service;
 mod sso;
 
-use std::collections::HashMap;
+use crate::ch_backend::ClickHouseBackend;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
-
-use tokio::sync::RwLock as AsyncRwLock;
-
-use crate::cache::GateStatus;
-use crate::ch_backend::ClickHouseBackend;
 
 use crate::admin::AdminModule;
 use crate::authz::{AuthzModule, TeamAuthzModule};
@@ -178,25 +173,24 @@ async fn main() {
         db.get_gateway_config().await.unwrap_or_default(),
     ));
 
-    // Initialize Redis (noop when disabled) — before rate limiter / admin
-    // so they can share the connection for distributed rate limiting.
+    // Redis is mandatory: billing backlog, observability events, distributed
+    // rate limiting, and cross-instance event delivery all depend on it.
     let redis_config = config.read().unwrap().redis.clone();
+    if !redis_config.enabled {
+        tracing::error!("Redis is mandatory; set redis.enabled=true");
+        std::process::exit(1);
+    }
     let cache_ttl = gateway_config.read().unwrap().cache_ttl_secs;
-    let cache = Arc::new(if redis_config.enabled {
-        match RedisCache::new(&redis_config.url, cache_ttl).await {
-            Ok(c) => {
-                tracing::info!("Redis cache enabled");
-                c
-            }
-            Err(e) => {
-                tracing::error!("Failed to connect to Redis: {}", e);
-                RedisCache::noop()
-            }
+    let cache = Arc::new(match RedisCache::new(&redis_config.url, cache_ttl).await {
+        Ok(c) => {
+            tracing::info!("Redis connected");
+            c
         }
-    } else {
-        RedisCache::noop()
+        Err(e) => {
+            tracing::error!("Failed to connect to mandatory Redis: {}", e);
+            std::process::exit(1);
+        }
     });
-    let shared_limiter_cache = cache.is_enabled().then(|| cache.clone());
 
     // Initialize services
     let auth = Arc::new(AuthService::new(db.clone()).await);
@@ -206,8 +200,7 @@ async fn main() {
             .expect("Failed to initialize routing credentials"),
     );
     let providers = Arc::new(ProviderRegistry::new());
-    let rate_limiter = Arc::new(RateLimiter::new(shared_limiter_cache.clone()));
-    rate_limiter.start_cleanup_task();
+    let rate_limiter = Arc::new(RateLimiter::new(cache.clone()));
     let health = Arc::new(
         HealthService::new(db.clone(), &encryption_key).expect("Failed to create HealthService"),
     );
@@ -215,7 +208,7 @@ async fn main() {
         &jwt_secret,
         &encryption_key,
         db.clone(),
-        shared_limiter_cache.clone(),
+        cache.clone(),
     ));
 
     let sso_config = config.read().unwrap().sso.clone();
@@ -238,25 +231,6 @@ async fn main() {
         },
     );
 
-    // Run usage log cleanup on startup
-    {
-        let days = config.read().unwrap().database.retention_days;
-        if days > 0 {
-            let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
-            let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%S").to_string();
-            match db.purge_usage_logs(&cutoff_str).await {
-                Ok(count) => {
-                    tracing::info!(
-                        "Purged {} usage log records older than {} days",
-                        count,
-                        days
-                    )
-                }
-                Err(e) => tracing::error!("Failed to purge usage logs: {}", e),
-            }
-        }
-    }
-
     // Load allow_private_ips setting from DB (default: true)
     let allow_private = db.get_setting("allow_private_ips").await.ok().flatten();
     provider::set_allow_private_ips(allow_private.as_deref() != Some("false"));
@@ -272,17 +246,14 @@ async fn main() {
 
     // Event bus for real-time observability (WebSocket push to admin UI).
     // Bridged to Redis pub/sub so events fan out across instances.
-    let event_bus = observability::event_bus::EventBus::new(
-        8192,
-        shared_limiter_cache.clone(),
-        instance_id.clone(),
-    );
+    let event_bus =
+        observability::event_bus::EventBus::new(8192, cache.clone(), instance_id.clone());
 
     // Remote event subscriber: relays events from other instances into the
     // local bus so WebSocket clients here see all gateway traffic.
-    if let Some(redis) = &shared_limiter_cache {
+    {
         let bus = event_bus.clone();
-        let redis = redis.clone();
+        let redis = cache.clone();
         tokio::spawn(async move {
             let mut pubsub = match redis.subscribe(observability::event_bus::BUS_CHANNEL).await {
                 Ok(p) => p,
@@ -309,25 +280,35 @@ async fn main() {
         });
     }
 
-    // ClickHouse backend (optional — gracefully disabled when not configured)
+    // ClickHouse backend is mandatory for observability.
     let (clickhouse_cfg, ch_retention_days) = {
         let cfg = config.read().unwrap();
         (cfg.database.clickhouse.clone(), cfg.database.retention_days)
     };
-    let ch = ClickHouseBackend::new(&clickhouse_cfg)
-        .await
-        .unwrap_or_else(|e| {
-            tracing::warn!("ClickHouse init failed: {e}");
-            None
-        });
-    if let Some(ref ch) = ch {
-        if let Err(e) = ch.migrate(ch_retention_days as u32).await {
-            tracing::warn!("ClickHouse migration: {e}");
+    let ch = match ClickHouseBackend::new(&clickhouse_cfg).await {
+        Ok(Some(ch)) => ch,
+        Ok(None) => {
+            tracing::error!("ClickHouse is mandatory; configure database.clickhouse.host");
+            std::process::exit(1);
         }
+        Err(e) => {
+            tracing::error!("Failed to connect to mandatory ClickHouse: {e}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = ch.migrate(ch_retention_days as u32).await {
+        tracing::error!("ClickHouse migration failed: {e}");
+        std::process::exit(1);
     }
 
     // Initialize usage service with billing workers (ClickHouse is now decoupled via Redis Stream)
-    let (usage, usage_handles) = UsageService::new(db.clone(), cache.clone(), event_bus.clone());
+    let flow_tracker = crate::observability::flow_tracker::FlowTracker::new();
+    let (usage, usage_handles) = UsageService::new(
+        db.clone(),
+        cache.clone(),
+        event_bus.clone(),
+        flow_tracker.clone(),
+    );
 
     // Billing backlog drain — reads from Redis Stream and retries billing
     {
@@ -342,19 +323,14 @@ async fn main() {
         let ch = ch.clone();
         let cache = cache.clone();
         let db = db.clone();
-        tokio::spawn(crate::cache::start_obs_consumer(ch, cache, db));
+        tokio::spawn(crate::cache::start_obs_consumer(Some(ch), cache, db));
     }
 
-    // In-memory gate cache (populated by inspection, read by handler when Redis is down)
-    let gate_cache: Arc<AsyncRwLock<HashMap<String, GateStatus>>> =
-        Arc::new(AsyncRwLock::new(HashMap::new()));
-
-    // Periodic inspection task: sync user gate status from PostgreSQL to Redis
-    // and the local fallback cache. Pagination keeps each query bounded.
+    // Periodic inspection task: refresh Redis gate status from PostgreSQL.
+    // Redis is mandatory, so no local gate cache is maintained.
     {
         let db = db.clone();
         let cache = cache.clone();
-        let gate_cache = gate_cache.clone();
         tokio::spawn(async move {
             const PAGE_SIZE: usize = 100;
             loop {
@@ -371,25 +347,14 @@ async fn main() {
                     if page.is_empty() {
                         break;
                     }
-                    // Batch-update both Redis and local cache for the page
-                    let mut local_updates = Vec::with_capacity(page.len());
                     for (user_id, balance, frozen) in &page {
                         let status = crate::cache::compute_gate_status(*balance, *frozen);
                         if let Err(e) = cache.set_gate_and_balance(user_id, status, *balance).await
                         {
                             tracing::warn!(user_id, "Inspection: failed to update Redis: {}", e);
                         }
-                        local_updates.push((user_id.clone(), status));
-                    }
-                    // Bulk-write local cache (single write lock acquisition per page)
-                    {
-                        let mut guard = gate_cache.write().await;
-                        for (user_id, status) in &local_updates {
-                            guard.insert(user_id.clone(), *status);
-                        }
                     }
                     offset += PAGE_SIZE;
-                    // Brief yield between pages to avoid monopolizing the executor.
                     tokio::time::sleep(Duration::from_millis(5)).await;
                 }
             }
@@ -419,9 +384,7 @@ async fn main() {
     );
     // Rebuild team role bindings from the DB so team permissions survive a
     // restart (the enforcer is in-memory).
-    team_authz
-        .reload_all(&db)
-        .await;
+    team_authz.reload_all(&db).await;
 
     // Initialize content filter service
     let content_filter = Arc::new(ContentFilterService::new(db.clone()).await);
@@ -431,7 +394,7 @@ async fn main() {
         db.clone(),
         providers.clone(),
         routing.clone(),
-        ch.clone(),
+        Some(ch.clone()),
     ));
 
     // Automatic model health probes: probe all channel endpoints of every
@@ -500,11 +463,11 @@ async fn main() {
         sso,
         gateway_config,
         cache,
-        gate_cache,
         content_filter,
         health_probe,
         event_bus: event_bus.clone(),
-        ch,
+        flow_tracker,
+        ch: Some(ch),
         instance_id: instance_id.clone(),
     });
 

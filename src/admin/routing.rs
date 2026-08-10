@@ -19,13 +19,14 @@ pub(crate) async fn routing_health(
     check_perm(&state.authz, &session, "admin:dashboard").await?;
 
     let models = state.db.list_models().await.map_err(db_err)?;
-    let usage = if let Some(ref ch) = state.ch {
-        ch.query_channel_usage_24h()
-            .await
-            .map_err(AdminError::internal)?
-    } else {
-        state.db.channel_usage_24h().await.map_err(db_err)?
-    };
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let usage = ch
+        .query_channel_usage_24h()
+        .await
+        .map_err(AdminError::internal)?;
 
     let mut usage_map: std::collections::HashMap<(String, String), (u64, u64, f64, f64)> =
         std::collections::HashMap::new();
@@ -138,43 +139,27 @@ pub(crate) async fn recent_request_paths(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:dashboard").await?;
 
-    let paths: Vec<serde_json::Value> = if let Some(ref ch) = state.ch {
-        ch.query_recent_request_paths(15)
-            .await
-            .map_err(AdminError::internal)?
-            .into_iter()
-            .map(|(ts, m, ch, eid, eurl, lat, suc)| {
-                serde_json::json!({
-                    "timestamp": ts,
-                    "model": m,
-                    "channel_id": ch,
-                    "endpoint_id": eid,
-                    "endpoint_url": eurl,
-                    "latency_ms": lat,
-                    "success": suc,
-                })
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let paths: Vec<serde_json::Value> = ch
+        .query_recent_request_paths(15)
+        .await
+        .map_err(AdminError::internal)?
+        .into_iter()
+        .map(|(ts, m, ch, eid, eurl, lat, suc)| {
+            serde_json::json!({
+                "timestamp": ts,
+                "model": m,
+                "channel_id": ch,
+                "endpoint_id": eid,
+                "endpoint_url": eurl,
+                "latency_ms": lat,
+                "success": suc,
             })
-            .collect()
-    } else {
-        state
-            .db
-            .recent_request_paths(15)
-            .await
-            .map_err(db_err)?
-            .into_iter()
-            .map(|(ts, m, ch, eid, lat, suc)| {
-                serde_json::json!({
-                    "timestamp": ts,
-                    "model": m,
-                    "channel_id": ch,
-                    "endpoint_id": eid,
-                    "endpoint_url": null,
-                    "latency_ms": lat,
-                    "success": suc,
-                })
-            })
-            .collect()
-    };
+        })
+        .collect();
 
     Ok(Json(serde_json::json!({ "paths": paths })))
 }
@@ -228,19 +213,14 @@ pub(crate) async fn routing_flow_snapshot_handler(
 ) -> Result<Json<Vec<(String, String, Option<i64>, u64)>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:dashboard").await?;
-    if let Some(ref ch) = state.ch {
-        ch.query_routing_flow_snapshot(24)
-            .await
-            .map(Json)
-            .map_err(AdminError::internal)
-    } else {
-        state
-            .db
-            .routing_flow_snapshot(24)
-            .await
-            .map(Json)
-            .map_err(|e| AdminError::internal(e.to_string()))
-    }
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    ch.query_routing_flow_snapshot(24)
+        .await
+        .map(Json)
+        .map_err(AdminError::internal)
 }
 
 pub(crate) async fn routing_history(
@@ -255,57 +235,32 @@ pub(crate) async fn routing_history(
 
     tracing::info!(start = %q.start, end = %q.end, model = ?model_filter, "routing_history query");
 
-    let use_ch = state.ch.is_some() && model_filter.is_none();
-    let ch = &state.ch;
-
-    let buckets = if use_ch {
-        ch.as_ref()
-            .unwrap()
-            .query_routing_history_buckets(&q.start, &q.end)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = e, "routing_history_buckets (CH) failed");
-                AdminError::internal(e)
-            })?
-    } else {
-        state
-            .db
-            .routing_history_buckets(&q.start, &q.end, model_filter)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e.0, start = %q.start, end = %q.end, "routing_history_buckets query failed");
-                AdminError::internal(e.to_string())
-            })?
-    };
-
-    let stats = if use_ch {
-        ch.as_ref()
-            .unwrap()
-            .query_routing_history_stats(&q.start, &q.end)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = e, "routing_history_stats (CH) failed");
-                AdminError::internal(e)
-            })?
-    } else {
-        state
-            .db
-            .routing_history_endpoint_stats(&q.start, &q.end, model_filter)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e.0, start = %q.start, end = %q.end, "routing_history_endpoint_stats query failed");
-                AdminError::internal(e.to_string())
-            })?
-    };
-
-    // Endpoint details needs a JOIN with PG endpoints table — keep on PG
-    let details = state
-        .db
-        .routing_history_endpoint_details(&q.start, &q.end, model_filter)
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let buckets = ch
+        .query_routing_history_buckets_filtered(&q.start, &q.end, model_filter)
         .await
         .map_err(|e| {
-            tracing::error!(error=%e.0,"routing_history_endpoint_details query failed");
-            AdminError::internal(e.to_string())
+            tracing::error!(error = e, "routing_history_buckets (CH) failed");
+            AdminError::internal(e)
+        })?;
+
+    let stats = ch
+        .query_routing_history_stats_filtered(&q.start, &q.end, model_filter)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = e, "routing_history_stats (CH) failed");
+            AdminError::internal(e)
+        })?;
+
+    let details = ch
+        .query_routing_history_endpoint_details(&q.start, &q.end, model_filter)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = e, "routing_history_endpoint_details (CH) failed");
+            AdminError::internal(e)
         })?;
     let mut ep_by_channel: std::collections::HashMap<String, Vec<EndptDetail>> =
         std::collections::HashMap::new();
@@ -409,5 +364,136 @@ pub(crate) async fn routing_history(
         buckets: all_buckets,
         series,
         summary,
+    }))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct FlowMetricsQuery {
+    start: Option<String>,
+    end: Option<String>,
+    model: Option<String>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct FlowMetricsPercentiles {
+    pub(crate) p50: Option<f64>,
+    pub(crate) p90: Option<f64>,
+    pub(crate) p99: Option<f64>,
+    pub(crate) sample_count: u64,
+}
+
+#[derive(Serialize)]
+pub(crate) struct FlowMetricsModelShare {
+    pub(crate) model: String,
+    pub(crate) requests: u64,
+    pub(crate) share: f64,
+}
+
+#[derive(Serialize)]
+pub(crate) struct FlowMetricsClientIp {
+    pub(crate) ip: String,
+    pub(crate) requests: u64,
+}
+
+#[derive(Serialize)]
+pub(crate) struct FlowMetricsHistorical {
+    pub(crate) total_completed: u64,
+    pub(crate) success_completed: u64,
+    pub(crate) failed_completed: u64,
+    pub(crate) model_share: Vec<FlowMetricsModelShare>,
+    pub(crate) client_ips: Vec<FlowMetricsClientIp>,
+    pub(crate) latency_ms: FlowMetricsPercentiles,
+    pub(crate) ttft_ms: FlowMetricsPercentiles,
+}
+
+#[derive(Serialize)]
+pub(crate) struct FlowMetricsRealtimeQueue {
+    status: &'static str,
+    count: Option<u64>,
+    reason: &'static str,
+}
+
+#[derive(Serialize)]
+pub(crate) struct FlowMetricsRealtime {
+    as_of: String,
+    in_flight: u64,
+    upstream_generating: u64,
+    upstream_outputting: u64,
+    queue: FlowMetricsRealtimeQueue,
+    consistency: &'static str,
+    source: &'static str,
+}
+
+#[derive(Serialize)]
+pub(crate) struct FlowMetricsRange {
+    start: String,
+    end: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct FlowMetricsResponse {
+    schema_version: u8,
+    range: FlowMetricsRange,
+    historical: FlowMetricsHistorical,
+    realtime: FlowMetricsRealtime,
+}
+
+pub(crate) async fn flow_metrics(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<FlowMetricsQuery>,
+) -> Result<Json<FlowMetricsResponse>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:dashboard").await?;
+
+    let start = q.start.unwrap_or_else(|| {
+        (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339()
+    });
+    let end = q.end.unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+    let model = q.model.as_deref().filter(|m| !m.is_empty() && *m != "all");
+
+    let start_dt = chrono::DateTime::parse_from_rfc3339(&start)
+        .map_err(|_| AdminError::bad_request("Invalid start datetime"))?;
+    let end_dt = chrono::DateTime::parse_from_rfc3339(&end)
+        .map_err(|_| AdminError::bad_request("Invalid end datetime"))?;
+    if end_dt <= start_dt {
+        return Err(AdminError::bad_request("end must be after start"));
+    }
+
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let historical = ch
+        .query_flow_metrics(&start, &end, model)
+        .await
+        .map_err(AdminError::internal)?;
+
+    Ok(Json(FlowMetricsResponse {
+        schema_version: 1,
+        range: FlowMetricsRange {
+            start,
+            end,
+            model: model.map(str::to_string),
+        },
+        historical,
+        realtime: {
+            let snapshot = state.flow_tracker.snapshot();
+            FlowMetricsRealtime {
+                as_of: snapshot.as_of,
+                in_flight: snapshot.in_flight,
+                upstream_generating: snapshot.upstream_generating,
+                upstream_outputting: snapshot.upstream_outputting,
+                queue: FlowMetricsRealtimeQueue {
+                    status: "unavailable",
+                    count: None,
+                    reason: "admission_not_enabled",
+                },
+                consistency: "approximate",
+                source: "in_memory_flow_tracker",
+            }
+        },
     }))
 }

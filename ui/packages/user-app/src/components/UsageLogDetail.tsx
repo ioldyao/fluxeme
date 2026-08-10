@@ -89,6 +89,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                 { label: t('table.user'), value: record.user_name },
                 { label: t('table.model'), value: record.original_model ? `${record.original_model} → ${record.model}` : record.model },
                 { label: t('usage.apiKey'), value: record.api_key_name ?? '—' },
+                { label: t('usage.keyScope'), value: record.team_id ? t('usage.teamKey') : t('usage.personalKey') },
                 { label: t('usage.apiFormat'), value: record.api_format ?? '—' },
                 { label: t('usage.channel'), value: record.channel_id },
                 { label: 'Client IP', value: record.client_ip ?? '—' },

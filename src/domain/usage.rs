@@ -57,6 +57,9 @@ pub struct UsageRecord {
     /// user's wallet); `Some` = team account (charged to the team wallet).
     #[serde(default)]
     pub team_id: Option<String>,
+    /// Time to first upstream response data for streaming requests.
+    #[serde(default)]
+    pub ttft_ms: Option<u64>,
     /// Which account type was charged: "user" or "team". Mirrors the
     /// discriminator column on wallet_transactions / billing_events.
     #[serde(default)]

@@ -245,6 +245,7 @@ export default function Usage() {
                         <th className="text-left py-3 px-4">{t('table.requestId')}</th>
                         <th className="text-left py-3 px-4">{t('table.user')}</th>
                         <th className="text-left py-3 px-4">{t('table.apiKey')}</th>
+                        <th className="text-left py-3 px-4">{t('usage.keyScope')}</th>
                         <th className="text-left py-3 px-4">{t('table.model')}</th>
                         <th className="text-left py-3 px-4">{t('usage.apiFormat')}</th>
                         <th className="text-right py-3 px-4">{t('table.prompt')}</th>
@@ -265,6 +266,11 @@ export default function Usage() {
                           <td className="py-3 px-4 font-mono text-xs">{r.request_id.substring(0, 8)}</td>
                           <td className="py-3 px-4">{r.user_name}</td>
                           <td className="py-3 px-4">{r.api_key_name}</td>
+                          <td className="py-3 px-4">
+                            <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${r.team_id ? 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'}`}>
+                              {r.team_id ? t('usage.teamKey') : t('usage.personalKey')}
+                            </span>
+                          </td>
                           <td className="py-3 px-4">
                             <span className="inline-flex items-center gap-1">
                               <span>{r.model}</span>

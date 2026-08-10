@@ -7,6 +7,9 @@ use rust_decimal::Decimal;
 use serde::Serialize;
 
 use crate::config::types::ClickHouseConfig;
+use crate::admin::routing::{
+    FlowMetricsClientIp, FlowMetricsHistorical, FlowMetricsModelShare, FlowMetricsPercentiles,
+};
 
 /// Row type for the `usage_events` ClickHouse table.
 /// Contains observability fields plus pre-computed cost_amount.
@@ -44,6 +47,9 @@ pub struct UsageEvent {
     /// Team scope for this usage event. Empty string = personal (non-team).
     #[serde(default)]
     pub team_id: String,
+    /// Time to first upstream response data for streaming requests.
+    #[serde(default)]
+    pub ttft_ms: Option<u64>,
 }
 
 /// ClickHouse backend for observability data.
@@ -78,6 +84,8 @@ struct UsageEventRow {
     endpoint_id: Option<i64>,
     endpoint_url: Option<String>,
     original_model: String,
+    team_id: String,
+    ttft_ms: Option<u64>,
 }
 
 /// Row type for the usage-detail query — includes the request/response bodies
@@ -108,6 +116,8 @@ struct UsageDetailRow {
     endpoint_id: Option<i64>,
     endpoint_url: Option<String>,
     original_model: String,
+    team_id: String,
+    ttft_ms: Option<u64>,
     request_body: Option<String>,
     response_body: Option<String>,
     reasoning_body: Option<String>,
@@ -143,7 +153,8 @@ impl From<UsageEventRow> for crate::domain::usage::UsageRecord {
             endpoint_id: row.endpoint_id,
             endpoint_url: row.endpoint_url,
             original_model: row.original_model,
-            team_id: None,
+            team_id: (!row.team_id.is_empty()).then_some(row.team_id),
+            ttft_ms: row.ttft_ms,
             account_type: None,
         }
     }
@@ -179,7 +190,8 @@ impl From<UsageDetailRow> for crate::domain::usage::UsageRecord {
             endpoint_id: row.endpoint_id,
             endpoint_url: row.endpoint_url,
             original_model: row.original_model,
-            team_id: None,
+            team_id: (!row.team_id.is_empty()).then_some(row.team_id),
+            ttft_ms: row.ttft_ms,
             account_type: None,
         }
     }
@@ -318,6 +330,7 @@ impl ClickHouseBackend {
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS endpoint_url Nullable(String)",
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cache_write_tokens UInt64 DEFAULT 0",
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS team_id String DEFAULT ''",
+            "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS ttft_ms Nullable(UInt64)",
         ] {
             self.client
                 .query(alter)
@@ -583,10 +596,11 @@ impl ClickHouseBackend {
     }
 
     /// Routing history buckets: (bucket, channel_id, endpoint_id, requests, successes, avg_latency).
-    pub async fn query_routing_history_buckets(
+    pub async fn query_routing_history_buckets_filtered(
         &self,
         start: &str,
         end: &str,
+        model: Option<&str>,
     ) -> Result<Vec<super::db::RoutingHistoryBucket>, String> {
         #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
         struct BktRow {
@@ -597,21 +611,16 @@ impl ClickHouseBackend {
             successes: u64,
             avg_latency: f64,
         }
-        let rows = self
-            .client
-            .query(
-                "SELECT toStartOfHour(timestamp)::String AS bucket, \
-                 channel_id, endpoint_id, \
-                 count()::UInt64 AS requests, \
-                 countIf(success = 1)::UInt64 AS successes, \
-                 avg(latency_ms)::Float64 AS avg_latency \
-                 FROM usage_events \
-                 WHERE timestamp >= ? AND timestamp <= ? \
-                 GROUP BY bucket, channel_id, endpoint_id \
-                 ORDER BY bucket ASC",
-            )
-            .bind(start)
-            .bind(end)
+        let sql = if model.is_some() {
+            "SELECT toStartOfHour(timestamp)::String AS bucket, channel_id, endpoint_id, count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency FROM usage_events WHERE timestamp >= ? AND timestamp <= ? AND model = ? GROUP BY bucket, channel_id, endpoint_id ORDER BY bucket ASC"
+        } else {
+            "SELECT toStartOfHour(timestamp)::String AS bucket, channel_id, endpoint_id, count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency FROM usage_events WHERE timestamp >= ? AND timestamp <= ? GROUP BY bucket, channel_id, endpoint_id ORDER BY bucket ASC"
+        };
+        let mut query = self.client.query(sql).bind(start).bind(end);
+        if let Some(model) = model {
+            query = query.bind(model);
+        }
+        let rows = query
             .fetch_all::<BktRow>()
             .await
             .map_err(|e| format!("CH routing_history_buckets: {e}"))?;
@@ -1004,7 +1013,7 @@ impl ClickHouseBackend {
              toString(usage_events.timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
-             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model \
+             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id \
              FROM usage_events \
              {} \
              ORDER BY usage_events.timestamp DESC \
@@ -1101,7 +1110,7 @@ impl ClickHouseBackend {
                  toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, \
-                 cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, \
+                 cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, \
                  request_body, response_body, reasoning_body \
                  FROM usage_events \
                  WHERE request_id = ? \
@@ -1124,14 +1133,14 @@ impl ClickHouseBackend {
              toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
-             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model \
+             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id \
              FROM usage_events WHERE timestamp >= ? AND user_id = ? ORDER BY timestamp ASC"
         } else {
             "SELECT \
              toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
-             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model \
+             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id \
              FROM usage_events WHERE timestamp >= ? ORDER BY timestamp ASC"
         };
         let mut query = self.client.query(sql).bind(since);
@@ -1189,10 +1198,11 @@ impl ClickHouseBackend {
     }
 
     /// Routing history endpoint stats: (channel_id, endpoint_id, requests, successes, avg_latency, p95).
-    pub async fn query_routing_history_stats(
+    pub async fn query_routing_history_stats_filtered(
         &self,
         start: &str,
         end: &str,
+        model: Option<&str>,
     ) -> Result<Vec<super::db::RoutingEndpointStat>, String> {
         #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
         struct StatRow {
@@ -1203,20 +1213,16 @@ impl ClickHouseBackend {
             avg_latency: f64,
             p95_latency: f64,
         }
-        let rows = self
-            .client
-            .query(
-                "SELECT channel_id, endpoint_id, \
-                 count()::UInt64 AS requests, \
-                 countIf(success = 1)::UInt64 AS successes, \
-                 avg(latency_ms)::Float64 AS avg_latency, \
-                 quantileExact(0.95)(latency_ms)::Float64 AS p95_latency \
-                 FROM usage_events \
-                 WHERE timestamp >= ? AND timestamp <= ? \
-                 GROUP BY channel_id, endpoint_id",
-            )
-            .bind(start)
-            .bind(end)
+        let sql = if model.is_some() {
+            "SELECT channel_id, endpoint_id, count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency, quantileExact(0.95)(latency_ms)::Float64 AS p95_latency FROM usage_events WHERE timestamp >= ? AND timestamp <= ? AND model = ? GROUP BY channel_id, endpoint_id"
+        } else {
+            "SELECT channel_id, endpoint_id, count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency, quantileExact(0.95)(latency_ms)::Float64 AS p95_latency FROM usage_events WHERE timestamp >= ? AND timestamp <= ? GROUP BY channel_id, endpoint_id"
+        };
+        let mut query = self.client.query(sql).bind(start).bind(end);
+        if let Some(model) = model {
+            query = query.bind(model);
+        }
+        let rows = query
             .fetch_all::<StatRow>()
             .await
             .map_err(|e| format!("CH routing_history_stats: {e}"))?;
@@ -1231,6 +1237,161 @@ impl ClickHouseBackend {
                 p95_latency: r.p95_latency,
             })
             .collect())
+    }
+
+    /// Endpoint-level routing history details from observability data.
+    pub async fn query_routing_history_endpoint_details(
+        &self,
+        start: &str,
+        end: &str,
+        model: Option<&str>,
+    ) -> Result<Vec<(String, Option<i64>, Option<String>, u64, u64, f64, f64)>, String> {
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct DetailRow {
+            channel_id: String,
+            endpoint_id: Option<i64>,
+            endpoint_url: Option<String>,
+            requests: u64,
+            successes: u64,
+            avg_latency: f64,
+            p95_latency: f64,
+        }
+        let sql = if model.is_some() {
+            "SELECT channel_id, endpoint_id, any(endpoint_url) AS endpoint_url, count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency, quantileExact(0.95)(latency_ms)::Float64 AS p95_latency FROM usage_events WHERE timestamp >= ? AND timestamp <= ? AND model = ? GROUP BY channel_id, endpoint_id"
+        } else {
+            "SELECT channel_id, endpoint_id, any(endpoint_url) AS endpoint_url, count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency, quantileExact(0.95)(latency_ms)::Float64 AS p95_latency FROM usage_events WHERE timestamp >= ? AND timestamp <= ? GROUP BY channel_id, endpoint_id"
+        };
+        let mut query = self.client.query(sql).bind(start).bind(end);
+        if let Some(model) = model {
+            query = query.bind(model);
+        }
+        let rows = query
+            .fetch_all::<DetailRow>()
+            .await
+            .map_err(|e| format!("CH routing_history_endpoint_details: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.channel_id,
+                    r.endpoint_id,
+                    r.endpoint_url,
+                    r.requests,
+                    r.successes,
+                    r.avg_latency,
+                    r.p95_latency,
+                )
+            })
+            .collect())
+    }
+
+    pub async fn query_flow_metrics(
+        &self,
+        start: &str,
+        end: &str,
+        model: Option<&str>,
+    ) -> Result<FlowMetricsHistorical, String> {
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct CompletionRow {
+            total_completed: u64,
+            success_completed: u64,
+            failed_completed: u64,
+            latency_p50: Option<f64>,
+            latency_p90: Option<f64>,
+            latency_p99: Option<f64>,
+            latency_samples: u64,
+            ttft_p50: Option<f64>,
+            ttft_p90: Option<f64>,
+            ttft_p99: Option<f64>,
+            ttft_samples: u64,
+        }
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct ModelRow {
+            model: String,
+            requests: u64,
+        }
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct IpRow {
+            ip: String,
+            requests: u64,
+        }
+
+        let completion_sql = if model.is_some() {
+            "SELECT count()::UInt64 AS total_completed, countIf(success = 1)::UInt64 AS success_completed, countIf(success = 0)::UInt64 AS failed_completed, quantileExact(0.50)(latency_ms)::Nullable(Float64) AS latency_p50, quantileExact(0.90)(latency_ms)::Nullable(Float64) AS latency_p90, quantileExact(0.99)(latency_ms)::Nullable(Float64) AS latency_p99, count()::UInt64 AS latency_samples, quantileExactIf(0.50)(ttft_ms, ttft_ms IS NOT NULL)::Nullable(Float64) AS ttft_p50, quantileExactIf(0.90)(ttft_ms, ttft_ms IS NOT NULL)::Nullable(Float64) AS ttft_p90, quantileExactIf(0.99)(ttft_ms, ttft_ms IS NOT NULL)::Nullable(Float64) AS ttft_p99, countIf(ttft_ms IS NOT NULL)::UInt64 AS ttft_samples FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) AND timestamp <= parseDateTimeBestEffort(?) AND model = ?"
+        } else {
+            "SELECT count()::UInt64 AS total_completed, countIf(success = 1)::UInt64 AS success_completed, countIf(success = 0)::UInt64 AS failed_completed, quantileExact(0.50)(latency_ms)::Nullable(Float64) AS latency_p50, quantileExact(0.90)(latency_ms)::Nullable(Float64) AS latency_p90, quantileExact(0.99)(latency_ms)::Nullable(Float64) AS latency_p99, count()::UInt64 AS latency_samples, quantileExactIf(0.50)(ttft_ms, ttft_ms IS NOT NULL)::Nullable(Float64) AS ttft_p50, quantileExactIf(0.90)(ttft_ms, ttft_ms IS NOT NULL)::Nullable(Float64) AS ttft_p90, quantileExactIf(0.99)(ttft_ms, ttft_ms IS NOT NULL)::Nullable(Float64) AS ttft_p99, countIf(ttft_ms IS NOT NULL)::UInt64 AS ttft_samples FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) AND timestamp <= parseDateTimeBestEffort(?)"
+        };
+        let mut completion_query = self.client.query(completion_sql).bind(start).bind(end);
+        if let Some(model) = model {
+            completion_query = completion_query.bind(model);
+        }
+        let completion = completion_query
+            .fetch_one::<CompletionRow>()
+            .await
+            .map_err(|e| format!("CH flow_metrics completion: {e}"))?;
+
+        let model_sql = if model.is_some() {
+            "SELECT model, count()::UInt64 AS requests FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) AND timestamp <= parseDateTimeBestEffort(?) AND model = ? GROUP BY model ORDER BY requests DESC"
+        } else {
+            "SELECT model, count()::UInt64 AS requests FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) AND timestamp <= parseDateTimeBestEffort(?) GROUP BY model ORDER BY requests DESC"
+        };
+        let mut model_query = self.client.query(model_sql).bind(start).bind(end);
+        if let Some(model) = model {
+            model_query = model_query.bind(model);
+        }
+        let model_rows = model_query
+            .fetch_all::<ModelRow>()
+            .await
+            .map_err(|e| format!("CH flow_metrics models: {e}"))?;
+        let model_total = model_rows.iter().map(|row| row.requests).sum::<u64>().max(1);
+        let model_share = model_rows
+            .into_iter()
+            .map(|row| FlowMetricsModelShare {
+                model: row.model,
+                requests: row.requests,
+                share: ((row.requests as f64 / model_total as f64) * 1000.0).round() / 10.0,
+            })
+            .collect();
+
+        let ip_sql = if model.is_some() {
+            "SELECT assumeNotNull(client_ip) AS ip, count()::UInt64 AS requests FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) AND timestamp <= parseDateTimeBestEffort(?) AND model = ? AND client_ip IS NOT NULL AND client_ip != '' GROUP BY client_ip ORDER BY requests DESC LIMIT 20"
+        } else {
+            "SELECT assumeNotNull(client_ip) AS ip, count()::UInt64 AS requests FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) AND timestamp <= parseDateTimeBestEffort(?) AND client_ip IS NOT NULL AND client_ip != '' GROUP BY client_ip ORDER BY requests DESC LIMIT 20"
+        };
+        let mut ip_query = self.client.query(ip_sql).bind(start).bind(end);
+        if let Some(model) = model {
+            ip_query = ip_query.bind(model);
+        }
+        let client_ips = ip_query
+            .fetch_all::<IpRow>()
+            .await
+            .map_err(|e| format!("CH flow_metrics ips: {e}"))?
+            .into_iter()
+            .map(|row| FlowMetricsClientIp {
+                ip: row.ip,
+                requests: row.requests,
+            })
+            .collect();
+
+        Ok(FlowMetricsHistorical {
+            total_completed: completion.total_completed,
+            success_completed: completion.success_completed,
+            failed_completed: completion.failed_completed,
+            model_share,
+            client_ips,
+            latency_ms: FlowMetricsPercentiles {
+                p50: completion.latency_p50,
+                p90: completion.latency_p90,
+                p99: completion.latency_p99,
+                sample_count: completion.latency_samples,
+            },
+            ttft_ms: FlowMetricsPercentiles {
+                p50: completion.ttft_p50,
+                p90: completion.ttft_p90,
+                p99: completion.ttft_p99,
+                sample_count: completion.ttft_samples,
+            },
+        })
     }
 }
 

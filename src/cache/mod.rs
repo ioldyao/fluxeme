@@ -60,12 +60,9 @@ pub fn compute_gate_status(balance: Decimal, frozen: Decimal) -> GateStatus {
 /// Also provides gate-status methods for the billing system (see
 /// `get_gate_status`, `set_gate_status`, `set_balance`).
 ///
-/// When the cache is disabled (`enabled: false` in config) the `noop()`
-/// sentinel is used — all operations return `None` / `Ok(())` without
-/// touching Redis.
 pub struct RedisCache {
-    client: Option<redis::Client>,
-    con: Option<redis::aio::MultiplexedConnection>,
+    client: redis::Client,
+    con: redis::aio::MultiplexedConnection,
     default_ttl_secs: u64,
 }
 
@@ -79,33 +76,16 @@ impl RedisCache {
             .await
             .map_err(|e| format!("Redis connection failed: {}", e))?;
         Ok(Self {
-            client: Some(client),
-            con: Some(con),
+            client,
+            con,
             default_ttl_secs,
         })
     }
 
-    /// No-op cache — all operations are implicit no-ops.
-    pub fn noop() -> Self {
-        Self {
-            client: None,
-            con: None,
-            default_ttl_secs: 0,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn is_enabled(&self) -> bool {
-        self.con.is_some()
-    }
-
     /// Connectivity check (PING). Returns Ok only if Redis is reachable.
-    /// Used by readiness probes. Returns Ok(()) for noop (disabled) cache.
+    /// Used by readiness probes.
     pub async fn ping(&self) -> Result<(), String> {
-        let mut con = match self.con.clone() {
-            Some(c) => c,
-            None => return Ok(()),
-        };
+        let mut con = self.con.clone();
         redis::Cmd::ping()
             .query_async::<String>(&mut con)
             .await
@@ -115,12 +95,9 @@ impl RedisCache {
 
     /// Distributed fixed-window RPM check (Lua-atomic).
     /// Returns Ok(true) if the request is allowed, Ok(false) if rate-limited.
-    /// Returns Ok(true) for noop (disabled) cache — caller falls back to local.
+    /// Redis errors are returned to the caller.
     pub async fn rate_limit_rpm(&self, key: &str, limit: u64) -> Result<bool, String> {
-        let mut con = match self.con.clone() {
-            Some(c) => c,
-            None => return Ok(true),
-        };
+        let mut con = self.con.clone();
         let allowed: i64 = redis::Script::new(
             "local cur = tonumber(redis.call('GET', KEYS[1]) or '0')
              if cur >= tonumber(ARGV[1]) then return 0 end
@@ -138,12 +115,9 @@ impl RedisCache {
 
     /// Distributed fixed-window TPM check (Lua-atomic).
     /// Returns Ok(true) if the request is allowed, Ok(false) if rate-limited.
-    /// Returns Ok(true) for noop (disabled) cache — caller falls back to local.
+    /// Redis errors are returned to the caller.
     pub async fn rate_limit_tpm(&self, key: &str, limit: u64, tokens: u64) -> Result<bool, String> {
-        let mut con = match self.con.clone() {
-            Some(c) => c,
-            None => return Ok(true),
-        };
+        let mut con = self.con.clone();
         let allowed: i64 = redis::Script::new(
             "local cur = tonumber(redis.call('GET', KEYS[1]) or '0')
              if cur + tonumber(ARGV[2]) > tonumber(ARGV[1]) then return 0 end
@@ -161,12 +135,9 @@ impl RedisCache {
     }
 
     /// Publish a message to a Redis pub/sub channel.
-    /// Returns Ok(()) for noop (disabled) cache.
+    /// Redis errors are returned to the caller.
     pub async fn publish(&self, channel: &str, payload: &str) -> Result<(), String> {
-        let mut con = match self.con.clone() {
-            Some(c) => c,
-            None => return Ok(()),
-        };
+        let mut con = self.con.clone();
         redis::Cmd::publish(channel, payload)
             .query_async::<i64>(&mut con)
             .await
@@ -174,12 +145,9 @@ impl RedisCache {
         Ok(())
     }
 
-    /// Open a dedicated pub/sub subscription. Returns `None` for noop cache.
+    /// Open a dedicated pub/sub subscription.
     pub async fn subscribe(&self, channel: &str) -> Result<redis::aio::PubSub, String> {
-        let client = match &self.client {
-            Some(c) => c,
-            None => return Err("Redis cache disabled".to_string()),
-        };
+        let client = &self.client;
         let mut pubsub = client
             .get_async_pubsub()
             .await
@@ -197,10 +165,7 @@ impl RedisCache {
     /// so the tenant ID is an *enforced part of the key itself*, not metadata
     /// that could be accidentally omitted from the query.
     pub async fn get(&self, tenant_id: &str, cache_key: &str) -> Result<Option<String>, String> {
-        let mut con = match self.con.clone() {
-            Some(c) => c,
-            None => return Ok(None),
-        };
+        let mut con = self.con.clone();
         let redis_key = build_redis_key(tenant_id, cache_key);
         redis::Cmd::get(&redis_key)
             .query_async::<Option<String>>(&mut con)
@@ -216,10 +181,7 @@ impl RedisCache {
         value: &str,
         ttl_secs: u64,
     ) -> Result<(), String> {
-        let mut con = match self.con.clone() {
-            Some(c) => c,
-            None => return Ok(()),
-        };
+        let mut con = self.con.clone();
         let redis_key = build_redis_key(tenant_id, cache_key);
         let ttl = if ttl_secs > 0 {
             ttl_secs
@@ -242,12 +204,9 @@ impl RedisCache {
     /// Read the gate status for a user from Redis.
     ///
     /// Returns `None` when no status has been set (e.g., first request,
-    /// or cache disabled) — the caller should fall back to PostgreSQL.
+    /// ; the caller may use PostgreSQL for a cold read.
     pub async fn get_gate_status(&self, user_id: &str) -> Result<Option<GateStatus>, String> {
-        let mut con = match self.con.clone() {
-            Some(c) => c,
-            None => return Ok(None),
-        };
+        let mut con = self.con.clone();
         let key = format!("gate_status:{}", user_id);
         let val: Option<String> = redis::Cmd::get(&key)
             .query_async(&mut con)
@@ -259,10 +218,7 @@ impl RedisCache {
     /// Set the gate status for a user in Redis (persistent, no TTL).
     #[allow(dead_code)]
     pub async fn set_gate_status(&self, user_id: &str, status: GateStatus) -> Result<(), String> {
-        let mut con = match self.con.clone() {
-            Some(c) => c,
-            None => return Ok(()),
-        };
+        let mut con = self.con.clone();
         let key = format!("gate_status:{}", user_id);
         redis::Cmd::set(&key, status.as_str())
             .query_async::<()>(&mut con)
@@ -274,10 +230,7 @@ impl RedisCache {
     /// task (persistent, no TTL).
     #[allow(dead_code)]
     pub async fn set_balance(&self, user_id: &str, balance: Decimal) -> Result<(), String> {
-        let mut con = match self.con.clone() {
-            Some(c) => c,
-            None => return Ok(()),
-        };
+        let mut con = self.con.clone();
         let key = format!("balance:{}", user_id);
         redis::Cmd::set(&key, balance.to_string())
             .query_async::<()>(&mut con)
@@ -292,10 +245,7 @@ impl RedisCache {
         status: GateStatus,
         balance: Decimal,
     ) -> Result<(), String> {
-        let mut con = match self.con.clone() {
-            Some(c) => c,
-            None => return Ok(()),
-        };
+        let mut con = self.con.clone();
         let gate_key = format!("gate_status:{}", user_id);
         let bal_key = format!("balance:{}", user_id);
         redis::pipe()
@@ -332,10 +282,7 @@ impl RedisCache {
     /// To eliminate this loss window entirely, add a local persistence
     /// fallback (e.g. sled) before the Redis XADD call.
     pub async fn backlog_billing_record(&self, record: UsageRecord) -> Result<(), String> {
-        let mut con = match self.con.clone() {
-            Some(c) => c,
-            None => return Err("Redis cache disabled".into()),
-        };
+        let mut con = self.con.clone();
         let json = serde_json::to_string(&record).map_err(|e| format!("Backlog serialize: {e}"))?;
         redis::cmd("XADD")
             .arg(Self::BILLING_BACKLOG_KEY)
@@ -356,10 +303,7 @@ impl RedisCache {
         &self,
         count: usize,
     ) -> Result<Vec<(String, UsageRecord)>, String> {
-        let mut con = match self.con.clone() {
-            Some(c) => c,
-            None => return Ok(Vec::new()),
-        };
+        let mut con = self.con.clone();
         let raw: redis::Value = redis::cmd("XREAD")
             .arg("COUNT")
             .arg(count)
@@ -375,10 +319,7 @@ impl RedisCache {
 
     /// Acknowledge and remove processed billing records from the backlog.
     pub async fn ack_billing_backlog(&self, entry_ids: &[String]) -> Result<(), String> {
-        let mut con = match self.con.clone() {
-            Some(c) => c,
-            None => return Ok(()),
-        };
+        let mut con = self.con.clone();
         for id in entry_ids {
             redis::cmd("XDEL")
                 .arg(Self::BILLING_BACKLOG_KEY)
@@ -397,10 +338,7 @@ impl RedisCache {
     /// Push an observability event to the Redis Stream.
     /// Called after every request completion — fire-and-forget via spawn.
     pub async fn push_obs_event(&self, record: UsageRecord) -> Result<(), String> {
-        let mut con = match self.con.clone() {
-            Some(c) => c,
-            None => return Ok(()),
-        };
+        let mut con = self.con.clone();
         let json =
             serde_json::to_string(&record).map_err(|e| format!("Obs event serialize: {e}"))?;
         redis::cmd("XADD")
@@ -421,10 +359,7 @@ impl RedisCache {
         &self,
         count: usize,
     ) -> Result<Vec<(String, UsageRecord)>, String> {
-        let mut con = match self.con.clone() {
-            Some(c) => c,
-            None => return Ok(Vec::new()),
-        };
+        let mut con = self.con.clone();
         let raw: redis::Value = redis::cmd("XREAD")
             .arg("COUNT")
             .arg(count)
@@ -440,10 +375,7 @@ impl RedisCache {
 
     /// Acknowledge (delete) processed obs events from the stream.
     pub async fn ack_obs_events(&self, entry_ids: &[String]) -> Result<(), String> {
-        let mut con = match self.con.clone() {
-            Some(c) => c,
-            None => return Ok(()),
-        };
+        let mut con = self.con.clone();
         for id in entry_ids {
             redis::cmd("XDEL")
                 .arg(Self::OBS_EVENTS_KEY)
@@ -553,7 +485,12 @@ pub async fn start_obs_consumer(
                 || r.cache_read_price > Decimal::ZERO
                 || r.cache_write_tokens > 0
             {
-                Some((r.prompt_price, r.completion_price, r.cache_read_price, Decimal::ZERO))
+                Some((
+                    r.prompt_price,
+                    r.completion_price,
+                    r.cache_read_price,
+                    Decimal::ZERO,
+                ))
             } else {
                 match db.lookup_model_pricing(&r.model).await {
                     Ok((pp, cp, crp, cwp)) => Some((pp, cp, crp, cwp)),
@@ -563,7 +500,9 @@ pub async fn start_obs_consumer(
                     }
                 }
             };
-            let Some((prompt_price, completion_price, cache_read_price, cache_write_price)) = pricing else {
+            let Some((prompt_price, completion_price, cache_read_price, cache_write_price)) =
+                pricing
+            else {
                 continue;
             };
             let cost_amount = (Decimal::from(r.prompt_tokens) / Decimal::from(1000000)
@@ -571,8 +510,7 @@ pub async fn start_obs_consumer(
                 + Decimal::from(r.completion_tokens) / Decimal::from(1000000) * completion_price
                 + Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000)
                     * cache_read_price
-                + Decimal::from(r.cache_write_tokens) / Decimal::from(1000000)
-                    * cache_write_price)
+                + Decimal::from(r.cache_write_tokens) / Decimal::from(1000000) * cache_write_price)
                 .to_f64()
                 .unwrap_or(0.0);
             events.push(crate::ch_backend::UsageEvent {
@@ -604,7 +542,8 @@ pub async fn start_obs_consumer(
                 response_body: r.response_body.clone(),
                 reasoning_body: r.reasoning_body.clone(),
                 original_model: r.original_model.clone(),
-                team_id: String::new(),
+                team_id: r.team_id.clone().unwrap_or_default(),
+                ttft_ms: r.ttft_ms,
             });
             entry_ids.push(eid.clone());
         }

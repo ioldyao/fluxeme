@@ -75,10 +75,9 @@ impl AdminModule {
         secret: &str,
         encryption_key: &str,
         db: Arc<Database>,
-        redis: Option<Arc<crate::cache::RedisCache>>,
+        redis: Arc<crate::cache::RedisCache>,
     ) -> Self {
         let rl = Arc::new(RateLimiter::new(redis));
-        rl.start_cleanup_task();
         Self {
             secret: secret.to_string(),
             encryption_key: encryption_key.to_string(),
@@ -539,7 +538,10 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         )
         // My teams (self-service)
         .route("/api/teams", axum::routing::get(me::my_teams))
-        .route("/api/teams/{team_id}", axum::routing::get(me::my_team_detail))
+        .route(
+            "/api/teams/{team_id}",
+            axum::routing::get(me::my_team_detail),
+        )
         .route(
             "/api/teams/{team_id}/members",
             axum::routing::get(me::my_team_members).post(me::add_my_team_member),
@@ -682,6 +684,10 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         .route(
             "/api/health/recent-paths",
             axum::routing::get(routing::recent_request_paths),
+        )
+        .route(
+            "/api/health/flow-metrics",
+            axum::routing::get(routing::flow_metrics),
         )
         .route(
             "/api/models/{id}",

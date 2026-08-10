@@ -2,7 +2,6 @@ pub mod handlers;
 pub mod health;
 pub mod ws;
 
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use axum::extract::DefaultBodyLimit;
@@ -10,7 +9,6 @@ use axum::http::HeaderValue;
 use axum::response::Redirect;
 use axum::routing::get;
 use axum::Router;
-use tokio::sync::RwLock as AsyncRwLock;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -19,7 +17,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::authz::{AuthzModule, TeamAuthzModule};
-use crate::cache::{GateStatus, RedisCache};
+use crate::cache::RedisCache;
 use crate::ch_backend::ClickHouseBackend;
 use crate::config::types::{AppConfig, GatewayRuntimeConfig};
 use crate::provider::ProviderRegistry;
@@ -50,17 +48,15 @@ pub struct AppState {
     /// (single-instance; multi-instance deployments would need a refresh loop).
     pub gateway_config: Arc<RwLock<GatewayRuntimeConfig>>,
     pub cache: Arc<RedisCache>,
-    /// In-memory gate-status cache used as second fallback when Redis is
-    /// unavailable (avoids a database query during Redis outages).
-    pub gate_cache: Arc<AsyncRwLock<HashMap<String, GateStatus>>>,
     /// Content filter service for request/response moderation.
     pub content_filter: Arc<ContentFilterService>,
     /// Health probe service for model channel health checks (DB-persisted).
     pub health_probe: Arc<HealthProbeService>,
     /// Event bus for real-time request path events (WebSocket push).
     pub event_bus: crate::observability::event_bus::EventBus,
-    /// ClickHouse backend for observability queries (optional).
-    /// When `None`, observability queries fall back to PostgreSQL.
+    /// In-memory flow lifecycle tracker for realtime in-flight/upstream metrics.
+    pub flow_tracker: crate::observability::flow_tracker::FlowTracker,
+    /// ClickHouse backend for observability data. Required at startup.
     pub ch: Option<Arc<ClickHouseBackend>>,
     /// Unique identifier for this instance (INSTANCE_ID env or generated).
     /// Used in logs and health probe responses for multi-instance ops.
@@ -161,15 +157,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .nest(
             "/admin",
             Router::new().fallback_service(
-                ServeDir::new("web/admin")
-                    .fallback(ServeFile::new("web/admin/index.html")),
+                ServeDir::new("web/admin").fallback(ServeFile::new("web/admin/index.html")),
             ),
         )
         // everything else → user SPA
-        .fallback_service(
-            ServeDir::new("web")
-                .fallback(ServeFile::new("web/index.html")),
-        )
+        .fallback_service(ServeDir::new("web").fallback(ServeFile::new("web/index.html")))
         // Remove the request body limit: LLM requests carry base64 images and
         // long conversation context. Axum's default is 2MB (via Json extractor),
         // which Claude Code hits with a few screenshots → 413 "request too large".
