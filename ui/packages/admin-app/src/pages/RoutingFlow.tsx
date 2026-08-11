@@ -395,15 +395,21 @@ function useRoutingStream(topology: TopoModel[]) {
 }
 
 // ── page ────────────────────────────────────────────────────────────
-export default function RoutingFlow() {
+type RoutingFlowProps = {
+  embedded?: boolean;
+  modelName?: string;
+};
+
+export default function RoutingFlow({ embedded = false, modelName }: RoutingFlowProps) {
   const { t } = useTranslation();
   const { data: models, isLoading: mLoading } = useModels();
   const { data: channels, isLoading: cLoading } = useChannels();
 
   const topology = useMemo(() => {
     if (!models || !channels) return [];
-    return buildTopology(models, channels).filter((m) => m.channels.length > 0);
-  }, [models, channels]);
+    const all = buildTopology(models, channels).filter((m) => m.channels.length > 0);
+    return modelName ? all.filter((m) => m.model === modelName) : all;
+  }, [channels, modelName, models]);
 
   const { counts, totalCount, lastEvent, connected, reconnectIn } = useRoutingStream(topology);
   const loading = mLoading || cLoading;
@@ -486,29 +492,33 @@ export default function RoutingFlow() {
 
   return (
     <div style={{ fontFamily: FONT_FAMILY, color: C.textPrimary }}>
-      <h1 style={{ fontSize: 20, fontWeight: 600, margin: '0 0 4px' }}>{t('routingFlow.title')}</h1>
-      <p style={{ fontSize: 13, color: C.textSecondary, margin: '0 0 20px' }}>
-        {t('routingFlow.subtitle')}
-        <span style={{ color: C.low }}> {t('routingFlow.legendLow')}</span> ·
-        <span style={{ color: C.mid }}> {t('routingFlow.legendMid')}</span> ·
-        <span style={{ color: C.high }}> {t('routingFlow.legendHigh')}</span>
-      </p>
+      {!embedded ? (
+        <>
+          <h1 style={{ fontSize: 20, fontWeight: 600, margin: '0 0 4px' }}>{t('routingFlow.title')}</h1>
+          <p style={{ fontSize: 13, color: C.textSecondary, margin: '0 0 20px' }}>
+            {t('routingFlow.subtitle')}
+            <span style={{ color: C.low }}> {t('routingFlow.legendLow')}</span> ·
+            <span style={{ color: C.mid }}> {t('routingFlow.legendMid')}</span> ·
+            <span style={{ color: C.high }}> {t('routingFlow.legendHigh')}</span>
+          </p>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: connected ? C.green : C.textMuted }}>
-          <span style={{ width: 7, height: 7, borderRadius: '50%', background: connected ? C.green : C.textMuted, animation: connected ? 'rfl-pulse 1.6s infinite' : 'none' }} />
-          {connected ? 'LIVE' : reconnectIn > 0 ? `⏳ ${reconnectIn}s` : t('routingFlow.connecting')}
-        </div>
-        <div style={{ fontSize: 12, color: C.textSecondary }}>
-          {t('routingFlow.totalRequests')}{' '}
-          <b style={{ fontSize: 15, color: C.textPrimary, fontWeight: 600 }}><AnimatedNumber value={totalCount} /></b>
-        </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 16, fontSize: 11.5, color: C.textSecondary }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 22, height: 6, borderRadius: 3, background: C.low, display: 'inline-block' }} /> {t('routingFlow.loadLow')}</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 22, height: 6, borderRadius: 3, background: C.mid, display: 'inline-block' }} /> {t('routingFlow.loadMid')}</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 22, height: 6, borderRadius: 3, background: C.high, display: 'inline-block' }} /> {t('routingFlow.loadHigh')}</div>
-        </div>
-      </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: connected ? C.green : C.textMuted }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: connected ? C.green : C.textMuted, animation: connected ? 'rfl-pulse 1.6s infinite' : 'none' }} />
+              {connected ? 'LIVE' : reconnectIn > 0 ? `⏳ ${reconnectIn}s` : t('routingFlow.connecting')}
+            </div>
+            <div style={{ fontSize: 12, color: C.textSecondary }}>
+              {t('routingFlow.totalRequests')}{' '}
+              <b style={{ fontSize: 15, color: C.textPrimary, fontWeight: 600 }}><AnimatedNumber value={totalCount} /></b>
+            </div>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 16, fontSize: 11.5, color: C.textSecondary }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 22, height: 6, borderRadius: 3, background: C.low, display: 'inline-block' }} /> {t('routingFlow.loadLow')}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 22, height: 6, borderRadius: 3, background: C.mid, display: 'inline-block' }} /> {t('routingFlow.loadMid')}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 22, height: 6, borderRadius: 3, background: C.high, display: 'inline-block' }} /> {t('routingFlow.loadHigh')}</div>
+            </div>
+          </div>
+        </>
+      ) : null}
 
       {/* Main content */}
       <div style={{ position: 'relative' }}>

@@ -1,6 +1,16 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from './client';
 
+export interface RoutingRecentPath {
+  timestamp: string;
+  model: string;
+  channel_id: string;
+  endpoint_id: number | null;
+  endpoint_url?: string | null;
+  latency_ms: number;
+  success: boolean;
+}
+
 export interface RoutingHistoryChannelSeries {
   channel_name: string;
   volume: number[];
@@ -41,6 +51,11 @@ export async function fetchRoutingFlowSnapshot(): Promise<Record<string, number>
     if (epId != null) counts[keyFor(model, chId, `id:${epId}`)] = (counts[keyFor(model, chId, `id:${epId}`)] || 0) + cnt;
   }
   return counts;
+}
+
+export async function fetchRecentRoutingPaths(): Promise<RoutingRecentPath[]> {
+  const res = await api<{ paths: RoutingRecentPath[] }>("/health/recent-paths");
+  return res.paths;
 }
 
 function routingWindow(days: number) {

@@ -11,9 +11,11 @@ import {
 import { useFlowMetrics } from '@fluxeme/shared';
 import { useModels } from '@fluxeme/shared/src/api/models';
 import { useChannels } from '@fluxeme/shared/src/api/channels';
+import { useProbeResults } from '@fluxeme/shared/src/api/probe';
 import { useRoutingHealth } from '@fluxeme/shared/src/api/routing';
 import type { RoutingHealthModel } from '@fluxeme/shared/src/api/routing';
-import type { Channel, FlowMetricsClientIp, FlowMetricsModelShare, FlowMetricsPercentiles, Model } from '@fluxeme/shared/src/types';
+import RoutingFlow from './RoutingFlow';
+import type { Channel, FlowMetricsClientIp, FlowMetricsModelShare, FlowMetricsPercentiles, Model, ProbeResult } from '@fluxeme/shared/src/types';
 
 type RangeKey = '5m' | '15m' | '1h' | '6h' | '24h';
 type FlowTabKey = 'flow' | 'endpoint' | 'compare';
@@ -38,6 +40,44 @@ type CatalogModel = {
   averageLatency24h?: number;
   highestChannelP95?: number;
   brokenCircuitChannels: number;
+};
+
+type EndpointStatusRow = {
+  channelId: string;
+  channelName: string;
+  channelPriority: number;
+  provider?: string;
+  endpointId: number | null;
+  endpointUrl: string;
+  endpointEnabled: boolean;
+  endpointWeight: number;
+  endpointTimeoutSecs?: number | null;
+  routingObserved: boolean;
+  routingAvailable: boolean;
+  probe: ProbeResult | null;
+  channelRequests24h: number;
+  channelSuccessRate24h?: number;
+  channelP95Latency24h?: number;
+  circuitEnabled: boolean;
+  circuitOk: boolean;
+};
+
+type CompareRow = {
+  id: string;
+  name: string;
+  status: string;
+  statusBadge: string;
+  selectedRangeRequests: number | null;
+  selectedRangeShare: number | null;
+  routedRequests24h?: number;
+  routingSuccessRate24h: number | null;
+  averageLatency24h?: number;
+  highestChannelP95?: number;
+  availableEndpoints: number;
+  enabledEndpoints: number;
+  brokenCircuitChannels: number;
+  configuredChannels: number;
+  selected: boolean;
 };
 
 const RANGE_OPTIONS: Array<{ key: RangeKey; short: string; long: string; label: string }> = [
@@ -128,6 +168,24 @@ function formatContextLength(value: number | null | undefined) {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
   if (value >= 1_000) return `${Math.round(value / 1_000)}K`;
   return formatNumber(value);
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('zh-CN', { hour12: false });
+}
+
+function endpointRoutingLabel(row: EndpointStatusRow) {
+  if (!row.routingObserved) return '未观测';
+  return row.routingAvailable ? '可路由' : '不可路由';
+}
+
+function endpointProbeLabel(probe: ProbeResult | null) {
+  if (!probe) return '未探测';
+  if (probe.success) return `成功 · ${formatNumber(probe.latency_ms)}ms`;
+  return '失败';
 }
 
 function modelHealthPresentation(status: ModelHealthStatus) {
@@ -373,6 +431,10 @@ export default function FlowTowerContent() {
   const modelsQuery = useModels();
   const channelsQuery = useChannels();
   const routingHealthQuery = useRoutingHealth();
+  const probeResultsQuery = useProbeResults({
+    enabled: selectedModelId !== 'all',
+    modelId: selectedModelId !== 'all' ? selectedModelId : undefined,
+  });
   const channelById = useMemo(
     () => new Map((channelsQuery.data ?? []).map((channel) => [channel.id, channel])),
     [channelsQuery.data],
@@ -396,6 +458,15 @@ export default function FlowTowerContent() {
       start: rangeBounds.start,
       end: rangeBounds.end,
       model: modelParam,
+    },
+    {
+      refetchInterval: false,
+    },
+  );
+  const compareMetricsQuery = useFlowMetrics(
+    {
+      start: rangeBounds.start,
+      end: rangeBounds.end,
     },
     {
       refetchInterval: false,
@@ -482,6 +553,97 @@ export default function FlowTowerContent() {
     { label: 'P99 延迟', value: historical?.latency_ms.p99 != null ? `${formatPercentile(historical.latency_ms.p99)} ms` : '—' },
     { label: 'TTFT P99', value: historical?.ttft_ms.p99 != null ? `${formatPercentile(historical.ttft_ms.p99)} ms` : '—' },
   ];
+
+  const endpointRows = useMemo(() => {
+    if (!selectedCatalogModel) return [] as EndpointStatusRow[];
+
+    const healthChannels = new Map((selectedCatalogModel.health?.channels ?? []).map((channel) => [channel.channel_id, channel]));
+    const probeRows = (probeResultsQuery.data ?? []).filter((row) => row.model_id === selectedCatalogModel.config.id);
+
+    return selectedCatalogModel.config.channels.flatMap((binding) => {
+      const channel = channelById.get(binding.channel_id);
+      if (!channel?.enabled) return [];
+      const channelHealth = healthChannels.get(binding.channel_id);
+      return channel.endpoints
+        .filter((endpoint) => endpoint.enabled !== false)
+        .map((endpoint) => {
+          const endpointHealth = channelHealth?.endpoints.find((item) => item.endpoint_id === endpoint.id);
+          const probe = probeRows.find((row) => row.channel_id === binding.channel_id && row.endpoint_url === endpoint.url) ?? null;
+          return {
+            channelId: binding.channel_id,
+            channelName: channel.name || binding.channel_id,
+            channelPriority: binding.priority,
+            provider: channel.provider,
+            endpointId: endpoint.id ?? null,
+            endpointUrl: endpoint.url,
+            endpointEnabled: endpoint.enabled !== false,
+            endpointWeight: endpoint.weight,
+            endpointTimeoutSecs: endpoint.timeout_secs,
+            routingObserved: Boolean(endpointHealth),
+            routingAvailable: endpointHealth?.available ?? false,
+            probe,
+            channelRequests24h: channelHealth?.requests ?? 0,
+            channelSuccessRate24h: channelHealth?.requests ? channelHealth.success_rate * 100 : undefined,
+            channelP95Latency24h: channelHealth?.requests ? channelHealth.p95_latency_ms : undefined,
+            circuitEnabled: channelHealth?.circuit_enabled ?? false,
+            circuitOk: channelHealth?.circuit_ok ?? false,
+          } satisfies EndpointStatusRow;
+        });
+    });
+  }, [channelById, probeResultsQuery.data, selectedCatalogModel]);
+
+  const endpointSummaryRows: MetricRow[] = useMemo(() => {
+    const enabled = endpointRows.length;
+    const observed = endpointRows.filter((row) => row.routingObserved).length;
+    const available = endpointRows.filter((row) => row.routingAvailable).length;
+    const probeSuccess = endpointRows.filter((row) => row.probe?.success).length;
+    const probeFail = endpointRows.filter((row) => row.probe && !row.probe.success).length;
+    const probeUnknown = endpointRows.filter((row) => !row.probe).length;
+
+    return [
+      { label: '已启用端点', value: formatNumber(enabled) },
+      { label: '已观测端点', value: formatNumber(observed) },
+      { label: '当前可路由', value: formatNumber(available) },
+      { label: '探测成功', value: formatNumber(probeSuccess) },
+      { label: '探测失败', value: formatNumber(probeFail) },
+      { label: '未探测', value: formatNumber(probeUnknown) },
+    ];
+  }, [endpointRows]);
+
+  const compareModelShareRows = compareMetricsQuery.data?.historical.model_share ?? [];
+  const compareModelShareMap = useMemo(
+    () => new Map(compareModelShareRows.map((row) => [row.model, row])),
+    [compareModelShareRows],
+  );
+  const unmatchedCompareModels = useMemo(
+    () => compareModelShareRows.filter((row) => !catalogModels.some((model) => model.config.name === row.model)),
+    [catalogModels, compareModelShareRows],
+  );
+
+  const compareRows = useMemo(() => {
+    const rangeMetricsAvailable = !compareMetricsQuery.isError && compareMetricsQuery.data != null;
+    return catalogModels.map((model) => {
+      const health = modelHealthPresentation(model.status);
+      const compareShare = compareModelShareMap.get(model.config.name);
+      return {
+        id: model.config.id,
+        name: model.config.name,
+        status: health.label,
+        statusBadge: health.badge,
+        selectedRangeRequests: rangeMetricsAvailable ? (compareShare?.requests ?? 0) : null,
+        selectedRangeShare: rangeMetricsAvailable ? (compareShare?.share ?? 0) : null,
+        routedRequests24h: model.routedRequests24h,
+        routingSuccessRate24h: model.successRate24h == null ? null : model.successRate24h * 100,
+        averageLatency24h: model.averageLatency24h,
+        highestChannelP95: model.highestChannelP95,
+        availableEndpoints: model.availableEndpoints,
+        enabledEndpoints: model.enabledEndpoints,
+        brokenCircuitChannels: model.brokenCircuitChannels,
+        configuredChannels: model.config.channels.length,
+        selected: selectedModelId === model.config.id,
+      } satisfies CompareRow;
+    });
+  }, [catalogModels, compareMetricsQuery.data, compareMetricsQuery.isError, compareModelShareMap, selectedModelId]);
 
   const lastUpdatedLabel = realtime?.as_of
     ? new Date(realtime.as_of).toLocaleTimeString('zh-CN', { hour12: false })
@@ -857,28 +1019,176 @@ export default function FlowTowerContent() {
 
               {activeTab === 'flow' ? (
                 <div id="flowtower-panel-flow" role="tabpanel" aria-labelledby="flowtower-tab-flow" className="space-y-5 p-4">
-                  <PlaceholderCard
-                    title="请求流拓扑待第二阶段接入"
-                    description="路由路径与端点分布正在完善中。"
-                  />
+                  {!selectedCatalogModel ? (
+                    <PlaceholderCard
+                      title="请选择模型查看请求流"
+                      description="请求流按单个模型展示，先在左侧选择一个模型。"
+                    />
+                  ) : (
+                    <RoutingFlow embedded modelName={selectedCatalogModel.config.name} />
+                  )}
                 </div>
               ) : null}
 
               {activeTab === 'endpoint' ? (
                 <div id="flowtower-panel-endpoint" role="tabpanel" aria-labelledby="flowtower-tab-endpoint" className="space-y-5 p-4">
-                  <PlaceholderCard
-                    title="端点状态待第二阶段接入"
-                    description="端点状态详情正在完善中。"
-                  />
+                  {!selectedCatalogModel ? (
+                    <PlaceholderCard
+                      title="请选择模型查看端点状态"
+                      description="端点状态按单个模型聚合展示，先在左侧选择一个模型。"
+                    />
+                  ) : channelsQuery.isError ? (
+                    <button
+                      type="button"
+                      onClick={() => void channelsQuery.refetch()}
+                      className="w-full rounded-xl border border-dashed border-[#d8dee7] px-4 py-6 text-center text-[11px] text-[#667085] hover:bg-muted"
+                    >
+                      端点配置加载失败，点击重试
+                    </button>
+                  ) : endpointRows.length === 0 ? (
+                    <PlaceholderCard
+                      title="该模型绑定渠道下没有已启用端点"
+                      description="请先检查该模型的渠道绑定和 endpoint 配置。"
+                    />
+                  ) : (
+                    <>
+                      <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+                        {endpointSummaryRows.map((row) => (
+                          <div key={row.label} className="rounded-xl border border-[#edf0f4] bg-white p-3">
+                            <small className="text-[10px] text-[#98a2b3]">{row.label}</small>
+                            <strong className="mt-1 block text-sm text-[#182230]">{row.value}</strong>
+                          </div>
+                        ))}
+                      </div>
+
+                      {routingHealthQuery.isError ? (
+                        <div className="rounded-xl border border-dashed border-[#d8dee7] px-4 py-3 text-[10.5px] text-[#667085]">
+                          路由健康数据加载失败，当前只展示配置与探测结果。
+                        </div>
+                      ) : null}
+
+                      {probeResultsQuery.isError ? (
+                        <div className="rounded-xl border border-dashed border-[#d8dee7] px-4 py-3 text-[10.5px] text-[#667085]">
+                          探测结果加载失败，当前只展示配置与路由状态。
+                        </div>
+                      ) : null}
+
+                      <div className="overflow-x-auto rounded-xl border border-[#edf0f4] bg-white">
+                        <table className="w-full min-w-[980px] border-collapse">
+                          <thead>
+                            <tr>
+                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">渠道</th>
+                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">端点</th>
+                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">配置</th>
+                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">路由状态</th>
+                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">最近探测</th>
+                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">最近探测时间</th>
+                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">24h 请求</th>
+                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">24h 成功率</th>
+                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">24h P95</th>
+                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">熔断</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {endpointRows.map((row) => (
+                              <tr key={`${row.channelId}-${row.endpointId ?? row.endpointUrl}`}>
+                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">
+                                  <div className="font-semibold">{row.channelName}</div>
+                                  <div className="text-[10px] text-[#98a2b3]">{row.channelId}</div>
+                                </td>
+                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">
+                                  <div className="max-w-[240px] truncate font-mono" title={row.endpointUrl}>{row.endpointUrl}</div>
+                                  <div className="text-[10px] text-[#98a2b3]">ID: {row.endpointId ?? '—'}</div>
+                                </td>
+                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">
+                                  <div>{row.endpointEnabled ? '已启用' : '已禁用'}</div>
+                                  <div className="text-[10px] text-[#98a2b3]">weight {row.endpointWeight}{row.endpointTimeoutSecs != null ? ` · ${row.endpointTimeoutSecs}s` : ''}</div>
+                                </td>
+                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">{endpointRoutingLabel(row)}</td>
+                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">{endpointProbeLabel(row.probe)}</td>
+                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">{formatDateTime(row.probe?.probed_at)}</td>
+                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{formatNumber(row.channelRequests24h)}</td>
+                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{formatPercent(row.channelSuccessRate24h)}</td>
+                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{row.channelP95Latency24h == null ? '—' : `${formatNumber(Math.round(row.channelP95Latency24h))} ms`}</td>
+                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">{row.circuitEnabled ? (row.circuitOk ? '正常' : '熔断中') : '未启用'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
                 </div>
               ) : null}
 
               {activeTab === 'compare' ? (
                 <div id="flowtower-panel-compare" role="tabpanel" aria-labelledby="flowtower-tab-compare" className="space-y-5 p-4">
-                  <PlaceholderCard
-                    title="模型对比待第二阶段接入"
-                    description="模型对比详情正在完善中。"
-                  />
+                  <div className="rounded-xl border border-dashed border-[#d8dee7] px-4 py-3 text-[10.5px] text-[#667085]">
+                    左侧列为当前选择区间的完成请求；右侧列为最近 24 小时运行情况。
+                  </div>
+                  {compareMetricsQuery.isError ? (
+                    <div className="rounded-xl border border-dashed border-[#d8dee7] px-4 py-3 text-[10.5px] text-[#667085]">
+                      当前区间请求数据加载失败，已保留其他模型信息。
+                    </div>
+                  ) : null}
+                  {routingHealthQuery.isError ? (
+                    <div className="rounded-xl border border-dashed border-[#d8dee7] px-4 py-3 text-[10.5px] text-[#667085]">
+                      24 小时运行情况加载失败，相关列暂不可用。
+                    </div>
+                  ) : null}
+                  {unmatchedCompareModels.length > 0 ? (
+                    <div className="rounded-xl border border-dashed border-[#d8dee7] px-4 py-3 text-[10.5px] text-[#667085]">
+                      当前区间有 {formatNumber(unmatchedCompareModels.length)} 个未匹配到目录配置的模型请求记录。
+                    </div>
+                  ) : null}
+                  {compareRows.length > 0 ? (
+                    <div className="overflow-x-auto rounded-xl border border-[#edf0f4] bg-white">
+                      <table className="w-full min-w-[980px] border-collapse">
+                        <thead>
+                          <tr>
+                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">模型</th>
+                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">当前状态</th>
+                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">区间请求数</th>
+                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">区间占比</th>
+                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">24h 路由请求</th>
+                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">24h 路由成功率</th>
+                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">24h 平均延迟</th>
+                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">24h 最高 P95</th>
+                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">可用端点</th>
+                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">熔断通道</th>
+                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">配置通道</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {compareRows.map((row) => (
+                            <tr key={row.id} className={row.selected ? 'bg-[#eff5ff]' : ''}>
+                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">
+                                <div className="font-semibold">{row.name}</div>
+                                <div className="text-[10px] text-[#98a2b3]">{row.selected ? '当前选中' : '—'}</div>
+                              </td>
+                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">
+                                <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${row.statusBadge}`}>{row.status}</span>
+                              </td>
+                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{row.selectedRangeRequests == null ? '—' : formatNumber(row.selectedRangeRequests)}</td>
+                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{row.selectedRangeShare == null ? '—' : formatPercent(row.selectedRangeShare)}</td>
+                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{row.routedRequests24h == null ? '—' : formatNumber(row.routedRequests24h)}</td>
+                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{formatPercent(row.routingSuccessRate24h)}</td>
+                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{row.averageLatency24h == null ? '—' : `${formatNumber(Math.round(row.averageLatency24h))} ms`}</td>
+                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{row.highestChannelP95 == null ? '—' : `${formatNumber(Math.round(row.highestChannelP95))} ms`}</td>
+                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{`${row.availableEndpoints} / ${row.enabledEndpoints}`}</td>
+                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{formatNumber(row.brokenCircuitChannels)}</td>
+                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{formatNumber(row.configuredChannels)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <PlaceholderCard
+                      title="暂无可对比模型"
+                      description="当前没有可用于对比的模型配置或统计数据。"
+                    />
+                  )}
                 </div>
               ) : null}
             </article>
