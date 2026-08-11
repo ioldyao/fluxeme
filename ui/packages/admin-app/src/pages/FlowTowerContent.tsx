@@ -442,7 +442,6 @@ export default function FlowTowerContent() {
   const displayedRangeModel = displayedRange?.model ?? null;
   const displayedRangeLabel = inferRangeLabel(displayedRange?.start, displayedRange?.end);
   const displayedModelLabel = displayedRangeModel ?? '全部模型';
-  const isShowingPreviousMetrics = flowMetrics.isPlaceholderData;
   const totalCompleted = historical?.total_completed ?? 0;
   const successRate = totalCompleted > 0
     ? (historical?.success_completed ?? 0) / totalCompleted * 100
@@ -559,11 +558,8 @@ export default function FlowTowerContent() {
                 onClick={() => setQueryNowMs(Date.now())}
                 className="inline-flex h-9 items-center rounded-lg border border-border bg-background px-3 text-xs text-[#475467] transition hover:bg-muted"
               >
-                {flowMetrics.isFetching ? '刷新中…' : '↻ 刷新'}
+                ↻ 刷新
               </button>
-              {isShowingPreviousMetrics ? (
-                <span className="text-[10px] text-[#98a2b3]">正在更新数据…</span>
-              ) : null}
             </div>
           </div>
 
