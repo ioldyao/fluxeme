@@ -1025,7 +1025,7 @@ impl ClickHouseBackend {
              toString(usage_events.timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
-             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id \
+             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms \
              FROM usage_events \
              {} \
              ORDER BY usage_events.timestamp DESC \
@@ -1122,7 +1122,7 @@ impl ClickHouseBackend {
                  toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, \
-                 cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, \
+                 cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, \
                  request_body, response_body, reasoning_body \
                  FROM usage_events \
                  WHERE request_id = ? \
@@ -1145,14 +1145,14 @@ impl ClickHouseBackend {
              toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
-             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id \
+             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms \
              FROM usage_events WHERE timestamp >= ? AND user_id = ? ORDER BY timestamp ASC"
         } else {
             "SELECT \
              toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
-             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id \
+             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms \
              FROM usage_events WHERE timestamp >= ? ORDER BY timestamp ASC"
         };
         let mut query = self.client.query(sql).bind(since);
