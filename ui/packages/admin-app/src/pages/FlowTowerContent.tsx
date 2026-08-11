@@ -10,7 +10,10 @@ import {
 } from 'recharts';
 import { useFlowMetrics } from '@fluxeme/shared';
 import { useModels } from '@fluxeme/shared/src/api/models';
-import type { FlowMetricsClientIp, FlowMetricsModelShare, FlowMetricsPercentiles } from '@fluxeme/shared/src/types';
+import { useChannels } from '@fluxeme/shared/src/api/channels';
+import { useRoutingHealth } from '@fluxeme/shared/src/api/routing';
+import type { RoutingHealthModel } from '@fluxeme/shared/src/api/routing';
+import type { Channel, FlowMetricsClientIp, FlowMetricsModelShare, FlowMetricsPercentiles, Model } from '@fluxeme/shared/src/types';
 
 type RangeKey = '5m' | '15m' | '1h' | '6h' | '24h';
 type FlowTabKey = 'flow' | 'endpoint' | 'compare';
@@ -19,6 +22,22 @@ type Tone = 'blue' | 'cyan' | 'green' | 'yellow' | 'red';
 type MetricRow = {
   label: string;
   value: string;
+};
+
+type ModelHealthStatus = 'healthy' | 'degraded' | 'unavailable' | 'unknown';
+
+type CatalogModel = {
+  config: Model;
+  health?: RoutingHealthModel;
+  status: ModelHealthStatus;
+  enabledEndpoints: number;
+  observedEndpoints: number;
+  availableEndpoints: number;
+  routedRequests24h?: number;
+  successRate24h?: number;
+  averageLatency24h?: number;
+  highestChannelP95?: number;
+  brokenCircuitChannels: number;
 };
 
 const RANGE_OPTIONS: Array<{ key: RangeKey; short: string; long: string; label: string }> = [
@@ -88,6 +107,97 @@ function formatRangeBounds(range: RangeKey, nowMs = Date.now()) {
   return {
     start: start.toISOString(),
     end: end.toISOString(),
+  };
+}
+
+function inferRangeLabel(start?: string, end?: string) {
+  if (!start || !end) return '当前区间';
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return '当前区间';
+  const minutes = Math.round((endDate.getTime() - startDate.getTime()) / 60_000);
+  const preset = Object.entries(RANGE_MINUTES).find(([, value]) => value === minutes)?.[0] as RangeKey | undefined;
+  if (preset) {
+    return RANGE_OPTIONS.find((option) => option.key === preset)?.long ?? '当前区间';
+  }
+  return `${startDate.toLocaleString('zh-CN', { hour12: false })} ~ ${endDate.toLocaleString('zh-CN', { hour12: false })}`;
+}
+
+function formatContextLength(value: number | null | undefined) {
+  if (!value) return '—';
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}K`;
+  return formatNumber(value);
+}
+
+function modelHealthPresentation(status: ModelHealthStatus) {
+  switch (status) {
+    case 'healthy':
+      return { label: '可路由', dot: 'bg-[#16a36a]', badge: 'bg-[#eaf8f1] text-[#15865a]' };
+    case 'degraded':
+      return { label: '部分降级', dot: 'bg-[#d99a18]', badge: 'bg-[#fff5dc] text-[#ad7411]' };
+    case 'unavailable':
+      return { label: '不可用', dot: 'bg-[#e24f4f]', badge: 'bg-[#ffecec] text-[#c83333]' };
+    case 'unknown':
+      return { label: '健康未知', dot: 'bg-[#98a2b3]', badge: 'bg-[#f1f3f6] text-[#667085]' };
+  }
+}
+
+function deriveCatalogModel(
+  config: Model,
+  channelById: Map<string, Channel>,
+  channelConfigReady: boolean,
+  health?: RoutingHealthModel,
+): CatalogModel {
+  const healthChannels = health?.channels ?? [];
+  const channels = healthChannels.filter((channel) => channel.enabled);
+  const endpointAvailability = new Map(
+    channels.flatMap((channel) => channel.endpoints.map((endpoint) => [endpoint.endpoint_id, endpoint.available])),
+  );
+  const configuredEndpoints = config.channels.flatMap((binding) => {
+    const channel = channelById.get(binding.channel_id);
+    if (!channel?.enabled) return [];
+    return channel.endpoints.filter((endpoint) => endpoint.enabled);
+  });
+  const enabledEndpoints = configuredEndpoints;
+  const observedEnabledEndpoints = enabledEndpoints.filter((endpoint) => endpoint.id != null && endpointAvailability.has(endpoint.id));
+  const availableEndpoints = observedEnabledEndpoints.filter((endpoint) => endpoint.id != null && endpointAvailability.get(endpoint.id) === true);
+  const totalRequests = healthChannels.reduce((sum, channel) => sum + channel.requests, 0);
+  const weightedSuccess = totalRequests > 0
+    ? healthChannels.reduce((sum, channel) => sum + channel.requests * channel.success_rate, 0) / totalRequests
+    : undefined;
+  const weightedLatency = totalRequests > 0
+    ? healthChannels.reduce((sum, channel) => sum + channel.requests * channel.avg_latency_ms, 0) / totalRequests
+    : undefined;
+  const p95Values = healthChannels.filter((channel) => channel.requests > 0).map((channel) => channel.p95_latency_ms);
+  const brokenCircuitChannels = channels.filter((channel) => channel.requests > 0 && channel.circuit_enabled && !channel.circuit_ok).length;
+
+  const status: ModelHealthStatus = !channelConfigReady
+    ? 'unknown'
+    : enabledEndpoints.length === 0
+      ? 'unavailable'
+      : brokenCircuitChannels > 0 && observedEnabledEndpoints.length === 0
+        ? 'unavailable'
+        : observedEnabledEndpoints.length === 0
+          ? 'unknown'
+          : availableEndpoints.length === 0
+            ? 'unavailable'
+            : availableEndpoints.length < enabledEndpoints.length || observedEnabledEndpoints.length < enabledEndpoints.length || brokenCircuitChannels > 0
+              ? 'degraded'
+              : 'healthy';
+
+  return {
+    config,
+    health,
+    status,
+    enabledEndpoints: enabledEndpoints.length,
+    observedEndpoints: observedEnabledEndpoints.length,
+    availableEndpoints: availableEndpoints.length,
+    routedRequests24h: health ? health.total_requests : undefined,
+    successRate24h: weightedSuccess,
+    averageLatency24h: weightedLatency,
+    highestChannelP95: p95Values.length > 0 ? Math.max(...p95Values) : undefined,
+    brokenCircuitChannels,
   };
 }
 
@@ -252,21 +362,35 @@ function MetricList({ rows }: { rows: MetricRow[] }) {
 
 export default function FlowTowerContent() {
   const [selectedRange, setSelectedRange] = useState<RangeKey>('15m');
-  const [selectedModelName, setSelectedModelName] = useState('all');
+  const [selectedModelId, setSelectedModelId] = useState('all');
   const [modelSearch, setModelSearch] = useState('');
   const [activeTab, setActiveTab] = useState<FlowTabKey>('flow');
   const [queryNowMs, setQueryNowMs] = useState(() => Date.now());
-  const [displayedData, setDisplayedData] = useState<ReturnType<typeof useFlowMetrics>['data']>(undefined);
+  const lastSuccessfulMetricsRef = useRef<ReturnType<typeof useFlowMetrics>['data']>(undefined);
 
-  const rangeMeta = useMemo(
-    () => RANGE_OPTIONS.find((item) => item.key === selectedRange) ?? RANGE_OPTIONS[1],
-    [selectedRange],
-  );
   const rangeBounds = useMemo(() => formatRangeBounds(selectedRange, queryNowMs), [selectedRange, queryNowMs]);
-  const modelParam = selectedModelName !== 'all' ? selectedModelName : undefined;
 
-  const lastFlowMetricsDataRef = useRef<ReturnType<typeof useFlowMetrics>['data']>(undefined);
-
+  const modelsQuery = useModels();
+  const channelsQuery = useChannels();
+  const routingHealthQuery = useRoutingHealth();
+  const channelById = useMemo(
+    () => new Map((channelsQuery.data ?? []).map((channel) => [channel.id, channel])),
+    [channelsQuery.data],
+  );
+  const healthByModelId = useMemo(
+    () => new Map((routingHealthQuery.data?.models ?? []).map((model) => [model.id, model])),
+    [routingHealthQuery.data?.models],
+  );
+  const catalogModels = useMemo(
+    () => (modelsQuery.data ?? [])
+      .map((model) => deriveCatalogModel(model, channelById, !channelsQuery.isLoading && !channelsQuery.isError, healthByModelId.get(model.id)))
+      .sort((left, right) => left.config.name.localeCompare(right.config.name) || left.config.id.localeCompare(right.config.id)),
+    [channelById, channelsQuery.isLoading, healthByModelId, modelsQuery.data],
+  );
+  const selectedCatalogModel = selectedModelId === 'all'
+    ? undefined
+    : catalogModels.find((model) => model.config.id === selectedModelId);
+  const modelParam = selectedCatalogModel?.config.name;
   const flowMetrics = useFlowMetrics(
     {
       start: rangeBounds.start,
@@ -277,7 +401,6 @@ export default function FlowTowerContent() {
       refetchInterval: false,
     },
   );
-  const modelsQuery = useModels();
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -288,28 +411,38 @@ export default function FlowTowerContent() {
   }, []);
 
   useEffect(() => {
-    if (flowMetrics.data) {
-      lastFlowMetricsDataRef.current = flowMetrics.data;
-      setDisplayedData(flowMetrics.data);
+    if (flowMetrics.data && !flowMetrics.isPlaceholderData) {
+      lastSuccessfulMetricsRef.current = flowMetrics.data;
     }
-  }, [flowMetrics.data]);
+  }, [flowMetrics.data, flowMetrics.isPlaceholderData]);
 
-  const modelOptions = useMemo(() => {
-    const names = Array.from(new Set((modelsQuery.data ?? []).map((model) => model.name)));
-    names.sort((left, right) => left.localeCompare(right));
-    return names;
-  }, [modelsQuery.data]);
+  useEffect(() => {
+    if (selectedModelId !== 'all' && !catalogModels.some((model) => model.config.id === selectedModelId)) {
+      setSelectedModelId('all');
+    }
+  }, [catalogModels, selectedModelId]);
 
   const visibleModels = useMemo(() => {
     const keyword = modelSearch.trim().toLowerCase();
-    if (!keyword) return modelOptions;
-    return modelOptions.filter((name) => name.toLowerCase().includes(keyword));
-  }, [modelOptions, modelSearch]);
+    if (!keyword) return catalogModels;
+    return catalogModels.filter((model) => [
+      model.config.name,
+      model.config.id,
+      model.config.model_pattern,
+      ...model.config.channels.map((channel) => channel.channel_id),
+      ...model.config.channels.flatMap((channel) => channel.upstream_model ? [channel.upstream_model] : []),
+    ].some((value) => value.toLowerCase().includes(keyword)));
+  }, [catalogModels, modelSearch]);
 
-  const effectiveFlowMetricsData = flowMetrics.data ?? displayedData ?? lastFlowMetricsDataRef.current;
+  const effectiveFlowMetricsData = flowMetrics.data ?? lastSuccessfulMetricsRef.current;
 
   const historical = effectiveFlowMetricsData?.historical;
   const realtime = effectiveFlowMetricsData?.realtime;
+  const displayedRange = effectiveFlowMetricsData?.range;
+  const displayedRangeModel = displayedRange?.model ?? null;
+  const displayedRangeLabel = inferRangeLabel(displayedRange?.start, displayedRange?.end);
+  const displayedModelLabel = displayedRangeModel ?? '全部模型';
+  const isShowingPreviousMetrics = flowMetrics.isPlaceholderData;
   const totalCompleted = historical?.total_completed ?? 0;
   const successRate = totalCompleted > 0
     ? (historical?.success_completed ?? 0) / totalCompleted * 100
@@ -340,48 +473,20 @@ export default function FlowTowerContent() {
     }));
   }, [historical?.trend]);
 
-  const inspectorRows: MetricRow[] = [
-    { label: '统计区间', value: rangeMeta.long },
-    { label: '筛选模型', value: selectedModelName === 'all' ? '全部模型' : selectedModelName },
+  const historicalInspectorRows: MetricRow[] = [
+    { label: '统计区间', value: displayedRangeLabel },
+    { label: '筛选模型', value: displayedModelLabel },
     { label: '完成请求', value: formatNumber(totalCompleted) },
+    { label: '成功完成', value: formatNumber(historical?.success_completed) },
+    { label: '失败完成', value: formatNumber(historical?.failed_completed) },
     { label: '成功率', value: formatPercent(successRate) },
     { label: 'P99 延迟', value: historical?.latency_ms.p99 != null ? `${formatPercentile(historical.latency_ms.p99)} ms` : '—' },
     { label: 'TTFT P99', value: historical?.ttft_ms.p99 != null ? `${formatPercentile(historical.ttft_ms.p99)} ms` : '—' },
-    { label: '实时来源', value: realtime?.source ?? '—' },
   ];
 
   const lastUpdatedLabel = realtime?.as_of
     ? new Date(realtime.as_of).toLocaleTimeString('zh-CN', { hour12: false })
     : '—';
-
-  if (flowMetrics.isLoading && !effectiveFlowMetricsData) {
-    return (
-      <div className="space-y-4 animate-fade-in">
-        <section className="rounded-2xl border border-border bg-card px-6 py-12 text-center shadow-sm">
-          <h2 className="text-lg font-semibold text-foreground">模型监控</h2>
-          <p className="mt-3 text-sm text-muted-foreground">正在加载真实观测数据…</p>
-        </section>
-      </div>
-    );
-  }
-
-  if (flowMetrics.isError && !effectiveFlowMetricsData) {
-    return (
-      <div className="space-y-4 animate-fade-in">
-        <section className="rounded-2xl border border-border bg-card px-6 py-12 text-center shadow-sm">
-          <h2 className="text-lg font-semibold text-foreground">模型监控</h2>
-          <p className="mt-3 text-sm text-muted-foreground">加载真实观测数据失败。</p>
-          <button
-            type="button"
-            onClick={() => void flowMetrics.refetch()}
-            className="mt-4 inline-flex h-9 items-center rounded-lg border border-border bg-background px-4 text-sm text-[#475467] transition hover:bg-muted"
-          >
-            重试
-          </button>
-        </section>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -390,13 +495,8 @@ export default function FlowTowerContent() {
           <div>
             <h2 className="text-lg font-semibold text-foreground">模型监控</h2>
             <p className="mt-1 text-sm text-muted-foreground">实时请求态势、模型流量、端点健康与异常定位</p>
-            <p className="mt-2 text-xs text-[#98a2b3]">本页已接入现有 flow metrics 真实接口；队列与异常事件等区块仍等待后端补充。</p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <div className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3 text-[#475467]">
-              <span className="h-2 w-2 rounded-full bg-[#16a36a] shadow-[0_0_0_4px_rgba(22,163,106,0.12)]" />
-              Real / polled
-            </div>
             <div className="inline-flex h-9 items-center rounded-lg border border-border bg-background px-3 text-[#475467]">
               自动刷新 · 30s
             </div>
@@ -431,16 +531,16 @@ export default function FlowTowerContent() {
               <select
                 aria-label="模型筛选"
                 className="h-9 rounded-lg border border-border bg-background px-3 text-xs text-[#475467]"
-                value={selectedModelName}
+                value={selectedModelId}
                 onChange={(event) => {
-                  setSelectedModelName(event.target.value);
+                  setSelectedModelId(event.target.value);
                   setQueryNowMs(Date.now());
                 }}
               >
                 <option value="all">全部模型</option>
-                {modelOptions.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
+                {catalogModels.map((model) => (
+                  <option key={model.config.id} value={model.config.id}>
+                    {model.config.name}
                   </option>
                 ))}
               </select>
@@ -461,6 +561,9 @@ export default function FlowTowerContent() {
               >
                 {flowMetrics.isFetching ? '刷新中…' : '↻ 刷新'}
               </button>
+              {isShowingPreviousMetrics ? (
+                <span className="text-[10px] text-[#98a2b3]">正在更新数据…</span>
+              ) : null}
             </div>
           </div>
 
@@ -470,7 +573,7 @@ export default function FlowTowerContent() {
               badge="LIVE"
               value={formatNumber(realtime?.in_flight)}
               tone="blue"
-              subtext={<>当前实时快照 · 数据源 <span className="font-semibold text-[#3276e8]">{realtime?.source ?? '—'}</span></>}
+              subtext="当前正在处理的请求数"
             />
             <KpiCard
               label="上游生成中"
@@ -495,14 +598,14 @@ export default function FlowTowerContent() {
             />
             <KpiCard
               label="成功完成"
-              badge={rangeMeta.short}
+              badge={displayedRangeLabel}
               value={formatNumber(historical?.success_completed)}
               tone="green"
               subtext={<>成功率 <span className="font-semibold text-[#16a36a]">{formatPercent(successRate)}</span></>}
             />
             <KpiCard
               label="失败完成"
-              badge={rangeMeta.short}
+              badge={displayedRangeLabel}
               value={formatNumber(historical?.failed_completed)}
               tone="red"
               subtext={<>错误率 <span className="font-semibold text-[#e24f4f]">{formatPercent(failureRate)}</span></>}
@@ -513,7 +616,7 @@ export default function FlowTowerContent() {
             <div className="grid gap-4">
               <Panel
                 title="成功 / 失败完成量趋势"
-                subtitle={`最近 ${rangeMeta.long} · ${historical?.trend.bucket_unit === 'minute' ? '按分钟聚合' : '按小时聚合'}`}
+                subtitle={`最近 ${displayedRangeLabel} · ${historical?.trend.bucket_unit === 'minute' ? '按分钟聚合' : '按小时聚合'}`}
               >
                 {trendData.length > 0 ? (
                   <div className="h-[260px] w-full">
@@ -533,16 +636,13 @@ export default function FlowTowerContent() {
                     </ResponsiveContainer>
                   </div>
                 ) : (
-                  <PlaceholderCard
-                    title="当前区间暂无趋势数据"
-                    description="当前时间窗口内没有可用的成功 / 失败完成量序列，暂时无法渲染趋势图。"
-                  />
+                  <div className="h-[260px] w-full rounded-xl border border-dashed border-[#d8dee7] bg-[#fbfcfe]" />
                 )}
               </Panel>
 
               <Panel
                 title="客户端 IP Top N"
-                subtitle={`请求来源排行 · 最近 ${rangeMeta.long}`}
+                subtitle={`请求来源排行 · 最近 ${displayedRangeLabel}`}
                 right={
                   <div className="inline-flex h-7 items-center rounded-md border border-border bg-background px-2.5 text-[11px] text-[#475467]">
                     按请求数
@@ -586,7 +686,7 @@ export default function FlowTowerContent() {
             <div className="grid gap-4">
               <Panel
                 title="模型请求占比"
-                subtitle={`成功 + 失败请求总量 · 最近 ${rangeMeta.long}`}
+                subtitle={`成功 + 失败请求总量 · 最近 ${displayedRangeLabel}`}
                 right={<div className="text-[11px] text-[#98a2b3]">{formatNumber(totalCompleted)} requests</div>}
               >
                 {shareRows.length > 0 ? (
@@ -611,7 +711,7 @@ export default function FlowTowerContent() {
 
               <Panel
                 title="延迟 / TTFT 分位数"
-                subtitle={`全模型汇总 · 最近 ${rangeMeta.long}`}
+                subtitle={`全模型汇总 · 最近 ${displayedRangeLabel}`}
                 right={
                   <div className="inline-flex h-7 items-center rounded-md border border-border bg-background px-2.5 text-[11px] text-[#475467]">
                     ms
@@ -637,54 +737,97 @@ export default function FlowTowerContent() {
           </section>
 
           <section className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)] 2xl:grid-cols-[240px_minmax(0,1fr)_310px]">
-            <Panel title="模型目录" subtitle={`${formatNumber(modelOptions.length)} 个模型 · 先接真实模型列表`} className="min-h-[580px]">
+            <Panel
+              title="模型目录"
+              subtitle={`${formatNumber(catalogModels.length)} 个已配置模型 · 结合 24h routing health`}
+              className="min-h-[580px]"
+              right={routingHealthQuery.isFetching ? <span className="text-[10px] text-[#98a2b3]">更新中…</span> : null}
+            >
               <div className="-mt-1">
                 <div className="mb-3">
                   <input
                     aria-label="搜索模型"
                     value={modelSearch}
                     onChange={(event) => setModelSearch(event.target.value)}
-                    placeholder="搜索模型"
+                    placeholder="搜索模型、ID 或渠道"
                     className="h-9 w-full rounded-lg border border-[#e1e7ef] bg-[#fbfcfe] px-3 text-[11px] text-[#475467] outline-none placeholder:text-[#98a2b3]"
                   />
                 </div>
+                {routingHealthQuery.isError ? (
+                  <button
+                    type="button"
+                    onClick={() => void routingHealthQuery.refetch()}
+                    className="mb-3 w-full rounded-lg border border-dashed border-[#d8dee7] px-3 py-2 text-[10px] text-[#667085] hover:bg-muted"
+                  >
+                    路由健康数据加载失败，点击重试
+                  </button>
+                ) : null}
                 <div className="space-y-1">
                   <button
                     type="button"
-                    onClick={() => setSelectedModelName('all')}
+                    onClick={() => {
+                      setSelectedModelId('all');
+                      setQueryNowMs(Date.now());
+                    }}
                     className={`w-full rounded-xl border px-3 py-3 text-left transition ${
-                      selectedModelName === 'all'
+                      selectedModelId === 'all'
                         ? 'border-[#d8e6ff] bg-[#eff5ff]'
                         : 'border-transparent hover:bg-[#f7f9fc]'
                     }`}
                   >
                     <div className="text-[11px] font-semibold text-[#344054]">全部模型</div>
-                    <div className="mt-2 text-[10px] text-[#98a2b3]">查看当前范围的聚合 flow metrics</div>
+                    <div className="mt-2 text-[10px] text-[#98a2b3]">查看当前范围聚合与全局实时快照</div>
                   </button>
                   {visibleModels.length > 0 ? (
-                    visibleModels.map((name) => (
-                      <button
-                        key={name}
-                        type="button"
-                        onClick={() => setSelectedModelName(name)}
-                        className={`w-full rounded-xl border px-3 py-3 text-left transition ${
-                          selectedModelName === name
-                            ? 'border-[#d8e6ff] bg-[#eff5ff]'
-                            : 'border-transparent hover:bg-[#f7f9fc]'
-                        }`}
-                      >
-                        <div className="text-[11px] font-semibold text-[#344054]">{name}</div>
-                        <div className="mt-2 text-[10px] text-[#98a2b3]">点击后按该模型重新查询已接入的 flow metrics</div>
-                      </button>
-                    ))
+                    visibleModels.map((model) => {
+                      const health = modelHealthPresentation(model.status);
+                      return (
+                        <button
+                          key={model.config.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedModelId(model.config.id);
+                            setQueryNowMs(Date.now());
+                          }}
+                          className={`w-full rounded-xl border px-3 py-3 text-left transition ${
+                            selectedModelId === model.config.id
+                              ? 'border-[#d8e6ff] bg-[#eff5ff]'
+                              : 'border-transparent hover:bg-[#f7f9fc]'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="truncate text-[11px] font-semibold text-[#344054]">{model.config.name}</div>
+                            <span className="inline-flex items-center gap-1.5 text-[10px] text-[#667085]">
+                              <i aria-hidden="true" className={`h-2 w-2 rounded-sm ${health.dot}`} />
+                              {health.label}
+                            </span>
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-[#98a2b3]">
+                            <span>{model.config.channels.length} configured channels</span>
+                            {model.routedRequests24h == null ? (
+                              <span>暂无路由健康数据</span>
+                            ) : (
+                              <>
+                                <span>{formatNumber(model.routedRequests24h)} req / 24h</span>
+                                <span>{formatPercent(model.successRate24h == null ? null : model.successRate24h * 100)}</span>
+                              </>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })
                   ) : modelsQuery.isLoading ? (
                     <div className="rounded-xl border border-dashed border-[#d8dee7] px-3 py-6 text-center text-[11px] text-[#98a2b3]">
                       正在加载模型列表…
                     </div>
                   ) : modelsQuery.isError ? (
-                    <div className="rounded-xl border border-dashed border-[#d8dee7] px-3 py-6 text-center text-[11px] text-[#98a2b3]">
-                      模型列表加载失败，请稍后重试。
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void modelsQuery.refetch()}
+                      className="w-full rounded-xl border border-dashed border-[#d8dee7] px-3 py-6 text-center text-[11px] text-[#98a2b3] hover:bg-muted"
+                    >
+                      模型列表加载失败，点击重试
+                    </button>
                   ) : (
                     <div className="rounded-xl border border-dashed border-[#d8dee7] px-3 py-6 text-center text-[11px] text-[#98a2b3]">
                       没有匹配的模型
@@ -720,7 +863,7 @@ export default function FlowTowerContent() {
                 <div id="flowtower-panel-flow" role="tabpanel" aria-labelledby="flowtower-tab-flow" className="space-y-5 p-4">
                   <PlaceholderCard
                     title="请求流拓扑待第二阶段接入"
-                    description="这一块需要组合 routing snapshot、recent paths、routing health 等接口才能展示真实路由拓扑百分比与端点分布。当前先保留占位态，避免继续展示伪实时路径图。"
+                    description="路由路径与端点分布正在完善中。"
                   />
                 </div>
               ) : null}
@@ -729,7 +872,7 @@ export default function FlowTowerContent() {
                 <div id="flowtower-panel-endpoint" role="tabpanel" aria-labelledby="flowtower-tab-endpoint" className="space-y-5 p-4">
                   <PlaceholderCard
                     title="端点状态待第二阶段接入"
-                    description="现有接口可以进一步接 routing health / probe results recent，但本轮先只接 flow metrics 已覆盖的区块，避免把不同接口的字段逻辑混在一起。"
+                    description="端点状态详情正在完善中。"
                   />
                 </div>
               ) : null}
@@ -738,24 +881,98 @@ export default function FlowTowerContent() {
                 <div id="flowtower-panel-compare" role="tabpanel" aria-labelledby="flowtower-tab-compare" className="space-y-5 p-4">
                   <PlaceholderCard
                     title="模型对比待第二阶段接入"
-                    description="完整模型对比需要组合 flow metrics、routing health 以及更多按模型维度的实时/趋势字段；当前接口还不足以支撑现有 mock 表格里的全部列。"
+                    description="模型对比详情正在完善中。"
                   />
                 </div>
               ) : null}
             </article>
 
-            <Panel title="模型检查器" subtitle="先展示当前已接入的真实 flow metrics 摘要" className="min-h-[580px]">
-              <div className="rounded-xl border border-[#dfe7f3] bg-[#f8fbff] p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <strong className="text-sm text-[#182230]">{selectedModelName === 'all' ? '全部模型' : selectedModelName}</strong>
-                  <span className="rounded-md bg-[#edf4ff] px-2 py-1 text-[10px] font-semibold text-[#3276e8]">
-                    flow-metrics
-                  </span>
+            <Panel
+              title="模型检查器"
+              subtitle={selectedCatalogModel ? '模型配置、24h routing health 与选定区间历史指标' : '当前范围聚合指标与全局实时快照'}
+              className="min-h-[580px]"
+            >
+              {selectedCatalogModel ? (() => {
+                const health = modelHealthPresentation(selectedCatalogModel.status);
+                const categories = selectedCatalogModel.config.category?.split(',').map((item) => item.trim()).filter(Boolean) ?? [];
+                const routingRows: MetricRow[] = [
+                  { label: '路由状态', value: health.label },
+                  { label: '可用端点', value: `${selectedCatalogModel.availableEndpoints} / ${selectedCatalogModel.enabledEndpoints}` },
+                  { label: '健康观测端点', value: `${selectedCatalogModel.observedEndpoints} / ${selectedCatalogModel.enabledEndpoints}` },
+                  { label: '24h 路由请求', value: selectedCatalogModel.routedRequests24h == null ? '—' : formatNumber(selectedCatalogModel.routedRequests24h) },
+                  { label: '24h 成功率', value: formatPercent(selectedCatalogModel.successRate24h == null ? null : selectedCatalogModel.successRate24h * 100) },
+                  { label: '24h 平均延迟', value: selectedCatalogModel.averageLatency24h == null ? '—' : `${formatNumber(Math.round(selectedCatalogModel.averageLatency24h))} ms` },
+                  { label: '最高 channel P95', value: selectedCatalogModel.highestChannelP95 == null ? '—' : `${formatNumber(Math.round(selectedCatalogModel.highestChannelP95))} ms` },
+                  { label: '熔断通道', value: String(selectedCatalogModel.brokenCircuitChannels) },
+                ];
+                return (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-[#dfe7f3] bg-[#f8fbff] p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <strong className="text-sm text-[#182230]">{selectedCatalogModel.config.name}</strong>
+                          <div className="mt-1 font-mono text-[10px] text-[#98a2b3]">{selectedCatalogModel.config.id}</div>
+                        </div>
+                        <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${health.badge}`}>{health.label}</span>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        <span className="rounded bg-white px-2 py-1 text-[10px] text-[#667085]">{selectedCatalogModel.config.published ? '已发布' : '未发布'}</span>
+                        {categories.map((category) => <span key={category} className="rounded bg-white px-2 py-1 text-[10px] text-[#667085]">{category}</span>)}
+                      </div>
+                      <div className="mt-4 grid grid-cols-[1fr_auto] gap-x-4 gap-y-2 text-[10.5px]">
+                        <span className="text-[#98a2b3]">模型 Pattern</span><span className="max-w-[180px] truncate text-right text-[#475467]">{selectedCatalogModel.config.model_pattern}</span>
+                        <span className="text-[#98a2b3]">上下文长度</span><span className="text-right text-[#475467]">{formatContextLength(selectedCatalogModel.config.context_length)}</span>
+                        <span className="text-[#98a2b3]">配置通道</span><span className="text-right text-[#475467]">{selectedCatalogModel.config.channels.length}</span>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-[#edf0f4] bg-white p-4">
+                      <div className="mb-3 flex items-center justify-between gap-2">
+                        <div className="text-[11px] font-semibold text-[#475467]">Routing Health · 最近 24h</div>
+                        {routingHealthQuery.isFetching ? <span className="text-[10px] text-[#98a2b3]">更新中…</span> : null}
+                      </div>
+                      {routingHealthQuery.isError ? (
+                        <button type="button" onClick={() => void routingHealthQuery.refetch()} className="text-[10.5px] text-[#667085] underline">
+                          路由健康数据加载失败，点击重试
+                        </button>
+                      ) : selectedCatalogModel.health ? (
+                        <MetricList rows={routingRows} />
+                      ) : (
+                        <p className="text-[10.5px] leading-5 text-[#98a2b3]">该已配置模型当前没有可用的 routing health 记录；这不等于故障，可能是无流量或没有启用端点。</p>
+                      )}
+                      {selectedCatalogModel.config.channels.length > 0 ? (
+                        <div className="mt-3 border-t border-[#edf0f4] pt-3">
+                          <div className="mb-2 text-[10px] text-[#98a2b3]">配置通道绑定</div>
+                          <div className="space-y-1.5">
+                            {selectedCatalogModel.config.channels.map((channel) => (
+                              <div key={`${channel.channel_id}-${channel.priority}`} className="flex justify-between gap-3 text-[10px] text-[#667085]">
+                                <span className="truncate">{channel.channel_id}{channel.upstream_model ? ` → ${channel.upstream_model}` : ''}</span>
+                                <span className="shrink-0">priority {channel.priority}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="rounded-xl border border-[#edf0f4] bg-white p-4">
+                      <div className="mb-3 text-[11px] font-semibold text-[#475467]">Flow Metrics · 当前选择区间</div>
+                      <MetricList rows={historicalInspectorRows} />
+                    </div>
+                  </div>
+                );
+              })() : (
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-[#dfe7f3] bg-[#f8fbff] p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <strong className="text-sm text-[#182230]">全部模型</strong>
+                      <span className="rounded-md bg-[#edf4ff] px-2 py-1 text-[10px] font-semibold text-[#3276e8]">聚合视图</span>
+                    </div>
+                    <div className="mt-4"><MetricList rows={historicalInspectorRows} /></div>
+                  </div>
+                  <p className="rounded-xl border border-dashed border-[#d8dee7] bg-[#fbfcfe] px-4 py-3 text-[10.5px] leading-5 text-[#667085]">选择左侧具体模型后，可查看模型配置、最近 24 小时运行状态和端点可用性。</p>
                 </div>
-                <div className="mt-4">
-                  <MetricList rows={inspectorRows} />
-                </div>
-              </div>
+              )}
 
               <div className="mt-4 border-t border-border pt-4">
                 <PlaceholderCard

@@ -59,10 +59,10 @@ pub(crate) async fn routing_health(
             let circuit_enabled = any_enabled || health.is_empty();
 
             if req > 0 || any_enabled {
-                let ch_name = state
-                    .routing
-                    .get_channel(&binding.channel_id)
-                    .map(|c| if c.name.is_empty() { c.id } else { c.name })
+                let configured_channel = state.routing.get_channel(&binding.channel_id);
+                let channel_enabled = configured_channel.as_ref().is_some_and(|channel| channel.enabled);
+                let ch_name = configured_channel
+                    .map(|channel| if channel.name.is_empty() { channel.id } else { channel.name })
                     .unwrap_or_else(|| binding.channel_id.clone());
 
                 if req > 0 {
@@ -88,6 +88,7 @@ pub(crate) async fn routing_health(
                 ch_results.push(serde_json::json!({
                     "channel_id": binding.channel_id,
                     "channel_name": ch_name,
+                    "enabled": channel_enabled,
                     "priority": binding.priority,
                     "provider": binding.provider,
                     "requests": req,
