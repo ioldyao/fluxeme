@@ -88,6 +88,7 @@ export interface RoutingHealthEndpoint {
 export interface RoutingHealthChannel {
   channel_id: string;
   channel_name: string;
+  enabled: boolean;
   priority: number;
   provider?: string;
   requests: number;

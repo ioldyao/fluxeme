@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from './client';
 import type { FlowMetricsResponse } from '../types';
 
@@ -33,5 +33,6 @@ export function useFlowMetrics(
     queryFn: () => api<FlowMetricsResponse>(`/health/flow-metrics${qs ? `?${qs}` : ''}`),
     refetchInterval: options.refetchInterval ?? 30_000,
     enabled: options.enabled !== false,
+    placeholderData: keepPreviousData,
   });
 }
