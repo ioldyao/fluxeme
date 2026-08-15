@@ -2350,9 +2350,7 @@ impl DbBackend for PgBackend {
         };
         let (cost, count, tokens): (f64, i64, i64) = if let Some(uid) = user_id {
             query_as(
-                "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price + \
-                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
+                "SELECT COALESCE(SUM(cost_amount), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3",
             )
@@ -2363,9 +2361,7 @@ impl DbBackend for PgBackend {
             .await?
         } else {
             query_as(
-                "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price + \
-                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
+                "SELECT COALESCE(SUM(cost_amount), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2",
             )
@@ -2395,9 +2391,7 @@ impl DbBackend for PgBackend {
         };
         let rows: Vec<(String, f64)> = if let Some(uid) = user_id {
             query_as::<_, (String, f64)>(
-                "SELECT model, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price + \
-                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
+                "SELECT model, COALESCE(SUM(cost_amount), 0) \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY model ORDER BY 2 DESC",
             )
@@ -2408,9 +2402,7 @@ impl DbBackend for PgBackend {
             .await?
         } else {
             query_as::<_, (String, f64)>(
-                "SELECT model, COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price + \
-                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
+                "SELECT model, COALESCE(SUM(cost_amount), 0) \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY model ORDER BY 2 DESC",
             )
@@ -2439,9 +2431,7 @@ impl DbBackend for PgBackend {
         };
         let rows: Vec<(String, String, f64)> = if let Some(uid) = user_id {
             query_as::<_, (String, String, f64)>(
-                "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(ul.prompt_tokens / 1000000.0 * ul.prompt_price + \
-                 ul.completion_tokens / 1000000.0 * ul.completion_price + \
-                 ul.cache_hit_input_tokens / 1000000.0 * ul.cache_read_price), 0) \
+                "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(ul.cost_amount), 0) \
                  FROM billing_events ul LEFT JOIN channels c ON c.id = ul.channel_id \
                  WHERE ul.timestamp >= $1 AND ul.timestamp < $2 AND ul.user_id = $3 \
                  GROUP BY ul.channel_id, c.name ORDER BY 3 DESC",
@@ -2453,9 +2443,7 @@ impl DbBackend for PgBackend {
             .await?
         } else {
             query_as::<_, (String, String, f64)>(
-                "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(ul.prompt_tokens / 1000000.0 * ul.prompt_price + \
-                 ul.completion_tokens / 1000000.0 * ul.completion_price + \
-                 ul.cache_hit_input_tokens / 1000000.0 * ul.cache_read_price), 0) \
+                "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(ul.cost_amount), 0) \
                  FROM billing_events ul LEFT JOIN channels c ON c.id = ul.channel_id \
                  WHERE ul.timestamp >= $1 AND ul.timestamp < $2 \
                  GROUP BY ul.channel_id, c.name ORDER BY 3 DESC",
@@ -2486,9 +2474,7 @@ impl DbBackend for PgBackend {
         let rows = if let Some(uid) = user_id {
             query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price + \
-                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
+                 COALESCE(SUM(cost_amount), 0), \
                  COUNT(*)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY day ORDER BY day DESC",
@@ -2501,9 +2487,7 @@ impl DbBackend for PgBackend {
         } else {
             query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price + \
-                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
+                 COALESCE(SUM(cost_amount), 0), \
                  COUNT(*)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY day ORDER BY day DESC",
@@ -2571,9 +2555,7 @@ impl DbBackend for PgBackend {
         let rows = if let Some(uid) = user_id {
             query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price + \
-                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
+                 COALESCE(SUM(cost_amount), 0), \
                  COUNT(*)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY day ORDER BY day DESC LIMIT $4 OFFSET $5",
@@ -2588,9 +2570,7 @@ impl DbBackend for PgBackend {
         } else {
             query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-                 completion_tokens / 1000000.0 * completion_price + \
-                 cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
+                 COALESCE(SUM(cost_amount), 0), \
                  COUNT(*)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY day ORDER BY day DESC LIMIT $3 OFFSET $4",
@@ -2630,9 +2610,7 @@ impl DbBackend for PgBackend {
     async fn period_summary_all(&self) -> Result<Vec<(String, Decimal, u64, u64)>, DbError> {
         let rows = query_as::<_, (String, f64, i64, i64)>(
             "SELECT LEFT(timestamp::text, 7) AS month, \
-             COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-             completion_tokens / 1000000.0 * completion_price + \
-             cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
+             COALESCE(SUM(cost_amount), 0), \
              COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
              FROM billing_events GROUP BY month ORDER BY month DESC",
         )
@@ -2657,9 +2635,7 @@ impl DbBackend for PgBackend {
     ) -> Result<Vec<(String, Decimal, u64, u64)>, DbError> {
         let rows = query_as::<_, (String, f64, i64, i64)>(
             "SELECT LEFT(timestamp::text, 7) AS month, \
-             COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-             completion_tokens / 1000000.0 * completion_price + \
-             cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
+             COALESCE(SUM(cost_amount), 0), \
              COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
              FROM billing_events WHERE user_id = $1 GROUP BY month ORDER BY month DESC",
         )
@@ -2677,6 +2653,1099 @@ impl DbBackend for PgBackend {
                 )
             })
             .collect())
+    }
+
+    async fn admin_billing_active_counts(
+        &self,
+        year: i32,
+        month: u32,
+    ) -> Result<(u64, u64), DbError> {
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let (active_teams, active_users): (i64, i64) = query_as(
+            "SELECT \
+             COUNT(DISTINCT CASE WHEN account_type = 'team' AND team_id IS NOT NULL THEN team_id END)::bigint, \
+             COUNT(DISTINCT user_id)::bigint \
+             FROM billing_events WHERE timestamp >= $1 AND timestamp < $2",
+        )
+        .bind(&start)
+        .bind(&end)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok((active_teams as u64, active_users as u64))
+    }
+
+    async fn admin_billing_team_spend_ranking(
+        &self,
+        year: i32,
+        month: u32,
+        limit: usize,
+    ) -> Result<Vec<(String, String, Decimal, u64, u64, u64)>, DbError> {
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let rows = query_as::<_, (String, String, f64, i64, i64, i64)>(
+            "SELECT \
+             be.team_id, \
+             COALESCE(t.name, be.team_id) AS team_name, \
+             COALESCE(SUM(be.cost_amount), 0) AS total_cost, \
+             COUNT(*)::bigint AS total_requests, \
+             COALESCE(SUM(be.total_tokens), 0)::bigint AS total_tokens, \
+             COUNT(DISTINCT be.user_id)::bigint AS active_users \
+             FROM billing_events be \
+             LEFT JOIN teams t ON t.id = be.team_id \
+             WHERE be.timestamp >= $1 AND be.timestamp < $2 \
+               AND be.account_type = 'team' AND be.team_id IS NOT NULL \
+             GROUP BY be.team_id, t.name \
+             ORDER BY total_cost DESC \
+             LIMIT $3",
+        )
+        .bind(&start)
+        .bind(&end)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(team_id, team_name, total_cost, total_requests, total_tokens, active_users)| {
+                (
+                    team_id,
+                    team_name,
+                    Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
+                    total_requests as u64,
+                    total_tokens as u64,
+                    active_users as u64,
+                )
+            })
+            .collect())
+    }
+
+    async fn admin_billing_teams_page(
+        &self,
+        year: i32,
+        month: u32,
+        search: Option<&str>,
+        sort_by: Option<&str>,
+        sort_order: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(Vec<(String, String, String, Decimal, u64, u64, u64, Option<String>)>, usize), DbError> {
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let search_term = search.filter(|value| !value.trim().is_empty()).map(|value| format!("%{}%", value.trim()));
+        let (sort_expr, sort_dir) = match sort_by.unwrap_or("total_cost") {
+            "team_name" => ("team_name", if sort_order == Some("asc") { "ASC" } else { "DESC" }),
+            "total_requests" => ("total_requests", if sort_order == Some("asc") { "ASC" } else { "DESC" }),
+            "total_tokens" => ("total_tokens", if sort_order == Some("asc") { "ASC" } else { "DESC" }),
+            "active_users" => ("active_users", if sort_order == Some("asc") { "ASC" } else { "DESC" }),
+            "last_billed_at" => ("last_billed_at", if sort_order == Some("asc") { "ASC" } else { "DESC" }),
+            _ => ("total_cost", if sort_order == Some("asc") { "ASC" } else { "DESC" }),
+        };
+
+        let base_cte = "WITH team_billing AS ( \
+            SELECT \
+            be.team_id, \
+            COALESCE(t.name, be.team_id) AS team_name, \
+            COALESCE(t.owner_id, '') AS owner_id, \
+            COALESCE(SUM(be.cost_amount), 0) AS total_cost, \
+            COUNT(*)::bigint AS total_requests, \
+            COALESCE(SUM(be.total_tokens), 0)::bigint AS total_tokens, \
+            COUNT(DISTINCT be.user_id)::bigint AS active_users, \
+            MAX(be.timestamp)::text AS last_billed_at \
+            FROM billing_events be \
+            LEFT JOIN teams t ON t.id = be.team_id \
+            WHERE be.timestamp >= $1 AND be.timestamp < $2 \
+              AND be.account_type = 'team' AND be.team_id IS NOT NULL \
+            GROUP BY be.team_id, t.name, t.owner_id \
+        ) ";
+
+        let count_sql = if search_term.is_some() {
+            format!("{} SELECT COUNT(*)::bigint FROM team_billing WHERE team_name ILIKE $3 OR team_id ILIKE $3 OR owner_id ILIKE $3", base_cte)
+        } else {
+            format!("{} SELECT COUNT(*)::bigint FROM team_billing", base_cte)
+        };
+
+        let total: i64 = if let Some(pattern) = &search_term {
+            query_scalar::<_, i64>(&count_sql)
+                .bind(&start)
+                .bind(&end)
+                .bind(pattern)
+                .fetch_one(&self.pool)
+                .await?
+        } else {
+            query_scalar::<_, i64>(&count_sql)
+                .bind(&start)
+                .bind(&end)
+                .fetch_one(&self.pool)
+                .await?
+        };
+
+        let page_sql = if search_term.is_some() {
+            format!(
+                "{} SELECT team_id, team_name, owner_id, total_cost, total_requests, total_tokens, active_users, last_billed_at \
+                 FROM team_billing \
+                 WHERE team_name ILIKE $3 OR team_id ILIKE $3 OR owner_id ILIKE $3 \
+                 ORDER BY {} {} LIMIT $4 OFFSET $5",
+                base_cte, sort_expr, sort_dir
+            )
+        } else {
+            format!(
+                "{} SELECT team_id, team_name, owner_id, total_cost, total_requests, total_tokens, active_users, last_billed_at \
+                 FROM team_billing \
+                 ORDER BY {} {} LIMIT $3 OFFSET $4",
+                base_cte, sort_expr, sort_dir
+            )
+        };
+
+        let rows = if let Some(pattern) = &search_term {
+            query_as::<_, (String, String, String, f64, i64, i64, i64, Option<String>)>(&page_sql)
+                .bind(&start)
+                .bind(&end)
+                .bind(pattern)
+                .bind(limit as i64)
+                .bind(offset as i64)
+                .fetch_all(&self.pool)
+                .await?
+        } else {
+            query_as::<_, (String, String, String, f64, i64, i64, i64, Option<String>)>(&page_sql)
+                .bind(&start)
+                .bind(&end)
+                .bind(limit as i64)
+                .bind(offset as i64)
+                .fetch_all(&self.pool)
+                .await?
+        };
+
+        Ok((
+            rows.into_iter()
+                .map(|(team_id, team_name, owner_id, total_cost, total_requests, total_tokens, active_users, last_billed_at)| {
+                    (
+                        team_id,
+                        team_name,
+                        owner_id,
+                        Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
+                        total_requests as u64,
+                        total_tokens as u64,
+                        active_users as u64,
+                        last_billed_at,
+                    )
+                })
+                .collect(),
+            total as usize,
+        ))
+    }
+
+    async fn admin_billing_team_users_page(
+        &self,
+        team_id: &str,
+        year: i32,
+        month: u32,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(Vec<(String, String, Decimal, u64, u64, Option<String>)>, usize), DbError> {
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let total: i64 = query_scalar(
+            "SELECT COUNT(*)::bigint FROM ( \
+             SELECT be.user_id \
+             FROM billing_events be \
+             WHERE be.timestamp >= $1 AND be.timestamp < $2 \
+               AND be.team_id = $3 AND be.account_type = 'team' \
+             GROUP BY be.user_id, be.user_name \
+            ) users",
+        )
+        .bind(&start)
+        .bind(&end)
+        .bind(team_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let rows = query_as::<_, (String, String, f64, i64, i64, Option<String>)>(
+            "SELECT \
+             be.user_id, \
+             be.user_name, \
+             COALESCE(SUM(be.cost_amount), 0) AS total_cost, \
+             COUNT(*)::bigint AS total_requests, \
+             COALESCE(SUM(be.total_tokens), 0)::bigint AS total_tokens, \
+             MAX(be.timestamp)::text AS last_billed_at \
+             FROM billing_events be \
+             WHERE be.timestamp >= $1 AND be.timestamp < $2 \
+               AND be.team_id = $3 AND be.account_type = 'team' \
+             GROUP BY be.user_id, be.user_name \
+             ORDER BY total_cost DESC LIMIT $4 OFFSET $5",
+        )
+        .bind(&start)
+        .bind(&end)
+        .bind(team_id)
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok((
+            rows.into_iter()
+                .map(|(user_id, user_name, total_cost, total_requests, total_tokens, last_billed_at)| {
+                    (
+                        user_id,
+                        user_name,
+                        Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
+                        total_requests as u64,
+                        total_tokens as u64,
+                        last_billed_at,
+                    )
+                })
+                .collect(),
+            total as usize,
+        ))
+    }
+
+    async fn admin_billing_scoped_period_summary(
+        &self,
+        year: i32,
+        month: u32,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<(Decimal, u64, u64, Vec<(String, u64, Decimal)>), DbError> {
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let (cost, count, tokens, prompt_tokens, prompt_cost, cache_tokens, cache_cost, completion_tokens, completion_cost): (f64, i64, i64, i64, f64, i64, f64, i64, f64) = if let Some(uid) = user_id {
+            if let Some(tid) = team_id {
+                query_as(
+                    "SELECT COALESCE(SUM(cost_amount), 0), \
+                     COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint, \
+                     COALESCE(SUM(prompt_tokens),0)::bigint, \
+                     COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price), 0), \
+                     COALESCE(SUM(cache_hit_input_tokens),0)::bigint, \
+                     COALESCE(SUM(cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
+                     COALESCE(SUM(completion_tokens),0)::bigint, \
+                     COALESCE(SUM(completion_tokens / 1000000.0 * completion_price), 0) \
+                     FROM billing_events \
+                     WHERE timestamp >= $1 AND timestamp < $2 \
+                       AND team_id = $3 AND user_id = $4 AND account_type = 'team'",
+                )
+                .bind(&start)
+                .bind(&end)
+                .bind(tid)
+                .bind(uid)
+                .fetch_one(&self.pool)
+                .await?
+            } else {
+                query_as(
+                    "SELECT COALESCE(SUM(cost_amount), 0), \
+                     COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint, \
+                     COALESCE(SUM(prompt_tokens),0)::bigint, \
+                     COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price), 0), \
+                     COALESCE(SUM(cache_hit_input_tokens),0)::bigint, \
+                     COALESCE(SUM(cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
+                     COALESCE(SUM(completion_tokens),0)::bigint, \
+                     COALESCE(SUM(completion_tokens / 1000000.0 * completion_price), 0) \
+                     FROM billing_events \
+                     WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3",
+                )
+                .bind(&start)
+                .bind(&end)
+                .bind(uid)
+                .fetch_one(&self.pool)
+                .await?
+            }
+        } else if let Some(tid) = team_id {
+            query_as(
+                "SELECT COALESCE(SUM(cost_amount), 0), \
+                 COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint, \
+                 COALESCE(SUM(prompt_tokens),0)::bigint, \
+                 COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price), 0), \
+                 COALESCE(SUM(cache_hit_input_tokens),0)::bigint, \
+                 COALESCE(SUM(cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
+                 COALESCE(SUM(completion_tokens),0)::bigint, \
+                 COALESCE(SUM(completion_tokens / 1000000.0 * completion_price), 0) \
+                 FROM billing_events \
+                 WHERE timestamp >= $1 AND timestamp < $2 \
+                   AND team_id = $3 AND account_type = 'team'",
+            )
+            .bind(&start)
+            .bind(&end)
+            .bind(tid)
+            .fetch_one(&self.pool)
+            .await?
+        } else {
+            query_as(
+                "SELECT COALESCE(SUM(cost_amount), 0), \
+                 COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint, \
+                 COALESCE(SUM(prompt_tokens),0)::bigint, \
+                 COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price), 0), \
+                 COALESCE(SUM(cache_hit_input_tokens),0)::bigint, \
+                 COALESCE(SUM(cache_hit_input_tokens / 1000000.0 * cache_read_price), 0), \
+                 COALESCE(SUM(completion_tokens),0)::bigint, \
+                 COALESCE(SUM(completion_tokens / 1000000.0 * completion_price), 0) \
+                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2",
+            )
+            .bind(&start)
+            .bind(&end)
+            .fetch_one(&self.pool)
+            .await?
+        };
+        Ok((
+            Decimal::try_from(cost).unwrap_or(Decimal::ZERO),
+            count as u64,
+            tokens as u64,
+            vec![
+                (
+                    "input".to_string(),
+                    prompt_tokens as u64,
+                    Decimal::try_from(prompt_cost).unwrap_or(Decimal::ZERO),
+                ),
+                (
+                    "cache_hit".to_string(),
+                    cache_tokens as u64,
+                    Decimal::try_from(cache_cost).unwrap_or(Decimal::ZERO),
+                ),
+                (
+                    "output".to_string(),
+                    completion_tokens as u64,
+                    Decimal::try_from(completion_cost).unwrap_or(Decimal::ZERO),
+                ),
+            ],
+        ))
+    }
+
+    async fn admin_billing_scoped_model_breakdown(
+        &self,
+        year: i32,
+        month: u32,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, Decimal)>, DbError> {
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let rows: Vec<(String, f64)> = if let Some(uid) = user_id {
+            if let Some(tid) = team_id {
+                query_as::<_, (String, f64)>(
+                    "SELECT model, COALESCE(SUM(cost_amount), 0) \
+                     FROM billing_events \
+                     WHERE timestamp >= $1 AND timestamp < $2 \
+                       AND team_id = $3 AND user_id = $4 AND account_type = 'team' \
+                     GROUP BY model ORDER BY 2 DESC",
+                )
+                .bind(&start)
+                .bind(&end)
+                .bind(tid)
+                .bind(uid)
+                .fetch_all(&self.pool)
+                .await?
+            } else {
+                query_as::<_, (String, f64)>(
+                    "SELECT model, COALESCE(SUM(cost_amount), 0) \
+                     FROM billing_events \
+                     WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
+                     GROUP BY model ORDER BY 2 DESC",
+                )
+                .bind(&start)
+                .bind(&end)
+                .bind(uid)
+                .fetch_all(&self.pool)
+                .await?
+            }
+        } else if let Some(tid) = team_id {
+            query_as::<_, (String, f64)>(
+                "SELECT model, COALESCE(SUM(cost_amount), 0) \
+                 FROM billing_events \
+                 WHERE timestamp >= $1 AND timestamp < $2 \
+                   AND team_id = $3 AND account_type = 'team' \
+                 GROUP BY model ORDER BY 2 DESC",
+            )
+            .bind(&start)
+            .bind(&end)
+            .bind(tid)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            query_as::<_, (String, f64)>(
+                "SELECT model, COALESCE(SUM(cost_amount), 0) \
+                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
+                 GROUP BY model ORDER BY 2 DESC",
+            )
+            .bind(&start)
+            .bind(&end)
+            .fetch_all(&self.pool)
+            .await?
+        };
+        Ok(rows
+            .into_iter()
+            .map(|(model, cost)| (model, Decimal::try_from(cost).unwrap_or(Decimal::ZERO)))
+            .collect())
+    }
+
+    async fn admin_billing_scoped_channel_breakdown(
+        &self,
+        year: i32,
+        month: u32,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, String, Decimal)>, DbError> {
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let rows: Vec<(String, String, f64)> = if let Some(uid) = user_id {
+            if let Some(tid) = team_id {
+                query_as::<_, (String, String, f64)>(
+                    "SELECT be.channel_id, COALESCE(c.name, be.channel_id), COALESCE(SUM(be.cost_amount), 0) \
+                     FROM billing_events be LEFT JOIN channels c ON c.id = be.channel_id \
+                     WHERE be.timestamp >= $1 AND be.timestamp < $2 \
+                       AND be.team_id = $3 AND be.user_id = $4 AND be.account_type = 'team' \
+                     GROUP BY be.channel_id, c.name ORDER BY 3 DESC",
+                )
+                .bind(&start)
+                .bind(&end)
+                .bind(tid)
+                .bind(uid)
+                .fetch_all(&self.pool)
+                .await?
+            } else {
+                query_as::<_, (String, String, f64)>(
+                    "SELECT be.channel_id, COALESCE(c.name, be.channel_id), COALESCE(SUM(be.cost_amount), 0) \
+                     FROM billing_events be LEFT JOIN channels c ON c.id = be.channel_id \
+                     WHERE be.timestamp >= $1 AND be.timestamp < $2 AND be.user_id = $3 \
+                     GROUP BY be.channel_id, c.name ORDER BY 3 DESC",
+                )
+                .bind(&start)
+                .bind(&end)
+                .bind(uid)
+                .fetch_all(&self.pool)
+                .await?
+            }
+        } else if let Some(tid) = team_id {
+            query_as::<_, (String, String, f64)>(
+                "SELECT be.channel_id, COALESCE(c.name, be.channel_id), COALESCE(SUM(be.cost_amount), 0) \
+                 FROM billing_events be LEFT JOIN channels c ON c.id = be.channel_id \
+                 WHERE be.timestamp >= $1 AND be.timestamp < $2 \
+                   AND be.team_id = $3 AND be.account_type = 'team' \
+                 GROUP BY be.channel_id, c.name ORDER BY 3 DESC",
+            )
+            .bind(&start)
+            .bind(&end)
+            .bind(tid)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            query_as::<_, (String, String, f64)>(
+                "SELECT be.channel_id, COALESCE(c.name, be.channel_id), COALESCE(SUM(be.cost_amount), 0) \
+                 FROM billing_events be LEFT JOIN channels c ON c.id = be.channel_id \
+                 WHERE be.timestamp >= $1 AND be.timestamp < $2 \
+                 GROUP BY be.channel_id, c.name ORDER BY 3 DESC",
+            )
+            .bind(&start)
+            .bind(&end)
+            .fetch_all(&self.pool)
+            .await?
+        };
+        Ok(rows
+            .into_iter()
+            .map(|(channel_id, name, cost)| {
+                (
+                    channel_id,
+                    name,
+                    Decimal::try_from(cost).unwrap_or(Decimal::ZERO),
+                )
+            })
+            .collect())
+    }
+
+    async fn admin_billing_daily_trend(
+        &self,
+        year: i32,
+        month: u32,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, Decimal, u64, u64)>, DbError> {
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let rows: Vec<(String, f64, i64, i64)> = if let Some(uid) = user_id {
+            if let Some(tid) = team_id {
+                query_as::<_, (String, f64, i64, i64)>(
+                    "SELECT LEFT(timestamp::text, 10) as day, \
+                     COALESCE(SUM(cost_amount), 0), \
+                     COUNT(*)::bigint, \
+                     COALESCE(SUM(total_tokens), 0)::bigint \
+                     FROM billing_events \
+                     WHERE timestamp >= $1 AND timestamp < $2 \
+                       AND team_id = $3 AND user_id = $4 AND account_type = 'team' \
+                     GROUP BY day ORDER BY day ASC",
+                )
+                .bind(&start)
+                .bind(&end)
+                .bind(tid)
+                .bind(uid)
+                .fetch_all(&self.pool)
+                .await?
+            } else {
+                query_as::<_, (String, f64, i64, i64)>(
+                    "SELECT LEFT(timestamp::text, 10) as day, \
+                     COALESCE(SUM(cost_amount), 0), \
+                     COUNT(*)::bigint, \
+                     COALESCE(SUM(total_tokens), 0)::bigint \
+                     FROM billing_events \
+                     WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
+                     GROUP BY day ORDER BY day ASC",
+                )
+                .bind(&start)
+                .bind(&end)
+                .bind(uid)
+                .fetch_all(&self.pool)
+                .await?
+            }
+        } else if let Some(tid) = team_id {
+            query_as::<_, (String, f64, i64, i64)>(
+                "SELECT LEFT(timestamp::text, 10) as day, \
+                 COALESCE(SUM(cost_amount), 0), \
+                 COUNT(*)::bigint, \
+                 COALESCE(SUM(total_tokens), 0)::bigint \
+                 FROM billing_events \
+                 WHERE timestamp >= $1 AND timestamp < $2 \
+                   AND team_id = $3 AND account_type = 'team' \
+                 GROUP BY day ORDER BY day ASC",
+            )
+            .bind(&start)
+            .bind(&end)
+            .bind(tid)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            query_as::<_, (String, f64, i64, i64)>(
+                "SELECT LEFT(timestamp::text, 10) as day, \
+                 COALESCE(SUM(cost_amount), 0), \
+                 COUNT(*)::bigint, \
+                 COALESCE(SUM(total_tokens), 0)::bigint \
+                 FROM billing_events \
+                 WHERE timestamp >= $1 AND timestamp < $2 \
+                 GROUP BY day ORDER BY day ASC",
+            )
+            .bind(&start)
+            .bind(&end)
+            .fetch_all(&self.pool)
+            .await?
+        };
+        Ok(rows
+            .into_iter()
+            .map(|(date, total_cost, total_requests, total_tokens)| {
+                (
+                    date,
+                    Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
+                    total_requests as u64,
+                    total_tokens as u64,
+                )
+            })
+            .collect())
+    }
+
+    async fn admin_billing_scoped_count_daily_deductions(
+        &self,
+        year: i32,
+        month: u32,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<usize, DbError> {
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let (count,): (i64,) = if let Some(uid) = user_id {
+            if let Some(tid) = team_id {
+                query_as(
+                    "SELECT COUNT(DISTINCT LEFT(timestamp::text, 10)) \
+                     FROM billing_events \
+                     WHERE timestamp >= $1 AND timestamp < $2 \
+                       AND team_id = $3 AND user_id = $4 AND account_type = 'team'",
+                )
+                .bind(&start)
+                .bind(&end)
+                .bind(tid)
+                .bind(uid)
+                .fetch_one(&self.pool)
+                .await?
+            } else {
+                query_as(
+                    "SELECT COUNT(DISTINCT LEFT(timestamp::text, 10)) \
+                     FROM billing_events \
+                     WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3",
+                )
+                .bind(&start)
+                .bind(&end)
+                .bind(uid)
+                .fetch_one(&self.pool)
+                .await?
+            }
+        } else if let Some(tid) = team_id {
+            query_as(
+                "SELECT COUNT(DISTINCT LEFT(timestamp::text, 10)) \
+                 FROM billing_events \
+                 WHERE timestamp >= $1 AND timestamp < $2 \
+                   AND team_id = $3 AND account_type = 'team'",
+            )
+            .bind(&start)
+            .bind(&end)
+            .bind(tid)
+            .fetch_one(&self.pool)
+            .await?
+        } else {
+            query_as(
+                "SELECT COUNT(DISTINCT LEFT(timestamp::text, 10)) \
+                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2",
+            )
+            .bind(&start)
+            .bind(&end)
+            .fetch_one(&self.pool)
+            .await?
+        };
+        Ok(count as usize)
+    }
+
+    async fn admin_billing_scoped_daily_deductions_paginated(
+        &self,
+        year: i32,
+        month: u32,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<(String, Decimal, u64)>, DbError> {
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let rows = if let Some(uid) = user_id {
+            if let Some(tid) = team_id {
+                query_as::<_, (String, f64, i64)>(
+                    "SELECT LEFT(timestamp::text, 10) as day, \
+                     COALESCE(SUM(cost_amount), 0), \
+                     COUNT(*)::bigint \
+                     FROM billing_events \
+                     WHERE timestamp >= $1 AND timestamp < $2 \
+                       AND team_id = $3 AND user_id = $4 AND account_type = 'team' \
+                     GROUP BY day ORDER BY day DESC LIMIT $5 OFFSET $6",
+                )
+                .bind(&start)
+                .bind(&end)
+                .bind(tid)
+                .bind(uid)
+                .bind(limit as i64)
+                .bind(offset as i64)
+                .fetch_all(&self.pool)
+                .await?
+            } else {
+                query_as::<_, (String, f64, i64)>(
+                    "SELECT LEFT(timestamp::text, 10) as day, \
+                     COALESCE(SUM(cost_amount), 0), \
+                     COUNT(*)::bigint \
+                     FROM billing_events \
+                     WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
+                     GROUP BY day ORDER BY day DESC LIMIT $4 OFFSET $5",
+                )
+                .bind(&start)
+                .bind(&end)
+                .bind(uid)
+                .bind(limit as i64)
+                .bind(offset as i64)
+                .fetch_all(&self.pool)
+                .await?
+            }
+        } else if let Some(tid) = team_id {
+            query_as::<_, (String, f64, i64)>(
+                "SELECT LEFT(timestamp::text, 10) as day, \
+                 COALESCE(SUM(cost_amount), 0), \
+                 COUNT(*)::bigint \
+                 FROM billing_events \
+                 WHERE timestamp >= $1 AND timestamp < $2 \
+                   AND team_id = $3 AND account_type = 'team' \
+                 GROUP BY day ORDER BY day DESC LIMIT $4 OFFSET $5",
+            )
+            .bind(&start)
+            .bind(&end)
+            .bind(tid)
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            query_as::<_, (String, f64, i64)>(
+                "SELECT LEFT(timestamp::text, 10) as day, \
+                 COALESCE(SUM(cost_amount), 0), \
+                 COUNT(*)::bigint \
+                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
+                 GROUP BY day ORDER BY day DESC LIMIT $3 OFFSET $4",
+            )
+            .bind(&start)
+            .bind(&end)
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&self.pool)
+            .await?
+        };
+        Ok(rows
+            .into_iter()
+            .map(|(d, c, n)| (d, Decimal::try_from(c).unwrap_or(Decimal::ZERO), n as u64))
+            .collect())
+    }
+
+    async fn admin_billing_scoped_period_summary_all(
+        &self,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, Decimal, u64, u64)>, DbError> {
+        let rows = if let Some(uid) = user_id {
+            if let Some(tid) = team_id {
+                query_as::<_, (String, f64, i64, i64)>(
+                    "SELECT LEFT(timestamp::text, 7) AS month, \
+                     COALESCE(SUM(cost_amount), 0), \
+                     COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
+                     FROM billing_events \
+                     WHERE team_id = $1 AND user_id = $2 AND account_type = 'team' \
+                     GROUP BY month ORDER BY month DESC",
+                )
+                .bind(tid)
+                .bind(uid)
+                .fetch_all(&self.pool)
+                .await?
+            } else {
+                query_as::<_, (String, f64, i64, i64)>(
+                    "SELECT LEFT(timestamp::text, 7) AS month, \
+                     COALESCE(SUM(cost_amount), 0), \
+                     COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
+                     FROM billing_events WHERE user_id = $1 \
+                     GROUP BY month ORDER BY month DESC",
+                )
+                .bind(uid)
+                .fetch_all(&self.pool)
+                .await?
+            }
+        } else if let Some(tid) = team_id {
+            query_as::<_, (String, f64, i64, i64)>(
+                "SELECT LEFT(timestamp::text, 7) AS month, \
+                 COALESCE(SUM(cost_amount), 0), \
+                 COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
+                 FROM billing_events \
+                 WHERE team_id = $1 AND account_type = 'team' \
+                 GROUP BY month ORDER BY month DESC",
+            )
+            .bind(tid)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            query_as::<_, (String, f64, i64, i64)>(
+                "SELECT LEFT(timestamp::text, 7) AS month, \
+                 COALESCE(SUM(cost_amount), 0), \
+                 COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
+                 FROM billing_events GROUP BY month ORDER BY month DESC",
+            )
+            .fetch_all(&self.pool)
+            .await?
+        };
+        Ok(rows
+            .into_iter()
+            .map(|(m, c, n, t)| {
+                (
+                    m,
+                    Decimal::try_from(c).unwrap_or(Decimal::ZERO),
+                    n as u64,
+                    t as u64,
+                )
+            })
+            .collect())
+    }
+
+    async fn admin_billing_user_spend_ranking(
+        &self,
+        year: i32,
+        month: u32,
+        limit: usize,
+    ) -> Result<
+        Vec<(
+            Option<String>,
+            Option<String>,
+            u64,
+            bool,
+            String,
+            String,
+            Decimal,
+            u64,
+            u64,
+            u64,
+            Option<String>,
+        )>,
+        DbError,
+    > {
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let rows = query_as::<_, (Option<String>, Option<String>, i64, bool, String, Option<String>, f64, i64, i64, i64, Option<String>)>(
+            "WITH filtered AS ( \
+                SELECT be.* \
+                FROM billing_events be \
+                WHERE be.timestamp >= $1 AND be.timestamp < $2 \
+            ), user_totals AS ( \
+                SELECT \
+                    be.user_id, \
+                    COALESCE(MAX(NULLIF(be.user_name, '')), be.user_id) AS user_name, \
+                    COALESCE(SUM(be.cost_amount), 0) AS total_cost, \
+                    COUNT(*)::bigint AS total_requests, \
+                    COALESCE(SUM(be.total_tokens), 0)::bigint AS total_tokens, \
+                    COUNT(DISTINCT be.api_key_name)::bigint AS api_key_count, \
+                    MAX(be.timestamp)::text AS last_billed_at, \
+                    COUNT(DISTINCT CASE WHEN be.team_id IS NOT NULL THEN be.team_id END)::bigint AS team_count \
+                FROM filtered be \
+                GROUP BY be.user_id \
+            ), user_team_rank AS ( \
+                SELECT \
+                    be.user_id, \
+                    be.team_id, \
+                    t.name AS team_name, \
+                    ROW_NUMBER() OVER ( \
+                        PARTITION BY be.user_id \
+                        ORDER BY COALESCE(SUM(be.cost_amount), 0) DESC, COUNT(*) DESC, be.team_id ASC NULLS LAST \
+                    ) AS rank_no \
+                FROM filtered be \
+                LEFT JOIN teams t ON t.id = be.team_id \
+                WHERE be.team_id IS NOT NULL \
+                GROUP BY be.user_id, be.team_id, t.name \
+            ) \
+            SELECT \
+                utr.team_id, \
+                utr.team_name, \
+                ut.team_count, \
+                (ut.team_count > 1) AS multi_team, \
+                ut.user_id, \
+                ut.user_name, \
+                ut.total_cost, \
+                ut.total_requests, \
+                ut.total_tokens, \
+                ut.api_key_count, \
+                ut.last_billed_at \
+            FROM user_totals ut \
+            LEFT JOIN user_team_rank utr \
+              ON utr.user_id = ut.user_id AND utr.rank_no = 1 \
+            ORDER BY ut.total_cost DESC, ut.total_requests DESC, ut.user_id ASC \
+            LIMIT $3",
+        )
+        .bind(&start)
+        .bind(&end)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(team_id, team_name, team_count, multi_team, user_id, user_name, total_cost, total_requests, total_tokens, api_key_count, last_billed_at)| {
+                let fallback_user_name = user_id.clone();
+                (
+                    team_id,
+                    team_name,
+                    team_count as u64,
+                    multi_team,
+                    user_id,
+                    user_name.unwrap_or(fallback_user_name),
+                    Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
+                    total_requests as u64,
+                    total_tokens as u64,
+                    api_key_count as u64,
+                    last_billed_at,
+                )
+            })
+            .collect())
+    }
+
+    async fn admin_billing_user_api_keys_page(
+        &self,
+        team_id: Option<&str>,
+        user_id: &str,
+        year: i32,
+        month: u32,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(
+        Vec<(Option<String>, Decimal, u64, u64, Option<String>, Option<String>)>,
+        usize,
+    ), DbError> {
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let total: i64 = if let Some(tid) = team_id {
+            query_scalar(
+                "SELECT COUNT(*)::bigint FROM ( \
+                 SELECT be.api_key_name \
+                 FROM billing_events be \
+                 WHERE be.timestamp >= $1 AND be.timestamp < $2 \
+                   AND be.team_id = $3 AND be.user_id = $4 AND be.account_type = 'team' \
+                 GROUP BY be.api_key_name \
+                ) api_keys",
+            )
+            .bind(&start)
+            .bind(&end)
+            .bind(tid)
+            .bind(user_id)
+            .fetch_one(&self.pool)
+            .await?
+        } else {
+            query_scalar(
+                "SELECT COUNT(*)::bigint FROM ( \
+                 SELECT be.api_key_name \
+                 FROM billing_events be \
+                 WHERE be.timestamp >= $1 AND be.timestamp < $2 AND be.user_id = $3 \
+                 GROUP BY be.api_key_name \
+                ) api_keys",
+            )
+            .bind(&start)
+            .bind(&end)
+            .bind(user_id)
+            .fetch_one(&self.pool)
+            .await?
+        };
+
+        let rows = if let Some(tid) = team_id {
+            query_as::<_, (Option<String>, f64, i64, i64, Option<String>, Option<String>)>(
+                "WITH key_stats AS ( \
+                    SELECT \
+                        be.api_key_name, \
+                        COALESCE(SUM(be.cost_amount), 0) AS total_cost, \
+                        COUNT(*)::bigint AS total_requests, \
+                        COALESCE(SUM(be.total_tokens), 0)::bigint AS total_tokens, \
+                        MAX(be.timestamp)::text AS last_request_at \
+                    FROM billing_events be \
+                    WHERE be.timestamp >= $1 AND be.timestamp < $2 \
+                      AND be.team_id = $3 AND be.user_id = $4 AND be.account_type = 'team' \
+                    GROUP BY be.api_key_name \
+                ), key_models AS ( \
+                    SELECT \
+                        be.api_key_name, \
+                        be.model, \
+                        ROW_NUMBER() OVER ( \
+                            PARTITION BY be.api_key_name \
+                            ORDER BY COALESCE(SUM(be.cost_amount), 0) DESC, COUNT(*) DESC, be.model ASC \
+                        ) AS rank_no \
+                    FROM billing_events be \
+                    WHERE be.timestamp >= $1 AND be.timestamp < $2 \
+                      AND be.team_id = $3 AND be.user_id = $4 AND be.account_type = 'team' \
+                    GROUP BY be.api_key_name, be.model \
+                ) \
+                SELECT \
+                    ks.api_key_name, \
+                    ks.total_cost, \
+                    ks.total_requests, \
+                    ks.total_tokens, \
+                    km.model AS primary_model, \
+                    ks.last_request_at \
+                FROM key_stats ks \
+                LEFT JOIN key_models km \
+                  ON km.api_key_name IS NOT DISTINCT FROM ks.api_key_name AND km.rank_no = 1 \
+                ORDER BY ks.total_cost DESC, ks.total_requests DESC, ks.api_key_name ASC NULLS LAST \
+                LIMIT $5 OFFSET $6",
+            )
+            .bind(&start)
+            .bind(&end)
+            .bind(tid)
+            .bind(user_id)
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            query_as::<_, (Option<String>, f64, i64, i64, Option<String>, Option<String>)>(
+                "WITH key_stats AS ( \
+                    SELECT \
+                        be.api_key_name, \
+                        COALESCE(SUM(be.cost_amount), 0) AS total_cost, \
+                        COUNT(*)::bigint AS total_requests, \
+                        COALESCE(SUM(be.total_tokens), 0)::bigint AS total_tokens, \
+                        MAX(be.timestamp)::text AS last_request_at \
+                    FROM billing_events be \
+                    WHERE be.timestamp >= $1 AND be.timestamp < $2 AND be.user_id = $3 \
+                    GROUP BY be.api_key_name \
+                ), key_models AS ( \
+                    SELECT \
+                        be.api_key_name, \
+                        be.model, \
+                        ROW_NUMBER() OVER ( \
+                            PARTITION BY be.api_key_name \
+                            ORDER BY COALESCE(SUM(be.cost_amount), 0) DESC, COUNT(*) DESC, be.model ASC \
+                        ) AS rank_no \
+                    FROM billing_events be \
+                    WHERE be.timestamp >= $1 AND be.timestamp < $2 AND be.user_id = $3 \
+                    GROUP BY be.api_key_name, be.model \
+                ) \
+                SELECT \
+                    ks.api_key_name, \
+                    ks.total_cost, \
+                    ks.total_requests, \
+                    ks.total_tokens, \
+                    km.model AS primary_model, \
+                    ks.last_request_at \
+                FROM key_stats ks \
+                LEFT JOIN key_models km \
+                  ON km.api_key_name IS NOT DISTINCT FROM ks.api_key_name AND km.rank_no = 1 \
+                ORDER BY ks.total_cost DESC, ks.total_requests DESC, ks.api_key_name ASC NULLS LAST \
+                LIMIT $4 OFFSET $5",
+            )
+            .bind(&start)
+            .bind(&end)
+            .bind(user_id)
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&self.pool)
+            .await?
+        };
+
+        Ok((
+            rows.into_iter()
+                .map(|(api_key_name, total_cost, total_requests, total_tokens, primary_model, last_request_at)| {
+                    (
+                        api_key_name,
+                        Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
+                        total_requests as u64,
+                        total_tokens as u64,
+                        primary_model,
+                        last_request_at,
+                    )
+                })
+                .collect(),
+            total as usize,
+        ))
     }
 
     async fn lookup_model_pricing(

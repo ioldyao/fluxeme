@@ -356,6 +356,166 @@ export interface BillingSummary {
   balance: number;
 }
 
+export interface AdminBillingSummary {
+  total_requests: number;
+  total_tokens: number;
+  total_cost: number;
+}
+
+export interface AdminBillingActivity {
+  year: number;
+  month: number;
+  active_teams: number;
+  active_users: number;
+}
+
+export interface AdminBillingTeamSpendRankItem {
+  team_id: string;
+  team_name: string;
+  total_cost: number;
+  total_requests: number;
+  total_tokens: number;
+  active_users: number;
+}
+
+export interface AdminBillingTeamSpendRankingResponse {
+  items: AdminBillingTeamSpendRankItem[];
+}
+
+export interface AdminBillingTeamRow {
+  team_id: string;
+  team_name: string;
+  owner_id: string;
+  total_cost: number;
+  total_requests: number;
+  total_tokens: number;
+  active_users: number;
+  last_billed_at?: string | null;
+}
+
+export interface AdminBillingTeamsResponse {
+  items: AdminBillingTeamRow[];
+  total: number;
+}
+
+export interface AdminBillingTeamUserRow {
+  user_id: string;
+  user_name: string;
+  total_cost: number;
+  total_requests: number;
+  total_tokens: number;
+  last_billed_at?: string | null;
+}
+
+export interface AdminBillingTeamUsersResponse {
+  team: {
+    team_id: string;
+    team_name: string;
+  };
+  year: number;
+  month: number;
+  items: AdminBillingTeamUserRow[];
+  total: number;
+}
+
+export interface AdminBillingApiKeyActivityRow {
+  api_key_name?: string | null;
+  total_requests: number;
+  total_tokens: number;
+  last_request_at?: string | null;
+}
+
+export interface AdminBillingApiKeyActivityResponse {
+  team: {
+    team_id: string;
+    team_name: string;
+  };
+  user_id: string;
+  year: number;
+  month: number;
+  stable_key_identity: boolean;
+  grouping_field: string;
+  items: AdminBillingApiKeyActivityRow[];
+  total: number;
+}
+
+export interface AdminBillingTrendPoint {
+  date: string;
+  total_cost: number;
+  total_requests: number;
+  total_tokens: number;
+}
+
+export interface AdminBillingUserSpendRow {
+  team_id?: string | null;
+  team_name?: string | null;
+  team_count: number;
+  multi_team: boolean;
+  user_id: string;
+  user_name: string;
+  total_cost: number;
+  total_requests: number;
+  total_tokens: number;
+  api_key_count: number;
+  last_billed_at?: string | null;
+}
+
+export interface AdminBillingUserSpendRankingResponse {
+  items: AdminBillingUserSpendRow[];
+}
+
+export interface AdminBillingUserApiKeyCostRow {
+  api_key_name?: string | null;
+  total_cost: number;
+  total_requests: number;
+  total_tokens: number;
+  primary_model?: string | null;
+  last_request_at?: string | null;
+}
+
+export interface AdminBillingUserApiKeyCostResponse {
+  team?: {
+    team_id: string;
+    team_name: string;
+  } | null;
+  user_id: string;
+  year: number;
+  month: number;
+  stable_key_identity: boolean;
+  grouping_field: string;
+  items: AdminBillingUserApiKeyCostRow[];
+  total: number;
+}
+
+export interface AdminBillingApiKeyDetailModelRow {
+  model: string;
+  total_requests: number;
+  total_tokens: number;
+}
+
+export interface AdminBillingApiKeyDetailChannelRow {
+  channel_id: string;
+  total_requests: number;
+}
+
+export interface AdminBillingApiKeyDetailResponse {
+  team?: {
+    team_id: string;
+    team_name: string;
+  } | null;
+  user_id: string;
+  api_key_name: string;
+  year: number;
+  month: number;
+  stable_key_identity: boolean;
+  grouping_field: string;
+  total_requests: number;
+  total_tokens: number;
+  top_models: AdminBillingApiKeyDetailModelRow[];
+  top_channels: AdminBillingApiKeyDetailChannelRow[];
+  recent_requests: UsageRecord[];
+}
+
 export interface ContentFilterRule {
   id: string;
   name: string;

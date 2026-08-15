@@ -134,6 +134,117 @@ pub trait DbBackend: Send + Sync {
         &self,
         user_id: &str,
     ) -> Result<Vec<(String, Decimal, u64, u64)>, DbError>;
+    async fn admin_billing_active_counts(
+        &self,
+        year: i32,
+        month: u32,
+    ) -> Result<(u64, u64), DbError>;
+    async fn admin_billing_team_spend_ranking(
+        &self,
+        year: i32,
+        month: u32,
+        limit: usize,
+    ) -> Result<Vec<(String, String, Decimal, u64, u64, u64)>, DbError>;
+    async fn admin_billing_teams_page(
+        &self,
+        year: i32,
+        month: u32,
+        search: Option<&str>,
+        sort_by: Option<&str>,
+        sort_order: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(Vec<(String, String, String, Decimal, u64, u64, u64, Option<String>)>, usize), DbError>;
+    async fn admin_billing_team_users_page(
+        &self,
+        team_id: &str,
+        year: i32,
+        month: u32,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(Vec<(String, String, Decimal, u64, u64, Option<String>)>, usize), DbError>;
+    async fn admin_billing_scoped_period_summary(
+        &self,
+        year: i32,
+        month: u32,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<(Decimal, u64, u64, Vec<(String, u64, Decimal)>), DbError>;
+    async fn admin_billing_scoped_model_breakdown(
+        &self,
+        year: i32,
+        month: u32,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, Decimal)>, DbError>;
+    async fn admin_billing_scoped_channel_breakdown(
+        &self,
+        year: i32,
+        month: u32,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, String, Decimal)>, DbError>;
+    async fn admin_billing_daily_trend(
+        &self,
+        year: i32,
+        month: u32,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, Decimal, u64, u64)>, DbError>;
+    async fn admin_billing_scoped_count_daily_deductions(
+        &self,
+        year: i32,
+        month: u32,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<usize, DbError>;
+    async fn admin_billing_scoped_daily_deductions_paginated(
+        &self,
+        year: i32,
+        month: u32,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<(String, Decimal, u64)>, DbError>;
+    async fn admin_billing_scoped_period_summary_all(
+        &self,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, Decimal, u64, u64)>, DbError>;
+    async fn admin_billing_user_spend_ranking(
+        &self,
+        year: i32,
+        month: u32,
+        limit: usize,
+    ) -> Result<
+        Vec<(
+            Option<String>,
+            Option<String>,
+            u64,
+            bool,
+            String,
+            String,
+            Decimal,
+            u64,
+            u64,
+            u64,
+            Option<String>,
+        )>,
+        DbError,
+    >;
+    async fn admin_billing_user_api_keys_page(
+        &self,
+        team_id: Option<&str>,
+        user_id: &str,
+        year: i32,
+        month: u32,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(
+        Vec<(Option<String>, Decimal, u64, u64, Option<String>, Option<String>)>,
+        usize,
+    ), DbError>;
     async fn lookup_model_pricing(
         &self,
         model_name: &str,

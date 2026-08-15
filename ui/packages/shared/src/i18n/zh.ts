@@ -678,6 +678,7 @@ const zh: Record<string, string> = {
   'bills.deductionTime': '扣费时间',
   'bills.deductionAmount': '金额',
   'bills.deductionMethod': '方式',
+  'bills.usageMethod': '按量计费',
   'bills.noDeductions': '暂无扣费记录',
   'bills.rechargeInvoices': '充值 / 发票',
   'bills.noData': '暂无数据',
