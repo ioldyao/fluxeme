@@ -2,6 +2,7 @@ import type { ComponentType, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink } from 'react-router-dom';
 import { Cog } from 'lucide-react';
+import { useAuth } from '@fluxeme/shared/src/store/auth';
 import { adminNavRoutes, type NavRoute } from '@/routes/config';
 
 type NavGroup = {
@@ -11,7 +12,7 @@ type NavGroup = {
 
 const ADMIN_NAV_GROUPS: NavGroup[] = [
   { label: 'nav.group.overview', items: ['nav.flowControl'] },
-  { label: 'nav.group.models', items: ['nav.models', 'nav.modelPricing'] },
+  { label: 'nav.group.models', items: ['nav.models', 'nav.modelPricing', 'nav.bills'] },
   { label: 'nav.group.channels', items: ['nav.channels'] },
   { label: 'nav.group.security', items: ['nav.rules', 'nav.moderation', 'nav.users', 'nav.teams', 'nav.rechargeKeys', 'nav.announcements', 'nav.adminSettings'] },
 ];
@@ -61,8 +62,14 @@ type SidebarSectionProps = {
 
 function SidebarSection({ label, items }: SidebarSectionProps) {
   const { t } = useTranslation();
+  const permissions = useAuth((s) => s.permissions);
+  const role = useAuth((s) => s.role);
+  const visibleItems = items.filter((item) => {
+    if (!item.perm) return true;
+    return permissions.length > 0 ? permissions.includes(item.perm) : role === 'admin';
+  });
 
-  if (items.length === 0) {
+  if (visibleItems.length === 0) {
     return null;
   }
 
@@ -74,7 +81,7 @@ function SidebarSection({ label, items }: SidebarSectionProps) {
         </span>
       </div>
       <div className="space-y-0.5">
-        {items.map((item) => (
+        {visibleItems.map((item) => (
           <SidebarNavItem key={item.path ?? item.label} item={item} />
         ))}
       </div>

@@ -982,6 +982,10 @@ impl ClickHouseBackend {
             conditions.push("user_id = ?");
             binds.push(user_id.to_string());
         }
+        if let Some(team_id) = filter.team_id.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("team_id = ?");
+            binds.push(team_id.to_string());
+        }
         if let Some(model) = filter.model.as_deref().filter(|value| !value.is_empty()) {
             conditions.push("model = ?");
             binds.push(model.to_string());
@@ -1011,7 +1015,7 @@ impl ClickHouseBackend {
             binds.push(normalize_clickhouse_datetime(start_date)?);
         }
         if let Some(end_date) = filter.end_date.as_deref().filter(|value| !value.is_empty()) {
-            conditions.push("usage_events.timestamp <= parseDateTimeBestEffort(?)");
+            conditions.push("usage_events.timestamp < parseDateTimeBestEffort(?)");
             binds.push(normalize_clickhouse_datetime(end_date)?);
         }
 
@@ -1026,7 +1030,7 @@ impl ClickHouseBackend {
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
              cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms \
-             FROM usage_events \
+             FROM usage_events AS usage_events \
              {} \
              ORDER BY usage_events.timestamp DESC \
              LIMIT ? OFFSET ?",
@@ -1055,6 +1059,10 @@ impl ClickHouseBackend {
             conditions.push("user_id = ?");
             binds.push(user_id.to_string());
         }
+        if let Some(team_id) = filter.team_id.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("team_id = ?");
+            binds.push(team_id.to_string());
+        }
         if let Some(model) = filter.model.as_deref().filter(|value| !value.is_empty()) {
             conditions.push("model = ?");
             binds.push(model.to_string());
@@ -1084,7 +1092,7 @@ impl ClickHouseBackend {
             binds.push(normalize_clickhouse_datetime(start_date)?);
         }
         if let Some(end_date) = filter.end_date.as_deref().filter(|value| !value.is_empty()) {
-            conditions.push("usage_events.timestamp <= parseDateTimeBestEffort(?)");
+            conditions.push("usage_events.timestamp < parseDateTimeBestEffort(?)");
             binds.push(normalize_clickhouse_datetime(end_date)?);
         }
 
@@ -1112,6 +1120,155 @@ impl ClickHouseBackend {
         Ok(row.count as usize)
     }
 
+    pub async fn query_api_key_activity(
+        &self,
+        filter: &crate::domain::usage::UsageFilter,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<(Option<String>, u64, u64, String)>, String> {
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct ApiKeyRow {
+            api_key_name: Option<String>,
+            total_requests: u64,
+            total_tokens: u64,
+            last_request_at: String,
+        }
+
+        let mut conditions = Vec::new();
+        let mut binds = Vec::new();
+        if let Some(user_id) = filter.user_id.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("user_id = ?");
+            binds.push(user_id.to_string());
+        }
+        if let Some(team_id) = filter.team_id.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("team_id = ?");
+            binds.push(team_id.to_string());
+        }
+        if let Some(model) = filter.model.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("model = ?");
+            binds.push(model.to_string());
+        }
+        if let Some(api_format) = filter
+            .api_format
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push("api_format = ?");
+            binds.push(api_format.to_string());
+        }
+        if let Some(start_date) = filter
+            .start_date
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push("usage_events.timestamp >= parseDateTimeBestEffort(?)");
+            binds.push(normalize_clickhouse_datetime(start_date)?);
+        }
+        if let Some(end_date) = filter.end_date.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("usage_events.timestamp < parseDateTimeBestEffort(?)");
+            binds.push(normalize_clickhouse_datetime(end_date)?);
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        let sql = format!(
+            "SELECT \
+             api_key_name, \
+             count()::UInt64 AS total_requests, \
+             sum(total_tokens)::UInt64 AS total_tokens, \
+             max(toString(timestamp)) AS last_request_at \
+             FROM usage_events \
+             {} \
+             GROUP BY api_key_name \
+             ORDER BY total_requests DESC \
+             LIMIT ? OFFSET ?",
+            where_clause,
+        );
+        let mut query = self.client.query(&sql);
+        for bind in &binds {
+            query = query.bind(bind.as_str());
+        }
+        let rows = query
+            .bind(limit as u64)
+            .bind(offset as u64)
+            .fetch_all::<ApiKeyRow>()
+            .await
+            .map_err(|e| format!("CH query_api_key_activity: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.api_key_name, row.total_requests, row.total_tokens, row.last_request_at))
+            .collect())
+    }
+
+    pub async fn count_api_key_activity(
+        &self,
+        filter: &crate::domain::usage::UsageFilter,
+    ) -> Result<usize, String> {
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct CountRow {
+            count: u64,
+        }
+
+        let mut conditions = Vec::new();
+        let mut binds = Vec::new();
+        if let Some(user_id) = filter.user_id.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("user_id = ?");
+            binds.push(user_id.to_string());
+        }
+        if let Some(team_id) = filter.team_id.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("team_id = ?");
+            binds.push(team_id.to_string());
+        }
+        if let Some(model) = filter.model.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("model = ?");
+            binds.push(model.to_string());
+        }
+        if let Some(api_format) = filter
+            .api_format
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push("api_format = ?");
+            binds.push(api_format.to_string());
+        }
+        if let Some(start_date) = filter
+            .start_date
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push("usage_events.timestamp >= parseDateTimeBestEffort(?)");
+            binds.push(normalize_clickhouse_datetime(start_date)?);
+        }
+        if let Some(end_date) = filter.end_date.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("usage_events.timestamp < parseDateTimeBestEffort(?)");
+            binds.push(normalize_clickhouse_datetime(end_date)?);
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        let sql = format!(
+            "SELECT count()::UInt64 AS count FROM ( \
+             SELECT api_key_name FROM usage_events {} GROUP BY api_key_name \
+            )",
+            where_clause,
+        );
+        let mut query = self.client.query(&sql);
+        for bind in &binds {
+            query = query.bind(bind.as_str());
+        }
+        let row = query
+            .fetch_one::<CountRow>()
+            .await
+            .map_err(|e| format!("CH count_api_key_activity: {e}"))?;
+        Ok(row.count as usize)
+    }
+
     pub async fn get_usage_detail(
         &self,
         request_id: &str,
@@ -1133,6 +1290,130 @@ impl ClickHouseBackend {
             .await
             .map_err(|e| format!("CH get_usage_detail: {e}"))?;
         Ok(row.map(Into::into))
+    }
+
+    pub async fn query_api_key_detail(
+        &self,
+        filter: &crate::domain::usage::UsageFilter,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(
+        u64,
+        u64,
+        Vec<(String, u64, u64)>,
+        Vec<(String, u64)>,
+        Vec<crate::domain::usage::UsageRecord>,
+    ), String> {
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct SummaryRow {
+            total_requests: u64,
+            total_tokens: u64,
+        }
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct ModelRow {
+            model: String,
+            total_requests: u64,
+            total_tokens: u64,
+        }
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct ChannelRow {
+            channel_id: String,
+            total_requests: u64,
+        }
+
+        let mut conditions = Vec::new();
+        let mut binds = Vec::new();
+        if let Some(user_id) = filter.user_id.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("user_id = ?");
+            binds.push(user_id.to_string());
+        }
+        if let Some(team_id) = filter.team_id.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("team_id = ?");
+            binds.push(team_id.to_string());
+        }
+        if let Some(model) = filter.model.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("model = ?");
+            binds.push(model.to_string());
+        }
+        if let Some(api_key_name) = filter.api_key_name.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("api_key_name = ?");
+            binds.push(api_key_name.to_string());
+        }
+        if let Some(api_format) = filter.api_format.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("api_format = ?");
+            binds.push(api_format.to_string());
+        }
+        if let Some(start_date) = filter.start_date.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("usage_events.timestamp >= parseDateTimeBestEffort(?)");
+            binds.push(normalize_clickhouse_datetime(start_date)?);
+        }
+        if let Some(end_date) = filter.end_date.as_deref().filter(|value| !value.is_empty()) {
+            conditions.push("usage_events.timestamp < parseDateTimeBestEffort(?)");
+            binds.push(normalize_clickhouse_datetime(end_date)?);
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        let summary_sql = format!(
+            "SELECT count()::UInt64 AS total_requests, sum(total_tokens)::UInt64 AS total_tokens FROM usage_events {}",
+            where_clause,
+        );
+        let mut summary_query = self.client.query(&summary_sql);
+        for bind in &binds {
+            summary_query = summary_query.bind(bind.as_str());
+        }
+        let summary = summary_query
+            .fetch_one::<SummaryRow>()
+            .await
+            .map_err(|e| format!("CH query_api_key_detail summary: {e}"))?;
+
+        let model_sql = format!(
+            "SELECT model, count()::UInt64 AS total_requests, sum(total_tokens)::UInt64 AS total_tokens \
+             FROM usage_events {} GROUP BY model ORDER BY total_requests DESC, total_tokens DESC LIMIT 5",
+            where_clause,
+        );
+        let mut model_query = self.client.query(&model_sql);
+        for bind in &binds {
+            model_query = model_query.bind(bind.as_str());
+        }
+        let top_models = model_query
+            .fetch_all::<ModelRow>()
+            .await
+            .map_err(|e| format!("CH query_api_key_detail models: {e}"))?
+            .into_iter()
+            .map(|row| (row.model, row.total_requests, row.total_tokens))
+            .collect();
+
+        let channel_sql = format!(
+            "SELECT channel_id, count()::UInt64 AS total_requests \
+             FROM usage_events {} GROUP BY channel_id ORDER BY total_requests DESC LIMIT 5",
+            where_clause,
+        );
+        let mut channel_query = self.client.query(&channel_sql);
+        for bind in &binds {
+            channel_query = channel_query.bind(bind.as_str());
+        }
+        let top_channels = channel_query
+            .fetch_all::<ChannelRow>()
+            .await
+            .map_err(|e| format!("CH query_api_key_detail channels: {e}"))?
+            .into_iter()
+            .map(|row| (row.channel_id, row.total_requests))
+            .collect();
+
+        let requests = self.query_usage(limit, offset, filter).await?;
+
+        Ok((
+            summary.total_requests,
+            summary.total_tokens,
+            top_models,
+            top_channels,
+            requests,
+        ))
     }
 
     pub async fn query_usage_since(

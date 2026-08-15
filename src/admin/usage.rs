@@ -18,6 +18,7 @@ pub(crate) struct UsageQuery {
     limit: Option<usize>,
     offset: Option<usize>,
     user_id: Option<String>,
+    team_id: Option<String>,
     model: Option<String>,
     api_key: Option<String>,
     api_format: Option<String>,
@@ -53,6 +54,7 @@ fn build_usage_filter(
 ) -> Result<UsageFilter, AdminError> {
     Ok(UsageFilter {
         user_id,
+        team_id: query.team_id,
         model: query.model,
         api_key_name: query.api_key,
         api_format: query.api_format,

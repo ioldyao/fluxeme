@@ -678,6 +678,7 @@ const en: Record<string, string> = {
   'bills.deductionTime': 'Time',
   'bills.deductionAmount': 'Amount',
   'bills.deductionMethod': 'Method',
+  'bills.usageMethod': 'Usage Billing',
   'bills.noDeductions': 'No deduction records',
   'bills.rechargeInvoices': 'Recharge & Invoices',
   'bills.noData': 'No data yet',
