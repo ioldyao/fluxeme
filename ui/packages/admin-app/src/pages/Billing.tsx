@@ -24,6 +24,36 @@ const monthLabel = (y: number, m: number) => `${y} 年 ${m} 月${y === curYear &
 
 const COLORS = ['#2563eb', '#7c3aed', '#16a34a', '#f59e0b'];
 
+/** Fill an array with all days of {year, month}, copying known data
+ *  from `source` (keyed by "MM-DD" label) and defaulting to 0 for
+ *  missing days.  Dates after today are excluded. */
+function fillMonthDays<T extends { label: string }>(
+  source: T[],
+  year: number,
+  month: number,
+  _field: 'cost' | 'cost_requests',
+): (T & { cost: number; requests?: number })[] {
+  const today = new Date();
+  const todayStr = `${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const lookup = new Map<string, T>();
+  for (const item of source) lookup.set(item.label, item);
+
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const result: (T & { cost: number; requests?: number })[] = [];
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = `${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    // skip future dates
+    if (key > todayStr) break;
+    const exist = lookup.get(key);
+    if (exist) {
+      result.push(exist as any);
+    } else {
+      result.push({ label: key, cost: 0, requests: 0 } as any);
+    }
+  }
+  return result;
+}
+
 // ── User Billing Overview ─────────────────────────
 
 function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => void }) {
@@ -66,7 +96,10 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
     };
   }, [ranking]);
 
-  const trendData = useMemo(() => (trend ?? []).map((p) => ({ label: p.date.slice(5, 10), cost: p.total_cost })), [trend]);
+  const trendData = useMemo(() => fillMonthDays(
+    (trend ?? []).map((p) => ({ label: p.date.slice(5, 10), cost: p.total_cost })),
+    year, month, 'cost',
+  ), [trend, year, month]);
 
   const handleMonthChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const [y, m] = e.target.value.split('-').map(Number);
@@ -257,7 +290,10 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
     ];
   }, [periodSummary]);
 
-  const trendData = useMemo(() => (trend ?? []).map((p) => ({ label: p.date.slice(5, 10), cost: p.total_cost, requests: p.total_requests })), [trend]);
+  const trendData = useMemo(() => fillMonthDays(
+    (trend ?? []).map((p) => ({ label: p.date.slice(5, 10), cost: p.total_cost, requests: p.total_requests })),
+    year, month, 'cost_requests',
+  ), [trend, year, month]);
   const pieData = useMemo(() => (periodSummary?.by_model ?? []).map((m, i) => ({ name: m.model, value: m.cost, color: COLORS[i % COLORS.length] })), [periodSummary]);
 
   const activeKeys = (apiKeyCosts?.items ?? []).filter((k) => k.total_requests > 0).length;
