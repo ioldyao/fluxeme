@@ -3646,7 +3646,8 @@ impl DbBackend for PgBackend {
                         COALESCE(SUM(be.cost_amount), 0) AS total_cost, \
                         COUNT(*)::bigint AS total_requests, \
                         COALESCE(SUM(be.total_tokens), 0)::bigint AS total_tokens, \
-                        MAX(be.timestamp)::text AS last_request_at \
+                        MAX(be.timestamp)::text AS last_request_at, \
+                        MAX(be.team_id) AS team_id \
                     FROM billing_events be \
                     WHERE be.timestamp >= $1 AND be.timestamp < $2 \
                       AND be.team_id = $3 AND be.user_id = $4 AND be.account_type = 'team' \
@@ -3694,7 +3695,8 @@ impl DbBackend for PgBackend {
                         COALESCE(SUM(be.cost_amount), 0) AS total_cost, \
                         COUNT(*)::bigint AS total_requests, \
                         COALESCE(SUM(be.total_tokens), 0)::bigint AS total_tokens, \
-                        MAX(be.timestamp)::text AS last_request_at \
+                        MAX(be.timestamp)::text AS last_request_at, \
+                        MAX(be.team_id) AS team_id \
                     FROM billing_events be \
                     WHERE be.timestamp >= $1 AND be.timestamp < $2 AND be.user_id = $3 \
                     GROUP BY be.api_key_name \
