@@ -471,6 +471,7 @@ export interface AdminBillingUserApiKeyCostRow {
   total_tokens: number;
   primary_model?: string | null;
   last_request_at?: string | null;
+  team_id?: string | null;
 }
 
 export interface AdminBillingUserApiKeyCostResponse {

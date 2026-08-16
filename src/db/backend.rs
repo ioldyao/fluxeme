@@ -242,7 +242,7 @@ pub trait DbBackend: Send + Sync {
         limit: usize,
         offset: usize,
     ) -> Result<(
-        Vec<(Option<String>, Decimal, u64, u64, Option<String>, Option<String>)>,
+        Vec<(Option<String>, Decimal, u64, u64, Option<String>, Option<String>, Option<String>)>,
         usize,
     ), DbError>;
     async fn lookup_model_pricing(
