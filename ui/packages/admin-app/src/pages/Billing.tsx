@@ -9,8 +9,12 @@ import {
 
 // ── helpers ───────────────────────────────────────
 
-const fmt2 = (n: number) => n.toFixed(2);
-const fmtMoney = (n: number) => `¥${n < 0 ? '-' : ''}${fmt2(Math.abs(n))}`;
+const fmtMoney = (n: number) => {
+  const abs = Math.abs(n);
+  if (abs === 0) return '¥0.00';
+  if (abs < 0.01) return `¥${abs.toFixed(6)}`;
+  return `¥${n < 0 ? '-' : ''}${abs.toFixed(2)}`;
+};
 const fmtShort = (n: number) => {
   if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(2) + 'B';
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
@@ -157,8 +161,8 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={trendData}>
                   <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#98a2b3' }} axisLine={{ stroke: '#e5e7eb' }} />
-                  <YAxis tick={{ fontSize: 10, fill: '#98a2b3' }} axisLine={false} />
-                  <Tooltip />
+                  <YAxis tick={{ fontSize: 10, fill: '#98a2b3' }} axisLine={false} tickFormatter={(v: number) => fmtMoney(v)} />
+                  <Tooltip formatter={(val: number) => fmtMoney(val)} />
                   <Bar dataKey="cost" name="用户消费" fill="#2563eb" radius={[4, 4, 0, 0]} maxBarSize={22} />
                 </BarChart>
               </ResponsiveContainer>
@@ -339,8 +343,8 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={trendData}>
                   <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#98a2b3' }} axisLine={{ stroke: '#e5e7eb' }} />
-                  <YAxis tick={{ fontSize: 10, fill: '#98a2b3' }} axisLine={false} />
-                  <Tooltip />
+                  <YAxis tick={{ fontSize: 10, fill: '#98a2b3' }} axisLine={false} tickFormatter={(v: number) => fmtMoney(v)} />
+                  <Tooltip formatter={(val: number) => typeof val === 'number' ? fmtMoney(val) : val} />
                   <Legend wrapperStyle={{ fontSize: 11, color: '#667085' }} verticalAlign="top" />
                   <Bar dataKey="cost" name="消费金额" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={22} />
                   <Line type="monotone" dataKey="requests" name="请求数" stroke="#7c3aed" strokeWidth={2} dot={false} />
