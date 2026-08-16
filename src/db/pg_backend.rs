@@ -3597,7 +3597,7 @@ impl DbBackend for PgBackend {
         limit: usize,
         offset: usize,
     ) -> Result<(
-        Vec<(Option<String>, Decimal, u64, u64, Option<String>, Option<String>)>,
+        Vec<(Option<String>, Decimal, u64, u64, Option<String>, Option<String>, Option<String>)>,
         usize,
     ), DbError> {
         let start = format!("{}-{:02}-01T00:00:00", year, month);
@@ -3639,7 +3639,7 @@ impl DbBackend for PgBackend {
         };
 
         let rows = if let Some(tid) = team_id {
-            query_as::<_, (Option<String>, f64, i64, i64, Option<String>, Option<String>)>(
+            query_as::<_, (Option<String>, f64, i64, i64, Option<String>, Option<String>, Option<String>)>(
                 "WITH key_stats AS ( \
                     SELECT \
                         be.api_key_name, \
@@ -3670,7 +3670,8 @@ impl DbBackend for PgBackend {
                     ks.total_requests, \
                     ks.total_tokens, \
                     km.model AS primary_model, \
-                    ks.last_request_at \
+                    ks.last_request_at, \
+                    ks.team_id \
                 FROM key_stats ks \
                 LEFT JOIN key_models km \
                   ON km.api_key_name IS NOT DISTINCT FROM ks.api_key_name AND km.rank_no = 1 \
@@ -3686,7 +3687,7 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         } else {
-            query_as::<_, (Option<String>, f64, i64, i64, Option<String>, Option<String>)>(
+            query_as::<_, (Option<String>, f64, i64, i64, Option<String>, Option<String>, Option<String>)>(
                 "WITH key_stats AS ( \
                     SELECT \
                         be.api_key_name, \
@@ -3715,7 +3716,8 @@ impl DbBackend for PgBackend {
                     ks.total_requests, \
                     ks.total_tokens, \
                     km.model AS primary_model, \
-                    ks.last_request_at \
+                    ks.last_request_at, \
+                    ks.team_id \
                 FROM key_stats ks \
                 LEFT JOIN key_models km \
                   ON km.api_key_name IS NOT DISTINCT FROM ks.api_key_name AND km.rank_no = 1 \
@@ -3733,7 +3735,7 @@ impl DbBackend for PgBackend {
 
         Ok((
             rows.into_iter()
-                .map(|(api_key_name, total_cost, total_requests, total_tokens, primary_model, last_request_at)| {
+                .map(|(api_key_name, total_cost, total_requests, total_tokens, primary_model, last_request_at, team_id)| {
                     (
                         api_key_name,
                         Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
@@ -3741,6 +3743,7 @@ impl DbBackend for PgBackend {
                         total_tokens as u64,
                         primary_model,
                         last_request_at,
+                        team_id,
                     )
                 })
                 .collect(),

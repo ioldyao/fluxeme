@@ -260,7 +260,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
   const year = parseInt(searchParams.get('year') ?? '', 10) || curYear;
   const month = parseInt(searchParams.get('month') ?? '', 10) || curMonth;
   const [detailTab, setDetailTab] = useState<'model' | 'deductions'>('model');
-  const [drawer, setDrawer] = useState<{ key: string; alias: string; req: string; cost: string; model: string } | null>(null);
+  const [drawer, setDrawer] = useState<{ key: string; alias: string; req: string; cost: string; model: string; isTeam: boolean } | null>(null);
 
   const { data: periodSummary } = useAdminScopedPeriodSummary(year, month, { user_id: userId });
   const { data: trend } = useAdminBillingDailyTrend(year, month, { user_id: userId });
@@ -433,16 +433,23 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
           <table className="w-full min-w-[900px] border-collapse">
             <thead>
               <tr>
-                {['API Key', '别名', '状态', '请求数', '输入 Token', '缓存命中', '输出 Token', '消费', '主要模型', '最后调用'].map((h) => (
+                {['API Key', '别名', '归属', '状态', '请求数', '输入 Token', '缓存命中', '输出 Token', '消费', '主要模型', '最后调用'].map((h) => (
                   <th key={h} className={`whitespace-nowrap border-b border-[#eef1f5] bg-[#fafbfc] px-3.5 py-[11px] text-[11px] font-bold text-[#667085] ${h === '请求数' || h === '输入 Token' || h === '缓存命中' || h === '输出 Token' || h === '消费' ? 'text-right' : 'text-left'}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {(apiKeyCosts?.items ?? []).map((key) => (
-                <tr key={key.api_key_name ?? 'unknown'} className="cursor-pointer hover:bg-[#fafcff]" onClick={() => setDrawer({ key: key.api_key_name ?? '', alias: key.api_key_name ?? '', req: fmtShort(key.total_requests), cost: fmtMoney(key.total_cost), model: key.primary_model ?? '-' })}>
+                <tr key={key.api_key_name ?? 'unknown'} className="cursor-pointer hover:bg-[#fafcff]" onClick={() => setDrawer({ key: key.api_key_name ?? '', alias: key.api_key_name ?? '', req: fmtShort(key.total_requests), cost: fmtMoney(key.total_cost), model: key.primary_model ?? '-', isTeam: !!key.team_id })}>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] font-mono text-[12px]">{(key.api_key_name ?? '-').slice(0, 12)}••••••</td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">-</td>
+                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">
+                    {key.team_id ? (
+                      <span className="inline-block rounded-md bg-[#fff7ed] px-1.5 py-0.5 text-[11px] font-semibold text-[#c2410c]">团队</span>
+                    ) : (
+                      <span className="inline-block rounded-md bg-[#f2f4f7] px-1.5 py-0.5 text-[11px] font-semibold text-[#475467]">个人</span>
+                    )}
+                  </td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px] font-semibold text-[#15803d]">{key.total_requests > 0 ? '● 活跃' : <span className="text-[#6b7280]">● 无调用</span>}</td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.total_requests)}</td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">-</td>
@@ -551,7 +558,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
                 { label: '请求数', value: drawer.req },
                 { label: '本期消费', value: drawer.cost },
                 { label: '主要模型', value: drawer.model },
-                { label: '消费归属', value: '用户个人账单' },
+                { label: '消费归属', value: drawer.isTeam ? '团队账单' : '用户个人账单' },
               ].map((item) => (
                 <div key={item.label} className="grid grid-cols-[140px_1fr] gap-3 border-b border-[#eef1f5] py-2.5">
                   <div className="text-[#6b7280]">{item.label}</div>
