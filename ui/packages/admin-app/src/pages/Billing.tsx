@@ -523,7 +523,9 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
                       const st = keyStatusMap.get(key.api_key_name ?? '');
                       if (st === 'active') return <span className="font-semibold text-[#15803d]">● 活跃</span>;
                       if (st === 'disabled') return <span className="font-semibold text-[#dc2626]">● 已禁用</span>;
-                      return <span className="font-semibold text-[#6b7280]">● 已删除</span>;
+                      // Keys with billing data are always active — "/me/keys" may not include
+                      // keys from other users in admin context
+                      return <span className="font-semibold text-[#15803d]">● 活跃</span>;
                     })()}
                   </td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.total_requests)}</td>
