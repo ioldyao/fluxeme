@@ -267,6 +267,23 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
   const { data: apiKeyCosts } = useAdminBillingUserApiKeyCosts(null, userId, year, month, { limit: 50 });
   const { data: deductions } = useAdminDeductions(year, month, 1, 30, { user_id: userId });
 
+  // Fetch user's teams
+  // const { data: userTeams } = useQuery({
+  //   queryKey: ['admin-user-teams', userId],
+  //   queryFn: () => api<Array<{ id: string; name: string }>>('/admin/users/' + userId + '/teams'),
+  //   enabled: false,
+  // });
+
+  // For now, extract team info from apiKeyCosts team_id values
+  const userTeamInfo = useMemo(() => {
+    const keys = apiKeyCosts?.items ?? [];
+    const teamIds = new Set(keys.filter((k) => k.team_id).map((k) => k.team_id));
+    if (teamIds.size > 0) {
+      return Array.from(teamIds).map((tid) => ({ team_id: tid, team_name: tid }));
+    }
+    return [];
+  }, [apiKeyCosts]);
+
   const m = useMemo(() => {
     if (!periodSummary) return null;
     const ch = periodSummary.token_cost_breakdown?.find((t) => t.token_type === 'cache_hit');
@@ -418,6 +435,20 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
                 <div className="break-words font-semibold">个人账户</div>
               </div>
             </div>
+            {userTeamInfo.length > 0 && (
+              <div className="mt-4 rounded-lg border border-[#e7eaf0] bg-[#fafbfc] p-3">
+                <div className="text-[11px] font-semibold text-[#6b7280]">所属团队</div>
+                {userTeamInfo.map((t) => (
+                  <div key={t.team_id} className="mt-2 flex items-center gap-2.5">
+                    <div className="grid h-[30px] w-[30px] place-items-center rounded-lg bg-[#eef2ff] text-[11px] font-bold text-[#4f46e5]">{(t.team_name ?? 'TM').slice(0, 2).toUpperCase()}</div>
+                    <div>
+                      <div className="text-[12px] font-semibold text-[#111827]">{t.team_name}</div>
+                      <div className="text-[10px] text-[#6b7280]">{t.team_id}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </section>
