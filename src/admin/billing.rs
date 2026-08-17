@@ -658,6 +658,9 @@ pub(crate) struct AdminBillingUserApiKeyCostRow {
     total_cost: Decimal,
     total_requests: u64,
     total_tokens: u64,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    cache_hit_input_tokens: u64,
     primary_model: Option<String>,
     last_request_at: Option<String>,
     #[serde(default)]
@@ -971,12 +974,15 @@ pub(crate) async fn admin_billing_user_api_key_costs(
 
     let items = items
         .into_iter()
-        .map(|(api_key_name, total_cost, total_requests, total_tokens, primary_model, last_request_at, _team_id)| {
+        .map(|(api_key_name, total_cost, total_requests, total_tokens, prompt_tokens, completion_tokens, cache_hit_input_tokens, primary_model, last_request_at, _team_id)| {
             AdminBillingUserApiKeyCostRow {
                 api_key_name,
                 total_cost,
                 total_requests,
                 total_tokens,
+                prompt_tokens,
+                completion_tokens,
+                cache_hit_input_tokens,
                 primary_model,
                 last_request_at,
                 team_id: _team_id,
@@ -1101,12 +1107,15 @@ pub(crate) async fn admin_billing_user_api_key_costs_global(
 
     let items = items
         .into_iter()
-        .map(|(api_key_name, total_cost, total_requests, total_tokens, primary_model, last_request_at, _team_id)| {
+        .map(|(api_key_name, total_cost, total_requests, total_tokens, prompt_tokens, completion_tokens, cache_hit_input_tokens, primary_model, last_request_at, _team_id)| {
             AdminBillingUserApiKeyCostRow {
                 api_key_name,
                 total_cost,
                 total_requests,
                 total_tokens,
+                prompt_tokens,
+                completion_tokens,
+                cache_hit_input_tokens,
                 primary_model,
                 last_request_at,
                 team_id: _team_id,

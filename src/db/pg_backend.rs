@@ -3597,7 +3597,7 @@ impl DbBackend for PgBackend {
         limit: usize,
         offset: usize,
     ) -> Result<(
-        Vec<(Option<String>, Decimal, u64, u64, Option<String>, Option<String>, Option<String>)>,
+        Vec<(Option<String>, Decimal, u64, u64, u64, u64, u64, Option<String>, Option<String>, Option<String>)>,
         usize,
     ), DbError> {
         let start = format!("{}-{:02}-01T00:00:00", year, month);
@@ -3639,13 +3639,16 @@ impl DbBackend for PgBackend {
         };
 
         let rows = if let Some(tid) = team_id {
-            query_as::<_, (Option<String>, f64, i64, i64, Option<String>, Option<String>, Option<String>)>(
+            query_as::<_, (Option<String>, f64, i64, i64, i64, i64, i64, Option<String>, Option<String>, Option<String>)>(
                 "WITH key_stats AS ( \
                     SELECT \
                         be.api_key_name, \
                         COALESCE(SUM(be.cost_amount), 0) AS total_cost, \
                         COUNT(*)::bigint AS total_requests, \
                         COALESCE(SUM(be.total_tokens), 0)::bigint AS total_tokens, \
+                        COALESCE(SUM(be.prompt_tokens), 0)::bigint AS prompt_tokens, \
+                        COALESCE(SUM(be.completion_tokens), 0)::bigint AS completion_tokens, \
+                        COALESCE(SUM(be.cache_hit_input_tokens), 0)::bigint AS cache_hit_input_tokens, \
                         MAX(be.timestamp)::text AS last_request_at, \
                         MAX(be.team_id) AS team_id \
                     FROM billing_events be \
@@ -3670,6 +3673,9 @@ impl DbBackend for PgBackend {
                     ks.total_cost, \
                     ks.total_requests, \
                     ks.total_tokens, \
+                    ks.prompt_tokens, \
+                    ks.completion_tokens, \
+                    ks.cache_hit_input_tokens, \
                     km.model AS primary_model, \
                     ks.last_request_at, \
                     ks.team_id \
@@ -3688,13 +3694,16 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         } else {
-            query_as::<_, (Option<String>, f64, i64, i64, Option<String>, Option<String>, Option<String>)>(
+            query_as::<_, (Option<String>, f64, i64, i64, i64, i64, i64, Option<String>, Option<String>, Option<String>)>(
                 "WITH key_stats AS ( \
                     SELECT \
                         be.api_key_name, \
                         COALESCE(SUM(be.cost_amount), 0) AS total_cost, \
                         COUNT(*)::bigint AS total_requests, \
                         COALESCE(SUM(be.total_tokens), 0)::bigint AS total_tokens, \
+                        COALESCE(SUM(be.prompt_tokens), 0)::bigint AS prompt_tokens, \
+                        COALESCE(SUM(be.completion_tokens), 0)::bigint AS completion_tokens, \
+                        COALESCE(SUM(be.cache_hit_input_tokens), 0)::bigint AS cache_hit_input_tokens, \
                         MAX(be.timestamp)::text AS last_request_at, \
                         MAX(be.team_id) AS team_id \
                     FROM billing_events be \
@@ -3717,6 +3726,9 @@ impl DbBackend for PgBackend {
                     ks.total_cost, \
                     ks.total_requests, \
                     ks.total_tokens, \
+                    ks.prompt_tokens, \
+                    ks.completion_tokens, \
+                    ks.cache_hit_input_tokens, \
                     km.model AS primary_model, \
                     ks.last_request_at, \
                     ks.team_id \
@@ -3737,12 +3749,15 @@ impl DbBackend for PgBackend {
 
         Ok((
             rows.into_iter()
-                .map(|(api_key_name, total_cost, total_requests, total_tokens, primary_model, last_request_at, team_id)| {
+                .map(|(api_key_name, total_cost, total_requests, total_tokens, prompt_tokens, completion_tokens, cache_hit_input_tokens, primary_model, last_request_at, team_id)| {
                     (
                         api_key_name,
                         Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
                         total_requests as u64,
                         total_tokens as u64,
+                        prompt_tokens as u64,
+                        completion_tokens as u64,
+                        cache_hit_input_tokens as u64,
                         primary_model,
                         last_request_at,
                         team_id,
