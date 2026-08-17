@@ -302,10 +302,14 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
   const m = useMemo(() => {
     if (!periodSummary) return null;
     const ch = periodSummary.token_cost_breakdown?.find((t) => t.token_type === 'cache_hit');
+    const inputRow = periodSummary.token_cost_breakdown?.find((t) => t.token_type === 'input');
+    const outputRow = periodSummary.token_cost_breakdown?.find((t) => t.token_type === 'output');
     return {
       cost: periodSummary.total_cost,
       req: periodSummary.total_requests,
       tok: periodSummary.total_tokens,
+      inputTok: inputRow?.total_tokens ?? 0,
+      outputTok: outputRow?.total_tokens ?? 0,
       cacheTok: ch?.total_tokens ?? 0,
       cacheSave: (ch?.total_cost ?? 0) * 3,
     };
@@ -355,8 +359,8 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
 
       <section className="grid grid-cols-5 gap-3 max-[1200px]:grid-cols-3 max-[850px]:grid-cols-2">
         <MetricCard label="本期消费" value={m ? fmtMoney(m.cost) : '-'} icon="¥" foot="当前计费周期" />
-        <MetricCard label="API 请求" value={m ? fmtShort(m.req) : '-'} icon="↗" foot="成功率" />
-        <MetricCard label="总 Token" value={m ? fmtShort(m.tok) : '-'} icon="T" foot="输入 · 输出" />
+        <MetricCard label="API 请求" value={m ? fmtShort(m.req) : '-'} icon="↗" foot={m ? `成功率 ${(((m.req - 0) / Math.max(m.req, 1)) * 100).toFixed(1)}%` : ''} />
+        <MetricCard label="总 Token" value={m ? fmtShort(m.tok) : '-'} icon="T" foot={m ? `输入 ${fmtShort(m.inputTok)} · 输出 ${fmtShort(m.outputTok)}` : ''} />
         <MetricCard label="缓存命中 Token" value={m ? fmtShort(m.cacheTok) : '-'} icon="C" foot={m ? `节省约 ${fmtMoney(m.cacheSave)}` : ''} />
         <MetricCard label="活跃 API Key" value={m ? `${activeKeys} / ${totalKeys}` : '-'} icon="K" foot="本期有调用" />
       </section>
