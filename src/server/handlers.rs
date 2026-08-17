@@ -2669,7 +2669,7 @@ pub async fn responses(
             .routing
             .route(&user.user_id, &model, user.team_id.as_deref())
             .await?;
-    let _orig_model = if model != resolved_model {
+    let orig_model = if model != resolved_model {
         model.clone()
     } else {
         String::new()
@@ -2684,79 +2684,489 @@ pub async fn responses(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    // Broadcast route-decision event
+    let accepted_at = Utc::now().to_rfc3339();
+    state.event_bus.route_decided(RouteDecided {
+        timestamp: accepted_at.clone(),
+        request_id: request_id.clone(),
+        model: resolved_model.clone(),
+        channel_id: channel_id.clone(),
+        endpoint_id: route.endpoint.id,
+        user_id: user.user_id.clone(),
+    });
+    state.flow_tracker.mark_accepted(
+        request_id.clone(),
+        resolved_model.clone(),
+        channel_id.clone(),
+        route.endpoint.id,
+        accepted_at,
+    );
+
+    let body_str = serde_json::to_string(&body).unwrap_or_default();
+
+    // ── Content filter check ──
+    if state.content_filter.is_enabled() {
+        match state
+            .content_filter
+            .check_request(&body_str, Some(&channel_id))
+        {
+            crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
+                state.flow_tracker.mark_completed(&request_id);
+                return Err(GatewayError::BadRequest(format!(
+                    "Request blocked by content filter rule: {}",
+                    rule_name
+                )));
+            }
+            crate::service::moderation::FilterOutcome::Masked(masked) => {
+                if let Ok(v) = serde_json::from_str(&masked) {
+                    body = v;
+                }
+            }
+            crate::service::moderation::FilterOutcome::Pass => {}
+        }
+    }
+
     if is_streaming {
-        // Add stream_options.include_usage so upstream returns usage in the final event
-        match body.get_mut("stream_options") {
-            Some(Value::Object(opts)) => {
-                opts.insert("include_usage".into(), Value::Bool(true));
-            }
-            _ => {
-                body["stream_options"] = serde_json::json!({"include_usage": true});
-            }
-        }
-        let stream_result = route.adapter.responses_stream(&route.endpoint, body.clone()).await;
-        match stream_result {
-            Ok(stream) => {
-                route.report_success();
-                let body_stream =
-                    stream.map(|data| Ok::<_, std::convert::Infallible>(Bytes::from(data)));
-                Ok(Response::builder()
-                    .header("content-type", "text/event-stream")
-                    .header("cache-control", "no-cache")
-                    .header("connection", "keep-alive")
-                    .body(Body::from_stream(body_stream))
-                    .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
-            }
-            Err(e) => {
-                route.report_failure();
-                let latency_ms = start.elapsed().as_millis() as u64;
-                state.usage.record(UsageRecord {
-                    timestamp: Utc::now().to_rfc3339(),
-                    request_id,
-                    user_id: user.user_id,
-                    user_name: user.user_name,
-                    channel_id: route.channel_id,
-                    model,
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    total_tokens: 0,
-                    cache_hit_input_tokens: 0,
-                    cache_write_tokens: 0,
-                    latency_ms,
-                    status_code: 502,
-                    success: false,
-                    request_body: Some(serde_json::to_string(&body).unwrap_or_default()),
-                    response_body: Some(format!("{{\"error\":\"{}\"}}", e.0)),
-                    reasoning_body: None,
-                    api_key_name: Some(user.api_key_name),
-                    api_format: "openai".to_string(),
-                    stream: true,
-                    prompt_price: Decimal::ZERO,
-                    completion_price: Decimal::ZERO,
-                    cache_read_price: Decimal::ZERO,
-                    client_ip: Some(client_ip),
-                    endpoint_id: route.endpoint.id,
-                    endpoint_url: Some(route.endpoint.url.clone()),
-                    original_model: String::new(),
-                    team_id: user.team_id,
-                    ttft_ms: None,
-                    account_type: Some("user".to_string()),
-                });
-                Err(GatewayError::Upstream(e.0))
-            }
-        }
-    } else {
-        relay_to_upstream(
+        handle_responses_streaming(
             &state,
-            &headers,
+            &mut route,
             body,
-            "/v1/responses",
             request_id,
+            user.user_id,
+            user.user_name,
+            user.api_key_name,
+            user.team_id,
+            resolved_model,
+            orig_model,
+            start,
+            client_ip,
+        )
+        .await
+    } else {
+        handle_responses_non_streaming(
+            &state,
+            &mut route,
+            body,
+            request_id,
+            user.user_id,
+            user.user_name,
+            user.api_key_name,
+            user.team_id,
+            resolved_model,
+            orig_model,
             start,
             client_ip,
         )
         .await
     }
+}
+
+/// Non-streaming POST /v1/responses — extract usage from the response body
+/// Responses API format: {usage: {input_tokens, input_tokens_details: {cached_tokens}, output_tokens}}
+async fn handle_responses_non_streaming(
+    state: &AppState,
+    route: &mut RouteTarget,
+    body: Value,
+    request_id: String,
+    user_id: String,
+    user_name: String,
+    api_key_name: String,
+    team_id: Option<String>,
+    model: String,
+    orig_model: String,
+    start: Instant,
+    client_ip: String,
+) -> Result<Response, GatewayError> {
+    let req_body = serde_json::to_string(&body).ok();
+    state
+        .flow_tracker
+        .mark_upstream_started(&request_id, Utc::now().to_rfc3339());
+
+    let result = route
+        .adapter
+        .relay(&route.endpoint, "/v1/responses", body.clone())
+        .await;
+
+    match result {
+        Ok(resp) => {
+            route.report_success();
+            let latency_ms = start.elapsed().as_millis() as u64;
+
+            // Responses API usage: input_tokens, input_tokens_details.cached_tokens, output_tokens
+            let input_tokens = resp["usage"]["input_tokens"].as_u64().unwrap_or(0);
+            let output_tokens = resp["usage"]["output_tokens"].as_u64().unwrap_or(0);
+            let cache_hit = resp["usage"]["input_tokens_details"]["cached_tokens"]
+                .as_u64()
+                .unwrap_or(0);
+
+            state.usage.record(UsageRecord {
+                timestamp: Utc::now().to_rfc3339(),
+                request_id,
+                user_id: user_id,
+                user_name: user_name,
+                channel_id: route.channel_id.clone(),
+                model,
+                prompt_tokens: input_tokens,
+                completion_tokens: output_tokens,
+                total_tokens: input_tokens + output_tokens,
+                cache_hit_input_tokens: cache_hit,
+                cache_write_tokens: 0,
+                latency_ms,
+                status_code: 200,
+                success: true,
+                request_body: req_body,
+                response_body: serde_json::to_string(&resp).ok(),
+                reasoning_body: None,
+                api_key_name: Some(api_key_name.clone()),
+                api_format: "openai".to_string(),
+                stream: false,
+                prompt_price: Decimal::ZERO,
+                completion_price: Decimal::ZERO,
+                cache_read_price: Decimal::ZERO,
+                client_ip: Some(client_ip),
+                endpoint_id: route.endpoint.id,
+                endpoint_url: Some(route.endpoint.url.clone()),
+                original_model: orig_model,
+                team_id: team_id.clone(),
+                ttft_ms: None,
+                account_type: Some("user".to_string()),
+            });
+
+            Ok(Json(resp).into_response())
+        }
+        Err(e) if e.kind() == ErrorKind::ConnectFailed => {
+            route.report_failure();
+            let latency_ms = start.elapsed().as_millis() as u64;
+            state.usage.record(UsageRecord {
+                timestamp: Utc::now().to_rfc3339(),
+                request_id,
+                user_id: user_id.clone(),
+                user_name: user_name.clone(),
+                channel_id: route.channel_id.clone(),
+                model,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                cache_hit_input_tokens: 0,
+                cache_write_tokens: 0,
+                latency_ms,
+                status_code: 502,
+                success: false,
+                request_body: req_body,
+                response_body: Some(format!("{{\"error\":\"{}\"}}", e.0)),
+                reasoning_body: None,
+                api_key_name: Some(api_key_name.clone()),
+                api_format: "openai".to_string(),
+                stream: false,
+                prompt_price: Decimal::ZERO,
+                completion_price: Decimal::ZERO,
+                cache_read_price: Decimal::ZERO,
+                client_ip: Some(client_ip),
+                endpoint_id: route.endpoint.id,
+                endpoint_url: Some(route.endpoint.url.clone()),
+                original_model: orig_model,
+                team_id: team_id.clone(),
+                ttft_ms: None,
+                account_type: Some("user".to_string()),
+            });
+            Err(GatewayError::Upstream(e.0))
+        }
+        Err(e) if is_retryable_error(&e) => {
+            route.report_failure();
+            let latency_ms = start.elapsed().as_millis() as u64;
+            state.usage.record(UsageRecord {
+                timestamp: Utc::now().to_rfc3339(),
+                request_id,
+                user_id: user_id.clone(),
+                user_name: user_name.clone(),
+                channel_id: route.channel_id.clone(),
+                model,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                cache_hit_input_tokens: 0,
+                cache_write_tokens: 0,
+                latency_ms,
+                status_code: 502,
+                success: false,
+                request_body: req_body,
+                response_body: Some(format!("{{\"error\":\"{}\"}}", e.0)),
+                reasoning_body: None,
+                api_key_name: Some(api_key_name.clone()),
+                api_format: "openai".to_string(),
+                stream: false,
+                prompt_price: Decimal::ZERO,
+                completion_price: Decimal::ZERO,
+                cache_read_price: Decimal::ZERO,
+                client_ip: Some(client_ip),
+                endpoint_id: route.endpoint.id,
+                endpoint_url: Some(route.endpoint.url.clone()),
+                original_model: orig_model,
+                team_id: team_id.clone(),
+                ttft_ms: None,
+                account_type: Some("user".to_string()),
+            });
+            Err(GatewayError::Upstream(e.0))
+        }
+        Err(e) => {
+            let latency_ms = start.elapsed().as_millis() as u64;
+            state.usage.record(UsageRecord {
+                timestamp: Utc::now().to_rfc3339(),
+                request_id,
+                user_id: user_id.clone(),
+                user_name: user_name.clone(),
+                channel_id: route.channel_id.clone(),
+                model,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                cache_hit_input_tokens: 0,
+                cache_write_tokens: 0,
+                latency_ms,
+                status_code: 502,
+                success: false,
+                request_body: req_body,
+                response_body: Some(format!("{{\"error\":\"{}\"}}", e.0)),
+                reasoning_body: None,
+                api_key_name: Some(api_key_name.clone()),
+                api_format: "openai".to_string(),
+                stream: false,
+                prompt_price: Decimal::ZERO,
+                completion_price: Decimal::ZERO,
+                cache_read_price: Decimal::ZERO,
+                client_ip: Some(client_ip),
+                endpoint_id: route.endpoint.id,
+                endpoint_url: Some(route.endpoint.url.clone()),
+                original_model: orig_model,
+                team_id: team_id.clone(),
+                ttft_ms: None,
+                account_type: Some("user".to_string()),
+            });
+            Err(GatewayError::Upstream(e.0))
+        }
+    }
+}
+
+/// Streaming POST /v1/responses — parse usage from the SSE response.completed event
+async fn handle_responses_streaming(
+    state: &AppState,
+    route: &mut RouteTarget,
+    mut body: Value,
+    request_id: String,
+    user_id: String,
+    user_name: String,
+    api_key_name: String,
+    team_id: Option<String>,
+    model: String,
+    orig_model: String,
+    start: Instant,
+    client_ip: String,
+) -> Result<Response, GatewayError> {
+    // Inject stream_options so upstream returns usage in the final event
+    match body.get_mut("stream_options") {
+        Some(Value::Object(opts)) => {
+            opts.insert("include_usage".into(), Value::Bool(true));
+        }
+        _ => {
+            body["stream_options"] = serde_json::json!({"include_usage": true});
+        }
+    }
+
+    let req_body = serde_json::to_string(&body).ok();
+    state
+        .flow_tracker
+        .mark_upstream_started(&request_id, Utc::now().to_rfc3339());
+
+    let stream_result = route
+        .adapter
+        .responses_stream(&route.endpoint, body.clone())
+        .await;
+
+    match stream_result {
+        Ok(stream) => {
+            route.report_success();
+
+            // Wrap the stream to capture response.completed usage
+            let resp_buf = Arc::new(std::sync::Mutex::new(String::new()));
+            let recorded = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let usage_state = state.usage.clone();
+            let rid = request_id.clone();
+            let uid = user_id.clone();
+            let uname = user_name.clone();
+            let akn = api_key_name.clone();
+            let chid = route.channel_id.clone();
+            let mdl = model.clone();
+            let orig_mdl = orig_model.clone();
+            let st = start;
+            let rbody = req_body.clone();
+            let cip = client_ip.clone();
+            let eid = route.endpoint.id;
+            let eurl = route.endpoint.url.clone();
+            let tid = team_id.clone();
+            let buf2 = resp_buf.clone();
+            let rec2 = recorded.clone();
+
+            let tracing_stream = stream.map(move |data| {
+                let mut b = buf2.lock().unwrap();
+                b.push_str(&data);
+                data
+            });
+
+            let on_done = move || {
+                if rec2.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                let latency_ms = st.elapsed().as_millis() as u64;
+                let buf = resp_buf.lock().unwrap().clone();
+                let (input_tokens, output_tokens, cache_hit) = parse_responses_sse_usage(&buf);
+                usage_state.record(UsageRecord {
+                    timestamp: Utc::now().to_rfc3339(),
+                    request_id: rid,
+                    user_id: uid,
+                    user_name: uname,
+                    channel_id: chid,
+                    model: mdl,
+                    prompt_tokens: input_tokens,
+                    completion_tokens: output_tokens,
+                    total_tokens: input_tokens + output_tokens,
+                    cache_hit_input_tokens: cache_hit,
+                    cache_write_tokens: 0,
+                    latency_ms,
+                    status_code: 200,
+                    success: true,
+                    request_body: rbody,
+                    response_body: None,
+                    reasoning_body: None,
+                    api_key_name: Some(akn),
+                    api_format: "openai".to_string(),
+                    stream: true,
+                    prompt_price: Decimal::ZERO,
+                    completion_price: Decimal::ZERO,
+                    cache_read_price: Decimal::ZERO,
+                    client_ip: Some(cip),
+                    endpoint_id: eid,
+                    endpoint_url: Some(eurl),
+                    original_model: orig_mdl,
+                    team_id: tid,
+                    ttft_ms: None,
+                    account_type: Some("user".to_string()),
+                });
+            };
+
+            // Wrap in a struct that calls on_done on Drop
+            struct TracingStream<S> {
+                inner: S,
+                on_done: Option<Box<dyn FnOnce() + Send>>,
+            }
+            impl<S: futures::Stream<Item = String> + Unpin> futures::Stream for TracingStream<S> {
+                type Item = String;
+                fn poll_next(
+                    mut self: std::pin::Pin<&mut Self>,
+                    cx: &mut std::task::Context<'_>,
+                ) -> std::task::Poll<Option<Self::Item>> {
+                    std::pin::Pin::new(&mut self.inner).poll_next(cx)
+                }
+            }
+            impl<S> Drop for TracingStream<S> {
+                fn drop(&mut self) {
+                    if let Some(f) = self.on_done.take() {
+                        f();
+                    }
+                }
+            }
+
+            let tracing_stream = TracingStream {
+                inner: tracing_stream,
+                on_done: Some(Box::new(on_done)),
+            };
+
+            let body_stream = tracing_stream
+                .map(|data| Ok::<_, std::convert::Infallible>(Bytes::from(data)));
+
+            Ok(Response::builder()
+                .header("content-type", "text/event-stream")
+                .header("cache-control", "no-cache")
+                .header("connection", "keep-alive")
+                .body(Body::from_stream(body_stream))
+                .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
+        }
+        Err(e) => {
+            route.report_failure();
+            let latency_ms = start.elapsed().as_millis() as u64;
+            state.usage.record(UsageRecord {
+                timestamp: Utc::now().to_rfc3339(),
+                request_id,
+                user_id: user_id.clone(),
+                user_name: user_name.clone(),
+                channel_id: route.channel_id.clone(),
+                model,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                cache_hit_input_tokens: 0,
+                cache_write_tokens: 0,
+                latency_ms,
+                status_code: 502,
+                success: false,
+                request_body: req_body,
+                response_body: Some(format!("{{\"error\":\"{}\"}}", e.0)),
+                reasoning_body: None,
+                api_key_name: Some(api_key_name.clone()),
+                api_format: "openai".to_string(),
+                stream: true,
+                prompt_price: Decimal::ZERO,
+                completion_price: Decimal::ZERO,
+                cache_read_price: Decimal::ZERO,
+                client_ip: Some(client_ip),
+                endpoint_id: route.endpoint.id,
+                endpoint_url: Some(route.endpoint.url.clone()),
+                original_model: orig_model,
+                team_id: team_id.clone(),
+                ttft_ms: None,
+                account_type: Some("user".to_string()),
+            });
+            Err(GatewayError::Upstream(e.0))
+        }
+    }
+}
+
+/// Extract token usage from Responses API SSE events.
+/// Looks for response.completed event with usage data.
+/// Format: {response: {usage: {input_tokens, input_tokens_details: {cached_tokens}, output_tokens}}}
+fn parse_responses_sse_usage(data: &str) -> (u64, u64, u64) {
+    let mut input_tokens = 0u64;
+    let mut output_tokens = 0u64;
+    let mut cache_hit = 0u64;
+    for line in data.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || !trimmed.starts_with("data: ") {
+            continue;
+        }
+        let json_str = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
+        if let Ok(val) = serde_json::from_str::<Value>(json_str) {
+            // Look for response.completed event: {type: "response.completed", response: {usage: {...}}}
+            if val.get("type").and_then(|t| t.as_str()) == Some("response.completed") {
+                if let Some(resp) = val.get("response") {
+                    if let Some(usage) = resp.get("usage") {
+                        if let Some(p) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
+                            input_tokens = p;
+                        }
+                        if let Some(c) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
+                            output_tokens = c;
+                        }
+                        if let Some(details) = usage.get("input_tokens_details") {
+                            if let Some(cached) =
+                                details.get("cached_tokens").and_then(|v| v.as_u64())
+                            {
+                                cache_hit = cached;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (input_tokens, output_tokens, cache_hit)
 }
 
 pub async fn embeddings(
