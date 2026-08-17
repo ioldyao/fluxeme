@@ -15,10 +15,8 @@ import { PROVIDERS, PROVIDER_DISPLAY } from "@fluxeme/shared/src/constants/provi
 
 const FIXED_BASE_URLS: Record<string, string> = {
   deepseek: 'https://api.deepseek.com',
-  // DashScope: user must provide dynamic URL with WorkspaceId and Region
-  // DashScope: Anthropic compatible: https://{WorkspaceId}.{Region}.maas.aliyuncs.com/apps/anthropic
-  // DashScope: OpenAI compatible: https://{WorkspaceId}.{Region}.maas.aliyuncs.com/compatible-mode/v1
-  dashscope: '', // DashScope requires dynamic URL construction
+  // DashScope: URL is auto-generated from region + workspaceId (backend auto-detects mode)
+  dashscope: '',
   zhipu: 'https://open.bigmodel.cn/api/paas/v4',
   minimax: 'https://api.minimaxi.com/v1',
 };
@@ -30,12 +28,6 @@ const DASHSCOPE_REGIONS = [
   { value: 'us-east-1', label: '美国（弗吉尼亚）us-east-1' },
   { value: 'eu-central-1', label: '德国（法兰克福）eu-central-1' },
   { value: 'ap-northeast-1', label: '日本（东京）ap-northeast-1' },
-];
-
-// DashScope compatible modes
-const DASHSCOPE_MODES = [
-  { value: 'anthropic', label: 'Anthropic 兼容 (Anthropic Compatible)' },
-  { value: 'openai', label: 'OpenAI 兼容 (OpenAI Compatible)' },
 ];
 
 interface Props {
@@ -58,24 +50,19 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
   const [priority, setPriority] = useState('0');
   const [enabled, setEnabled] = useState(true);
   const [anthropicCompat, setAnthropicCompat] = useState(false);
+  const [endpoints, setEndpoints] = useState<Endpoint[]>([emptyEp()]);
   // DashScope-specific fields
-  const [dashscopeMode, setDashscopeMode] = useState('openai'); // 'anthropic' or 'openai'
   const [dashscopeRegion, setDashscopeRegion] = useState('cn-beijing');
   const [dashscopeWorkspaceId, setDashscopeWorkspaceId] = useState('');
-  const [endpoints, setEndpoints] = useState<Endpoint[]>([emptyEp()]);
-  // DashScope URL override (manual URL input)
-  const [dashscopeBaseUrlOverride, setDashscopeBaseUrlOverride] = useState('');
 
-  // DashScope URL construction
+  // DashScope URL construction (auto based on region + workspaceId)
   const isDashScope = provider === 'dashscope';
   const dashscopeBaseUrl = isDashScope
-    ? dashscopeMode === 'anthropic'
-      ? `https://${dashscopeWorkspaceId}.${dashscopeRegion}.maas.aliyuncs.com/apps/anthropic`
-      : `https://${dashscopeWorkspaceId}.${dashscopeRegion}.maas.aliyuncs.com/compatible-mode/v1`
+    ? dashscopeWorkspaceId
+      ? `https://${dashscopeWorkspaceId}.${dashscopeRegion}.maas.aliyuncs.com/compatible-mode/v1`
+      : ''
     : '';
-  // Use override URL if provided, otherwise use auto-generated URL
-  const dashscopeFinalUrl = isDashScope && dashscopeBaseUrlOverride ? dashscopeBaseUrlOverride : dashscopeBaseUrl;
-  const fixedBaseUrl = isDashScope ? dashscopeFinalUrl : FIXED_BASE_URLS[provider] || '';
+  const fixedBaseUrl = isDashScope ? dashscopeBaseUrl : FIXED_BASE_URLS[provider] || '';
 
   useEffect(() => {
     if (channel) {
@@ -86,23 +73,19 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       setAnthropicCompat(channel.anthropic_compat ?? false);
       // Load DashScope-specific config from channel
       if (channel.provider === 'dashscope') {
-        // Try to extract workspace ID and region from existing URL
         const existingUrl = channel.endpoints[0]?.url || '';
         const match = existingUrl.match(/https:\/\/([^\.]+)\.([^.]+)\.maas\.aliyuncs\.com/);
         if (match) {
           setDashscopeWorkspaceId(match[1]);
           setDashscopeRegion(match[2]);
-          setDashscopeMode(existingUrl.includes('/apps/anthropic') ? 'anthropic' : 'openai');
         } else {
           setDashscopeWorkspaceId('');
           setDashscopeRegion('cn-beijing');
-          setDashscopeMode('openai');
         }
       }
       setEndpoints(channel.endpoints.length ? channel.endpoints : [emptyEp()]);
     } else {
       setName(''); setProvider(''); setPriority('0'); setEnabled(true); setAnthropicCompat(false);
-      setDashscopeMode('openai');
       setDashscopeRegion('cn-beijing');
       setDashscopeWorkspaceId('');
       setEndpoints([emptyEp()]);
@@ -152,11 +135,12 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
 
     // DashScope-specific config
     if (provider === 'dashscope') {
-      (data as Record<string, unknown>).dashscope_mode = dashscopeMode;
       (data as Record<string, unknown>).dashscope_region = dashscopeRegion;
       (data as Record<string, unknown>).dashscope_workspace_id = dashscopeWorkspaceId;
-      // Use override URL if provided, otherwise use auto-generated URL
-      const finalUrl = dashscopeBaseUrlOverride || dashscopeBaseUrl;
+      // Use auto-generated URL (user fills workspaceId and region, backend auto-detects mode from URL)
+      const finalUrl = dashscopeWorkspaceId
+        ? `https://${dashscopeWorkspaceId}.${dashscopeRegion}.maas.aliyuncs.com/compatible-mode/v1`
+        : '';
       // Update endpoints with the final URL
       (data as Record<string, unknown>).endpoints = (data.endpoints as Endpoint[]).map((ep: Endpoint) => ({
         ...ep,
@@ -234,22 +218,6 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
               {isDashScope && (
                 <div className="space-y-3 pt-2 border-t border-muted/30 mt-2">
                   <div className="space-y-1.5">
-                    <Label className="text-sm font-medium">{t('dashscope.mode')}</Label>
-                    <Select value={dashscopeMode} onValueChange={(v) => setDashscopeMode(v ?? 'openai')}>
-                      <SelectTrigger className="h-9 bg-background">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {DASHSCOPE_MODES.map((mode) => (
-                          <SelectItem key={mode.value} value={mode.value}>
-                            {mode.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-1.5">
                     <Label className="text-sm font-medium">{t('dashscope.region')}</Label>
                     <Select value={dashscopeRegion} onValueChange={(v) => setDashscopeRegion(v ?? 'cn-beijing')}>
                       <SelectTrigger className="h-9 bg-background">
@@ -279,26 +247,8 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                   </div>
 
                   <div className="space-y-1.5">
-                    <Label className="text-sm font-medium text-muted-foreground">
-                      {t('dashscope.previewUrl')}
-                    </Label>
-                    <div className="p-2.5 rounded-md bg-muted/30 text-xs font-mono text-muted-foreground break-all">
-                      {dashscopeBaseUrl || '—'}
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label className="text-sm font-medium text-muted-foreground">
-                      {t('dashscope.overrideUrl')}
-                    </Label>
-                    <Input
-                      className="h-9 bg-background text-xs"
-                      placeholder={isDashScope ? dashscopeBaseUrl : ''}
-                      value={isDashScope ? dashscopeBaseUrl : ''}
-                      onChange={(e) => setDashscopeBaseUrlOverride(e.target.value)}
-                    />
                     <p className="text-[10px] text-muted-foreground leading-tight">
-                      {t('dashscope.overrideUrlDesc')}
+                      后端自动根据 URL 中的 /compatible-mode 或 /apps/anthropic 判断兼容模式
                     </p>
                   </div>
                 </div>
