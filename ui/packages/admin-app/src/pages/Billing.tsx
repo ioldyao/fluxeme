@@ -433,8 +433,8 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
           <table className="w-full min-w-[900px] border-collapse">
             <thead>
               <tr>
-                {['名称', '归属', '状态', '请求数', 'Token', '消费', '主要模型', '最后调用'].map((h) => (
-                  <th key={h} className={`whitespace-nowrap border-b border-[#eef1f5] bg-[#fafbfc] px-3.5 py-[11px] text-[11px] font-bold text-[#667085] ${h === '请求数' || h === 'Token' || h === '消费' ? 'text-right' : 'text-left'}`}>{h}</th>
+                {['名称', '归属', '状态', '请求数', '输入 Token', '缓存命中', '输出 Token', '消费', '主要模型', '最后调用'].map((h) => (
+                  <th key={h} className={`whitespace-nowrap border-b border-[#eef1f5] bg-[#fafbfc] px-3.5 py-[11px] text-[11px] font-bold text-[#667085] ${h === '请求数' || h === '输入 Token' || h === '缓存命中' || h === '输出 Token' || h === '消费' ? 'text-right' : 'text-left'}`}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -452,7 +452,9 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
                   </td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px] font-semibold text-[#15803d]">{key.total_requests > 0 ? '● 活跃' : <span className="text-[#6b7280]">● 无调用</span>}</td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.total_requests)}</td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.total_tokens)}</td>
+                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.prompt_tokens ?? 0)}</td>
+                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.cache_hit_input_tokens ?? 0)}</td>
+                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.completion_tokens ?? 0)}</td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px] font-bold text-[#111827]">{fmtMoney(key.total_cost)}</td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">{key.primary_model ?? '-'}</td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">{key.last_request_at ? new Date(key.last_request_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}</td>
