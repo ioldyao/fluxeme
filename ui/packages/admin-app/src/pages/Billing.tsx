@@ -441,7 +441,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
             <tbody>
               {(apiKeyCosts?.items ?? []).map((key) => (
                 <tr key={key.api_key_name ?? 'unknown'} className="cursor-pointer hover:bg-[#fafcff]" onClick={() => setDrawer({ key: key.api_key_name ?? '', alias: key.api_key_name ?? '', req: fmtShort(key.total_requests), cost: fmtMoney(key.total_cost), model: key.primary_model ?? '-', isTeam: !!key.team_id })}>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] font-mono text-[12px]">{(key.api_key_name ?? '-').slice(0, 12)}••••••</td>
+                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px] font-bold text-[#111827]">{key.api_key_name ?? '-'}</td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">-</td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">
                     {key.team_id ? (
