@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod anthropic_compat;
+pub mod dashscope;
 pub mod generic;
 pub mod openai;
 pub mod vllm;
@@ -415,7 +416,7 @@ pub struct ProviderRegistry {
     vllm: Arc<vllm::VllmAdapter>,
     sglang: Arc<generic::GenericAdapter>,
     deepseek: Arc<generic::GenericAdapter>,
-    dashscope: Arc<generic::GenericAdapter>,
+    dashscope: Arc<dashscope::DashScopeAdapter>,
     zhipu: Arc<generic::GenericAdapter>,
     minimax: Arc<generic::GenericAdapter>,
 }
@@ -428,7 +429,7 @@ impl ProviderRegistry {
             vllm: Arc::new(vllm::VllmAdapter),
             sglang: Arc::new(generic::GenericAdapter::sglang()),
             deepseek: Arc::new(generic::GenericAdapter::deepseek()),
-            dashscope: Arc::new(generic::GenericAdapter::dashscope()),
+            dashscope: Arc::new(dashscope::DashScopeAdapter::new()),
             zhipu: Arc::new(generic::GenericAdapter::zhipu()),
             minimax: Arc::new(generic::GenericAdapter::minimax()),
         }
