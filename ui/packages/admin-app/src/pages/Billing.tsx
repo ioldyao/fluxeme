@@ -344,7 +344,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
                 <LineChart data={trendData}>
                   <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#98a2b3' }} axisLine={{ stroke: '#e5e7eb' }} />
                   <YAxis tick={{ fontSize: 10, fill: '#98a2b3' }} axisLine={false} tickFormatter={(v: number) => fmtMoney(v)} />
-                  <Tooltip formatter={(val: number) => typeof val === 'number' ? fmtMoney(val) : val} />
+                  <Tooltip formatter={(val: number, name: string) => name === '请求数' ? String(val) : fmtMoney(val)} />
                   <Legend wrapperStyle={{ fontSize: 11, color: '#667085' }} verticalAlign="top" />
                   <Bar dataKey="cost" name="消费金额" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={22} />
                   <Line type="monotone" dataKey="requests" name="请求数" stroke="#7c3aed" strokeWidth={2} dot={false} />
