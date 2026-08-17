@@ -269,6 +269,23 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
   const { data: apiKeyCosts } = useAdminBillingUserApiKeyCosts(null, userId, year, month, { limit: 50 });
   const { data: deductions } = useAdminDeductions(year, month, 1, 30, { user_id: userId });
 
+  // Fetch user API keys to get real enabled/disabled/deleted status
+  const { data: userApiKeys } = useQuery({
+    queryKey: ['admin-user-api-keys', userId],
+    queryFn: () => api<{ id: string; name: string; keys: Array<{ name: string; enabled: boolean }> }>(`/admin/users/${userId}`),
+    staleTime: 30_000,
+    enabled: !!userId,
+  });
+
+  // Build api_key_name -> status map (deleted keys not in map = 'deleted')
+  const keyStatusMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const k of userApiKeys?.keys ?? []) {
+      map.set(k.name, k.enabled ? 'active' : 'disabled');
+    }
+    return map;
+  }, [userApiKeys]);
+
   // Fetch team list to resolve team_id -> team_name
   const { data: teamList } = useQuery({
     queryKey: ['admin-billing-teams', year, month],
@@ -499,7 +516,14 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
                       <span className="inline-block rounded-md bg-[#f2f4f7] px-1.5 py-0.5 text-[11px] font-semibold text-[#475467]">个人</span>
                     )}
                   </td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px] font-semibold text-[#15803d]">{key.total_requests > 0 ? '● 活跃' : <span className="text-[#6b7280]">● 无调用</span>}</td>
+                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">
+                    {(() => {
+                      const st = keyStatusMap.get(key.api_key_name ?? '');
+                      if (st === 'active') return <span className="font-semibold text-[#15803d]">● 活跃</span>;
+                      if (st === 'disabled') return <span className="font-semibold text-[#dc2626]">● 已禁用</span>;
+                      return <span className="font-semibold text-[#6b7280]">● 已删除</span>;
+                    })()}
+                  </td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.total_requests)}</td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.prompt_tokens ?? 0)}</td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.cache_hit_input_tokens ?? 0)}</td>
