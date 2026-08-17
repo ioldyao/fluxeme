@@ -788,8 +788,8 @@ export default function FlowTowerContent() {
                           formatter={(value, name) => [formatNumber(Number(value)), name === 'success_completed' ? '成功完成' : '失败完成']}
                           labelFormatter={(label) => String(label ?? '')}
                         />
-                        <Area type="monotone" dataKey="success_completed" stackId="1" stroke="#27ad74" fill="#54bd8b" fillOpacity={0.25} />
-                        <Area type="monotone" dataKey="failed_completed" stackId="1" stroke="#e45d5d" fill="#e45d5d" fillOpacity={0.18} />
+                        <Area type="monotone" dataKey="success_completed" stroke="#27ad74" fill="#54bd8b" fillOpacity={0.25} />
+                        <Area type="monotone" dataKey="failed_completed" stroke="#e45d5d" fill="#e45d5d" fillOpacity={0.18} />
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
