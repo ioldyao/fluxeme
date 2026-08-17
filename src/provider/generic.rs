@@ -56,7 +56,7 @@ impl GenericAdapter {
         Self {
             name: "dashscope",
             display_name: "DashScope",
-            anthropic_path: "/v1/messages",
+            anthropic_path: "/anthropic/v1/messages",
         }
     }
     pub fn zhipu() -> Self {
