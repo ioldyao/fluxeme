@@ -475,6 +475,7 @@ export interface AdminBillingUserApiKeyCostRow {
   primary_model?: string | null;
   last_request_at?: string | null;
   team_id?: string | null;
+  api_key_enabled?: boolean | null;
 }
 
 export interface AdminBillingUserApiKeyCostResponse {
