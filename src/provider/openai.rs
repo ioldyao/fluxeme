@@ -40,6 +40,74 @@ impl ProviderAdapter for OpenAIAdapter {
         super::relay_request(endpoint, "/v1/responses/input_tokens", body, "openai").await
     }
 
+    async fn responses_stream(
+        &self,
+        endpoint: &EndpointConfig,
+        body: Value,
+    ) -> Result<StreamResult, ProviderError> {
+        super::validate_endpoint_url(&endpoint.url).await?;
+        let client = shared_client();
+
+        let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
+        let url = format!("{}/v1/responses", base);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key)).map_err(|e| {
+                ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other)
+            })?,
+        );
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+        let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
+        let timeout = request_timeout(&RequestKind::Streaming, endpoint, &default_config());
+        tracing::info!(
+            endpoint = %endpoint.url,
+            body_size = %body_size,
+            total_timeout_ms = timeout.as_millis(),
+            "Sending stream request to upstream (openai, responses)"
+        );
+
+        let req = client
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .timeout(timeout);
+        let response = req.send().await.map_err(|e| {
+            let kind = classify_reqwest_error(&e);
+            ProviderError::new(format!("Stream request failed: {}", e), kind)
+        })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            let upstream_msg = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().map(String::from))
+                .unwrap_or(body.trim().to_string());
+            let kind = classify_status(status.as_u16());
+            tracing::error!(%status, body = %body, "openai upstream responses stream request failed");
+            return Err(ProviderError::new(
+                format!(
+                    "Upstream request failed with status {}: {}",
+                    status.as_u16(),
+                    upstream_msg
+                ),
+                kind,
+            ));
+        }
+
+        let byte_stream = response.bytes_stream();
+        let mapped = byte_stream.map(|chunk| match chunk {
+            Ok(bytes) => String::from_utf8(bytes.to_vec())
+                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).to_string()),
+            Err(e) => format!("event: error\ndata: {{\"error\":\"{}\"}}\n\n", e),
+        });
+
+        Ok(Pin::from(Box::new(mapped)))
+    }
+
     async fn chat_complete(
         &self,
         endpoint: &EndpointConfig,
