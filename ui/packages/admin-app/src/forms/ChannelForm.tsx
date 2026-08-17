@@ -40,8 +40,24 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
   const [priority, setPriority] = useState('0');
   const [enabled, setEnabled] = useState(true);
   const [anthropicCompat, setAnthropicCompat] = useState(false);
+  // DashScope-specific fields
+  const [dashscopeMode, setDashscopeMode] = useState('openai'); // 'anthropic' or 'openai'
+  const [dashscopeRegion, setDashscopeRegion] = useState('cn-beijing');
+  const [dashscopeWorkspaceId, setDashscopeWorkspaceId] = useState('');
   const [endpoints, setEndpoints] = useState<Endpoint[]>([emptyEp()]);
-  const fixedBaseUrl = FIXED_BASE_URLS[provider];
+  // DashScope URL override (manual URL input)
+  const [dashscopeBaseUrlOverride, setDashscopeBaseUrlOverride] = useState('');
+
+  // DashScope URL construction
+  const isDashScope = provider === 'dashscope';
+  const dashscopeBaseUrl = isDashScope
+    ? dashscopeMode === 'anthropic'
+      ? `https://${dashscopeWorkspaceId}.${dashscopeRegion}.maas.aliyuncs.com/apps/anthropic`
+      : `https://${dashscopeWorkspaceId}.${dashscopeRegion}.maas.aliyuncs.com/compatible-mode/v1`
+    : '';
+  // Use override URL if provided, otherwise use auto-generated URL
+  const dashscopeFinalUrl = isDashScope && dashscopeBaseUrlOverride ? dashscopeBaseUrlOverride : dashscopeBaseUrl;
+  const fixedBaseUrl = isDashScope ? dashscopeFinalUrl : FIXED_BASE_URLS[provider] || '';
 
   useEffect(() => {
     if (channel) {
@@ -50,9 +66,28 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       setPriority(String(channel.priority));
       setEnabled(channel.enabled);
       setAnthropicCompat(channel.anthropic_compat ?? false);
+      // Load DashScope-specific config from channel
+      if (channel.provider === 'dashscope') {
+        // Try to extract workspace ID and region from existing URL
+        const existingUrl = channel.endpoints[0]?.url || '';
+        const match = existingUrl.match(/https:\/\/([^\.]+)\.([^.]+)\.maas\.aliyuncs\.com/);
+        if (match) {
+          setDashscopeWorkspaceId(match[1]);
+          setDashscopeRegion(match[2]);
+          setDashscopeMode(existingUrl.includes('/apps/anthropic') ? 'anthropic' : 'openai');
+        } else {
+          setDashscopeWorkspaceId('');
+          setDashscopeRegion('cn-beijing');
+          setDashscopeMode('openai');
+        }
+      }
       setEndpoints(channel.endpoints.length ? channel.endpoints : [emptyEp()]);
     } else {
-      setName(''); setProvider(''); setPriority('0'); setEnabled(true); setAnthropicCompat(false); setEndpoints([emptyEp()]);
+      setName(''); setProvider(''); setPriority('0'); setEnabled(true); setAnthropicCompat(false);
+      setDashscopeMode('openai');
+      setDashscopeRegion('cn-beijing');
+      setDashscopeWorkspaceId('');
+      setEndpoints([emptyEp()]);
     }
   }, [channel, open]);
 
@@ -83,7 +118,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const data = {
+    const data: Record<string, unknown> = {
       name,
       provider,
       priority: Number(priority),
@@ -96,6 +131,21 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
         timeout_secs: endpoint.timeout_secs ? Number(endpoint.timeout_secs) : null,
       })),
     };
+
+    // DashScope-specific config
+    if (provider === 'dashscope') {
+      data.dashscope_mode = dashscopeMode;
+      data.dashscope_region = dashscopeRegion;
+      data.dashscope_workspace_id = dashscopeWorkspaceId;
+      // Use override URL if provided, otherwise use auto-generated URL
+      const finalUrl = dashscopeBaseUrlOverride || dashscopeBaseUrl;
+      // Update endpoints with the final URL
+      data.endpoints = data.endpoints.map((ep: Endpoint) => ({
+        ...ep,
+        url: finalUrl || ep.url,
+      }));
+    }
+
     onSubmit(data);
   };
 
@@ -160,6 +210,79 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                   <p className="text-[11px] text-muted-foreground leading-tight">
                     {t('channel.anthropicCompatDesc')}
                   </p>
+                </div>
+              )}
+
+              {isDashScope && (
+                <div className="space-y-3 pt-2 border-t border-muted/30 mt-2">
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium">{t('dashscope.mode')}</Label>
+                    <Select value={dashscopeMode} onValueChange={(v) => setDashscopeMode(v ?? 'openai')}>
+                      <SelectTrigger className="h-9 bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {DASHSCOPE_MODES.map((mode) => (
+                          <SelectItem key={mode.value} value={mode.value}>
+                            {mode.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium">{t('dashscope.region')}</Label>
+                    <Select value={dashscopeRegion} onValueChange={(v) => setDashscopeRegion(v ?? 'cn-beijing')}>
+                      <SelectTrigger className="h-9 bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {DASHSCOPE_REGIONS.map((region) => (
+                          <SelectItem key={region.value} value={region.value}>
+                            {region.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium">{t('dashscope.workspaceId')}</Label>
+                    <Input
+                      className="h-9 bg-background"
+                      placeholder="例如：ws-xxxxxx"
+                      value={dashscopeWorkspaceId}
+                      onChange={(e) => setDashscopeWorkspaceId(e.target.value)}
+                    />
+                    <p className="text-[10px] text-muted-foreground leading-tight">
+                      {t('dashscope.workspaceIdDesc')}
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium text-muted-foreground">
+                      {t('dashscope.previewUrl')}
+                    </Label>
+                    <div className="p-2.5 rounded-md bg-muted/30 text-xs font-mono text-muted-foreground break-all">
+                      {dashscopeBaseUrl || '—'}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium text-muted-foreground">
+                      {t('dashscope.overrideUrl')}
+                    </Label>
+                    <Input
+                      className="h-9 bg-background text-xs"
+                      placeholder={isDashScope ? dashscopeBaseUrl : ''}
+                      value={isDashScope ? dashscopeBaseUrl : ''}
+                      onChange={(e) => setDashscopeBaseUrlOverride(e.target.value)}
+                    />
+                    <p className="text-[10px] text-muted-foreground leading-tight">
+                      {t('dashscope.overrideUrlDesc')}
+                    </p>
+                  </div>
                 </div>
               )}
             </div>
