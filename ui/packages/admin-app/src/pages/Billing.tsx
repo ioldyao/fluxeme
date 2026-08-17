@@ -272,7 +272,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
   // Fetch user API keys to get real enabled/disabled/deleted status
   const { data: userApiKeys } = useQuery({
     queryKey: ['admin-user-api-keys', userId],
-    queryFn: () => api<{ id: string; name: string; keys: Array<{ name: string; enabled: boolean }> }>(`/admin/users/${userId}`),
+    queryFn: () => api<Array<{ name: string; enabled: boolean }>>('/me/keys'),
     staleTime: 30_000,
     enabled: !!userId,
   });
@@ -280,7 +280,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
   // Build api_key_name -> status map (deleted keys not in map = 'deleted')
   const keyStatusMap = useMemo(() => {
     const map = new Map<string, string>();
-    for (const k of userApiKeys?.keys ?? []) {
+    for (const k of userApiKeys ?? []) {
       map.set(k.name, k.enabled ? 'active' : 'disabled');
     }
     return map;
