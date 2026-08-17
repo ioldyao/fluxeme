@@ -518,6 +518,8 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
                   </td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">
                     {(() => {
+                      // Team keys are assumed active (deleted team keys would have no billing data)
+                      if (key.team_id) return <span className="font-semibold text-[#15803d]">● 活跃</span>;
                       const st = keyStatusMap.get(key.api_key_name ?? '');
                       if (st === 'active') return <span className="font-semibold text-[#15803d]">● 活跃</span>;
                       if (st === 'disabled') return <span className="font-semibold text-[#dc2626]">● 已禁用</span>;
