@@ -433,7 +433,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
           <table className="w-full min-w-[900px] border-collapse">
             <thead>
               <tr>
-                {['API Key', '别名', '归属', '状态', '请求数', '输入 Token', '缓存命中', '输出 Token', '消费', '主要模型', '最后调用'].map((h) => (
+                {['名称', '归属', '状态', '请求数', '输入 Token', '缓存命中', '输出 Token', '消费', '主要模型', '最后调用'].map((h) => (
                   <th key={h} className={`whitespace-nowrap border-b border-[#eef1f5] bg-[#fafbfc] px-3.5 py-[11px] text-[11px] font-bold text-[#667085] ${h === '请求数' || h === '输入 Token' || h === '缓存命中' || h === '输出 Token' || h === '消费' ? 'text-right' : 'text-left'}`}>{h}</th>
                 ))}
               </tr>
@@ -546,15 +546,14 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
           <div className="flex h-full w-[min(620px,95vw)] flex-col bg-white shadow-[-12px_0_30px_rgba(0,0,0,0.12)]" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-[#e7eaf0] px-5 py-[18px]">
               <div>
-                <div className="text-[16px] font-[750]">API Key 账单详情</div>
+                <div className="text-[16px] font-[750]">Key 账单详情</div>
                 <div className="mt-[3px] text-[12px] text-[#6b7280]">当前计费周期</div>
               </div>
               <button className="flex h-[30px] w-[30px] cursor-pointer items-center justify-center rounded-lg border-0 bg-[#f2f4f7]" onClick={() => setDrawer(null)}>×</button>
             </div>
             <div className="overflow-auto px-5 py-[18px]">
               {[
-                { label: 'API Key', value: drawer.key + '••••••••' },
-                { label: '别名', value: drawer.alias },
+                { label: '名称', value: drawer.key },
                 { label: '请求数', value: drawer.req },
                 { label: '本期消费', value: drawer.cost },
                 { label: '主要模型', value: drawer.model },
