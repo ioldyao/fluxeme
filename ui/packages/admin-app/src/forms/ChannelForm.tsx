@@ -15,10 +15,28 @@ import { PROVIDERS, PROVIDER_DISPLAY } from "@fluxeme/shared/src/constants/provi
 
 const FIXED_BASE_URLS: Record<string, string> = {
   deepseek: 'https://api.deepseek.com',
-  dashscope: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  // DashScope: user must provide dynamic URL with WorkspaceId and Region
+  // DashScope: Anthropic compatible: https://{WorkspaceId}.{Region}.maas.aliyuncs.com/apps/anthropic
+  // DashScope: OpenAI compatible: https://{WorkspaceId}.{Region}.maas.aliyuncs.com/compatible-mode/v1
+  dashscope: '', // DashScope requires dynamic URL construction
   zhipu: 'https://open.bigmodel.cn/api/paas/v4',
   minimax: 'https://api.minimaxi.com/v1',
 };
+
+// DashScope regions for dropdown selection
+const DASHSCOPE_REGIONS = [
+  { value: 'cn-beijing', label: '华北2（北京）cn-beijing' },
+  { value: 'ap-southeast-1', label: '新加坡 ap-southeast-1' },
+  { value: 'us-east-1', label: '美国（弗吉尼亚）us-east-1' },
+  { value: 'eu-central-1', label: '德国（法兰克福）eu-central-1' },
+  { value: 'ap-northeast-1', label: '日本（东京）ap-northeast-1' },
+];
+
+// DashScope compatible modes
+const DASHSCOPE_MODES = [
+  { value: 'anthropic', label: 'Anthropic 兼容 (Anthropic Compatible)' },
+  { value: 'openai', label: 'OpenAI 兼容 (OpenAI Compatible)' },
+];
 
 interface Props {
   channel?: Channel | null;
@@ -134,13 +152,13 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
 
     // DashScope-specific config
     if (provider === 'dashscope') {
-      data.dashscope_mode = dashscopeMode;
-      data.dashscope_region = dashscopeRegion;
-      data.dashscope_workspace_id = dashscopeWorkspaceId;
+      (data as Record<string, unknown>).dashscope_mode = dashscopeMode;
+      (data as Record<string, unknown>).dashscope_region = dashscopeRegion;
+      (data as Record<string, unknown>).dashscope_workspace_id = dashscopeWorkspaceId;
       // Use override URL if provided, otherwise use auto-generated URL
       const finalUrl = dashscopeBaseUrlOverride || dashscopeBaseUrl;
       // Update endpoints with the final URL
-      data.endpoints = data.endpoints.map((ep: Endpoint) => ({
+      (data as Record<string, unknown>).endpoints = (data.endpoints as Endpoint[]).map((ep: Endpoint) => ({
         ...ep,
         url: finalUrl || ep.url,
       }));
