@@ -2622,6 +2622,25 @@ pub async fn completions(
     .await
 }
 
+pub async fn responses(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    body: Json<Value>,
+) -> Result<Response, GatewayError> {
+    let client_ip = extract_client_ip(&headers, addr);
+    relay_to_upstream(
+        &state,
+        &headers,
+        body.0,
+        "/v1/responses",
+        Uuid::new_v4().to_string(),
+        Instant::now(),
+        client_ip,
+    )
+    .await
+}
+
 pub async fn embeddings(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
