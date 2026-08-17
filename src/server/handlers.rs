@@ -1761,6 +1761,7 @@ pub async fn chat_completions(
             .check_request(&body_str, Some(&channel_id))
         {
             crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
+                state.flow_tracker.mark_completed(&request_id);
                 tracing::warn!(request_id, rule = %rule_name, "Request blocked by content filter");
                 return Err(GatewayError::BadRequest(format!(
                     "Request blocked by content filter rule: {}",
@@ -1786,6 +1787,7 @@ pub async fn chat_completions(
             Ok(Some(cached)) => {
                 tracing::info!(request_id, "Cache HIT for model {}", model);
                 if let Ok(val) = serde_json::from_str::<Value>(&cached) {
+                    state.flow_tracker.mark_completed(&request_id);
                     let mut resp = Json(val).into_response();
                     resp.headers_mut()
                         .insert("x-cache", HeaderValue::from_static("HIT"));
@@ -2251,6 +2253,7 @@ pub async fn messages(
             .check_request(&body_str, Some(&channel_id))
         {
             crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
+                state.flow_tracker.mark_completed(&request_id);
                 tracing::warn!(request_id, rule = %rule_name, "Messages request blocked by content filter");
                 return Err(GatewayError::BadRequest(format!(
                     "Request blocked by content filter rule: {}",
@@ -2318,6 +2321,7 @@ pub async fn messages(
     match result {
         Ok(inner) => inner,
         Err(_) => {
+            state.flow_tracker.mark_completed(&rid);
             tracing::error!(
                 rid,
                 handler_timeout_s = handler_timeout.as_secs(),
@@ -2417,6 +2421,7 @@ async fn relay_to_upstream(
             .check_request(&body_str, Some(&channel_id))
         {
             crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
+                state.flow_tracker.mark_completed(&request_id);
                 tracing::warn!(request_id, rule = %rule_name, "Relay request blocked by content filter");
                 return Err(GatewayError::BadRequest(format!(
                     "Request blocked by content filter rule: {}",
