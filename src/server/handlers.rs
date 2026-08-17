@@ -2629,16 +2629,134 @@ pub async fn responses(
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
     let client_ip = extract_client_ip(&headers, addr);
-    relay_to_upstream(
-        &state,
-        &headers,
-        body.0,
-        "/v1/responses",
-        Uuid::new_v4().to_string(),
-        Instant::now(),
-        client_ip,
-    )
-    .await
+    let mut body = body.0;
+    let request_id = Uuid::new_v4().to_string();
+    let start = Instant::now();
+    let user = state.auth.authenticate(&headers)?;
+    let model = trim_model(&mut body)?;
+
+    if let Some(ref allowed) = user.allowed_models {
+        if !allowed.contains(&model) {
+            return Err(GatewayError::Auth(format!(
+                "Model '{}' not allowed for this API key",
+                model
+            )));
+        }
+    }
+
+    if let Some((rpm, tpm)) = user.rate_limits {
+        state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
+        state
+            .rate_limiter
+            .check_tpm(&user.user_id, tpm, estimate_tokens(&body))
+            .await?;
+    }
+
+    let gw_cfg = state.gateway_config.read().unwrap().clone();
+    if gw_cfg.billing_enabled {
+        check_wallet_balance(
+            &state,
+            match &user.team_id {
+                Some(tid) => WalletAccount::Team(tid),
+                None => WalletAccount::User(&user.user_id),
+            },
+        )
+        .await?;
+    }
+
+    let (channel_id, resolved_model, upstream_model) =
+        state
+            .routing
+            .route(&user.user_id, &model, user.team_id.as_deref())
+            .await?;
+    let _orig_model = if model != resolved_model {
+        model.clone()
+    } else {
+        String::new()
+    };
+    if let Some(ref id) = upstream_model {
+        body["model"] = Value::String(id.clone());
+    }
+    let mut route = resolve_route(&state, &channel_id)?;
+
+    let is_streaming = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if is_streaming {
+        // Add stream_options.include_usage so upstream returns usage in the final event
+        match body.get_mut("stream_options") {
+            Some(Value::Object(opts)) => {
+                opts.insert("include_usage".into(), Value::Bool(true));
+            }
+            _ => {
+                body["stream_options"] = serde_json::json!({"include_usage": true});
+            }
+        }
+        let stream_result = route.adapter.responses_stream(&route.endpoint, body.clone()).await;
+        match stream_result {
+            Ok(stream) => {
+                route.report_success();
+                let body_stream =
+                    stream.map(|data| Ok::<_, std::convert::Infallible>(Bytes::from(data)));
+                Ok(Response::builder()
+                    .header("content-type", "text/event-stream")
+                    .header("cache-control", "no-cache")
+                    .header("connection", "keep-alive")
+                    .body(Body::from_stream(body_stream))
+                    .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
+            }
+            Err(e) => {
+                route.report_failure();
+                let latency_ms = start.elapsed().as_millis() as u64;
+                state.usage.record(UsageRecord {
+                    timestamp: Utc::now().to_rfc3339(),
+                    request_id,
+                    user_id: user.user_id,
+                    user_name: user.user_name,
+                    channel_id: route.channel_id,
+                    model,
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                    cache_hit_input_tokens: 0,
+                    cache_write_tokens: 0,
+                    latency_ms,
+                    status_code: 502,
+                    success: false,
+                    request_body: Some(serde_json::to_string(&body).unwrap_or_default()),
+                    response_body: Some(format!("{{\"error\":\"{}\"}}", e.0)),
+                    reasoning_body: None,
+                    api_key_name: Some(user.api_key_name),
+                    api_format: "openai".to_string(),
+                    stream: true,
+                    prompt_price: Decimal::ZERO,
+                    completion_price: Decimal::ZERO,
+                    cache_read_price: Decimal::ZERO,
+                    client_ip: Some(client_ip),
+                    endpoint_id: route.endpoint.id,
+                    endpoint_url: Some(route.endpoint.url.clone()),
+                    original_model: String::new(),
+                    team_id: user.team_id,
+                    ttft_ms: None,
+                    account_type: Some("user".to_string()),
+                });
+                Err(GatewayError::Upstream(e.0))
+            }
+        }
+    } else {
+        relay_to_upstream(
+            &state,
+            &headers,
+            body,
+            "/v1/responses",
+            request_id,
+            start,
+            client_ip,
+        )
+        .await
+    }
 }
 
 pub async fn embeddings(

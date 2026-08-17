@@ -188,6 +188,19 @@ pub trait ProviderAdapter: Send + Sync {
         ))
     }
 
+    /// Handle streaming POST /v1/responses (OpenAI Responses API).
+    /// Returns SSE event stream with different event types than chat.completions.
+    async fn responses_stream(
+        &self,
+        _endpoint: &EndpointConfig,
+        _body: Value,
+    ) -> Result<StreamResult, ProviderError> {
+        Err(ProviderError::new(
+            "Responses streaming not supported for this provider",
+            ErrorKind::Other,
+        ))
+    }
+
     async fn relay(
         &self,
         _endpoint: &EndpointConfig,
