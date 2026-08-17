@@ -6,6 +6,8 @@ import {
 import {
   useAdminBillingSummary, useAdminBillingUserSpendRanking, useAdminBillingDailyTrend, useAdminBillingMonths, useAdminScopedPeriodSummary, useAdminBillingUserApiKeyCosts, useAdminDeductions,
 } from '@fluxeme/shared/src/api/billing';
+import { api } from '@fluxeme/shared/src/api/client';
+import { useQuery } from '@tanstack/react-query';
 
 // ── helpers ───────────────────────────────────────
 
@@ -267,22 +269,35 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
   const { data: apiKeyCosts } = useAdminBillingUserApiKeyCosts(null, userId, year, month, { limit: 50 });
   const { data: deductions } = useAdminDeductions(year, month, 1, 30, { user_id: userId });
 
-  // Fetch user's teams
-  // const { data: userTeams } = useQuery({
-  //   queryKey: ['admin-user-teams', userId],
-  //   queryFn: () => api<Array<{ id: string; name: string }>>('/admin/users/' + userId + '/teams'),
-  //   enabled: false,
-  // });
+  // Fetch team list to resolve team_id -> team_name
+  const { data: teamList } = useQuery({
+    queryKey: ['admin-billing-teams', year, month],
+    queryFn: () => api<{ items: Array<{ team_id: string; team_name: string }>; total: number }>(`/admin/billing/teams?year=${year}&month=${month}&limit=100`),
+    staleTime: 60_000,
+  });
 
-  // For now, extract team info from apiKeyCosts team_id values
+  // Build team_id -> team_name lookup
+  const teamNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const t of teamList?.items ?? []) {
+      map.set(t.team_id, t.team_name);
+    }
+    return map;
+  }, [teamList]);
+
+  // Extract unique team info from apiKeyCosts team_id values
   const userTeamInfo = useMemo(() => {
     const keys = apiKeyCosts?.items ?? [];
-    const teamIds = new Set(keys.filter((k) => k.team_id).map((k) => k.team_id));
-    if (teamIds.size > 0) {
-      return Array.from(teamIds).map((tid) => ({ team_id: tid, team_name: tid }));
+    const seen = new Set<string>();
+    const result: Array<{ team_id: string; team_name: string }> = [];
+    for (const k of keys) {
+      if (k.team_id && !seen.has(k.team_id)) {
+        seen.add(k.team_id);
+        result.push({ team_id: k.team_id, team_name: teamNameMap.get(k.team_id) ?? k.team_id });
+      }
     }
-    return [];
-  }, [apiKeyCosts]);
+    return result;
+  }, [apiKeyCosts, teamNameMap]);
 
   const m = useMemo(() => {
     if (!periodSummary) return null;
