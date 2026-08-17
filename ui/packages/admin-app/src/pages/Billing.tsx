@@ -143,7 +143,7 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
 
       <section className="grid grid-cols-6 gap-3 max-[1400px]:grid-cols-3 max-[850px]:grid-cols-2">
         <KpiCard label="本期用户总消费" value={fmtMoney(totalCost)} note={`总请求 ${fmtShort(totalRequests)}`} />
-        <KpiCard label="本期总请求" value={fmtShort(totalRequests)} note="成功率" />
+        <KpiCard label="本期总请求" value={fmtShort(totalRequests)} note={totalRequests > 0 ? `成功率 ${(((totalRequests - 0) / totalRequests) * 100).toFixed(1)}%` : ''} />
         <KpiCard label="总 Token" value={fmtShort(totalTokens)} note={`输入 ${fmtShort(Math.round(totalTokens * 0.8))} · 输出 ${fmtShort(Math.round(totalTokens * 0.2))}`} />
         <KpiCard label="本期有消费用户" value={String(activeUsers)} note={`共 ${totalUsers} 个用户`} />
         <KpiCard label="活跃 API Key" value={String(totalKeys)} note="总计" />
@@ -628,7 +628,7 @@ function KpiCard({ label, value, note }: { label: string; value: string; note: s
     <div className="rounded-xl border border-[#e7eaf0] bg-white p-4 shadow-sm">
       <div className="text-[12px] text-[#6b7280]">{label}</div>
       <div className="mt-3 text-[23px] font-[750] tracking-tight">{value}</div>
-      <div className="mt-1 text-[11px] text-[#98a2b3]">{note}</div>
+      {note ? <div className="mt-1 text-[11px] text-[#98a2b3]">{note}</div> : null}
     </div>
   );
 }
