@@ -442,7 +442,6 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
               {(apiKeyCosts?.items ?? []).map((key) => (
                 <tr key={key.api_key_name ?? 'unknown'} className="cursor-pointer hover:bg-[#fafcff]" onClick={() => setDrawer({ key: key.api_key_name ?? '', alias: key.api_key_name ?? '', req: fmtShort(key.total_requests), cost: fmtMoney(key.total_cost), model: key.primary_model ?? '-', isTeam: !!key.team_id })}>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px] font-bold text-[#111827]">{key.api_key_name ?? '-'}</td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">-</td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">
                     {key.team_id ? (
                       <span className="inline-block rounded-md bg-[#fff7ed] px-1.5 py-0.5 text-[11px] font-semibold text-[#c2410c]">团队</span>
