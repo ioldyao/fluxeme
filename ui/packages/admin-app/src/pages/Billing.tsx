@@ -269,23 +269,6 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
   const { data: apiKeyCosts } = useAdminBillingUserApiKeyCosts(null, userId, year, month, { limit: 50 });
   const { data: deductions } = useAdminDeductions(year, month, 1, 30, { user_id: userId });
 
-  // Fetch user API keys to get real enabled/disabled/deleted status
-  const { data: userApiKeys } = useQuery({
-    queryKey: ['admin-user-api-keys', userId],
-    queryFn: () => api<Array<{ name: string; enabled: boolean }>>('/me/keys'),
-    staleTime: 30_000,
-    enabled: !!userId,
-  });
-
-  // Build api_key_name -> status map (deleted keys not in map = 'deleted')
-  const keyStatusMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const k of userApiKeys ?? []) {
-      map.set(k.name, k.enabled ? 'active' : 'disabled');
-    }
-    return map;
-  }, [userApiKeys]);
-
   // Fetch team list to resolve team_id -> team_name
   const { data: teamList } = useQuery({
     queryKey: ['admin-billing-teams', year, month],
@@ -518,14 +501,10 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
                   </td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">
                     {(() => {
-                      // Team keys are assumed active (deleted team keys would have no billing data)
                       if (key.team_id) return <span className="font-semibold text-[#15803d]">● 活跃</span>;
-                      const st = keyStatusMap.get(key.api_key_name ?? '');
-                      if (st === 'active') return <span className="font-semibold text-[#15803d]">● 活跃</span>;
-                      if (st === 'disabled') return <span className="font-semibold text-[#dc2626]">● 已禁用</span>;
-                      // Keys with billing data are always active — "/me/keys" may not include
-                      // keys from other users in admin context
-                      return <span className="font-semibold text-[#15803d]">● 活跃</span>;
+                      if (key.api_key_enabled === true) return <span className="font-semibold text-[#15803d]">● 活跃</span>;
+                      if (key.api_key_enabled === false) return <span className="font-semibold text-[#dc2626]">● 已禁用</span>;
+                      return <span className="font-semibold text-[#6b7280]">● 已删除</span>;
                     })()}
                   </td>
                   <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.total_requests)}</td>

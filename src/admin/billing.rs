@@ -665,6 +665,8 @@ pub(crate) struct AdminBillingUserApiKeyCostRow {
     last_request_at: Option<String>,
     #[serde(default)]
     team_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_key_enabled: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -974,7 +976,7 @@ pub(crate) async fn admin_billing_user_api_key_costs(
 
     let items = items
         .into_iter()
-        .map(|(api_key_name, total_cost, total_requests, total_tokens, prompt_tokens, completion_tokens, cache_hit_input_tokens, primary_model, last_request_at, _team_id)| {
+        .map(|(api_key_name, total_cost, total_requests, total_tokens, prompt_tokens, completion_tokens, cache_hit_input_tokens, primary_model, last_request_at, _team_id, api_key_enabled)| {
             AdminBillingUserApiKeyCostRow {
                 api_key_name,
                 total_cost,
@@ -986,6 +988,7 @@ pub(crate) async fn admin_billing_user_api_key_costs(
                 primary_model,
                 last_request_at,
                 team_id: _team_id,
+                api_key_enabled,
             }
         })
         .collect();
@@ -1107,7 +1110,7 @@ pub(crate) async fn admin_billing_user_api_key_costs_global(
 
     let items = items
         .into_iter()
-        .map(|(api_key_name, total_cost, total_requests, total_tokens, prompt_tokens, completion_tokens, cache_hit_input_tokens, primary_model, last_request_at, _team_id)| {
+        .map(|(api_key_name, total_cost, total_requests, total_tokens, prompt_tokens, completion_tokens, cache_hit_input_tokens, primary_model, last_request_at, _team_id, api_key_enabled)| {
             AdminBillingUserApiKeyCostRow {
                 api_key_name,
                 total_cost,
@@ -1119,6 +1122,7 @@ pub(crate) async fn admin_billing_user_api_key_costs_global(
                 primary_model,
                 last_request_at,
                 team_id: _team_id,
+                api_key_enabled,
             }
         })
         .collect();
