@@ -5,6 +5,7 @@ use axum::http::HeaderMap;
 
 use crate::db::Database;
 use crate::domain::user::{ApiKey, AuthResult, User, USER_STATUS_ACTIVE};
+use crate::service::oidc::OidcResourceServer;
 
 pub struct AuthService {
     db: Arc<Database>,
@@ -13,6 +14,10 @@ pub struct AuthService {
     /// team_id -> (user_id -> role). Loaded on reload() so `authenticate`
     /// can resolve team membership synchronously (it has no await).
     team_memberships: RwLock<HashMap<String, HashMap<String, String>>>,
+    /// Optional OAuth2/OIDC Resource Server (Mode 2): when a bearer token is
+    /// not a gateway API key, try validating it as an access token issued by a
+    /// trusted IdP (e.g. Keycloak). Attached at startup; see `attach_oidc`.
+    oidc: RwLock<Option<Arc<OidcResourceServer>>>,
 }
 
 impl AuthService {
@@ -22,9 +27,16 @@ impl AuthService {
             users: RwLock::new(HashMap::new()),
             api_keys: RwLock::new(HashMap::new()),
             team_memberships: RwLock::new(HashMap::new()),
+            oidc: RwLock::new(None),
         };
         svc.reload().await;
         svc
+    }
+
+    /// Attach the OIDC Resource Server so `/v1/*` accepts access tokens issued
+    /// by a trusted IdP in addition to gateway API keys.
+    pub fn attach_oidc(&self, oidc: Arc<OidcResourceServer>) {
+        *self.oidc.write().unwrap() = Some(oidc);
     }
 
     /// Reload all caches from database. Called after admin modifies users/keys.
@@ -115,6 +127,47 @@ impl AuthService {
                     team_id,
                     team_role,
                 });
+            }
+        }
+
+        // Mode 2: accept access tokens issued by a trusted IdP (OAuth2
+        // Resource Server). Only reached when the presented key is not a
+        // gateway API key. The token's `sub` maps to the SSO user created by
+        // the gateway SSO login flow (`sso:{provider}:{sub}`).
+        if let Some(oidc) = self.oidc.read().unwrap().as_ref() {
+            match oidc.validate(&key) {
+                Ok(subject) => {
+                    let user = self.users.read().unwrap().get(&subject.user_id).cloned();
+                    return match user {
+                        Some(user) if user.status == USER_STATUS_ACTIVE => Ok(AuthResult {
+                            user_id: user.id.clone(),
+                            user_name: user.name.clone(),
+                            rate_limits: user.rate_limits.as_ref().map(|rl| {
+                                (rl.rpm.unwrap_or(u64::MAX), rl.tpm.unwrap_or(u64::MAX))
+                            }),
+                            allowed_models: None,
+                            api_key_name: "oidc".to_string(),
+                            concurrency_limit: user.concurrency_limit,
+                            team_id: None,
+                            team_role: None,
+                        }),
+                        Some(_) => Err(AuthError("User account is suspended".into())),
+                        None => {
+                            tracing::warn!(
+                                user_id = %subject.user_id,
+                                sub = %subject.sub,
+                                issuer = %subject.issuer,
+                                "Valid OIDC token but no matching SSO user; log into the gateway SSO once first"
+                            );
+                            Err(AuthError(
+                                "OIDC identity has no gateway account; sign in via SSO first".into(),
+                            ))
+                        }
+                    };
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, "OIDC token validation failed");
+                }
             }
         }
 

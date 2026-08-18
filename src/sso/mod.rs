@@ -571,6 +571,11 @@ pub async fn sso_callback_handler(
         )
         .await?;
 
+    // The callback may have auto-created (or re-logged) a user; reload the
+    // auth cache so the OIDC Resource Server can immediately resolve this SSO
+    // identity from an external access token (Mode 2) too.
+    state.auth.reload().await;
+
     let session_cookie = session_cookie_value(&token, is_secure);
     let mut response_headers = HeaderMap::new();
     response_headers.append(

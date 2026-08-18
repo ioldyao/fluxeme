@@ -27,8 +27,8 @@ use crate::provider::ProviderRegistry;
 use crate::ratelimit::RateLimiter;
 use crate::server::{build_router, AppState};
 use crate::service::{
-    AuthService, ContentFilterService, HealthProbeService, HealthService, RoutingService,
-    UsageService,
+    AuthService, ContentFilterService, HealthProbeService, HealthService, OidcResourceServer,
+    RoutingService, UsageService,
 };
 
 async fn migrate_endpoint_credentials(
@@ -214,6 +214,18 @@ async fn main() {
     let sso = Arc::new(sso::SsoModule::new(&encryption_key, db.clone()).await);
     if sso.is_enabled() {
         tracing::info!("SSO enabled with {} provider(s)", sso.providers().len());
+    }
+
+    // OAuth2 Resource Server (Mode 2): accept access tokens issued by a
+    // trusted IdP (the enabled SSO configs) in addition to gateway API keys.
+    let oidc = Arc::new(OidcResourceServer::new());
+    oidc.refresh(&sso.providers()).await;
+    auth.attach_oidc(oidc.clone());
+    if oidc.is_trusting_any() {
+        tracing::info!(
+            "OIDC resource server trusting {} issuer(s)",
+            sso.providers().len()
+        );
     }
 
     // Load allow_private_ips setting from DB (default: true)
@@ -446,6 +458,7 @@ async fn main() {
         team_authz,
         health,
         sso,
+        oidc,
         gateway_config,
         cache,
         content_filter,
@@ -485,6 +498,10 @@ async fn main() {
                     let _ = poll_state.routing.reload().await;
                     poll_state.auth.reload().await;
                     poll_state.content_filter.reload().await;
+                    poll_state
+                        .oidc
+                        .refresh(&poll_state.sso.providers())
+                        .await;
                     let _ = poll_state.authz.reload(&poll_state.db).await;
                     tracing::debug!("Reloaded in-memory caches after config_version change");
                 }

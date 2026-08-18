@@ -23,8 +23,8 @@ use crate::config::types::{AppConfig, GatewayRuntimeConfig};
 use crate::provider::ProviderRegistry;
 use crate::ratelimit::RateLimiter;
 use crate::service::{
-    AuthService, ContentFilterService, HealthProbeService, HealthService, RoutingService,
-    UsageService,
+    AuthService, ContentFilterService, HealthProbeService, HealthService, OidcResourceServer,
+    RoutingService, UsageService,
 };
 use crate::sso::SsoModule;
 
@@ -43,6 +43,9 @@ pub struct AppState {
     pub team_authz: Arc<TeamAuthzModule>,
     pub health: Arc<HealthService>,
     pub sso: Arc<SsoModule>,
+    /// OAuth2 Resource Server (Mode 2): validates access tokens issued by a
+    /// trusted IdP so `/v1/*` accepts them in place of gateway API keys.
+    pub oidc: Arc<OidcResourceServer>,
     /// Runtime-adjustable timeout config. Read on every request, updated by
     /// PUT /admin/api/gateway/config.  Uses RwLock so writes propagate instantly
     /// (single-instance; multi-instance deployments would need a refresh loop).

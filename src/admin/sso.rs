@@ -98,6 +98,12 @@ pub(crate) async fn create_sso_config(
     // Reload SSO configs in-memory
     state.sso.reload_configs().await;
 
+    // Refresh the OIDC resource server (trusted issuers + JWKS) so access
+    // tokens from the new/changed provider validate immediately, and bump
+    // config_version so other gateway instances converge too.
+    state.oidc.refresh(&state.sso.providers()).await;
+    notify_config_changed(&state).await;
+
     let mut response = config;
     response.client_secret_encrypted = None;
     Ok(Json(response))
@@ -159,6 +165,12 @@ pub(crate) async fn update_sso_config(
     // Reload SSO configs in-memory
     state.sso.reload_configs().await;
 
+    // Refresh the OIDC resource server (trusted issuers + JWKS) so access
+    // tokens from the new/changed provider validate immediately, and bump
+    // config_version so other gateway instances converge too.
+    state.oidc.refresh(&state.sso.providers()).await;
+    notify_config_changed(&state).await;
+
     let mut response = config;
     response.client_secret_encrypted = None;
     Ok(Json(response))
@@ -184,6 +196,12 @@ pub(crate) async fn delete_sso_config(
 
     // Reload SSO configs in-memory
     state.sso.reload_configs().await;
+
+    // Refresh the OIDC resource server (trusted issuers + JWKS) so access
+    // tokens from the new/changed provider validate immediately, and bump
+    // config_version so other gateway instances converge too.
+    state.oidc.refresh(&state.sso.providers()).await;
+    notify_config_changed(&state).await;
 
     Ok(Json(serde_json::json!({"ok": true})))
 }
