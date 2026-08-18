@@ -90,6 +90,54 @@ pub(crate) async fn set_allow_private_ips(
     Ok(Json(serde_json::json!({ "enabled": req.enabled })))
 }
 
+// ── OIDC expected audience (Mode 2) ────────────────────────────────
+
+/// GET /api/settings/oidc-audience — the `aud` claim Fluxeme requires on
+/// external IdP access tokens. Empty/null = audience not checked.
+pub(crate) async fn get_oidc_expected_audience(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:settings").await?;
+    let value = state
+        .db
+        .get_setting("oidc_expected_audience")
+        .await
+        .map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "audience": value })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct OidcExpectedAudienceReq {
+    /// Audience the external token's `aud` must contain. Empty disables.
+    audience: String,
+}
+
+/// PUT /api/settings/oidc-audience — configure (or clear) the expected
+/// audience, then apply it to the running OIDC resource server.
+pub(crate) async fn set_oidc_expected_audience(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<OidcExpectedAudienceReq>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:settings").await?;
+
+    let value = req.audience.trim().to_string();
+    state
+        .db
+        .set_setting("oidc_expected_audience", &value)
+        .await
+        .map_err(db_err)?;
+
+    let aud = if value.is_empty() { None } else { Some(value.clone()) };
+    state.oidc.set_expected_audience(aud);
+    notify_config_changed(&state).await;
+
+    Ok(Json(serde_json::json!({ "audience": value })))
+}
+
 // ── Auto probe interval ────────────────────────────────────────────
 
 const PROBE_INTERVAL_MIN_SECS: u64 = 10;

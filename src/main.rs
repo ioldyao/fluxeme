@@ -221,6 +221,16 @@ async fn main() {
     let oidc = Arc::new(OidcResourceServer::new());
     oidc.refresh(&sso.providers()).await;
     auth.attach_oidc(oidc.clone());
+    // Also let user-facing /api/* endpoints accept external tokens (Mode 2).
+    admin.attach_oidc(oidc.clone());
+    // Configurable expected `aud` (strict Mode 2), controlled by the admin API
+    // /api/settings/oidc-audience. None/empty = audience not checked.
+    let expected_aud = db
+        .get_setting("oidc_expected_audience")
+        .await
+        .ok()
+        .flatten();
+    oidc.set_expected_audience(expected_aud);
     if oidc.is_trusting_any() {
         tracing::info!(
             "OIDC resource server trusting {} issuer(s)",
@@ -502,6 +512,13 @@ async fn main() {
                         .oidc
                         .refresh(&poll_state.sso.providers())
                         .await;
+                    let expected_aud = poll_state
+                        .db
+                        .get_setting("oidc_expected_audience")
+                        .await
+                        .ok()
+                        .flatten();
+                    poll_state.oidc.set_expected_audience(expected_aud);
                     let _ = poll_state.authz.reload(&poll_state.db).await;
                     tracing::debug!("Reloaded in-memory caches after config_version change");
                 }

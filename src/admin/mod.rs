@@ -67,6 +67,10 @@ pub struct AdminModule {
     encryption_key: String,
     rate_limiter: Arc<RateLimiter>,
     db: Arc<Database>,
+    /// Optional OAuth2 Resource Server (Mode 2). Lets user-facing /api/*
+    /// endpoints accept external IdP access tokens in addition to gateway
+    /// session cookies (attached at startup).
+    oidc: std::sync::RwLock<Option<Arc<crate::service::oidc::OidcResourceServer>>>,
 }
 
 impl AdminModule {
@@ -84,7 +88,14 @@ impl AdminModule {
             encryption_key: encryption_key.to_string(),
             rate_limiter: rl,
             db,
+            oidc: std::sync::RwLock::new(None),
         }
+    }
+
+    /// Attach the OIDC Resource Server so user-facing /api/* endpoints accept
+    /// external IdP access tokens (Mode 2) in addition to gateway sessions.
+    pub fn attach_oidc(&self, oidc: Arc<crate::service::oidc::OidcResourceServer>) {
+        *self.oidc.write().unwrap() = Some(oidc);
     }
 
     pub(crate) fn encode_token(&self, info: &SessionInfo) -> Result<String, AdminError> {
@@ -133,6 +144,9 @@ impl Clone for AdminModule {
             encryption_key: self.encryption_key.clone(),
             rate_limiter: Arc::clone(&self.rate_limiter),
             db: self.db.clone(),
+            oidc: std::sync::RwLock::new(
+                self.oidc.read().unwrap().as_ref().map(Arc::clone),
+            ),
         }
     }
 }
@@ -313,7 +327,15 @@ async fn require_session(
     headers: &HeaderMap,
 ) -> Result<SessionInfo, AdminError> {
     let token = extract_token(headers)?;
-    let session = admin.decode_token(&token)?;
+    let session = match admin.decode_token(&token) {
+        Ok(s) => s,
+        Err(_) => {
+            // Mode 2: not a gateway session JWT — try it as an external IdP
+            // access token (e.g. Keycloak) so the portal can fetch its own
+            // data. Admin endpoints stay protected by the later role checks.
+            return require_oidc_session(admin, &token).await;
+        }
+    };
 
     // Verify token_version against DB (session revocation enforcement)
     let db_user = admin
@@ -329,6 +351,53 @@ async fn require_session(
     }
 
     // Rate limit: 300 requests/minute per admin session to prevent abuse
+    admin
+        .rate_limiter
+        .check_rpm(&format!("admin:{}", db_user.id), 300)
+        .await
+        .map_err(|_| AdminError::too_many_requests("Too many requests. Try again later."))?;
+
+    Ok(SessionInfo {
+        user_id: db_user.id,
+        user_name: db_user.name,
+        role: db_user.role,
+        token_version: db_user.token_version,
+    })
+}
+
+/// Mode 2 session resolution: validate an external IdP access token (RS256 +
+/// issuer + expiry via JWKS) and map its `sub` to the gateway SSO user. Used
+/// by user-facing /api/* endpoints so the portal can fetch its own data with a
+/// Keycloak token, without a gateway session cookie.
+async fn require_oidc_session(
+    admin: &AdminModule,
+    token: &str,
+) -> Result<SessionInfo, AdminError> {
+    let oidc = admin
+        .oidc
+        .read()
+        .unwrap()
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| AdminError::unauthorized("External token auth is not configured"))?;
+
+    let subject = oidc
+        .validate(token)
+        .map_err(|_| AdminError::unauthorized("Invalid or expired token"))?;
+
+    let db_user = admin
+        .db
+        .get_user(&subject.user_id)
+        .await
+        .map_err(|e| AdminError::internal(e.to_string()))?
+        .ok_or_else(|| {
+            AdminError::unauthorized("OIDC identity has no gateway account; sign in via SSO first")
+        })?;
+    if db_user.status != USER_STATUS_ACTIVE {
+        return Err(AdminError::unauthorized("User account is suspended"));
+    }
+
+    // Same request budget as session-based requests.
     admin
         .rate_limiter
         .check_rpm(&format!("admin:{}", db_user.id), 300)
@@ -906,6 +975,11 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             "/api/settings/allow-private-ips",
             axum::routing::get(settings::get_allow_private_ips)
                 .put(settings::set_allow_private_ips),
+        )
+        .route(
+            "/api/settings/oidc-audience",
+            axum::routing::get(settings::get_oidc_expected_audience)
+                .put(settings::set_oidc_expected_audience),
         )
         .route(
             "/api/settings/probe-interval",

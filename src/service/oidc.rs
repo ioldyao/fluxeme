@@ -127,6 +127,10 @@ pub struct OidcResourceServer {
     issuers: RwLock<Vec<TrustedIssuer>>,
     /// normalized issuer -> cached JWKS.
     jwks: RwLock<HashMap<String, JwkSet>>,
+    /// Optional expected audience (from the `oidc_expected_audience` setting).
+    /// When set, the token's `aud` claim must contain it (strict mode). When
+    /// None (default), `aud` is not checked (loose mode — see module docs).
+    expected_audience: RwLock<Option<String>>,
 }
 
 impl OidcResourceServer {
@@ -139,7 +143,18 @@ impl OidcResourceServer {
             http_client,
             issuers: RwLock::new(Vec::new()),
             jwks: RwLock::new(HashMap::new()),
+            expected_audience: RwLock::new(None),
         }
+    }
+
+    /// Set the expected `aud` claim (empty/None disables audience checking).
+    /// Loaded from the `oidc_expected_audience` setting at startup and on
+    /// config changes.
+    pub fn set_expected_audience(&self, aud: Option<String>) {
+        let aud = aud
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        *self.expected_audience.write().unwrap() = aud;
     }
 
     /// Replace trusted issuers from the given SSO configs and (re)fetch their
@@ -258,11 +273,16 @@ impl OidcResourceServer {
         validation.set_issuer(&[iss.to_string()]);
         validation.set_required_spec_claims(&["exp", "iss"]);
         validation.leeway = 60;
-        // `aud` is intentionally not validated: jsonwebtoken rejects tokens
-        // carrying an `aud` when no allowed audience is configured, and Keycloak
-        // sets `aud` to the requesting client (e.g. the portal), not the gateway.
-        // See module docs for the trust boundary.
-        validation.validate_aud = false;
+        if let Some(expected) = self.expected_audience.read().unwrap().as_ref() {
+            // Strict mode: token must be minted for this gateway API audience
+            // (e.g. `fluxeme-api` via a Keycloak audience mapper).
+            validation.set_audience(std::slice::from_ref(expected));
+        } else {
+            // Loose mode (default): `aud` not checked. jsonwebtoken rejects
+            // tokens carrying an `aud` when none is allowed, and Keycloak sets
+            // `aud` to the requesting client (e.g. the portal), not the gateway.
+            validation.validate_aud = false;
+        }
 
         let key = DecodingKey::from_jwk(jwk).map_err(|_| OidcError::InvalidSignature)?;
         let data = decode::<VerifiedClaims>(token, &key, &validation).map_err(|e| {
@@ -346,14 +366,14 @@ ULpqkdDpgi5KInL1jH4XTy1rWw8uGIuqWgghzVRrEh15rpvSeelSxPhBEWnqwK6m\n\
         })
     }
 
-    fn sign_token(iss: &str, sub: &str, exp_offset: i64, tamper: bool) -> String {
+    fn sign_token(iss: &str, sub: &str, exp_offset: i64, tamper: bool, aud: &str) -> String {
         let mut header = Header::new(Algorithm::RS256);
         header.kid = Some(TEST_KID.to_string());
         let claims = serde_json::json!({
             "iss": iss,
             "sub": sub,
-            "aud": "portal-client",
-            "azp": "portal-client",
+            "aud": aud,
+            "azp": aud,
             "iat": chrono::Utc::now().timestamp(),
             "exp": chrono::Utc::now().timestamp() + exp_offset,
         });
@@ -389,7 +409,7 @@ ULpqkdDpgi5KInL1jH4XTy1rWw8uGIuqWgghzVRrEh15rpvSeelSxPhBEWnqwK6m\n\
     #[test]
     fn validates_well_signed_token_and_maps_subject() {
         let server = test_server();
-        let token = sign_token(TEST_ISSUER, "dev01-subject-id", 3600, false);
+        let token = sign_token(TEST_ISSUER, "dev01-subject-id", 3600, false, "portal-client");
 
         let subject = server.validate(&token).unwrap();
         assert_eq!(subject.sub, "dev01-subject-id");
@@ -400,7 +420,7 @@ ULpqkdDpgi5KInL1jH4XTy1rWw8uGIuqWgghzVRrEh15rpvSeelSxPhBEWnqwK6m\n\
     #[test]
     fn rejects_tampered_signature() {
         let server = test_server();
-        let token = sign_token(TEST_ISSUER, "dev01-subject-id", 3600, true);
+        let token = sign_token(TEST_ISSUER, "dev01-subject-id", 3600, true, "portal-client");
 
         match server.validate(&token) {
             Err(OidcError::InvalidSignature) => {}
@@ -411,7 +431,13 @@ ULpqkdDpgi5KInL1jH4XTy1rWw8uGIuqWgghzVRrEh15rpvSeelSxPhBEWnqwK6m\n\
     #[test]
     fn rejects_untrusted_issuer() {
         let server = test_server();
-        let token = sign_token("https://evil.example.com/realms/other", "dev01", 3600, false);
+        let token = sign_token(
+            "https://evil.example.com/realms/other",
+            "dev01",
+            3600,
+            false,
+            "portal-client",
+        );
 
         match server.validate(&token) {
             Err(OidcError::UntrustedIssuer) => {}
@@ -422,7 +448,7 @@ ULpqkdDpgi5KInL1jH4XTy1rWw8uGIuqWgghzVRrEh15rpvSeelSxPhBEWnqwK6m\n\
     #[test]
     fn rejects_expired_token() {
         let server = test_server();
-        let token = sign_token(TEST_ISSUER, "dev01", -7200, false);
+        let token = sign_token(TEST_ISSUER, "dev01", -7200, false, "portal-client");
 
         match server.validate(&token) {
             Err(OidcError::Expired) => {}
@@ -437,11 +463,36 @@ ULpqkdDpgi5KInL1jH4XTy1rWw8uGIuqWgghzVRrEh15rpvSeelSxPhBEWnqwK6m\n\
             issuer_url: TEST_ISSUER.to_string(),
             provider_name: "oidc".to_string(),
         }];
-        let token = sign_token(TEST_ISSUER, "dev01", 3600, false);
+        let token = sign_token(TEST_ISSUER, "dev01", 3600, false, "portal-client");
 
         match server.validate(&token) {
             Err(OidcError::JwksNotReady) => {}
             other => panic!("expected JwksNotReady, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn enforces_expected_audience_when_configured() {
+        let server = test_server();
+        server.set_expected_audience(Some("fluxeme-api".to_string()));
+
+        // Token minted for the portal (aud != fluxeme-api) must be rejected.
+        let wrong = sign_token(TEST_ISSUER, "dev01", 3600, false, "portal-a");
+        match server.validate(&wrong) {
+            Err(OidcError::InvalidClaims) => {}
+            other => panic!("expected InvalidClaims for wrong aud, got {other:?}"),
+        }
+
+        // Token minted for fluxeme-api must be accepted.
+        let right = sign_token(TEST_ISSUER, "dev01", 3600, false, "fluxeme-api");
+        assert!(server.validate(&right).is_ok());
+    }
+
+    #[test]
+    fn ignores_aud_when_no_expected_audience() {
+        let server = test_server();
+        // expected_audience is None by default — portal-minted token passes.
+        let token = sign_token(TEST_ISSUER, "dev01", 3600, false, "portal-a");
+        assert!(server.validate(&token).is_ok());
     }
 }
