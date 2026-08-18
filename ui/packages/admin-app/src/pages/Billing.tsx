@@ -40,7 +40,10 @@ function fillMonthDays<T extends { label: string }>(
   _field: 'cost' | 'cost_requests',
 ): (T & { cost: number; requests?: number })[] {
   const today = new Date();
-  const todayStr = `${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  // Compare using numeric year+month+day to avoid string comparison pitfalls
+  const todayYear = today.getFullYear();
+  const todayMonth = today.getMonth() + 1;
+  const todayDay = today.getDate();
   const lookup = new Map<string, T>();
   for (const item of source) lookup.set(item.label, item);
 
@@ -48,8 +51,9 @@ function fillMonthDays<T extends { label: string }>(
   const result: (T & { cost: number; requests?: number })[] = [];
   for (let d = 1; d <= daysInMonth; d++) {
     const key = `${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    // skip future dates
-    if (key > todayStr) break;
+    // skip future dates — numeric comparison to avoid "8-18" > "08-18" string issues
+    if (todayYear === year && todayMonth === month && d > todayDay) break;
+    if (todayYear > year || (todayYear === year && todayMonth > month)) break;
     const exist = lookup.get(key);
     if (exist) {
       result.push(exist as any);
