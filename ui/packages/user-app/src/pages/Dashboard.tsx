@@ -1,20 +1,20 @@
 // Importers/callers: mounted by user-app/src/routes/config.ts and src/routes/index.tsx
 // as the authenticated dashboard page. Affected APIs: GET /dashboard,
 // /dashboard/aggregations, /usage, /usage/aggregate, /usage/model-activity,
-// /usage/funnel, /wallet/overview, /wallet/estimated-days. Data schemas: the
+// /wallet/overview, /wallet/estimated-days. Data schemas: the
 // component consumes DashboardStats, DashboardAggregations, UsageResponse,
 // DailyAggregate[], ModelActivity[], FunnelStats, WalletOverview, and
 // { days: number | null }. User instruction: "`网关运行总览` 这个前端页面中，哪些还有计算全部用户的，统一修改只看当前个人用户的数据,admin登陆也只看自己的数据".
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  Activity, AlertTriangle, Bell, HelpCircle, Info, Layers3, ShieldCheck, Wallet,
+  Activity, Bell, HelpCircle, Layers3, ShieldCheck, Wallet,
 } from 'lucide-react';
 import { Button } from '@fluxeme/shared/src/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@fluxeme/shared/src/components/ui/card';
 import { useCurrency, CURRENCY_SYMBOL } from '@fluxeme/shared/src/store/currency';
 import { useSelfDashboard, useSelfDashboardAggregations } from '@fluxeme/shared/src/api/dashboard';
-import { useMyUsage, useMyUsageAggregate, useMyModelActivity, useMyUsageFunnel } from '@fluxeme/shared/src/api/usage';
+import { useMyUsage, useMyUsageAggregate, useMyModelActivity } from '@fluxeme/shared/src/api/usage';
 import { useEstimatedDays, useWalletOverview } from '@fluxeme/shared/src/api/wallet';
 import { formatTimestamp } from '@fluxeme/shared/src/lib/date';
 import { usePublishedAnnouncements } from '@fluxeme/shared/src/api/announcements';
@@ -56,9 +56,7 @@ export default function Dashboard() {
   } = useSelfDashboardAggregations();
   const {
     data: ua,
-    isError: usageAggregateError,
     isLoading: usageAggregateLoading,
-    isPlaceholderData: isUsageAggregatePlaceholder,
     refetch: rua,
   } = useMyUsageAggregate(days);
   const {
@@ -69,13 +67,6 @@ export default function Dashboard() {
   const { data: recent, refetch: rrl } = useMyUsage({ limit: 8 });
   const { data: wo, refetch: rwo } = useWalletOverview();
   const { data: ed, refetch: red } = useEstimatedDays();
-  const {
-    data: funnel,
-    isError: funnelError,
-    isLoading: funnelLoading,
-    isPlaceholderData: isFunnelPlaceholder,
-    refetch: rfunnel,
-  } = useMyUsageFunnel(days);
   const { currency } = useCurrency();
   const sym = CURRENCY_SYMBOL[currency];
   const { data: announcements } = usePublishedAnnouncements();
@@ -86,16 +77,6 @@ export default function Dashboard() {
   const apiKeyCount = stats?.api_keys ?? 0;
   const requests24h = agg?.requests_24h ?? 0;
   const totalTokens24h = agg?.total_tokens_24h ?? 0;
-  const selectedPeriodTokens = useMemo(() => {
-    if (!ua) return days === 1 ? totalTokens24h : 0;
-    return ua.reduce((sum, day) => sum + day.total_tokens, 0);
-  }, [days, totalTokens24h, ua]);
-  const isRequestFlowLoading = usageAggregateLoading
-    || funnelLoading
-    || isUsageAggregatePlaceholder
-    || isFunnelPlaceholder;
-  const hasRequestFlowData = !!funnel && (days === 1 || !!ua);
-  const hasRequestFlowError = !hasRequestFlowData && (funnelError || (days !== 1 && usageAggregateError));
   const gatewayError = statsErr || aggErr;
   const toneCls = isHealthStripLoading
     ? 'bg-muted-foreground/30 shadow-none'
@@ -120,16 +101,6 @@ export default function Dashboard() {
     return items;
   }, [ma, t]);
 
-  // alerts
-  const alerts = useMemo(() => {
-    const a: { id: string; title: string; desc: string; warn: boolean }[] = [];
-    if (agg && avgLat > 2000) a.push({ id: 'lat', title: t('dash.alertLatencyTitle'), desc: t('dash.alertLatencyDesc', { latency: avgLat.toFixed(0) }), warn: true });
-    if (agg && availability < 95) a.push({ id: 'suc', title: t('dash.alertSuccessTitle'), desc: t('dash.alertSuccessDesc', { rate: availability.toFixed(1) }), warn: true });
-    if ((modelShare[0]?.percentage ?? 0) > 80) a.push({ id: 'con', title: t('dash.alertConcentrationTitle'), desc: t('dash.alertConcentrationDesc', { model: modelShare[0]?.model ?? '—', share: (modelShare[0]?.percentage ?? 0).toFixed(1) }), warn: false });
-    if ((ed?.days ?? Infinity) < 10) a.push({ id: 'bal', title: t('dash.alertBalanceTitle'), desc: t('dash.alertBalanceDesc', { days: (ed?.days ?? 0).toFixed(1) }), warn: true });
-    return a;
-  }, [agg, avgLat, availability, modelShare, ed?.days, t]);
-
   const handleRefresh = () => {
     void refetch();
     void ra();
@@ -138,7 +109,6 @@ export default function Dashboard() {
     void rrl();
     void rwo();
     void red();
-    void rfunnel();
   };
 
   const chartData = useMemo(() => {
@@ -210,127 +180,6 @@ export default function Dashboard() {
 
         {/* ── Left Column ── */}
         <div className="space-y-4">
-          {/* Request Flow Funnel (Scheme B) */}
-          <Card className="card-hover">
-            <CardHeader>
-              <h2 className="text-base font-semibold leading-none">{t('dash.requestFlow')}</h2>
-              <CardDescription>{t('dash.requestFlowSub')}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {isRequestFlowLoading ? (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 md:grid-cols-5">
-                  {Array.from({ length: 5 }, (_, index) => (
-                    <div key={index} className="h-48 animate-pulse rounded-lg border bg-muted/20" />
-                  ))}
-                </div>
-              ) : hasRequestFlowError || !hasRequestFlowData ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">{t('dash.noData')}</p>
-              ) : (() => {
-                const f = funnel;
-                if (!f) {
-                  return <p className="py-8 text-center text-sm text-muted-foreground">{t('dash.noData')}</p>;
-                }
-                const total = f.total;
-                const successCount = f.success_count;
-                const authCount = f.auth_fail_count;
-                const rateLimitCount = f.rate_limit_count;
-                const badReqCount = f.bad_request_count;
-                const upstreamErrCount = f.upstream_error_count;
-                const timeoutCount = f.timeout_count;
-                const otherErrCount = f.other_error_count;
-                const totalTokens = selectedPeriodTokens;
-                const intervalSecs = days * 86400;
-                const avgQps = intervalSecs > 0 ? (total / intervalSecs) : 0;
-                const avgTps = intervalSecs > 0 ? (totalTokens / intervalSecs) : 0;
-                const bizLimits = rateLimitCount + badReqCount + authCount;
-                const slaEligibleTotal = Math.max(0, total - bizLimits);
-                const slaLvl = slaEligibleTotal > 0 ? (successCount / slaEligibleTotal) * 100 : 0;
-                const requestSuccessRate = total > 0 ? (successCount / total) * 100 : 0;
-                const requestErrorRate = total > 0 ? 100 - requestSuccessRate : 0;
-                const sysErrors = upstreamErrCount + timeoutCount;
-                const totalErrors = sysErrors + bizLimits + otherErrCount;
-                const healthy = totalErrors === 0;
-                const p50s = f.p50_latency / 1000;
-                const p95s = f.p95_latency / 1000;
-                const p99s = f.p99_latency / 1000;
-                const avgS = f.avg_latency / 1000;
-                return (
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 md:grid-cols-5">
-                    {/* Stage 01 */}
-                    <div className="rounded-lg border bg-muted/20 p-4">
-                      <div className="text-[11px] font-medium text-muted-foreground">阶段 01</div>
-                      <h3 className="mt-1.5 text-sm font-semibold text-foreground">请求入口</h3>
-                      <div className="mt-4 text-2xl font-semibold tracking-tight">{total.toLocaleString()}</div>
-                      <div className="mt-1 text-[11px] text-muted-foreground">请求数</div>
-                      <div className="mt-3 text-xl font-semibold tracking-tight">{totalTokens >= 1000000 ? `${(totalTokens / 1000000).toFixed(1)}M` : totalTokens >= 1000 ? `${(totalTokens / 1000).toFixed(1)}K` : totalTokens.toLocaleString()}</div>
-                      <div className="mt-1 text-[11px] text-muted-foreground">Token 数</div>
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
-                        <div><span className="text-muted-foreground">平均 QPS</span><div className="font-semibold">{avgQps.toFixed(1)}</div></div>
-                        <div><span className="text-muted-foreground">平均 TPS</span><div className="font-semibold">{avgTps.toFixed(1)}</div></div>
-                      </div>
-                    </div>
-
-                    {/* Stage 02 */}
-                    <div className="rounded-lg border bg-muted/20 p-4">
-                      <div className="text-[11px] font-medium text-muted-foreground">阶段 02</div>
-                      <h3 className="mt-1.5 text-sm font-semibold text-foreground">网关处理</h3>
-                      <div className="mt-4 text-2xl font-semibold tracking-tight">{slaLvl.toFixed(3)}%</div>
-                      <div className="mt-1 text-[11px] text-muted-foreground">SLA · 排除业务限制</div>
-                      <div className="mt-3 space-y-1.5 text-[11px]">
-                        <div className="flex justify-between"><span className="text-muted-foreground">系统异常</span><b className={sysErrors > 0 ? 'text-red-500' : ''}>{sysErrors}</b></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">业务限制</span><b>{bizLimits}</b></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">健康状态</span><b className={healthy ? 'text-emerald-600' : 'text-amber-600'}>{healthy ? '正常' : '异常'}</b></div>
-                      </div>
-                    </div>
-
-                    {/* Stage 03 */}
-                    <div className="rounded-lg border bg-muted/20 p-4">
-                      <div className="text-[11px] font-medium text-muted-foreground">阶段 03</div>
-                      <h3 className="mt-1.5 text-sm font-semibold text-foreground">请求延迟</h3>
-                      <div className="mt-4 text-2xl font-semibold tracking-tight">{p50s.toFixed(2)}s</div>
-                      <div className="mt-1 text-[11px] text-muted-foreground">端到端 · P50</div>
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
-                        <div><span className="text-muted-foreground">P95</span><div className="font-semibold">{p95s.toFixed(2)}s</div></div>
-                        <div><span className="text-muted-foreground">P99</span><div className="font-semibold">{p99s.toFixed(2)}s</div></div>
-                        <div className="col-span-2"><span className="text-muted-foreground">平均</span><div className="font-semibold">{avgS.toFixed(2)}s</div></div>
-                      </div>
-                    </div>
-
-                    {/* Stage 04 */}
-                    <div className="rounded-lg border bg-muted/20 p-4">
-                      <div className="text-[11px] font-medium text-muted-foreground">阶段 04</div>
-                      <h3 className="mt-1.5 text-sm font-semibold text-foreground">模型执行</h3>
-                      <div className="mt-4 text-2xl font-semibold tracking-tight">{avgS.toFixed(2)}s</div>
-                      <div className="mt-1 text-[11px] text-muted-foreground">平均请求时长</div>
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
-                        <div><span className="text-muted-foreground">P95</span><div className="font-semibold">{p95s.toFixed(2)}s</div></div>
-                        <div><span className="text-muted-foreground">P99</span><div className="font-semibold">{p99s.toFixed(2)}s</div></div>
-                      </div>
-                      <div className="mt-3 space-y-1 text-[11px]">
-                        <div className="flex justify-between"><span className="text-muted-foreground">排队中</span><b>{rateLimitCount}</b></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">发生重试</span><b>0</b></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">上下文超限</span><b>{badReqCount}</b></div>
-                      </div>
-                    </div>
-
-                    {/* Stage 05 */}
-                    <div className="rounded-lg border bg-muted/20 p-4">
-                      <div className="text-[11px] font-medium text-muted-foreground">阶段 05</div>
-                      <h3 className="mt-1.5 text-sm font-semibold text-foreground">最终结果</h3>
-                      <div className="mt-4 text-2xl font-semibold tracking-tight">{requestSuccessRate.toFixed(2)}%</div>
-                      <div className="mt-1 text-[11px] text-muted-foreground">请求成功率</div>
-                      <div className="mt-3 space-y-1.5 text-[11px]">
-                        <div className="flex justify-between"><span className="text-muted-foreground">请求错误率</span><b className="text-red-500">{requestErrorRate.toFixed(2)}%</b></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">错误请求</span><b className="text-red-500">{totalErrors}</b></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">上游错误率</span><b>{total > 0 ? ((upstreamErrCount / total) * 100).toFixed(2) : '0.00'}%</b></div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-            </CardContent>
-          </Card>
-
           {/* Traffic / Token Trend */}
           <Card className="card-hover">
             <CardHeader className="flex flex-row items-start justify-between gap-3">
@@ -480,33 +329,6 @@ export default function Dashboard() {
                 </div>
               ) : (
                 <p className="py-8 text-center text-sm text-muted-foreground">{t('dash.noData')}</p>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Risk Alerts */}
-          <Card className="card-hover">
-            <CardHeader>
-              <h2 className="text-base font-semibold leading-none">{t('dash.riskAlerts')}</h2>
-              <CardDescription>{t('dash.riskAlertsSub')}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {alerts.length === 0 ? (
-                <p className="py-6 text-center text-sm text-muted-foreground">{t('dash.noAlerts')}</p>
-              ) : (
-                <div className="space-y-2">
-                  {alerts.map(a => (
-                    <div key={a.id} className={`flex gap-3 rounded-lg border p-3 ${a.warn ? 'bg-amber-500/5 border-amber-200/40' : 'bg-muted/20'}`}>
-                      <div className={`mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md ${a.warn ? 'bg-amber-500/15 text-amber-700' : 'bg-brand/10 text-brand'}`}>
-                        {a.warn ? <AlertTriangle className="size-3.5" /> : <Info className="size-3.5" />}
-                      </div>
-                      <div>
-                        <div className="text-xs font-medium text-foreground">{a.title}</div>
-                        <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{a.desc}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
               )}
             </CardContent>
           </Card>
