@@ -153,8 +153,8 @@ pub(crate) async fn get_usage_detail(
         })?
         .ok_or_else(|| AdminError::not_found("Usage record not found"))?;
 
-    if !state.authz.enforce(&session.role, "admin:usage").await && record.user_id != session.user_id
-    {
+    // Request details (full request/response bodies) are admin-only.
+    if !state.authz.enforce(&session.role, "admin:usage").await {
         return Err(AdminError::not_found("Usage record not found"));
     }
 

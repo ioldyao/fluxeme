@@ -92,7 +92,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                 { label: t('usage.keyScope'), value: record.team_id ? t('usage.teamKey') : t('usage.personalKey') },
                 { label: t('usage.apiFormat'), value: record.api_format ?? '—' },
                 { label: t('usage.channel'), value: record.channel_id },
-                { label: 'Client IP', value: record.client_ip ?? '—' },
+                { label: t('usage.clientIp'), value: record.client_ip ?? '—' },
               ].map(m => (
                 <div key={m.label} className="rounded-lg border bg-card p-3">
                   <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">{m.label}</div>

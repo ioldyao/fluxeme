@@ -12,7 +12,7 @@ type NavGroup = {
 
 const ADMIN_NAV_GROUPS: NavGroup[] = [
   { label: 'nav.group.overview', items: ['nav.flowControl'] },
-  { label: 'nav.group.models', items: ['nav.models', 'nav.modelPricing', 'nav.bills'] },
+  { label: 'nav.group.models', items: ['nav.models', 'nav.modelPricing', 'nav.bills', 'nav.usage'] },
   { label: 'nav.group.channels', items: ['nav.channels'] },
   { label: 'nav.group.security', items: ['nav.rules', 'nav.moderation', 'nav.users', 'nav.teams', 'nav.rechargeKeys', 'nav.announcements', 'nav.adminSettings'] },
 ];

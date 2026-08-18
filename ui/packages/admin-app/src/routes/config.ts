@@ -8,6 +8,7 @@ import {
   Radio,
   Receipt,
   Route,
+  ScrollText,
   Shield,
   Users,
 } from 'lucide-react';
@@ -49,6 +50,7 @@ export const adminRoutes: RouteConfig[] = [
   { path: '/rules', Component: lazy(() => import('@/pages/Rules')), guard: 'admin', label: 'nav.rules', icon: Route, nav: true, perm: 'admin:rules' },
   { path: '/pricing', Component: lazy(() => import('@/pages/ModelPricing')), guard: 'admin', label: 'nav.modelPricing', icon: DollarSign, nav: true, perm: 'admin:model-pricing' },
   { path: '/billing', Component: lazy(() => import('@/pages/Billing')), guard: 'admin', label: 'nav.bills', icon: Receipt, nav: true, perm: 'admin:bills' },
+  { path: '/usage-log', Component: lazy(() => import('@/pages/UsageLog')), guard: 'admin', label: 'nav.usage', icon: ScrollText, nav: true, perm: 'admin:usage' },
   { path: '/recharge-keys', Component: lazy(() => import('@/pages/admin/RechargeKeys')), guard: 'admin', label: 'nav.rechargeKeys', icon: KeyRound, nav: true, perm: 'admin:recharge-keys' },
   { path: '/announcements', Component: lazy(() => import('@/pages/admin/Announcements')), guard: 'admin', label: 'nav.announcements', icon: Bell, nav: true, perm: 'admin:announcements' },
   { path: '/gateway-settings', Component: lazy(() => import('@/pages/admin/AdminSettings')), guard: 'admin', label: 'nav.adminSettings', icon: Cog, nav: true, perm: 'admin:settings' },

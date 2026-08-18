@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next';
 import { formatCost, getRecordPricing } from '@fluxeme/shared/src/lib/cost';
 import { formatTimestamp } from '@fluxeme/shared/src/lib/date';
 import { useMyUsage, useMyUsageAggregate, useMyModelActivity } from '@fluxeme/shared/src/api/usage';
-import { UsageLogDetail } from '../components/UsageLogDetail';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
 import { EmptyState } from '@fluxeme/shared/src/components/EmptyState';
 import { Button } from '@fluxeme/shared/src/components/ui/button';
@@ -74,7 +73,6 @@ export default function Usage() {
   const [modelFilter, setModelFilter] = useState('');
   const [apiKeyFilter, setApiKeyFilter] = useState('');
   const [apiFormatFilter, setApiFormatFilter] = useState('');
-  const [detailId, setDetailId] = useState<string | null>(null);
 
   // ── Date filter (supports ?date=YYYY-MM-DD from wallet navigation) ──
   const [searchParams] = useSearchParams();
@@ -243,7 +241,6 @@ export default function Usage() {
                       <tr className="border-b text-muted-foreground">
                         <th className="text-left py-3 px-4">{t('table.time')}</th>
                         <th className="text-left py-3 px-4">{t('table.requestId')}</th>
-                        <th className="text-left py-3 px-4">{t('table.user')}</th>
                         <th className="text-left py-3 px-4">{t('table.apiKey')}</th>
                         <th className="text-left py-3 px-4">{t('usage.keyScope')}</th>
                         <th className="text-left py-3 px-4">{t('table.model')}</th>
@@ -254,17 +251,17 @@ export default function Usage() {
                         <th className="text-right py-3 px-4">{t('table.total')}</th>
                         <th className="text-right py-3 px-4">{t('table.cost')}</th>
                         <th className="text-right py-3 px-4">{t('table.latency')}</th>
+                        <th className="text-left py-3 px-4">{t('usage.clientIp')}</th>
                         <th className="text-center py-3 px-4">{t('table.status')}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {records.map((r) => (
-                        <tr key={r.request_id} className="border-b last:border-0 hover:bg-muted/50 cursor-pointer" onClick={() => setDetailId(r.request_id)}>
+                        <tr key={r.request_id} className="border-b last:border-0 hover:bg-muted/50">
                           <td className="py-3 px-4 text-muted-foreground whitespace-nowrap text-xs">
                             {formatTimestamp(r.timestamp)}
                           </td>
                           <td className="py-3 px-4 font-mono text-xs">{r.request_id.substring(0, 8)}</td>
-                          <td className="py-3 px-4">{r.user_name}</td>
                           <td className="py-3 px-4">{r.api_key_name}</td>
                           <td className="py-3 px-4">
                             <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${r.team_id ? 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'}`}>
@@ -292,6 +289,7 @@ export default function Usage() {
                           <td className="py-3 px-4 text-right font-medium">{r.total_tokens}</td>
                           <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, r.cache_hit_input_tokens, getRecordPricing(r))}</td>
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>
+                          <td className="py-3 px-4 text-muted-foreground whitespace-nowrap text-xs font-mono">{r.client_ip ?? '—'}</td>
                           <td className="py-3 px-4 text-center">
                             {r.success ? (
                               <CheckCircle2 className="size-4 text-green-500 inline" />
@@ -462,11 +460,6 @@ export default function Usage() {
         </TabsContent>
       </Tabs>
 
-      <UsageLogDetail
-        requestId={detailId}
-        open={!!detailId}
-        onOpenChange={(open) => { if (!open) setDetailId(null); }}
-      />
     </div>
   );
 }
