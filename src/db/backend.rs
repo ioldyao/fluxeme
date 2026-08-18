@@ -5,6 +5,7 @@ use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, Pricing};
 use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
+use crate::domain::sso::SsoConfigRow;
 use crate::domain::team::{Team, TeamMember};
 use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
@@ -473,4 +474,17 @@ pub trait DbBackend: Send + Sync {
     async fn list_team_api_keys(&self, team_id: &str) -> Result<Vec<ApiKey>, DbError>;
     /// Team-scoped routing rules (scope='user' AND team_id = $1).
     async fn list_team_rules(&self, team_id: &str) -> Result<Vec<RoutingRule>, DbError>;
+
+    // ── SSO Configs ─────────────────────────────────────────────────────────
+    async fn list_sso_configs(&self) -> Result<Vec<SsoConfigRow>, DbError>;
+    async fn get_sso_config(&self, id: &str) -> Result<Option<SsoConfigRow>, DbError>;
+    async fn get_sso_config_by_team(&self, team_id: &str) -> Result<Option<SsoConfigRow>, DbError>;
+    async fn create_sso_config(&self, config: &SsoConfigRow) -> Result<(), DbError>;
+    async fn update_sso_config(&self, config: &SsoConfigRow) -> Result<(), DbError>;
+    async fn delete_sso_config(&self, id: &str) -> Result<(), DbError>;
+
+    /// SSO user → IdP organizations mapping. Returns (user_id, orgs_json).
+    async fn list_sso_user_orgs(&self) -> Result<Vec<(String, String)>, DbError>;
+    /// Upsert a user's IdP organizations (orgs_json = JSON array of SsoOrg).
+    async fn upsert_sso_user_orgs(&self, user_id: &str, orgs_json: &str) -> Result<(), DbError>;
 }

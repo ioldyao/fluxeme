@@ -14,6 +14,7 @@ use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, ModelChannel, Pricing};
 use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
+use crate::domain::sso::SsoConfigRow;
 use crate::domain::team::{Team, TeamMember};
 use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User, USER_STATUS_ACTIVE, USER_STATUS_SUSPENDED};
@@ -971,6 +972,42 @@ impl DbBackend for PgBackend {
         .execute(&self.pool)
         .await;
         tracing::info!("teams tables ready");
+
+        // ── SSO configs ─────────────────────────────────────────────────
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS sso_configs (
+                id TEXT PRIMARY KEY,
+                team_id TEXT REFERENCES teams(id) ON DELETE CASCADE,
+                provider_name TEXT NOT NULL DEFAULT 'SSO',
+                issuer_url TEXT NOT NULL,
+                client_id TEXT NOT NULL,
+                client_secret_encrypted TEXT NOT NULL,
+                redirect_url TEXT NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT true,
+                auto_create_user BOOLEAN NOT NULL DEFAULT true,
+                domain_restrictions TEXT,
+                default_role TEXT NOT NULL DEFAULT 'user',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create sso_configs: {e}")))?;
+        tracing::info!("sso_configs table ready");
+
+        // ── SSO user organizations (from IdP, e.g. Keycloak Organizations) ─
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS sso_user_orgs (
+                user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                orgs TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL DEFAULT (now() AT TIME ZONE 'utc')
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create sso_user_orgs: {e}")))?;
+        tracing::info!("sso_user_orgs table ready");
 
         Ok(())
     }
@@ -5414,6 +5451,181 @@ impl DbBackend for PgBackend {
                 team_id: r.get(13),
             })
             .collect())
+    }
+
+    // ── SSO Configs ─────────────────────────────────────────────────────────
+
+    async fn list_sso_configs(&self) -> Result<Vec<SsoConfigRow>, DbError> {
+        let rows = query_as::<_, (String, Option<String>, String, String, String, String, String, bool, bool, Option<String>, String, String, String)>(
+            "SELECT id, team_id, provider_name, issuer_url, client_id, \
+             client_secret_encrypted, redirect_url, enabled, auto_create_user, \
+             domain_restrictions, default_role, created_at, updated_at \
+             FROM sso_configs ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Failed to list sso configs: {}", e)))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(id, team_id, provider_name, issuer_url, client_id, client_secret_encrypted, redirect_url, enabled, auto_create_user, domain_restrictions, default_role, created_at, updated_at)| SsoConfigRow {
+                id,
+                team_id,
+                provider_name,
+                issuer_url,
+                client_id,
+                client_secret_encrypted: Some(client_secret_encrypted),
+                redirect_url,
+                enabled,
+                auto_create_user,
+                domain_restrictions,
+                default_role,
+                created_at,
+                updated_at,
+            })
+            .collect())
+    }
+
+    async fn get_sso_config(&self, id: &str) -> Result<Option<SsoConfigRow>, DbError> {
+        let row: Option<(String, Option<String>, String, String, String, String, String, bool, bool, Option<String>, String, String, String)> = query_as(
+            "SELECT id, team_id, provider_name, issuer_url, client_id, \
+             client_secret_encrypted, redirect_url, enabled, auto_create_user, \
+             domain_restrictions, default_role, created_at, updated_at \
+             FROM sso_configs WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Failed to get sso config: {}", e)))?;
+
+        Ok(row.map(|(id, team_id, provider_name, issuer_url, client_id, client_secret_encrypted, redirect_url, enabled, auto_create_user, domain_restrictions, default_role, created_at, updated_at)| SsoConfigRow {
+            id,
+            team_id,
+            provider_name,
+            issuer_url,
+            client_id,
+            client_secret_encrypted: Some(client_secret_encrypted),
+            redirect_url,
+            enabled,
+            auto_create_user,
+            domain_restrictions,
+            default_role,
+            created_at,
+            updated_at,
+        }))
+    }
+
+    async fn get_sso_config_by_team(&self, team_id: &str) -> Result<Option<SsoConfigRow>, DbError> {
+        let row: Option<(String, Option<String>, String, String, String, String, String, bool, bool, Option<String>, String, String, String)> = query_as(
+            "SELECT id, team_id, provider_name, issuer_url, client_id, \
+             client_secret_encrypted, redirect_url, enabled, auto_create_user, \
+             domain_restrictions, default_role, created_at, updated_at \
+             FROM sso_configs WHERE team_id = $1",
+        )
+        .bind(team_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Failed to get sso config by team: {}", e)))?;
+
+        Ok(row.map(|(id, team_id, provider_name, issuer_url, client_id, client_secret_encrypted, redirect_url, enabled, auto_create_user, domain_restrictions, default_role, created_at, updated_at)| SsoConfigRow {
+            id,
+            team_id,
+            provider_name,
+            issuer_url,
+            client_id,
+            client_secret_encrypted: Some(client_secret_encrypted),
+            redirect_url,
+            enabled,
+            auto_create_user,
+            domain_restrictions,
+            default_role,
+            created_at,
+            updated_at,
+        }))
+    }
+
+    async fn create_sso_config(&self, config: &SsoConfigRow) -> Result<(), DbError> {
+        query(
+            "INSERT INTO sso_configs (id, team_id, provider_name, issuer_url, client_id, \
+             client_secret_encrypted, redirect_url, enabled, auto_create_user, \
+             domain_restrictions, default_role, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+        )
+        .bind(&config.id)
+        .bind(&config.team_id)
+        .bind(&config.provider_name)
+        .bind(&config.issuer_url)
+        .bind(&config.client_id)
+        .bind(&config.client_secret_encrypted)
+        .bind(&config.redirect_url)
+        .bind(config.enabled)
+        .bind(config.auto_create_user)
+        .bind(&config.domain_restrictions)
+        .bind(&config.default_role)
+        .bind(&config.created_at)
+        .bind(&config.updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Failed to create sso config: {}", e)))?;
+        Ok(())
+    }
+
+    async fn update_sso_config(&self, config: &SsoConfigRow) -> Result<(), DbError> {
+        query(
+            "UPDATE sso_configs SET team_id=$2, provider_name=$3, issuer_url=$4, \
+             client_id=$5, client_secret_encrypted=$6, redirect_url=$7, \
+             enabled=$8, auto_create_user=$9, domain_restrictions=$10, \
+             default_role=$11, updated_at=$12 \
+             WHERE id=$1",
+        )
+        .bind(&config.id)
+        .bind(&config.team_id)
+        .bind(&config.provider_name)
+        .bind(&config.issuer_url)
+        .bind(&config.client_id)
+        .bind(&config.client_secret_encrypted)
+        .bind(&config.redirect_url)
+        .bind(config.enabled)
+        .bind(config.auto_create_user)
+        .bind(&config.domain_restrictions)
+        .bind(&config.default_role)
+        .bind(&config.updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Failed to update sso config: {}", e)))?;
+        Ok(())
+    }
+
+    async fn delete_sso_config(&self, id: &str) -> Result<(), DbError> {
+        query("DELETE FROM sso_configs WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError(format!("Failed to delete sso config: {}", e)))?;
+        Ok(())
+    }
+
+    async fn list_sso_user_orgs(&self) -> Result<Vec<(String, String)>, DbError> {
+        let rows = query_as::<_, (String, String)>(
+            "SELECT user_id, orgs FROM sso_user_orgs ORDER BY user_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Failed to list sso user orgs: {}", e)))?;
+        Ok(rows)
+    }
+
+    async fn upsert_sso_user_orgs(&self, user_id: &str, orgs_json: &str) -> Result<(), DbError> {
+        query(
+            "INSERT INTO sso_user_orgs (user_id, orgs, updated_at) VALUES ($1, $2, now() AT TIME ZONE 'utc') \
+             ON CONFLICT (user_id) DO UPDATE SET orgs = EXCLUDED.orgs, updated_at = now() AT TIME ZONE 'utc'",
+        )
+        .bind(user_id)
+        .bind(orgs_json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Failed to upsert sso user orgs: {}", e)))?;
+        Ok(())
     }
 }
 

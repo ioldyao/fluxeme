@@ -10,6 +10,7 @@ use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, Pricing};
 use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
+use crate::domain::sso::SsoConfigRow;
 use crate::domain::team::{Team, TeamMember};
 use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
@@ -711,6 +712,32 @@ impl Database {
     pub async fn bump_config_version(&self) -> Result<(), DbError> {
         let now = chrono::Utc::now().timestamp_millis().to_string();
         self.backend.set_setting("config_version", &now).await
+    }
+
+    // ── SSO Configs ─────────────────────────────────────────────────────────
+    pub async fn list_sso_configs(&self) -> Result<Vec<SsoConfigRow>, DbError> {
+        self.backend.list_sso_configs().await
+    }
+    pub async fn get_sso_config(&self, id: &str) -> Result<Option<SsoConfigRow>, DbError> {
+        self.backend.get_sso_config(id).await
+    }
+    pub async fn get_sso_config_by_team(&self, team_id: &str) -> Result<Option<SsoConfigRow>, DbError> {
+        self.backend.get_sso_config_by_team(team_id).await
+    }
+    pub async fn create_sso_config(&self, config: &SsoConfigRow) -> Result<(), DbError> {
+        self.backend.create_sso_config(config).await
+    }
+    pub async fn update_sso_config(&self, config: &SsoConfigRow) -> Result<(), DbError> {
+        self.backend.update_sso_config(config).await
+    }
+    pub async fn delete_sso_config(&self, id: &str) -> Result<(), DbError> {
+        self.backend.delete_sso_config(id).await
+    }
+    pub async fn list_sso_user_orgs(&self) -> Result<Vec<(String, String)>, DbError> {
+        self.backend.list_sso_user_orgs().await
+    }
+    pub async fn upsert_sso_user_orgs(&self, user_id: &str, orgs_json: &str) -> Result<(), DbError> {
+        self.backend.upsert_sso_user_orgs(user_id, orgs_json).await
     }
 
     // ── Casbin Policies ─────────────────────────────────────────────────

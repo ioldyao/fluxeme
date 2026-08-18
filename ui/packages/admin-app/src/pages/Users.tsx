@@ -39,6 +39,14 @@ function formatSuspendedAt(value?: string | null): string {
   return date.toLocaleString();
 }
 
+/** Display names of the IdP organizations a user belongs to (fallback: '-'). */
+function orgNames(user: User): string {
+  if (!user.sso_orgs || user.sso_orgs.length === 0) {
+    return '-';
+  }
+  return user.sso_orgs.map((o) => o.name || o.alias || o.id).join(', ');
+}
+
 export default function Users() {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<UserStatus>('active');
@@ -186,6 +194,7 @@ export default function Users() {
                       <tr className="border-b text-muted-foreground">
                         <th className="px-4 py-3 text-left">{t('table.id')}</th>
                         <th className="px-4 py-3 text-left">{t('table.name')}</th>
+                        <th className="px-4 py-3 text-left">{t('table.organization')}</th>
                         <th className="px-4 py-3 text-left">{t('table.role')}</th>
                         <th className="px-4 py-3 text-left">{t('table.rateLimits')}</th>
                         <th className="px-4 py-3 text-center">{t('table.concurrencyLimit')}</th>
@@ -197,6 +206,9 @@ export default function Users() {
                         <tr key={user.id} className="border-b last:border-0 hover:bg-muted/50">
                           <td className="px-4 py-3 font-mono text-xs">{user.id}</td>
                           <td className="px-4 py-3">{user.name}</td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground">
+                            {orgNames(user)}
+                          </td>
                           <td className="px-4 py-3">
                             {user.role === 'admin' ? (
                               <span className="inline-flex items-center gap-1 rounded bg-brand/10 px-2 py-0.5 text-xs font-medium text-brand">
@@ -262,6 +274,7 @@ export default function Users() {
                       <tr className="border-b text-muted-foreground">
                         <th className="px-4 py-3 text-left">{t('table.id')}</th>
                         <th className="px-4 py-3 text-left">{t('table.name')}</th>
+                        <th className="px-4 py-3 text-left">{t('table.organization')}</th>
                         <th className="px-4 py-3 text-left">{t('table.role')}</th>
                         <th className="px-4 py-3 text-left">{t('user.suspendedAt')}</th>
                         <th className="px-4 py-3 text-right">{t('table.actions')}</th>
@@ -272,6 +285,9 @@ export default function Users() {
                         <tr key={user.id} className="border-b last:border-0 hover:bg-muted/50">
                           <td className="px-4 py-3 font-mono text-xs">{user.id}</td>
                           <td className="px-4 py-3">{user.name}</td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground">
+                            {orgNames(user)}
+                          </td>
                           <td className="px-4 py-3">
                             {user.role === 'admin' ? (
                               <span className="inline-flex items-center gap-1 rounded bg-brand/10 px-2 py-0.5 text-xs font-medium text-brand">

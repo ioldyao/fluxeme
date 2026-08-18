@@ -23,11 +23,3 @@ redis:
   enabled: true
   url: "redis://:${REDIS_PASSWORD}@127.0.0.1:16379"
 
-# SSO / 统一身份认证 (OIDC)
-sso:
-  enabled: false
-  provider_name: SSO
-  issuer_url: https://your-idp.example.com
-  client_id: your-client-id
-  client_secret: your-client-secret
-  redirect_url: http://localhost:8080/admin/api/sso/callback

@@ -5,6 +5,7 @@ import { api } from '@fluxeme/shared/src/api/client';
 import { fetchAppConfig, saveCurrencySettings } from '@fluxeme/shared/src/api/settings';
 import { CURRENCY_SYMBOL, useCurrency, type CurrencyCode } from '@fluxeme/shared/src/store/currency';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@fluxeme/shared/src/components/ui/tabs';
 import { Guard, usePermission } from '@fluxeme/shared/src/permissions';
 import { Button } from '@fluxeme/shared/src/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@fluxeme/shared/src/components/ui/card';
@@ -12,6 +13,7 @@ import { Input } from '@fluxeme/shared/src/components/ui/input';
 import { Label } from '@fluxeme/shared/src/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@fluxeme/shared/src/components/ui/select';
 import { Switch } from '@fluxeme/shared/src/components/ui/switch';
+import SsoSettings from '@/pages/admin/SsoSettings';
 import type { GatewayRuntimeConfig } from '@fluxeme/shared/src/types';
 
 const PROBE_INTERVAL_MIN = 10;
@@ -144,9 +146,16 @@ export default function AdminSettings() {
   };
 
   return (
-    <div className="max-w-2xl space-y-6 animate-fade-in">
+    <div className="max-w-4xl space-y-6 animate-fade-in">
       <PageHeader title={t('settings.title')} description={t('settings.adminSubtitle')} />
 
+      <Tabs defaultValue="gateway">
+        <TabsList variant="line">
+          <TabsTrigger value="gateway">{t('settings.gatewayTab')}</TabsTrigger>
+          <TabsTrigger value="sso">{t('ssoSettings.title')}</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="gateway" className="mt-6 space-y-6">
       {/* ── Currency ──────────────────────────────────────────────── */}
       <Card>
         <CardHeader>
@@ -336,6 +345,12 @@ export default function AdminSettings() {
           </p>
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="sso" className="mt-6">
+          <SsoSettings />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

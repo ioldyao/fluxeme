@@ -14,6 +14,15 @@ export interface User {
   concurrency_limit?: number;
   status: UserStatus;
   suspended_at?: string | null;
+  /** IdP organizations (e.g. Keycloak Organizations) the user belongs to. */
+  sso_orgs?: SsoOrg[];
+}
+
+/** An organization (tenant) from the IdP, from the OIDC `organizations` claim. */
+export interface SsoOrg {
+  id: string;
+  name?: string | null;
+  alias?: string | null;
 }
 
 export interface UserDetail extends User {
@@ -534,4 +543,32 @@ export interface ContentFilterRule {
   priority: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface SsoConfig {
+  id: string;
+  team_id?: string | null;
+  provider_name: string;
+  issuer_url: string;
+  client_id: string;
+  redirect_url: string;
+  enabled: boolean;
+  auto_create_user: boolean;
+  domain_restrictions?: string | null;
+  default_role: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SsoConfigRequest {
+  team_id?: string | null;
+  provider_name: string;
+  issuer_url: string;
+  client_id: string;
+  client_secret: string;
+  redirect_url: string;
+  enabled: boolean;
+  auto_create_user: boolean;
+  domain_restrictions?: string | null;
+  default_role: string;
 }

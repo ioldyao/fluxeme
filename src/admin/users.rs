@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
@@ -8,6 +9,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::domain::sso::SsoOrg;
 use crate::domain::user::{ApiKey, User, USER_STATUS_ACTIVE, USER_STATUS_SUSPENDED};
 use crate::server::AppState;
 
@@ -52,16 +54,48 @@ async fn ensure_not_last_active_admin(
     Ok(())
 }
 
+/// User row for the admin user list, enriched with the IdP organizations
+/// (Keycloak Organizations) the user belongs to.
+#[derive(Serialize)]
+pub(crate) struct UserListRow {
+    #[serde(flatten)]
+    user: User,
+    #[serde(default)]
+    sso_orgs: Vec<SsoOrg>,
+}
+
 pub(crate) async fn list_users(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<ListUsersQuery>,
-) -> Result<Json<Vec<User>>, AdminError> {
+) -> Result<Json<Vec<UserListRow>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:users").await?;
     let status = parse_user_status_filter(query.status.as_deref())?;
     let users = state.db.list_users(status).await.map_err(db_err)?;
-    Ok(Json(users))
+
+    // Load all SSO user orgs once and map by user_id (avoids N+1).
+    let orgs_map: HashMap<String, Vec<SsoOrg>> = state
+        .db
+        .list_sso_user_orgs()
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .filter_map(|(uid, json)| {
+            serde_json::from_str::<Vec<SsoOrg>>(&json)
+                .ok()
+                .map(|orgs| (uid, orgs))
+        })
+        .collect();
+
+    let rows = users
+        .into_iter()
+        .map(|user| UserListRow {
+            sso_orgs: orgs_map.get(&user.id).cloned().unwrap_or_default(),
+            user,
+        })
+        .collect();
+    Ok(Json(rows))
 }
 
 #[derive(Serialize)]

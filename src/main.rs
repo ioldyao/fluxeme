@@ -211,25 +211,10 @@ async fn main() {
         cache.clone(),
     ));
 
-    let sso_config = config.read().unwrap().sso.clone();
-    let sso = Arc::new(
-        match sso::SsoModule::new(&sso_config, &encryption_key).await {
-            Ok(m) => {
-                if sso_config.enabled {
-                    tracing::info!(
-                        "SSO enabled: provider={}, issuer={}",
-                        sso_config.provider_name,
-                        sso_config.issuer_url
-                    );
-                }
-                m
-            }
-            Err(e) => {
-                tracing::error!("Failed to initialize SSO: {}", e);
-                std::process::exit(1);
-            }
-        },
-    );
+    let sso = Arc::new(sso::SsoModule::new(&encryption_key, db.clone()).await);
+    if sso.is_enabled() {
+        tracing::info!("SSO enabled with {} provider(s)", sso.providers().len());
+    }
 
     // Load allow_private_ips setting from DB (default: true)
     let allow_private = db.get_setting("allow_private_ips").await.ok().flatten();

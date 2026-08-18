@@ -35,6 +35,7 @@ pub mod policies;
 pub mod routing;
 pub mod rules;
 pub mod settings;
+pub mod sso;
 pub mod teams;
 pub mod usage;
 pub mod users;
@@ -922,6 +923,17 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         .route(
             "/api/app/config",
             axum::routing::get(settings::get_app_config),
+        )
+        // SSO Configs (admin:settings)
+        .route(
+            "/api/settings/sso-configs",
+            axum::routing::get(sso::list_sso_configs).post(sso::create_sso_config),
+        )
+        .route(
+            "/api/settings/sso-configs/{id}",
+            axum::routing::get(sso::get_sso_config)
+                .put(sso::update_sso_config)
+                .delete(sso::delete_sso_config),
         )
         // Announcements
         .route(
