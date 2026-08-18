@@ -360,7 +360,7 @@ function KpiCard({
     <article className={`relative min-h-30 overflow-hidden rounded-2xl border p-4 shadow-sm ${palette.card}`}>
       <div className={`pointer-events-none absolute -right-7 -bottom-8 h-22 w-22 rounded-full ${palette.glow}`} />
       <div className="relative flex items-center justify-between gap-2">
-        <div className="text-xs font-semibold text-muted-foreground">{label}</div>
+        <div className="text-xs font-semibold text-foreground">{label}</div>
         <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold ${palette.badge}`}>{badge}</span>
       </div>
       <div className={`relative mt-4 text-3xl font-semibold tracking-[-0.04em] ${palette.value}`}>{value}</div>
@@ -383,9 +383,9 @@ function PercentileBlock({
   const toneClass = tone === 'orange' ? 'text-sidebar-primary' : 'text-chart-1';
 
   return (
-    <div className="rounded-xl border border-secondary bg-muted p-4">
+    <div className="rounded-xl border border-secondary bg-secondary p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="text-[11px] font-semibold text-muted-foreground">{title}</div>
+        <div className="text-[11px] font-semibold text-foreground">{title}</div>
         <div className="text-[10px] text-muted-foreground">{status}</div>
       </div>
       <div className="grid grid-cols-3 gap-3">
@@ -394,7 +394,7 @@ function PercentileBlock({
           { label: 'P90', value: metrics.p90 },
           { label: 'P99', value: metrics.p99 },
         ].map((item, index) => (
-          <div key={item.label} className={index < 2 ? 'border-r border-chart-1' : ''}>
+          <div key={item.label} className={index < 2 ? 'border-r border-border' : ''}>
             <small className="block text-[10px] text-muted-foreground">{item.label}</small>
             <strong className={`mt-1 block text-lg tracking-[-0.02em] ${toneClass}`}>{formatPercentile(item.value)}</strong>
           </div>
@@ -411,7 +411,7 @@ function MetricList({ rows }: { rows: MetricRow[] }) {
       {rows.map((row) => (
         <Fragment key={row.label}>
           <span className="text-muted-foreground">{row.label}</span>
-          <span className="text-right text-muted-foreground">{row.value}</span>
+          <span className="text-right font-medium text-foreground">{row.value}</span>
         </Fragment>
       ))}
     </div>
@@ -780,11 +780,11 @@ export default function FlowTowerContent() {
                   <div className="h-[260px] w-full">
                     <ResponsiveContainer>
                       <AreaChart data={trendData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-1)" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                         <XAxis dataKey="label" tick={{ fill: 'var(--muted-foreground)', fontSize: 10 }} minTickGap={20} />
                         <YAxis tick={{ fill: 'var(--muted-foreground)', fontSize: 10 }} allowDecimals={false} />
                         <RechartsTooltip
-                          contentStyle={{ borderRadius: 12, border: '1px solid var(--chart-1)', fontSize: 12 }}
+                          contentStyle={{ borderRadius: 12, border: '1px solid var(--border)', fontSize: 12 }}
                           formatter={(value, name) => [formatNumber(Number(value)), name === 'success_completed' ? '成功完成' : '失败完成']}
                           labelFormatter={(label) => String(label ?? '')}
                         />
@@ -851,14 +851,14 @@ export default function FlowTowerContent() {
                   <div className="flex flex-col gap-3">
                     {shareRows.map((row) => (
                       <div key={row.model} className="grid grid-cols-[minmax(120px,145px)_minmax(0,1fr)_52px] items-center gap-3">
-                        <div className="truncate text-[11px] text-muted-foreground">{row.model}</div>
+                        <div className="truncate text-[11px] font-medium text-foreground">{row.model}</div>
                         <div className="h-2 overflow-hidden rounded-full bg-secondary">
                           <div
                             className="h-full rounded-full bg-[linear-gradient(90deg,var(--chart-1),var(--accent-foreground))]"
                             style={{ width: `${Math.max(6, row.share)}%` }}
                           />
                         </div>
-                        <div className="text-right text-[11px] text-muted-foreground">{row.share.toFixed(1)}%</div>
+                        <div className="text-right text-[11px] font-semibold text-foreground">{row.share.toFixed(1)}%</div>
                       </div>
                     ))}
                   </div>
