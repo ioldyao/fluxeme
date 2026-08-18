@@ -243,7 +243,7 @@ export default function Users() {
                               aria-label={t('user.suspend')}
                               onClick={() => setConfirmAction({ type: 'suspend', user })}
                             >
-                              <Ban className="size-3.5 text-amber-600" />
+                              <Ban className="size-3.5 text-sidebar-primary" />
                             </Button>
                           </td>
                         </tr>
@@ -309,7 +309,7 @@ export default function Users() {
                               aria-label={t('user.restore')}
                               onClick={() => setConfirmAction({ type: 'restore', user })}
                             >
-                              <RotateCcw className="size-3.5 text-emerald-600" />
+                              <RotateCcw className="size-3.5 text-chart-2" />
                             </Button>
                             <Button
                               variant="ghost"

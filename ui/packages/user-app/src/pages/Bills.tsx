@@ -184,7 +184,7 @@ export default function Bills() {
                     {deductions.map((d) => (
                       <tr key={d.time} className="border-b last:border-0">
                         <td className="px-5 py-3 text-muted-foreground">{new Date(d.time).toLocaleDateString()}</td>
-                        <td className="px-5 py-3 text-right font-mono text-red-500">{fmt(d.amount)}</td>
+                        <td className="px-5 py-3 text-right font-mono text-destructive">{fmt(d.amount)}</td>
                         <td className="px-5 py-3">{d.method}</td>
                       </tr>
                     ))}

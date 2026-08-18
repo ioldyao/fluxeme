@@ -81,12 +81,12 @@ export default function Dashboard() {
   const toneCls = isHealthStripLoading
     ? 'bg-muted-foreground/30 shadow-none'
     : gatewayError
-      ? 'bg-red-500 shadow-[0_0_0_6px_rgba(216,75,75,0.14)]'
+      ? 'bg-destructive shadow-[0_0_0_6px_color-mix(in oklab, var(--destructive) 14%, transparent)]'
       : availability >= 99
-        ? 'bg-emerald-500 shadow-[0_0_0_6px_rgba(20,150,106,0.12)]'
+        ? 'bg-chart-2 shadow-[0_0_0_6px_color-mix(in oklab, var(--chart-2) 12%, transparent)]'
         : availability >= 95
-          ? 'bg-amber-500 shadow-[0_0_0_6px_rgba(217,145,19,0.14)]'
-          : 'bg-emerald-500 shadow-[0_0_0_6px_rgba(20,150,106,0.12)]';
+          ? 'bg-sidebar-primary shadow-[0_0_0_6px_color-mix(in oklab, var(--sidebar-primary) 14%, transparent)]'
+          : 'bg-chart-2 shadow-[0_0_0_6px_color-mix(in oklab, var(--chart-2) 12%, transparent)]';
   const toneLabel = isHealthStripLoading ? t('common.loading') : gatewayError ? t('gateway.unstable') : t('gateway.healthy');
 
   // model share
@@ -133,7 +133,7 @@ export default function Dashboard() {
           <div className="flex items-center gap-1 rounded-lg border bg-card p-1 shadow-sm">
             {RANGE_DAYS.map(d => (
               <button key={d} type="button" onClick={() => setDays(d)}
-                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${d === days ? 'bg-amber-500/15 text-amber-700 font-semibold' : 'text-muted-foreground hover:text-foreground'}`}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${d === days ? 'bg-sidebar-primary/15 text-sidebar-primary font-semibold' : 'text-muted-foreground hover:text-foreground'}`}
               >{d === 1 ? '24H' : `${d}D`}</button>
             ))}
           </div>
@@ -250,8 +250,8 @@ export default function Dashboard() {
                         <tr key={r.request_id} className="border-b last:border-0">
                           <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{formatTimestamp(r.timestamp)}</td>
                           <td className="px-4 py-3">
-                            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${r.success ? 'bg-emerald-500/10 text-emerald-700' : 'bg-red-500/10 text-red-700'}`}>
-                              <span className={`size-1.5 rounded-full ${r.success ? 'bg-emerald-500' : 'bg-red-500'}`} aria-hidden="true" />
+                            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${r.success ? 'bg-chart-2/10 text-chart-2' : 'bg-destructive/10 text-destructive'}`}>
+                              <span className={`size-1.5 rounded-full ${r.success ? 'bg-chart-2' : 'bg-destructive'}`} aria-hidden="true" />
                               {r.success ? t('usage.success') : t('usage.failure')}
                             </span>
                           </td>

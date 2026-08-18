@@ -47,9 +47,9 @@
   --font-sans: 'Inter', 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 
-  --color-brand: #d4a84b;
-  --color-brand-light: #ecc87a;
-  --color-brand-dark: #b8892e;
+  --color-brand: var(--brand-gold);
+  --color-brand-gold: var(--brand-gold);
+  --color-brand-gold-muted: var(--brand-gold-muted);
 
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -118,76 +118,80 @@
 
 :root {
   color-scheme: light;
-  --background: oklch(0.9383 0.0042 236.4993);
-  --foreground: oklch(0.3211 0 0);
-  --card: oklch(1.0000 0 0);
-  --card-foreground: oklch(0.3211 0 0);
-  --popover: oklch(1.0000 0 0);
-  --popover-foreground: oklch(0.3211 0 0);
-  --primary: oklch(0.2972 0.0398 246.6002);
-  --primary-foreground: oklch(1.0000 0 0);
-  --secondary: oklch(0.9670 0.0029 264.5419);
-  --secondary-foreground: oklch(0.6325 0.0904 80.9413);
-  --muted: oklch(0.9846 0.0017 247.8389);
-  --muted-foreground: oklch(0.5510 0.0234 264.3637);
-  --accent: oklch(0.9119 0.0222 243.8174);
-  --accent-foreground: oklch(0.3791 0.1378 265.5222);
-  --destructive: oklch(0.6368 0.2078 25.3313);
-  --destructive-foreground: oklch(1.0000 0 0);
-  --border: oklch(0.8853 0 0);
-  --input: oklch(0.9700 0.0029 264.5420);
-  --ring: oklch(0.6325 0.0904 80.9413);
+  --background: rgb(247, 248, 250);
+  --foreground: rgb(31, 41, 55);
+  --card: rgb(255, 255, 255);
+  --card-foreground: rgb(31, 41, 55);
+  --popover: rgb(255, 255, 255);
+  --popover-foreground: rgb(31, 41, 55);
+  --primary: rgb(31, 48, 66);
+  --primary-foreground: rgb(255, 255, 255);
+  --secondary: rgb(241, 244, 247);
+  --secondary-foreground: rgb(51, 65, 85);
+  --muted: rgb(245, 247, 249);
+  --muted-foreground: rgb(102, 112, 133);
+  --accent: rgb(233, 239, 245);
+  --accent-foreground: rgb(31, 48, 66);
+  --destructive: rgb(217, 45, 32);
+  --destructive-foreground: rgb(255, 255, 255);
+  --border: rgb(228, 231, 236);
+  --input: rgb(248, 250, 252);
+  --ring: rgb(99, 124, 149);
   --radius: 0.75rem;
-  --chart-1: oklch(0.7156 0.0605 248.6845);
-  --chart-2: oklch(0.7875 0.0917 35.9616);
-  --chart-3: oklch(0.5778 0.0759 254.1573);
-  --chart-4: oklch(0.5016 0.0849 259.4902);
-  --chart-5: oklch(0.2210 0.0253 246.6492);
-  --sidebar: oklch(0.9030 0.0046 258.3257);
-  --sidebar-foreground: oklch(0.2210 0.0253 246.6492);
-  --sidebar-primary: oklch(0.6397 0.1720 36.4421);
-  --sidebar-primary-foreground: oklch(1.0000 0 0);
-  --sidebar-accent: oklch(0.9119 0.0222 243.8174);
-  --sidebar-accent-foreground: oklch(0.6325 0.0904 80.9413);
-  --sidebar-border: oklch(0.8853 0 0);
-  --sidebar-ring: oklch(0.6397 0.1720 36.4421);
+  --chart-1: rgb(82, 126, 168);
+  --chart-2: rgb(100, 152, 135);
+  --chart-3: rgb(191, 145, 66);
+  --chart-4: rgb(132, 114, 168);
+  --chart-5: rgb(82, 96, 112);
+  --sidebar: rgb(241, 243, 246);
+  --sidebar-foreground: rgb(51, 65, 85);
+  --sidebar-primary: rgb(31, 48, 66);
+  --sidebar-primary-foreground: rgb(255, 255, 255);
+  --sidebar-accent: rgb(214, 226, 238);
+  --sidebar-accent-foreground: rgb(31, 48, 66);
+  --sidebar-border: rgb(224, 228, 233);
+  --sidebar-ring: rgb(99, 124, 149);
+  --brand-gold: rgb(177, 132, 43);
+  --brand-gold-muted: rgb(245, 237, 219);
 }
 
 .dark {
   color-scheme: dark;
-  --background: oklch(0.2598 0.0306 262.6666);
-  --foreground: oklch(0.9219 0 0);
-  --card: oklch(0.3106 0.0301 268.6365);
-  --card-foreground: oklch(0.9219 0 0);
-  --popover: oklch(0.2900 0.0249 268.3986);
-  --popover-foreground: oklch(0.9219 0 0);
-  --primary: oklch(0.6325 0.0904 80.9413);
-  --primary-foreground: oklch(1.0000 0 0);
-  --secondary: oklch(0.8853 0 0);
-  --secondary-foreground: oklch(0.4461 0.0263 256.8018);
-  --muted: oklch(0.3095 0.0266 266.7132);
-  --muted-foreground: oklch(0.7155 0 0);
-  --accent: oklch(0.3380 0.0589 267.5867);
-  --accent-foreground: oklch(0.6325 0.0904 80.9413);
-  --destructive: oklch(0.6368 0.2078 25.3313);
-  --destructive-foreground: oklch(1.0000 0 0);
-  --border: oklch(0.3843 0.0301 269.7337);
-  --input: oklch(0.3843 0.0301 269.7337);
-  --ring: oklch(0.7853 0.0998 82.0579);
+  --background: rgb(21, 26, 32);
+  --foreground: rgb(226, 232, 240);
+  --card: rgb(28, 34, 42);
+  --card-foreground: rgb(226, 232, 240);
+  --popover: rgb(26, 31, 38);
+  --popover-foreground: rgb(226, 232, 240);
+  --primary: rgb(141, 168, 196);
+  --primary-foreground: rgb(20, 27, 35);
+  --secondary: rgb(45, 53, 63);
+  --secondary-foreground: rgb(203, 213, 225);
+  --muted: rgb(37, 44, 52);
+  --muted-foreground: rgb(148, 163, 184);
+  --accent: rgb(49, 60, 72);
+  --accent-foreground: rgb(165, 192, 220);
+  --destructive: rgb(239, 68, 68);
+  --destructive-foreground: rgb(255, 255, 255);
+  --border: rgb(51, 59, 70);
+  --input: rgb(45, 52, 62);
+  --ring: rgb(120, 150, 180);
   --radius: 0.75rem;
-  --chart-1: oklch(0.7156 0.0605 248.6845);
-  --chart-2: oklch(0.7693 0.0876 34.1875);
-  --chart-3: oklch(0.5778 0.0759 254.1573);
-  --chart-4: oklch(0.5016 0.0849 259.4902);
-  --chart-5: oklch(0.4241 0.0952 264.0306);
-  --sidebar: oklch(0.3100 0.0283 267.7408);
-  --sidebar-foreground: oklch(0.9219 0 0);
-  --sidebar-primary: oklch(0.6397 0.1720 36.4421);
-  --sidebar-primary-foreground: oklch(1.0000 0 0);
-  --sidebar-accent: oklch(0.3380 0.0589 267.5867);
-  --sidebar-accent-foreground: oklch(0.8823 0.0571 254.1284);
-  --sidebar-border: oklch(0.3843 0.0301 269.7337);
-  --sidebar-ring: oklch(0.6397 0.1720 36.4421);
+  --chart-1: rgb(82, 126, 168);
+  --chart-2: rgb(100, 152, 135);
+  --chart-3: rgb(191, 145, 66);
+  --chart-4: rgb(132, 114, 168);
+  --chart-5: rgb(82, 96, 112);
+  --sidebar: rgb(30, 36, 44);
+  --sidebar-foreground: rgb(203, 213, 225);
+  --sidebar-primary: rgb(141, 168, 196);
+  --sidebar-primary-foreground: rgb(20, 27, 35);
+  --sidebar-accent: rgb(56, 68, 84);
+  --sidebar-accent-foreground: rgb(165, 192, 220);
+  --sidebar-border: rgb(45, 52, 62);
+  --sidebar-ring: rgb(120, 150, 180);
+  --brand-gold: rgb(177, 132, 43);
+  --brand-gold-muted: rgb(42, 35, 20);
 }
 
 @layer base {
@@ -236,7 +240,7 @@
     @apply bg-accent/50 text-foreground;
   }
   .nav-link.active {
-    @apply bg-accent text-accent-foreground font-medium relative;
+    @apply bg-sidebar-accent text-sidebar-accent-foreground font-medium relative;
   }
   .nav-link.active::before {
     content: '';

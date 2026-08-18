@@ -347,7 +347,7 @@ function TeamWalletView({ teamId }: { teamId: string }) {
                 <div className="text-xs">{tx.tx_type}</div>
                 <div className="text-xs text-muted-foreground">{tx.created_at}</div>
               </div>
-              <span className={tx.amount >= 0 ? 'text-emerald-600' : 'text-destructive'}>
+              <span className={tx.amount >= 0 ? 'text-chart-2' : 'text-destructive'}>
                 {tx.amount >= 0 ? '+' : ''}
                 {tx.amount}
               </span>

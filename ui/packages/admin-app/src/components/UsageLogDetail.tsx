@@ -12,7 +12,7 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
-const COLORS: Record<string, string> = { ok: '#14966a', pending: '#87939e', streaming: '#2d7fb8', warn: '#c97800', fail: '#d84b4b' };
+const COLORS: Record<string, string> = { ok: 'var(--chart-1)', pending: 'var(--chart-1)', streaming: 'var(--chart-1)', warn: 'var(--chart-1)', fail: 'var(--destructive)' };
 
 function estimateEvents(record: UsageRecord) {
   const ts = parseTimestamp(record.timestamp);
@@ -143,8 +143,8 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                 {/* Inspector panel */}
                 <div className="rounded-lg border bg-card p-4">
                   <h4 className="text-sm font-semibold mb-2">{t('usage.detailTitle')}</h4>
-                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${record.success ? 'bg-emerald-500/10 text-emerald-700' : 'bg-red-500/10 text-red-700'}`}>
-                    <span className={`size-1.5 rounded-full ${record.success ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${record.success ? 'bg-chart-2/10 text-chart-2' : 'bg-destructive/10 text-destructive'}`}>
+                    <span className={`size-1.5 rounded-full ${record.success ? 'bg-chart-2' : 'bg-destructive'}`} />
                     {record.success ? t('usage.success') : t('usage.failure')} · HTTP {record.status_code}
                   </span>
                   <div className="mt-3 space-y-0">

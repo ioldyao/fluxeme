@@ -225,7 +225,7 @@ export default function WalletPage() {
           {overview && (
             <div className="flex items-center gap-3">
               <div className={`px-3 py-1.5 rounded-md text-xs font-medium ${
-                lowBalance ? 'bg-destructive/10 text-destructive' : 'bg-green-500/10 text-green-600'
+                lowBalance ? 'bg-destructive/10 text-destructive' : 'bg-chart-2/10 text-chart-2'
               }`}>
                 {lowBalance ? t('wallet.alertBelowThreshold') : t('wallet.alertOk')}
               </div>
@@ -312,7 +312,7 @@ export default function WalletPage() {
                           </span>
                         )}
                         {day.rechargeCount > 0 && (
-                          <span className="text-green-600">
+                          <span className="text-chart-2">
                             {t('wallet.groupRecharge', { count: day.rechargeCount, amount: fmt(day.rechargeTotal) })}
                           </span>
                         )}
@@ -343,19 +343,19 @@ export default function WalletPage() {
                                 </td>
                                 <td className="px-5 py-2.5">
                                   <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                                    tx.tx_type === 'recharge' ? 'bg-green-500/10 text-green-600' : 'bg-destructive/10 text-destructive'
+                                    tx.tx_type === 'recharge' ? 'bg-chart-2/10 text-chart-2' : 'bg-destructive/10 text-destructive'
                                   }`}>
                                     {tx.tx_type === 'recharge' ? t('wallet.type.recharge') : t('wallet.type.deduction')}
                                   </span>
                                 </td>
-                                <td className={`px-5 py-2.5 text-right font-mono text-xs ${tx.amount >= 0 ? 'text-green-600' : 'text-destructive'}`}>
+                                <td className={`px-5 py-2.5 text-right font-mono text-xs ${tx.amount >= 0 ? 'text-chart-2' : 'text-destructive'}`}>
                                   {tx.amount >= 0 ? '+' : ''}{fmt(Math.abs(tx.amount))}
                                 </td>
                                 <td className="px-5 py-2.5 text-right font-mono text-xs text-muted-foreground">{fmt(tx.balance_before)}</td>
                                 <td className="px-5 py-2.5 text-right font-mono text-xs text-muted-foreground">{fmt(tx.balance_after)}</td>
                                 <td className="px-5 py-2.5 text-muted-foreground text-xs">{tx.method}</td>
                                 <td className="px-5 py-2.5 text-xs">
-                                  <span className={`text-xs ${tx.status === 'completed' ? 'text-green-600' : 'text-muted-foreground'}`}>
+                                  <span className={`text-xs ${tx.status === 'completed' ? 'text-chart-2' : 'text-muted-foreground'}`}>
                                     {tx.status}
                                   </span>
                                 </td>

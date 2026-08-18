@@ -16,21 +16,21 @@ import {
  */
 
 const C = {
-  bg: '#f5f5f3',
-  cardBg: '#ffffff',
-  border: '#e4e3de',
-  textPrimary: '#1a1a18',
-  textSecondary: '#6b6a64',
-  textMuted: '#9a988f',
-  nodeBg: '#fafaf8',
-  barTrack: '#eeede8',
-  green: '#1a8a3d',
-  low: '#4a7fc9',
-  mid: '#d99a2b',
-  high: '#c94a4a',
+  bg: 'var(--muted)',
+  cardBg: 'var(--card)',
+  border: 'var(--secondary)',
+  textPrimary: 'var(--foreground)',
+  textSecondary: 'var(--muted-foreground)',
+  textMuted: 'var(--muted-foreground)',
+  nodeBg: 'var(--muted)',
+  barTrack: 'var(--secondary)',
+  green: 'var(--chart-2)',
+  low: 'var(--chart-1)',
+  mid: 'var(--sidebar-primary)',
+  high: 'var(--destructive)',
 };
 
-const HISTORY_COLORS = ['#4a7fc9', '#d99a2b', '#6a4ec9', '#c94a4a', '#3ca07a', '#c47a3c'];
+const HISTORY_COLORS = ['var(--chart-1)', 'var(--sidebar-primary)', 'var(--chart-3)', 'var(--destructive)', 'var(--chart-2)', 'var(--sidebar-primary)'];
 
 function rateClass(rate: number) {
   if (rate >= 97) return 'ok';
@@ -38,9 +38,9 @@ function rateClass(rate: number) {
   return 'bad';
 }
 const RATE_STYLE: Record<string, { color: string; bg: string }> = {
-  ok: { color: C.green, bg: '#e7f5ea' },
-  warn: { color: '#b4770a', bg: '#fbf1de' },
-  bad: { color: '#c23b3b', bg: '#fbeaea' },
+  ok: { color: C.green, bg: 'var(--chart-2/15)' },
+  warn: { color: 'var(--sidebar-primary)', bg: 'var(--sidebar-primary/15)' },
+  bad: { color: 'var(--destructive)', bg: 'var(--destructive/15)' },
 };
 
 function formatBucket(bucket: string): string {
@@ -156,8 +156,8 @@ export default function RoutingHistory() {
   const btnStyle = (p: string): React.CSSProperties => ({
     fontSize: 12.5, padding: '6px 12px', borderRadius: 6,
     border: `1px solid ${C.border}`,
-    background: preset === p ? C.low : '#fafaf8',
-    color: preset === p ? '#fff' : C.textSecondary,
+    background: preset === p ? 'var(--accent)' : 'var(--muted)',
+    color: preset === p ? 'var(--accent-foreground)' : C.textSecondary,
     fontWeight: preset === p ? 500 : 400,
     cursor: 'pointer', transition: 'all 0.12s',
   });
@@ -175,11 +175,11 @@ export default function RoutingHistory() {
         <button style={btnStyle('7d')} onClick={() => setPreset('7d')}>{t('routingFlow.history7d')}</button>
         <button style={btnStyle('30d')} onClick={() => setPreset('30d')}>{t('routingFlow.history30d')}</button>
         <div style={{ width: 1, height: 20, background: C.border, margin: '0 4px' }} />
-        <input type="datetime-local" style={{ fontSize: 12.5, padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.border}`, color: C.textPrimary, background: '#fff' }} value={customStart} onChange={(e) => setCustomStart(e.target.value)} />
+        <input type="datetime-local" style={{ fontSize: 12.5, padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.border}`, color: C.textPrimary, background: 'var(--card)' }} value={customStart} onChange={(e) => setCustomStart(e.target.value)} />
         <span style={{ color: C.textMuted, fontSize: 12 }}>{t('routingFlow.historyTo')}</span>
-        <input type="datetime-local" style={{ fontSize: 12.5, padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.border}`, color: C.textPrimary, background: '#fff' }} value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} />
-        <button style={{ fontSize: 12.5, padding: '6px 14px', borderRadius: 6, border: 'none', background: C.textPrimary, color: '#fff', cursor: 'pointer' }} onClick={handleApply}>{t('routingFlow.historyApply')}</button>
-        <select style={{ fontSize: 12.5, padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.border}`, color: C.textPrimary, background: '#fff', marginLeft: 'auto' }} value={modelFilter} onChange={(e) => setModelFilter(e.target.value)}>
+        <input type="datetime-local" style={{ fontSize: 12.5, padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.border}`, color: C.textPrimary, background: 'var(--card)' }} value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} />
+        <button style={{ fontSize: 12.5, padding: '6px 14px', borderRadius: 6, border: 'none', background: C.textPrimary, color: 'var(--card)', cursor: 'pointer' }} onClick={handleApply}>{t('routingFlow.historyApply')}</button>
+        <select style={{ fontSize: 12.5, padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.border}`, color: C.textPrimary, background: 'var(--card)', marginLeft: 'auto' }} value={modelFilter} onChange={(e) => setModelFilter(e.target.value)}>
           <option value="all">{t('routingFlow.historyAllModels')}</option>
           {modelList.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
         </select>
@@ -199,9 +199,9 @@ export default function RoutingHistory() {
             <div style={{ width: '100%', height: 230 }}>
               <ResponsiveContainer>
                 <BarChart data={volumeData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e1e0d9" />
-                  <XAxis dataKey="bucket" tick={{ fill: '#898781', fontSize: 11 }} />
-                  <YAxis tick={{ fill: '#898781', fontSize: 11 }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--secondary)" />
+                  <XAxis dataKey="bucket" tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />
+                  <YAxis tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />
                   <ReTooltip contentStyle={{ borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12 }} />
                   {channelIds.map((chId, i) => (
                     <Bar key={chId} dataKey={chId} stackId="a" fill={HISTORY_COLORS[i % HISTORY_COLORS.length]} radius={[2, 2, 0, 0]} />
@@ -226,9 +226,9 @@ export default function RoutingHistory() {
             <div style={{ width: '100%', height: 230 }}>
               <ResponsiveContainer>
                 <LineChart data={successData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e1e0d9" />
-                  <XAxis dataKey="bucket" tick={{ fill: '#898781', fontSize: 11 }} />
-                  <YAxis domain={[0, 100]} tick={{ fill: '#898781', fontSize: 11 }} tickFormatter={(v: number) => v + '%'} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--secondary)" />
+                  <XAxis dataKey="bucket" tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />
+                  <YAxis domain={[0, 100]} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} tickFormatter={(v: number) => v + '%'} />
                   <ReTooltip contentStyle={{ borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12 }} formatter={(v: number) => [`${v}%`, '']} />
                   {channelIds.map((chId, i) => (
                     <Line key={chId} type="monotone" dataKey={chId} stroke={HISTORY_COLORS[i % HISTORY_COLORS.length]} strokeWidth={2} dot={false} />
@@ -265,7 +265,7 @@ export default function RoutingHistory() {
                   const rs = RATE_STYLE[rateClass(s.success_rate)];
                   const rows = [];
                   rows.push(
-                    <tr key={s.channel_id} style={{ fontWeight: 600, background: '#fbfbf9', borderBottom: `1px solid ${C.border}` }}>
+                    <tr key={s.channel_id} style={{ fontWeight: 600, background: 'var(--muted)', borderBottom: `1px solid ${C.border}` }}>
                       <td style={{ padding: '11px 18px', fontSize: 13, verticalAlign: 'middle' }}>{channelName(s.channel_id)}</td>
                       <td style={{ padding: '11px 18px', fontSize: 13, verticalAlign: 'middle', minWidth: 140 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

@@ -191,13 +191,13 @@ function endpointProbeLabel(probe: ProbeResult | null) {
 function modelHealthPresentation(status: ModelHealthStatus) {
   switch (status) {
     case 'healthy':
-      return { label: '可路由', dot: 'bg-[#16a36a]', badge: 'bg-[#eaf8f1] text-[#15865a]' };
+      return { label: '可路由', dot: 'bg-chart-2', badge: 'bg-chart-2/15 text-chart-2' };
     case 'degraded':
-      return { label: '部分降级', dot: 'bg-[#d99a18]', badge: 'bg-[#fff5dc] text-[#ad7411]' };
+      return { label: '部分降级', dot: 'bg-sidebar-primary', badge: 'bg-sidebar-primary/15 text-sidebar-primary' };
     case 'unavailable':
-      return { label: '不可用', dot: 'bg-[#e24f4f]', badge: 'bg-[#ffecec] text-[#c83333]' };
+      return { label: '不可用', dot: 'bg-destructive', badge: 'bg-destructive/15 text-destructive' };
     case 'unknown':
-      return { label: '健康未知', dot: 'bg-[#98a2b3]', badge: 'bg-[#f1f3f6] text-[#667085]' };
+      return { label: '健康未知', dot: 'bg-muted-foreground', badge: 'bg-muted text-muted-foreground' };
   }
 }
 
@@ -263,38 +263,38 @@ function toneClasses(tone: Tone) {
   switch (tone) {
     case 'blue':
       return {
-        card: 'border-[#dce7ff] bg-[linear-gradient(180deg,#ffffff_0%,#f6f9ff_100%)]',
-        badge: 'bg-[#edf4ff] text-[#3276e8]',
-        value: 'text-[#3276e8]',
-        glow: 'bg-[#edf4ff]',
+        card: 'border-accent bg-[linear-gradient(180deg,var(--card)_0%,var(--accent)_100%)]',
+        badge: 'bg-accent text-accent-foreground',
+        value: 'text-accent-foreground',
+        glow: 'bg-accent',
       };
     case 'cyan':
       return {
-        card: 'border-[#d8f0f5] bg-[linear-gradient(180deg,#ffffff_0%,#f3fcfe_100%)]',
-        badge: 'bg-[#eafafb] text-[#0ca8bd]',
-        value: 'text-[#0ca8bd]',
-        glow: 'bg-[#eafafb]',
+        card: 'border-accent bg-[linear-gradient(180deg,var(--card)_0%,var(--accent)_100%)]',
+        badge: 'bg-accent text-chart-1',
+        value: 'text-chart-1',
+        glow: 'bg-accent',
       };
     case 'green':
       return {
-        card: 'border-[#d7f0e3] bg-[linear-gradient(180deg,#ffffff_0%,#f5fcf8_100%)]',
-        badge: 'bg-[#ecfbf4] text-[#16a36a]',
-        value: 'text-[#16a36a]',
-        glow: 'bg-[#ecfbf4]',
+        card: 'border-chart-2/15 bg-[linear-gradient(180deg,var(--card)_0%,var(--accent)_100%)]',
+        badge: 'bg-chart-2/15 text-chart-2',
+        value: 'text-chart-2',
+        glow: 'bg-chart-2/15',
       };
     case 'yellow':
       return {
-        card: 'border-[#f3e4bc] bg-[linear-gradient(180deg,#ffffff_0%,#fffaf0_100%)]',
-        badge: 'bg-[#fff8e8] text-[#d99a18]',
-        value: 'text-[#d99a18]',
-        glow: 'bg-[#fff8e8]',
+        card: 'border-sidebar-primary/15 bg-[linear-gradient(180deg,var(--card)_0%,#fffaf0_100%)]',
+        badge: 'bg-sidebar-primary/15 text-sidebar-primary',
+        value: 'text-sidebar-primary',
+        glow: 'bg-sidebar-primary/15',
       };
     case 'red':
       return {
-        card: 'border-[#f2d8d8] bg-[linear-gradient(180deg,#ffffff_0%,#fff6f6_100%)]',
-        badge: 'bg-[#fff0f0] text-[#e24f4f]',
-        value: 'text-[#e24f4f]',
-        glow: 'bg-[#fff0f0]',
+        card: 'border-destructive/15 bg-[linear-gradient(180deg,var(--card)_0%,#fff6f6_100%)]',
+        badge: 'bg-destructive/15 text-destructive',
+        value: 'text-destructive',
+        glow: 'bg-destructive/15',
       };
   }
 }
@@ -334,8 +334,8 @@ function PlaceholderCard({
   description: string;
 }) {
   return (
-    <div className="rounded-xl border border-dashed border-[#d8dee7] bg-[#fbfcfe] px-4 py-6 text-sm text-[#667085]">
-      <div className="font-medium text-[#344054]">{title}</div>
+    <div className="rounded-xl border border-dashed border-border bg-muted px-4 py-6 text-sm text-muted-foreground">
+      <div className="font-medium text-muted-foreground">{title}</div>
       <p className="mt-2 leading-6">{description}</p>
     </div>
   );
@@ -364,7 +364,7 @@ function KpiCard({
         <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold ${palette.badge}`}>{badge}</span>
       </div>
       <div className={`relative mt-4 text-3xl font-semibold tracking-[-0.04em] ${palette.value}`}>{value}</div>
-      <div className="relative mt-3 text-[11px] text-[#98a2b3]">{subtext}</div>
+      <div className="relative mt-3 text-[11px] text-muted-foreground">{subtext}</div>
     </article>
   );
 }
@@ -380,13 +380,13 @@ function PercentileBlock({
   tone: 'orange' | 'cyan';
   metrics: FlowMetricsPercentiles;
 }) {
-  const toneClass = tone === 'orange' ? 'text-[#f08b32]' : 'text-[#0ca8bd]';
+  const toneClass = tone === 'orange' ? 'text-sidebar-primary' : 'text-chart-1';
 
   return (
-    <div className="rounded-xl border border-[#edf0f4] bg-[#fbfcfe] p-4">
+    <div className="rounded-xl border border-secondary bg-muted p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="text-[11px] font-semibold text-[#475467]">{title}</div>
-        <div className="text-[10px] text-[#98a2b3]">{status}</div>
+        <div className="text-[11px] font-semibold text-muted-foreground">{title}</div>
+        <div className="text-[10px] text-muted-foreground">{status}</div>
       </div>
       <div className="grid grid-cols-3 gap-3">
         {[
@@ -394,13 +394,13 @@ function PercentileBlock({
           { label: 'P90', value: metrics.p90 },
           { label: 'P99', value: metrics.p99 },
         ].map((item, index) => (
-          <div key={item.label} className={index < 2 ? 'border-r border-[#e9edf2]' : ''}>
-            <small className="block text-[10px] text-[#98a2b3]">{item.label}</small>
+          <div key={item.label} className={index < 2 ? 'border-r border-chart-1' : ''}>
+            <small className="block text-[10px] text-muted-foreground">{item.label}</small>
             <strong className={`mt-1 block text-lg tracking-[-0.02em] ${toneClass}`}>{formatPercentile(item.value)}</strong>
           </div>
         ))}
       </div>
-      <div className="mt-3 text-[10px] text-[#98a2b3]">样本数：{formatNumber(metrics.sample_count)}</div>
+      <div className="mt-3 text-[10px] text-muted-foreground">样本数：{formatNumber(metrics.sample_count)}</div>
     </div>
   );
 }
@@ -410,8 +410,8 @@ function MetricList({ rows }: { rows: MetricRow[] }) {
     <div className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-2 text-[10.5px]">
       {rows.map((row) => (
         <Fragment key={row.label}>
-          <span className="text-[#98a2b3]">{row.label}</span>
-          <span className="text-right text-[#475467]">{row.value}</span>
+          <span className="text-muted-foreground">{row.label}</span>
+          <span className="text-right text-muted-foreground">{row.value}</span>
         </Fragment>
       ))}
     </div>
@@ -651,17 +651,17 @@ export default function FlowTowerContent() {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      <section className="overflow-hidden rounded-2xl border border-border bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.96)_100%)] shadow-sm">
+      <section className="overflow-hidden rounded-2xl border border-border bg-[linear-gradient(180deg,var(--card)_0%,var(--muted)_100%)] shadow-sm">
         <div className="flex flex-col gap-4 border-b border-border px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="text-lg font-semibold text-foreground">模型监控</h2>
             <p className="mt-1 text-sm text-muted-foreground">实时请求态势、模型流量、端点健康与异常定位</p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <div className="inline-flex h-9 items-center rounded-lg border border-border bg-background px-3 text-[#475467]">
+            <div className="inline-flex h-9 items-center rounded-lg border border-border bg-background px-3 text-muted-foreground">
               自动刷新 · 30s
             </div>
-            <div className="inline-flex h-9 items-center rounded-lg border border-border bg-background px-3 text-[#475467]">
+            <div className="inline-flex h-9 items-center rounded-lg border border-border bg-background px-3 text-muted-foreground">
               最近更新 · {lastUpdatedLabel}
             </div>
           </div>
@@ -670,7 +670,7 @@ export default function FlowTowerContent() {
         <div className="space-y-4 px-5 py-5">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex flex-wrap items-center gap-2">
-              <div className="inline-flex rounded-xl bg-[#eaf0f7] p-1">
+              <div className="inline-flex rounded-xl bg-accent p-1">
                 {RANGE_OPTIONS.map((option) => (
                   <button
                     key={option.key}
@@ -681,8 +681,8 @@ export default function FlowTowerContent() {
                     }}
                     className={`rounded-lg px-3 py-1.5 text-xs transition ${
                       selectedRange === option.key
-                        ? 'bg-white text-[#1f2937] shadow-sm'
-                        : 'text-[#697586] hover:text-[#1f2937]'
+                        ? 'bg-white text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
                     }`}
                   >
                     {option.label}
@@ -691,7 +691,7 @@ export default function FlowTowerContent() {
               </div>
               <select
                 aria-label="模型筛选"
-                className="h-9 rounded-lg border border-border bg-background px-3 text-xs text-[#475467]"
+                className="h-9 rounded-lg border border-border bg-background px-3 text-xs text-muted-foreground"
                 value={selectedModelId}
                 onChange={(event) => {
                   setSelectedModelId(event.target.value);
@@ -709,7 +709,7 @@ export default function FlowTowerContent() {
             <div className="flex flex-wrap items-center gap-2">
               <select
                 aria-label="渠道筛选"
-                className="h-9 rounded-lg border border-border bg-muted px-3 text-xs text-[#98a2b3]"
+                className="h-9 rounded-lg border border-border bg-muted px-3 text-xs text-muted-foreground"
                 value="pending"
                 disabled
               >
@@ -718,7 +718,7 @@ export default function FlowTowerContent() {
               <button
                 type="button"
                 onClick={() => setQueryNowMs(Date.now())}
-                className="inline-flex h-9 items-center rounded-lg border border-border bg-background px-3 text-xs text-[#475467] transition hover:bg-muted"
+                className="inline-flex h-9 items-center rounded-lg border border-border bg-background px-3 text-xs text-muted-foreground transition hover:bg-muted"
               >
                 ↻ 刷新
               </button>
@@ -759,14 +759,14 @@ export default function FlowTowerContent() {
               badge={displayedRangeLabel}
               value={formatNumber(historical?.success_completed)}
               tone="green"
-              subtext={<>成功率 <span className="font-semibold text-[#16a36a]">{formatPercent(successRate)}</span></>}
+              subtext={<>成功率 <span className="font-semibold text-chart-2">{formatPercent(successRate)}</span></>}
             />
             <KpiCard
               label="失败完成"
               badge={displayedRangeLabel}
               value={formatNumber(historical?.failed_completed)}
               tone="red"
-              subtext={<>错误率 <span className="font-semibold text-[#e24f4f]">{formatPercent(failureRate)}</span></>}
+              subtext={<>错误率 <span className="font-semibold text-destructive">{formatPercent(failureRate)}</span></>}
             />
           </section>
 
@@ -780,21 +780,21 @@ export default function FlowTowerContent() {
                   <div className="h-[260px] w-full">
                     <ResponsiveContainer>
                       <AreaChart data={trendData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#edf1f6" />
-                        <XAxis dataKey="label" tick={{ fill: '#98a2b3', fontSize: 10 }} minTickGap={20} />
-                        <YAxis tick={{ fill: '#98a2b3', fontSize: 10 }} allowDecimals={false} />
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-1)" />
+                        <XAxis dataKey="label" tick={{ fill: 'var(--muted-foreground)', fontSize: 10 }} minTickGap={20} />
+                        <YAxis tick={{ fill: 'var(--muted-foreground)', fontSize: 10 }} allowDecimals={false} />
                         <RechartsTooltip
-                          contentStyle={{ borderRadius: 12, border: '1px solid #e6ebf2', fontSize: 12 }}
+                          contentStyle={{ borderRadius: 12, border: '1px solid var(--chart-1)', fontSize: 12 }}
                           formatter={(value, name) => [formatNumber(Number(value)), name === 'success_completed' ? '成功完成' : '失败完成']}
                           labelFormatter={(label) => String(label ?? '')}
                         />
-                        <Area type="monotone" dataKey="success_completed" stroke="#27ad74" fill="#54bd8b" fillOpacity={0.25} />
-                        <Area type="monotone" dataKey="failed_completed" stroke="#e45d5d" fill="#e45d5d" fillOpacity={0.18} />
+                        <Area type="monotone" dataKey="success_completed" stroke="var(--chart-2)" fill="var(--chart-2)" fillOpacity={0.25} />
+                        <Area type="monotone" dataKey="failed_completed" stroke="var(--destructive)" fill="var(--destructive)" fillOpacity={0.18} />
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
                 ) : (
-                  <div className="h-[260px] w-full rounded-xl border border-dashed border-[#d8dee7] bg-[#fbfcfe]" />
+                  <div className="h-[260px] w-full rounded-xl border border-dashed border-border bg-muted" />
                 )}
               </Panel>
 
@@ -802,7 +802,7 @@ export default function FlowTowerContent() {
                 title="客户端 IP Top N"
                 subtitle={`请求来源排行 · 最近 ${displayedRangeLabel}`}
                 right={
-                  <div className="inline-flex h-7 items-center rounded-md border border-border bg-background px-2.5 text-[11px] text-[#475467]">
+                  <div className="inline-flex h-7 items-center rounded-md border border-border bg-background px-2.5 text-[11px] text-muted-foreground">
                     按请求数
                   </div>
                 }
@@ -812,24 +812,24 @@ export default function FlowTowerContent() {
                     <table className="w-full min-w-[520px] border-collapse">
                       <thead>
                         <tr>
-                          <th className="pb-2 text-left text-[10px] font-semibold text-[#98a2b3]">客户端 IP</th>
-                          <th className="pb-2 text-left text-[10px] font-semibold text-[#98a2b3]">请求占比</th>
-                          <th className="pb-2 text-right text-[10px] font-semibold text-[#98a2b3]">请求</th>
+                          <th className="pb-2 text-left text-[10px] font-semibold text-muted-foreground">客户端 IP</th>
+                          <th className="pb-2 text-left text-[10px] font-semibold text-muted-foreground">请求占比</th>
+                          <th className="pb-2 text-right text-[10px] font-semibold text-muted-foreground">请求</th>
                         </tr>
                       </thead>
                       <tbody>
                         {ipRows.map((row) => (
                           <tr key={row.ip}>
-                            <td className="border-t border-[#f2f4f7] py-2.5 font-mono text-[11px] text-[#475467]">{row.ip}</td>
-                            <td className="border-t border-[#f2f4f7] py-2.5">
-                              <div className="h-1.5 overflow-hidden rounded-full bg-[#eef2f7]">
+                            <td className="border-t border-muted py-2.5 font-mono text-[11px] text-muted-foreground">{row.ip}</td>
+                            <td className="border-t border-muted py-2.5">
+                              <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
                                 <div
-                                  className="h-full rounded-full bg-[linear-gradient(90deg,#9683ed,#5f7fe5)]"
+                                  className="h-full rounded-full bg-[linear-gradient(90deg,var(--chart-3),var(--accent-foreground))]"
                                   style={{ width: `${row.ratio}%` }}
                                 />
                               </div>
                             </td>
-                            <td className="border-t border-[#f2f4f7] py-2.5 text-right text-[11px] text-[#475467]">{formatNumber(row.requests)}</td>
+                            <td className="border-t border-muted py-2.5 text-right text-[11px] text-muted-foreground">{formatNumber(row.requests)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -845,20 +845,20 @@ export default function FlowTowerContent() {
               <Panel
                 title="模型请求占比"
                 subtitle={`成功 + 失败请求总量 · 最近 ${displayedRangeLabel}`}
-                right={<div className="text-[11px] text-[#98a2b3]">{formatNumber(totalCompleted)} requests</div>}
+                right={<div className="text-[11px] text-muted-foreground">{formatNumber(totalCompleted)} requests</div>}
               >
                 {shareRows.length > 0 ? (
                   <div className="flex flex-col gap-3">
                     {shareRows.map((row) => (
                       <div key={row.model} className="grid grid-cols-[minmax(120px,145px)_minmax(0,1fr)_52px] items-center gap-3">
-                        <div className="truncate text-[11px] text-[#475467]">{row.model}</div>
-                        <div className="h-2 overflow-hidden rounded-full bg-[#eef2f7]">
+                        <div className="truncate text-[11px] text-muted-foreground">{row.model}</div>
+                        <div className="h-2 overflow-hidden rounded-full bg-secondary">
                           <div
-                            className="h-full rounded-full bg-[linear-gradient(90deg,#7eb0ff,#3678e8)]"
+                            className="h-full rounded-full bg-[linear-gradient(90deg,var(--chart-1),var(--accent-foreground))]"
                             style={{ width: `${Math.max(6, row.share)}%` }}
                           />
                         </div>
-                        <div className="text-right text-[11px] text-[#667085]">{row.share.toFixed(1)}%</div>
+                        <div className="text-right text-[11px] text-muted-foreground">{row.share.toFixed(1)}%</div>
                       </div>
                     ))}
                   </div>
@@ -871,7 +871,7 @@ export default function FlowTowerContent() {
                 title="延迟 / TTFT 分位数"
                 subtitle={`全模型汇总 · 最近 ${displayedRangeLabel}`}
                 right={
-                  <div className="inline-flex h-7 items-center rounded-md border border-border bg-background px-2.5 text-[11px] text-[#475467]">
+                  <div className="inline-flex h-7 items-center rounded-md border border-border bg-background px-2.5 text-[11px] text-muted-foreground">
                     ms
                   </div>
                 }
@@ -899,7 +899,7 @@ export default function FlowTowerContent() {
               title="模型目录"
               subtitle={`${formatNumber(catalogModels.length)} 个已配置模型 · 结合 24h routing health`}
               className="min-h-[580px]"
-              right={routingHealthQuery.isFetching ? <span className="text-[10px] text-[#98a2b3]">更新中…</span> : null}
+              right={routingHealthQuery.isFetching ? <span className="text-[10px] text-muted-foreground">更新中…</span> : null}
             >
               <div className="-mt-1">
                 <div className="mb-3">
@@ -908,14 +908,14 @@ export default function FlowTowerContent() {
                     value={modelSearch}
                     onChange={(event) => setModelSearch(event.target.value)}
                     placeholder="搜索模型、ID 或渠道"
-                    className="h-9 w-full rounded-lg border border-[#e1e7ef] bg-[#fbfcfe] px-3 text-[11px] text-[#475467] outline-none placeholder:text-[#98a2b3]"
+                    className="h-9 w-full rounded-lg border border-border bg-muted px-3 text-[11px] text-muted-foreground outline-none placeholder:text-muted-foreground"
                   />
                 </div>
                 {routingHealthQuery.isError ? (
                   <button
                     type="button"
                     onClick={() => void routingHealthQuery.refetch()}
-                    className="mb-3 w-full rounded-lg border border-dashed border-[#d8dee7] px-3 py-2 text-[10px] text-[#667085] hover:bg-muted"
+                    className="mb-3 w-full rounded-lg border border-dashed border-border px-3 py-2 text-[10px] text-muted-foreground hover:bg-muted"
                   >
                     路由健康数据加载失败，点击重试
                   </button>
@@ -929,12 +929,12 @@ export default function FlowTowerContent() {
                     }}
                     className={`w-full rounded-xl border px-3 py-3 text-left transition ${
                       selectedModelId === 'all'
-                        ? 'border-[#d8e6ff] bg-[#eff5ff]'
-                        : 'border-transparent hover:bg-[#f7f9fc]'
+                        ? 'border-accent bg-accent'
+                        : 'border-transparent hover:bg-muted'
                     }`}
                   >
-                    <div className="text-[11px] font-semibold text-[#344054]">全部模型</div>
-                    <div className="mt-2 text-[10px] text-[#98a2b3]">查看当前范围聚合与全局实时快照</div>
+                    <div className="text-[11px] font-semibold text-muted-foreground">全部模型</div>
+                    <div className="mt-2 text-[10px] text-muted-foreground">查看当前范围聚合与全局实时快照</div>
                   </button>
                   {visibleModels.length > 0 ? (
                     visibleModels.map((model) => {
@@ -949,18 +949,18 @@ export default function FlowTowerContent() {
                           }}
                           className={`w-full rounded-xl border px-3 py-3 text-left transition ${
                             selectedModelId === model.config.id
-                              ? 'border-[#d8e6ff] bg-[#eff5ff]'
-                              : 'border-transparent hover:bg-[#f7f9fc]'
+                              ? 'border-accent bg-accent'
+                              : 'border-transparent hover:bg-muted'
                           }`}
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <div className="truncate text-[11px] font-semibold text-[#344054]">{model.config.name}</div>
-                            <span className="inline-flex items-center gap-1.5 text-[10px] text-[#667085]">
+                            <div className="truncate text-[11px] font-semibold text-muted-foreground">{model.config.name}</div>
+                            <span className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
                               <i aria-hidden="true" className={`h-2 w-2 rounded-sm ${health.dot}`} />
                               {health.label}
                             </span>
                           </div>
-                          <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-[#98a2b3]">
+                          <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
                             <span>{model.config.channels.length} configured channels</span>
                             {model.routedRequests24h == null ? (
                               <span>暂无路由健康数据</span>
@@ -975,19 +975,19 @@ export default function FlowTowerContent() {
                       );
                     })
                   ) : modelsQuery.isLoading ? (
-                    <div className="rounded-xl border border-dashed border-[#d8dee7] px-3 py-6 text-center text-[11px] text-[#98a2b3]">
+                    <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-[11px] text-muted-foreground">
                       正在加载模型列表…
                     </div>
                   ) : modelsQuery.isError ? (
                     <button
                       type="button"
                       onClick={() => void modelsQuery.refetch()}
-                      className="w-full rounded-xl border border-dashed border-[#d8dee7] px-3 py-6 text-center text-[11px] text-[#98a2b3] hover:bg-muted"
+                      className="w-full rounded-xl border border-dashed border-border px-3 py-6 text-center text-[11px] text-muted-foreground hover:bg-muted"
                     >
                       模型列表加载失败，点击重试
                     </button>
                   ) : (
-                    <div className="rounded-xl border border-dashed border-[#d8dee7] px-3 py-6 text-center text-[11px] text-[#98a2b3]">
+                    <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-[11px] text-muted-foreground">
                       没有匹配的模型
                     </div>
                   )}
@@ -1008,8 +1008,8 @@ export default function FlowTowerContent() {
                     onClick={() => setActiveTab(tab.key)}
                     className={`border-b-2 pb-3 text-[11px] transition ${
                       activeTab === tab.key
-                        ? 'border-[#2f6edb] text-[#2f6edb] font-semibold'
-                        : 'border-transparent text-[#667085] hover:text-[#2f6edb]'
+                        ? 'border-accent-foreground text-accent-foreground font-semibold'
+                        : 'border-transparent text-muted-foreground hover:text-accent-foreground'
                     }`}
                   >
                     {tab.label}
@@ -1041,7 +1041,7 @@ export default function FlowTowerContent() {
                     <button
                       type="button"
                       onClick={() => void channelsQuery.refetch()}
-                      className="w-full rounded-xl border border-dashed border-[#d8dee7] px-4 py-6 text-center text-[11px] text-[#667085] hover:bg-muted"
+                      className="w-full rounded-xl border border-dashed border-border px-4 py-6 text-center text-[11px] text-muted-foreground hover:bg-muted"
                     >
                       端点配置加载失败，点击重试
                     </button>
@@ -1054,63 +1054,63 @@ export default function FlowTowerContent() {
                     <>
                       <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
                         {endpointSummaryRows.map((row) => (
-                          <div key={row.label} className="rounded-xl border border-[#edf0f4] bg-white p-3">
-                            <small className="text-[10px] text-[#98a2b3]">{row.label}</small>
-                            <strong className="mt-1 block text-sm text-[#182230]">{row.value}</strong>
+                          <div key={row.label} className="rounded-xl border border-secondary bg-white p-3">
+                            <small className="text-[10px] text-muted-foreground">{row.label}</small>
+                            <strong className="mt-1 block text-sm text-foreground">{row.value}</strong>
                           </div>
                         ))}
                       </div>
 
                       {routingHealthQuery.isError ? (
-                        <div className="rounded-xl border border-dashed border-[#d8dee7] px-4 py-3 text-[10.5px] text-[#667085]">
+                        <div className="rounded-xl border border-dashed border-border px-4 py-3 text-[10.5px] text-muted-foreground">
                           路由健康数据加载失败，当前只展示配置与探测结果。
                         </div>
                       ) : null}
 
                       {probeResultsQuery.isError ? (
-                        <div className="rounded-xl border border-dashed border-[#d8dee7] px-4 py-3 text-[10.5px] text-[#667085]">
+                        <div className="rounded-xl border border-dashed border-border px-4 py-3 text-[10.5px] text-muted-foreground">
                           探测结果加载失败，当前只展示配置与路由状态。
                         </div>
                       ) : null}
 
-                      <div className="overflow-x-auto rounded-xl border border-[#edf0f4] bg-white">
+                      <div className="overflow-x-auto rounded-xl border border-secondary bg-white">
                         <table className="w-full min-w-[980px] border-collapse">
                           <thead>
                             <tr>
-                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">渠道</th>
-                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">端点</th>
-                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">配置</th>
-                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">路由状态</th>
-                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">最近探测</th>
-                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">最近探测时间</th>
-                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">24h 请求</th>
-                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">24h 成功率</th>
-                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">24h P95</th>
-                              <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">熔断</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">渠道</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">端点</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">配置</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">路由状态</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">最近探测</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">最近探测时间</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">24h 请求</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">24h 成功率</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">24h P95</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">熔断</th>
                             </tr>
                           </thead>
                           <tbody>
                             {endpointRows.map((row) => (
                               <tr key={`${row.channelId}-${row.endpointId ?? row.endpointUrl}`}>
-                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">
+                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">
                                   <div className="font-semibold">{row.channelName}</div>
-                                  <div className="text-[10px] text-[#98a2b3]">{row.channelId}</div>
+                                  <div className="text-[10px] text-muted-foreground">{row.channelId}</div>
                                 </td>
-                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">
+                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">
                                   <div className="max-w-[240px] truncate font-mono" title={row.endpointUrl}>{row.endpointUrl}</div>
-                                  <div className="text-[10px] text-[#98a2b3]">ID: {row.endpointId ?? '—'}</div>
+                                  <div className="text-[10px] text-muted-foreground">ID: {row.endpointId ?? '—'}</div>
                                 </td>
-                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">
+                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">
                                   <div>{row.endpointEnabled ? '已启用' : '已禁用'}</div>
-                                  <div className="text-[10px] text-[#98a2b3]">weight {row.endpointWeight}{row.endpointTimeoutSecs != null ? ` · ${row.endpointTimeoutSecs}s` : ''}</div>
+                                  <div className="text-[10px] text-muted-foreground">weight {row.endpointWeight}{row.endpointTimeoutSecs != null ? ` · ${row.endpointTimeoutSecs}s` : ''}</div>
                                 </td>
-                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">{endpointRoutingLabel(row)}</td>
-                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">{endpointProbeLabel(row.probe)}</td>
-                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">{formatDateTime(row.probe?.probed_at)}</td>
-                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{formatNumber(row.channelRequests24h)}</td>
-                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{formatPercent(row.channelSuccessRate24h)}</td>
-                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{row.channelP95Latency24h == null ? '—' : `${formatNumber(Math.round(row.channelP95Latency24h))} ms`}</td>
-                                <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">{row.circuitEnabled ? (row.circuitOk ? '正常' : '熔断中') : '未启用'}</td>
+                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">{endpointRoutingLabel(row)}</td>
+                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">{endpointProbeLabel(row.probe)}</td>
+                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">{formatDateTime(row.probe?.probed_at)}</td>
+                                <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{formatNumber(row.channelRequests24h)}</td>
+                                <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{formatPercent(row.channelSuccessRate24h)}</td>
+                                <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{row.channelP95Latency24h == null ? '—' : `${formatNumber(Math.round(row.channelP95Latency24h))} ms`}</td>
+                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">{row.circuitEnabled ? (row.circuitOk ? '正常' : '熔断中') : '未启用'}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1123,61 +1123,61 @@ export default function FlowTowerContent() {
 
               {activeTab === 'compare' ? (
                 <div id="flowtower-panel-compare" role="tabpanel" aria-labelledby="flowtower-tab-compare" className="space-y-5 p-4">
-                  <div className="rounded-xl border border-dashed border-[#d8dee7] px-4 py-3 text-[10.5px] text-[#667085]">
+                  <div className="rounded-xl border border-dashed border-border px-4 py-3 text-[10.5px] text-muted-foreground">
                     左侧列为当前选择区间的完成请求；右侧列为最近 24 小时运行情况。
                   </div>
                   {compareMetricsQuery.isError ? (
-                    <div className="rounded-xl border border-dashed border-[#d8dee7] px-4 py-3 text-[10.5px] text-[#667085]">
+                    <div className="rounded-xl border border-dashed border-border px-4 py-3 text-[10.5px] text-muted-foreground">
                       当前区间请求数据加载失败，已保留其他模型信息。
                     </div>
                   ) : null}
                   {routingHealthQuery.isError ? (
-                    <div className="rounded-xl border border-dashed border-[#d8dee7] px-4 py-3 text-[10.5px] text-[#667085]">
+                    <div className="rounded-xl border border-dashed border-border px-4 py-3 text-[10.5px] text-muted-foreground">
                       24 小时运行情况加载失败，相关列暂不可用。
                     </div>
                   ) : null}
                   {unmatchedCompareModels.length > 0 ? (
-                    <div className="rounded-xl border border-dashed border-[#d8dee7] px-4 py-3 text-[10.5px] text-[#667085]">
+                    <div className="rounded-xl border border-dashed border-border px-4 py-3 text-[10.5px] text-muted-foreground">
                       当前区间有 {formatNumber(unmatchedCompareModels.length)} 个未匹配到目录配置的模型请求记录。
                     </div>
                   ) : null}
                   {compareRows.length > 0 ? (
-                    <div className="overflow-x-auto rounded-xl border border-[#edf0f4] bg-white">
+                    <div className="overflow-x-auto rounded-xl border border-secondary bg-white">
                       <table className="w-full min-w-[980px] border-collapse">
                         <thead>
                           <tr>
-                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">模型</th>
-                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-left text-[10.5px] font-semibold text-[#98a2b3]">当前状态</th>
-                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">区间请求数</th>
-                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">区间占比</th>
-                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">24h 路由请求</th>
-                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">24h 路由成功率</th>
-                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">24h 平均延迟</th>
-                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">24h 最高 P95</th>
-                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">可用端点</th>
-                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">熔断通道</th>
-                            <th className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] font-semibold text-[#98a2b3]">配置通道</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">模型</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">当前状态</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">区间请求数</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">区间占比</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">24h 路由请求</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">24h 路由成功率</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">24h 平均延迟</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">24h 最高 P95</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">可用端点</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">熔断通道</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">配置通道</th>
                           </tr>
                         </thead>
                         <tbody>
                           {compareRows.map((row) => (
-                            <tr key={row.id} className={row.selected ? 'bg-[#eff5ff]' : ''}>
-                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">
+                            <tr key={row.id} className={row.selected ? 'bg-accent' : ''}>
+                              <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">
                                 <div className="font-semibold">{row.name}</div>
-                                <div className="text-[10px] text-[#98a2b3]">{row.selected ? '当前选中' : '—'}</div>
+                                <div className="text-[10px] text-muted-foreground">{row.selected ? '当前选中' : '—'}</div>
                               </td>
-                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-[10.5px] text-[#475467]">
+                              <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">
                                 <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${row.statusBadge}`}>{row.status}</span>
                               </td>
-                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{row.selectedRangeRequests == null ? '—' : formatNumber(row.selectedRangeRequests)}</td>
-                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{row.selectedRangeShare == null ? '—' : formatPercent(row.selectedRangeShare)}</td>
-                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{row.routedRequests24h == null ? '—' : formatNumber(row.routedRequests24h)}</td>
-                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{formatPercent(row.routingSuccessRate24h)}</td>
-                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{row.averageLatency24h == null ? '—' : `${formatNumber(Math.round(row.averageLatency24h))} ms`}</td>
-                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{row.highestChannelP95 == null ? '—' : `${formatNumber(Math.round(row.highestChannelP95))} ms`}</td>
-                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{`${row.availableEndpoints} / ${row.enabledEndpoints}`}</td>
-                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{formatNumber(row.brokenCircuitChannels)}</td>
-                              <td className="border-b border-[#eef1f5] px-3 py-2.5 text-right text-[10.5px] text-[#475467]">{formatNumber(row.configuredChannels)}</td>
+                              <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{row.selectedRangeRequests == null ? '—' : formatNumber(row.selectedRangeRequests)}</td>
+                              <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{row.selectedRangeShare == null ? '—' : formatPercent(row.selectedRangeShare)}</td>
+                              <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{row.routedRequests24h == null ? '—' : formatNumber(row.routedRequests24h)}</td>
+                              <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{formatPercent(row.routingSuccessRate24h)}</td>
+                              <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{row.averageLatency24h == null ? '—' : `${formatNumber(Math.round(row.averageLatency24h))} ms`}</td>
+                              <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{row.highestChannelP95 == null ? '—' : `${formatNumber(Math.round(row.highestChannelP95))} ms`}</td>
+                              <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{`${row.availableEndpoints} / ${row.enabledEndpoints}`}</td>
+                              <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{formatNumber(row.brokenCircuitChannels)}</td>
+                              <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{formatNumber(row.configuredChannels)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1213,45 +1213,45 @@ export default function FlowTowerContent() {
                 ];
                 return (
                   <div className="space-y-4">
-                    <div className="rounded-xl border border-[#dfe7f3] bg-[#f8fbff] p-4">
+                    <div className="rounded-xl border border-border bg-accent p-4">
                       <div className="flex items-center justify-between gap-2">
                         <div>
-                          <strong className="text-sm text-[#182230]">{selectedCatalogModel.config.name}</strong>
-                          <div className="mt-1 font-mono text-[10px] text-[#98a2b3]">{selectedCatalogModel.config.id}</div>
+                          <strong className="text-sm text-foreground">{selectedCatalogModel.config.name}</strong>
+                          <div className="mt-1 font-mono text-[10px] text-muted-foreground">{selectedCatalogModel.config.id}</div>
                         </div>
                         <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${health.badge}`}>{health.label}</span>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-1.5">
-                        <span className="rounded bg-white px-2 py-1 text-[10px] text-[#667085]">{selectedCatalogModel.config.published ? '已发布' : '未发布'}</span>
-                        {categories.map((category) => <span key={category} className="rounded bg-white px-2 py-1 text-[10px] text-[#667085]">{category}</span>)}
+                        <span className="rounded bg-white px-2 py-1 text-[10px] text-muted-foreground">{selectedCatalogModel.config.published ? '已发布' : '未发布'}</span>
+                        {categories.map((category) => <span key={category} className="rounded bg-white px-2 py-1 text-[10px] text-muted-foreground">{category}</span>)}
                       </div>
                       <div className="mt-4 grid grid-cols-[1fr_auto] gap-x-4 gap-y-2 text-[10.5px]">
-                        <span className="text-[#98a2b3]">模型 Pattern</span><span className="max-w-[180px] truncate text-right text-[#475467]">{selectedCatalogModel.config.model_pattern}</span>
-                        <span className="text-[#98a2b3]">上下文长度</span><span className="text-right text-[#475467]">{formatContextLength(selectedCatalogModel.config.context_length)}</span>
-                        <span className="text-[#98a2b3]">配置通道</span><span className="text-right text-[#475467]">{selectedCatalogModel.config.channels.length}</span>
+                        <span className="text-muted-foreground">模型 Pattern</span><span className="max-w-[180px] truncate text-right text-muted-foreground">{selectedCatalogModel.config.model_pattern}</span>
+                        <span className="text-muted-foreground">上下文长度</span><span className="text-right text-muted-foreground">{formatContextLength(selectedCatalogModel.config.context_length)}</span>
+                        <span className="text-muted-foreground">配置通道</span><span className="text-right text-muted-foreground">{selectedCatalogModel.config.channels.length}</span>
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-[#edf0f4] bg-white p-4">
+                    <div className="rounded-xl border border-secondary bg-white p-4">
                       <div className="mb-3 flex items-center justify-between gap-2">
-                        <div className="text-[11px] font-semibold text-[#475467]">Routing Health · 最近 24h</div>
-                        {routingHealthQuery.isFetching ? <span className="text-[10px] text-[#98a2b3]">更新中…</span> : null}
+                        <div className="text-[11px] font-semibold text-muted-foreground">Routing Health · 最近 24h</div>
+                        {routingHealthQuery.isFetching ? <span className="text-[10px] text-muted-foreground">更新中…</span> : null}
                       </div>
                       {routingHealthQuery.isError ? (
-                        <button type="button" onClick={() => void routingHealthQuery.refetch()} className="text-[10.5px] text-[#667085] underline">
+                        <button type="button" onClick={() => void routingHealthQuery.refetch()} className="text-[10.5px] text-muted-foreground underline">
                           路由健康数据加载失败，点击重试
                         </button>
                       ) : selectedCatalogModel.health ? (
                         <MetricList rows={routingRows} />
                       ) : (
-                        <p className="text-[10.5px] leading-5 text-[#98a2b3]">该已配置模型当前没有可用的 routing health 记录；这不等于故障，可能是无流量或没有启用端点。</p>
+                        <p className="text-[10.5px] leading-5 text-muted-foreground">该已配置模型当前没有可用的 routing health 记录；这不等于故障，可能是无流量或没有启用端点。</p>
                       )}
                       {selectedCatalogModel.config.channels.length > 0 ? (
-                        <div className="mt-3 border-t border-[#edf0f4] pt-3">
-                          <div className="mb-2 text-[10px] text-[#98a2b3]">配置通道绑定</div>
+                        <div className="mt-3 border-t border-secondary pt-3">
+                          <div className="mb-2 text-[10px] text-muted-foreground">配置通道绑定</div>
                           <div className="space-y-1.5">
                             {selectedCatalogModel.config.channels.map((channel) => (
-                              <div key={`${channel.channel_id}-${channel.priority}`} className="flex justify-between gap-3 text-[10px] text-[#667085]">
+                              <div key={`${channel.channel_id}-${channel.priority}`} className="flex justify-between gap-3 text-[10px] text-muted-foreground">
                                 <span className="truncate">{channel.channel_id}{channel.upstream_model ? ` → ${channel.upstream_model}` : ''}</span>
                                 <span className="shrink-0">priority {channel.priority}</span>
                               </div>
@@ -1261,22 +1261,22 @@ export default function FlowTowerContent() {
                       ) : null}
                     </div>
 
-                    <div className="rounded-xl border border-[#edf0f4] bg-white p-4">
-                      <div className="mb-3 text-[11px] font-semibold text-[#475467]">Flow Metrics · 当前选择区间</div>
+                    <div className="rounded-xl border border-secondary bg-white p-4">
+                      <div className="mb-3 text-[11px] font-semibold text-muted-foreground">Flow Metrics · 当前选择区间</div>
                       <MetricList rows={historicalInspectorRows} />
                     </div>
                   </div>
                 );
               })() : (
                 <div className="space-y-4">
-                  <div className="rounded-xl border border-[#dfe7f3] bg-[#f8fbff] p-4">
+                  <div className="rounded-xl border border-border bg-accent p-4">
                     <div className="flex items-center justify-between gap-2">
-                      <strong className="text-sm text-[#182230]">全部模型</strong>
-                      <span className="rounded-md bg-[#edf4ff] px-2 py-1 text-[10px] font-semibold text-[#3276e8]">聚合视图</span>
+                      <strong className="text-sm text-foreground">全部模型</strong>
+                      <span className="rounded-md bg-accent px-2 py-1 text-[10px] font-semibold text-accent-foreground">聚合视图</span>
                     </div>
                     <div className="mt-4"><MetricList rows={historicalInspectorRows} /></div>
                   </div>
-                  <p className="rounded-xl border border-dashed border-[#d8dee7] bg-[#fbfcfe] px-4 py-3 text-[10.5px] leading-5 text-[#667085]">选择左侧具体模型后，可查看模型配置、最近 24 小时运行状态和端点可用性。</p>
+                  <p className="rounded-xl border border-dashed border-border bg-muted px-4 py-3 text-[10.5px] leading-5 text-muted-foreground">选择左侧具体模型后，可查看模型配置、最近 24 小时运行状态和端点可用性。</p>
                 </div>
               )}
 

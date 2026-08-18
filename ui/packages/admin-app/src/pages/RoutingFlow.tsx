@@ -7,10 +7,10 @@ import type { Channel, Model } from '@fluxeme/shared/src/types';
 
 // ── design tokens ──────────────────────────────────────────────────
 const C = {
-  bg: '#f5f5f3', cardBg: '#ffffff', border: '#e4e3de',
-  line: '#d8d7d1', textPrimary: '#1a1a18', textSecondary: '#6b6a64',
-  textMuted: '#9a988f', nodeBg: '#fafaf8', barTrack: '#eeede8',
-  green: '#1a8a3d', low: '#4a7fc9', mid: '#d99a2b', high: '#c94a4a',
+  bg: 'var(--muted)', cardBg: 'var(--card)', border: 'var(--secondary)',
+  line: 'var(--border)', textPrimary: 'var(--foreground)', textSecondary: 'var(--muted-foreground)',
+  textMuted: 'var(--muted-foreground)', nodeBg: 'var(--muted)', barTrack: 'var(--secondary)',
+  green: 'var(--chart-2)', low: 'var(--chart-1)', mid: 'var(--sidebar-primary)', high: 'var(--destructive)',
 };
 const LOAD_COLOR: Record<string, string> = { low: C.low, mid: C.mid, high: C.high };
 const FONT_FAMILY = '-apple-system, PingFang SC, Microsoft YaHei, Segoe UI, sans-serif';
@@ -115,7 +115,7 @@ function SkeletonBar() {
   return (
     <div style={{
       marginTop: 6, height: 4, borderRadius: 2,
-      background: 'linear-gradient(90deg, #eeede8 40%, #e0ded8 50%, #eeede8 60%)',
+      background: 'linear-gradient(90deg, var(--secondary) 40%, var(--border) 50%, var(--secondary) 60%)',
       backgroundSize: '200% 100%', animation: 'sk-shimmer 1.4s infinite linear',
     }} />
   );
@@ -139,7 +139,7 @@ function CometPulse({ pathD, onDone }: { pathD: string; onDone: () => void }) {
     // create circle via DOM (bypasses React render for each frame)
     const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
     circle.setAttribute('r', '3.5');
-    circle.setAttribute('fill', '#4a7fc9');
+    circle.setAttribute('fill', 'var(--chart-1)');
     svg.appendChild(circle);
 
     const start = performance.now();
@@ -226,7 +226,7 @@ function FlowNode({
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
         <span style={{ fontWeight: 600, color: color || C.textPrimary }}>{title}</span>
         {skeleton
-          ? <div style={{ width: 32, height: 14, borderRadius: 3, background: '#eeede8', animation: 'sk-shimmer 1.4s infinite linear', backgroundSize: '200% 100%' }} />
+          ? <div style={{ width: 32, height: 14, borderRadius: 3, background: 'var(--secondary)', animation: 'sk-shimmer 1.4s infinite linear', backgroundSize: '200% 100%' }} />
           : <AnimatedNumber value={count} style={{ fontSize: 12, color: C.textSecondary }} />}
       </div>
       {subtitle && <div style={{ fontSize: 10.5, color: C.textMuted, marginTop: 2 }}>{subtitle}</div>}
@@ -248,16 +248,16 @@ function FlowNode({
 function SkeletonPanel() {
   return (
     <div style={{ marginBottom: 16, borderRadius: 10, border: `1px solid ${C.border}`, background: C.cardBg, padding: '20px 24px' }}>
-      <div style={{ height: 18, width: 180, borderRadius: 4, background: '#eeede8', marginBottom: 20, animation: 'sk-shimmer 1.4s infinite linear', backgroundSize: '200% 100%' }} />
+      <div style={{ height: 18, width: 180, borderRadius: 4, background: 'var(--secondary)', marginBottom: 20, animation: 'sk-shimmer 1.4s infinite linear', backgroundSize: '200% 100%' }} />
       <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr 200px 1fr 200px', gap: 24, minHeight: 60 }}>
         <div style={{ borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.nodeBg, padding: '9px 12px' }}>
-          <div style={{ height: 14, borderRadius: 3, background: '#eeede8', animation: 'sk-shimmer 1.4s infinite linear', backgroundSize: '200% 100%' }} />
+          <div style={{ height: 14, borderRadius: 3, background: 'var(--secondary)', animation: 'sk-shimmer 1.4s infinite linear', backgroundSize: '200% 100%' }} />
           <SkeletonBar />
         </div>
         <div /><div />
         <div />
         <div style={{ borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.nodeBg, padding: '9px 12px' }}>
-          <div style={{ height: 14, borderRadius: 3, background: '#eeede8', animation: 'sk-shimmer 1.4s infinite linear', backgroundSize: '200% 100%' }} />
+          <div style={{ height: 14, borderRadius: 3, background: 'var(--secondary)', animation: 'sk-shimmer 1.4s infinite linear', backgroundSize: '200% 100%' }} />
           <SkeletonBar />
         </div>
       </div>
@@ -544,12 +544,12 @@ export default function RoutingFlow({ embedded = false, modelName }: RoutingFlow
               <svg ref={svgRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'none' }}>
                 <defs>
                   <linearGradient id="gl-m2c" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0%" stopColor="#4a7fc9" stopOpacity="0.65" />
-                    <stop offset="100%" stopColor="#6a4ec9" stopOpacity="0.3" />
+                    <stop offset="0%" stopColor="var(--chart-1)" stopOpacity="0.65" />
+                    <stop offset="100%" stopColor="var(--chart-3)" stopOpacity="0.3" />
                   </linearGradient>
                   <linearGradient id="gl-c2e" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0%" stopColor="#3ca07a" stopOpacity="0.65" />
-                    <stop offset="100%" stopColor="#267b7b" stopOpacity="0.3" />
+                    <stop offset="0%" stopColor="var(--chart-2)" stopOpacity="0.65" />
+                    <stop offset="100%" stopColor="var(--chart-1)" stopOpacity="0.3" />
                   </linearGradient>
                 </defs>
                 {paths.map((p) => {
@@ -612,7 +612,7 @@ export default function RoutingFlow({ embedded = false, modelName }: RoutingFlow
         )}
 
         {!loading && !connected && topology.length > 0 && (
-          <div style={{ position: 'absolute', inset: 0, borderRadius: 10, background: 'rgba(255,255,255,0.55)', backdropFilter: 'blur(1px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}>
+          <div style={{ position: 'absolute', inset: 0, borderRadius: 10, background: 'color-mix(in oklab, var(--card) 55%, transparent)', backdropFilter: 'blur(1px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}>
             <span style={{ fontSize: 14, color: C.textSecondary, fontWeight: 500 }}>
               🔌 {t('routingFlow.connecting')}... {reconnectIn > 0 ? `(${reconnectIn}s)` : ''}
             </span>
@@ -621,7 +621,7 @@ export default function RoutingFlow({ embedded = false, modelName }: RoutingFlow
       </div>
 
       <style>{`
-        @keyframes rfl-pulse { 0% { box-shadow: 0 0 0 0 rgba(26,138,61,0.5); } 70% { box-shadow: 0 0 0 6px rgba(26,138,61,0); } 100% { box-shadow: 0 0 0 0 rgba(26,138,61,0); } }
+        @keyframes rfl-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--chart-2) 50%, transparent); } 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
         @keyframes sk-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
       `}</style>
     </div>

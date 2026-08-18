@@ -313,7 +313,7 @@ export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props
                 className="absolute top-2 right-2 size-7 p-0"
                 title="复制"
               >
-                {copied ? <Check className="size-3.5 text-green-500" /> : <Copy className="size-3.5" />}
+                {copied ? <Check className="size-3.5 text-chart-2" /> : <Copy className="size-3.5" />}
               </Button>
             </div>
           </section>

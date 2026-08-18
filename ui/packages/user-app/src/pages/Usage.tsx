@@ -264,7 +264,7 @@ export default function Usage() {
                           <td className="py-3 px-4 font-mono text-xs">{r.request_id.substring(0, 8)}</td>
                           <td className="py-3 px-4">{r.api_key_name}</td>
                           <td className="py-3 px-4">
-                            <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${r.team_id ? 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'}`}>
+                            <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${r.team_id ? 'bg-chart-4/15 text-chart-4 dark:bg-chart-4/15 dark:text-chart-4' : 'bg-muted text-muted-foreground dark:bg-secondary dark:text-muted-foreground'}`}>
                               {r.team_id ? t('usage.teamKey') : t('usage.personalKey')}
                             </span>
                           </td>
@@ -272,11 +272,11 @@ export default function Usage() {
                             <span className="inline-flex items-center gap-1">
                               <span>{r.model}</span>
                               {r.stream ? (
-                                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-yellow-600 bg-yellow-50 dark:text-yellow-400 dark:bg-yellow-950 px-1.5 py-0.5 rounded">
+                                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-accent-foreground bg-accent border border-border px-1.5 py-0.5 rounded">
                                   <Radio className="h-2.5 w-2.5" />stream
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-950 px-1.5 py-0.5 rounded">
+                                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-muted-foreground bg-secondary border border-border px-1.5 py-0.5 rounded">
                                   <RadioIcon className="h-2.5 w-2.5" />sync
                                 </span>
                               )}
@@ -292,9 +292,9 @@ export default function Usage() {
                           <td className="py-3 px-4 text-muted-foreground whitespace-nowrap text-xs font-mono">{r.client_ip ?? '—'}</td>
                           <td className="py-3 px-4 text-center">
                             {r.success ? (
-                              <CheckCircle2 className="size-4 text-green-500 inline" />
+                              <CheckCircle2 className="size-4 text-chart-2 inline" />
                             ) : (
-                              <XCircle className="size-4 text-red-500 inline" />
+                              <XCircle className="size-4 text-destructive inline" />
                             )}
                           </td>
                         </tr>
@@ -399,7 +399,7 @@ export default function Usage() {
                       <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} />
                       <YAxis domain={[0, 100]} unit="%" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} width={40} />
                       <Tooltip content={<ChartTooltip formatter={(value: number | string | undefined) => `${value ?? 0}%`} />} />
-                      <Line type="monotone" dataKey="successRate" stroke="hsl(142, 65%, 55%)" strokeWidth={2} dot={false} name={t('dash.successRate')} />
+                      <Line type="monotone" dataKey="successRate" stroke="var(--chart-2)" strokeWidth={2} dot={false} name={t('dash.successRate')} />
                     </LineChart>
                   </ResponsiveContainer>
                 </CardContent>
@@ -442,8 +442,8 @@ export default function Usage() {
                             <XAxis dataKey="model" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />
                             <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} width={45} />
                             <Tooltip content={<ChartTooltip />} />
-                            <Bar dataKey="success_count" stackId="status" fill="hsl(142, 65%, 55%)" name={t('usage.success')} />
-                            <Bar dataKey="failure_count" stackId="status" fill="hsl(0, 70%, 55%)" name={t('usage.failure')} />
+                            <Bar dataKey="success_count" stackId="status" fill="var(--chart-2)" name={t('usage.success')} />
+                            <Bar dataKey="failure_count" stackId="status" fill="var(--destructive)" name={t('usage.failure')} />
                           </BarChart>
                         </ResponsiveContainer>
                       </CardContent>

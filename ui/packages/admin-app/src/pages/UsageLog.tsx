@@ -204,9 +204,9 @@ export default function UsageLog() {
                       <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>
                       <td className="py-3 px-4 text-center">
                         {r.success ? (
-                          <CheckCircle2 className="size-4 text-green-500 inline" />
+                          <CheckCircle2 className="size-4 text-chart-2 inline" />
                         ) : (
-                          <XCircle className="size-4 text-red-500 inline" />
+                          <XCircle className="size-4 text-destructive inline" />
                         )}
                       </td>
                     </tr>

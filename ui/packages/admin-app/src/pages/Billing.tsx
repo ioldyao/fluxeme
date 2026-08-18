@@ -28,7 +28,7 @@ const now = () => { const d = new Date(); return { year: d.getFullYear(), month:
 const { year: curYear, month: curMonth } = now();
 const monthLabel = (y: number, m: number) => `${y} 年 ${m} 月${y === curYear && m === curMonth ? '（本期）' : ''}`;
 
-const COLORS = ['#2563eb', '#7c3aed', '#16a34a', '#f59e0b'];
+const COLORS = ['var(--accent-foreground)', 'var(--chart-3)', 'var(--chart-2)', 'var(--sidebar-primary)'];
 
 /** Fill an array with all days of {year, month}, copying known data
  *  from `source` (keyed by "MM-DD" label) and defaulting to 0 for
@@ -128,15 +128,15 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
       <section className="flex items-start justify-between gap-5">
         <div>
           <h1 className="m-0 text-[22px] font-bold leading-tight">用户账单总览</h1>
-          <p className="mt-[7px] text-[13px] text-[#6b7280]">查看全部用户在当前计费周期内的消费、请求、Token 使用情况，并进入单个用户账单详情。</p>
+          <p className="mt-[7px] text-[13px] text-muted-foreground">查看全部用户在当前计费周期内的消费、请求、Token 使用情况，并进入单个用户账单详情。</p>
           <div className="mt-[10px] flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-[5px] rounded-full bg-[#eff6ff] px-2 py-[3px] text-[12px] font-semibold text-[#1d4ed8]">{monthLabel(year, month)}</span>
-            <span className="inline-flex items-center gap-[5px] rounded-full bg-[#f2f4f7] px-2 py-[3px] text-[12px] font-semibold text-[#475467]">共 {totalUsers} 个用户</span>
-            <span className="inline-flex items-center gap-[5px] rounded-full bg-[#f0fdf4] px-2 py-[3px] text-[12px] font-semibold text-[#15803d]">{activeUsers} 个本期有消费</span>
+            <span className="inline-flex items-center gap-[5px] rounded-full bg-accent px-2 py-[3px] text-[12px] font-semibold text-accent-foreground">{monthLabel(year, month)}</span>
+            <span className="inline-flex items-center gap-[5px] rounded-full bg-muted px-2 py-[3px] text-[12px] font-semibold text-muted-foreground">共 {totalUsers} 个用户</span>
+            <span className="inline-flex items-center gap-[5px] rounded-full bg-chart-2/15 px-2 py-[3px] text-[12px] font-semibold text-chart-2">{activeUsers} 个本期有消费</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <select className="h-9 rounded-lg border border-[#d8dde6] bg-white px-[10px] font-medium text-[#344054]" value={`${year}-${String(month).padStart(2, '0')}`} onChange={handleMonthChange}>
+          <select className="h-9 rounded-lg border border-border bg-white px-[10px] font-medium text-muted-foreground" value={`${year}-${String(month).padStart(2, '0')}`} onChange={handleMonthChange}>
             {(months ?? []).map((m) => {
               const [ys, ms] = m.split('-').map(Number);
               return <option key={m} value={`${ys}-${String(ms).padStart(2, '0')}`}>{ys} 年 {ms} 月</option>;
@@ -155,32 +155,32 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
       </section>
 
       <section className="grid grid-cols-[1.55fr_0.85fr] gap-3.5 max-[1200px]:grid-cols-1">
-        <div className="rounded-xl border border-[#e7eaf0] bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-[#eef1f5] px-4 py-[15px]">
+        <div className="rounded-xl border border-border bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
             <div>
               <div className="text-[14px] font-bold">用户消费趋势</div>
-              <div className="mt-[3px] text-[12px] text-[#6b7280]">全体用户每日消费与活跃用户数</div>
+              <div className="mt-[3px] text-[12px] text-muted-foreground">全体用户每日消费与活跃用户数</div>
             </div>
           </div>
           <div className="h-[270px] px-4 py-3">
             {trendData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={trendData}>
-                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#98a2b3' }} axisLine={{ stroke: '#e5e7eb' }} />
-                  <YAxis tick={{ fontSize: 10, fill: '#98a2b3' }} axisLine={false} tickFormatter={(v: number) => fmtMoney(v)} />
+                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} axisLine={{ stroke: 'var(--border)' }} />
+                  <YAxis tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} axisLine={false} tickFormatter={(v: number) => fmtMoney(v)} />
                   <Tooltip formatter={(val: number) => fmtMoney(val)} />
-                  <Bar dataKey="cost" name="用户消费" fill="#2563eb" radius={[4, 4, 0, 0]} maxBarSize={22} />
+                  <Bar dataKey="cost" name="用户消费" fill="var(--accent-foreground)" radius={[4, 4, 0, 0]} maxBarSize={22} />
                 </BarChart>
               </ResponsiveContainer>
             ) : <ChartEmpty />}
           </div>
         </div>
 
-        <div className="rounded-xl border border-[#e7eaf0] bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-[#eef1f5] px-4 py-[15px]">
+        <div className="rounded-xl border border-border bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
             <div>
               <div className="text-[14px] font-bold">消费集中度</div>
-              <div className="mt-[3px] text-[12px] text-[#6b7280]">Top 用户对本期账单的贡献</div>
+              <div className="mt-[3px] text-[12px] text-muted-foreground">Top 用户对本期账单的贡献</div>
             </div>
           </div>
           <div className="space-y-4 px-4 py-4">
@@ -195,24 +195,24 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
         </div>
       </section>
 
-      <section className="rounded-xl border border-[#e7eaf0] bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-[#eef1f5] px-4 py-[15px]">
+      <section className="rounded-xl border border-border bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
           <div>
             <div className="text-[14px] font-bold">用户账单列表</div>
-            <div className="mt-[3px] text-[12px] text-[#6b7280]">账单主体按用户独立统计；团队仅作为可选关联维度，不影响用户账单本身</div>
+            <div className="mt-[3px] text-[12px] text-muted-foreground">账单主体按用户独立统计；团队仅作为可选关联维度，不影响用户账单本身</div>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#eef1f5] px-3.5 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-secondary px-3.5 py-3">
           <div className="flex flex-wrap items-center gap-2">
-            <input className="h-8 min-w-[220px] rounded-lg border border-[#d8dde6] bg-white px-2.5 text-[#344054] outline-none" placeholder="搜索用户名 / 邮箱 / 用户 ID" value={search} onChange={(e) => setSearch(e.target.value)} />
-            <select className="h-8 rounded-lg border border-[#d8dde6] bg-white px-2.5 text-[#344054]" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+            <input className="h-8 min-w-[220px] rounded-lg border border-border bg-white px-2.5 text-muted-foreground outline-none" placeholder="搜索用户名 / 邮箱 / 用户 ID" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <select className="h-8 rounded-lg border border-border bg-white px-2.5 text-muted-foreground" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
               <option value="cost_desc">按消费降序</option>
               <option value="requests_desc">按请求数降序</option>
               <option value="tokens_desc">按 Token 降序</option>
             </select>
           </div>
-          <button className="rounded-lg border border-[#d8dde6] bg-white px-3 py-1.5 text-sm font-semibold text-[#344054] hover:bg-[#f9fafb]" onClick={() => { setSearch(''); setSortBy('cost_desc'); }}>重置</button>
+          <button className="rounded-lg border border-border bg-white px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:bg-muted" onClick={() => { setSearch(''); setSortBy('cost_desc'); }}>重置</button>
         </div>
 
         <div className="overflow-auto">
@@ -220,37 +220,37 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
             <thead>
               <tr>
                 {['用户', '账户类型', '所属团队', '本期消费', '请求数', '总 Token', '缓存命中', '活跃 Key', '状态', '最后调用'].map((h) => (
-                  <th key={h} className={`whitespace-nowrap border-b border-[#eef1f5] bg-[#fafbfc] px-3.5 py-[11px] text-[11px] font-bold text-[#667085] ${h === '本期消费' || h === '请求数' || h === '总 Token' || h === '缓存命中' || h === '活跃 Key' ? 'text-right' : 'text-left'}`}>{h}</th>
+                  <th key={h} className={`whitespace-nowrap border-b border-secondary bg-muted px-3.5 py-[11px] text-[11px] font-bold text-muted-foreground ${h === '本期消费' || h === '请求数' || h === '总 Token' || h === '缓存命中' || h === '活跃 Key' ? 'text-right' : 'text-left'}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.map((row) => (
-                <tr key={row.user_id} className="cursor-pointer hover:bg-[#f8fbff]" onClick={() => onSelectUser(row.user_id)}>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px]">
+                <tr key={row.user_id} className="cursor-pointer hover:bg-accent" onClick={() => onSelectUser(row.user_id)}>
+                  <td className="border-b border-secondary px-3.5 py-[11px]">
                     <div className="flex items-center gap-2.5">
-                      <div className="grid h-[30px] w-[30px] place-items-center rounded-lg bg-[#eef2ff] text-[11px] font-bold text-[#4f46e5]">{row.user_name.slice(0, 2).toUpperCase()}</div>
+                      <div className="grid h-[30px] w-[30px] place-items-center rounded-lg bg-accent text-[11px] font-bold text-accent-foreground">{row.user_name.slice(0, 2).toUpperCase()}</div>
                       <div>
-                        <div className="font-bold text-[#111827]">{row.user_name}</div>
-                        <div className="mt-0.5 text-[11px] text-[#6b7280]">{row.user_id}</div>
+                        <div className="font-bold text-foreground">{row.user_name}</div>
+                        <div className="mt-0.5 text-[11px] text-muted-foreground">{row.user_id}</div>
                       </div>
                     </div>
                   </td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]"><span className="inline-block rounded-md bg-[#f2f4f7] px-1.5 py-0.5 text-[11px] text-[#475467]">个人账户</span></td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">{row.team_name ?? '-'}</td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px] font-bold text-[#111827]">{fmtMoney(row.total_cost)}</td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(row.total_requests)}</td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(row.total_tokens)}</td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">-</td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{row.api_key_count}</td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]"><span className="inline-flex items-center rounded-full bg-[#f0fdf4] px-1.5 py-[3px] text-[11px] font-bold text-[#15803d]">正常</span></td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">{row.last_billed_at ? new Date(row.last_billed_at).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) : '-'}</td>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-[12px]"><span className="inline-block rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">个人账户</span></td>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-[12px]">{row.team_name ?? '-'}</td>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px] font-bold text-foreground">{fmtMoney(row.total_cost)}</td>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px]">{fmtShort(row.total_requests)}</td>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px]">{fmtShort(row.total_tokens)}</td>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px]">-</td>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px]">{row.api_key_count}</td>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-[12px]"><span className="inline-flex items-center rounded-full bg-chart-2/15 px-1.5 py-[3px] text-[11px] font-bold text-chart-2">正常</span></td>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-[12px]">{row.last_billed_at ? new Date(row.last_billed_at).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) : '-'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <div className="flex justify-between px-3.5 py-3 text-[11px] text-[#6b7280]">
+        <div className="flex justify-between px-3.5 py-3 text-[11px] text-muted-foreground">
           <span>展示 {filtered.length} / {totalUsers} 个用户 · 点击任意用户进入账单详情</span>
           <span>本期数据更新：{new Date().toLocaleString('zh-CN')}</span>
         </div>
@@ -348,16 +348,16 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
       <section className="flex items-start justify-between gap-5">
         <div>
           <h1 className="m-0 text-[22px] font-bold leading-tight">用户本期账单详情</h1>
-          <p className="mt-[7px] text-[13px] text-[#6b7280]">查看该用户在当前计费周期内的独立消费、请求、Token、API Key 与费用明细。</p>
+          <p className="mt-[7px] text-[13px] text-muted-foreground">查看该用户在当前计费周期内的独立消费、请求、Token、API Key 与费用明细。</p>
           <div className="mt-[10px] flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-[5px] rounded-full bg-[#f0fdf4] px-2 py-[3px] text-[12px] font-semibold text-[#15803d]">● 正常</span>
-            <span className="inline-flex items-center gap-[5px] rounded-full bg-[#f2f4f7] px-2 py-[3px] text-[12px] font-semibold text-[#475467]">用户 ID: {userId}</span>
-            <span className="inline-flex items-center gap-[5px] rounded-full bg-[#eff6ff] px-2 py-[3px] text-[12px] font-semibold text-[#1d4ed8]">个人账户</span>
+            <span className="inline-flex items-center gap-[5px] rounded-full bg-chart-2/15 px-2 py-[3px] text-[12px] font-semibold text-chart-2">● 正常</span>
+            <span className="inline-flex items-center gap-[5px] rounded-full bg-muted px-2 py-[3px] text-[12px] font-semibold text-muted-foreground">用户 ID: {userId}</span>
+            <span className="inline-flex items-center gap-[5px] rounded-full bg-accent px-2 py-[3px] text-[12px] font-semibold text-accent-foreground">个人账户</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-[5px] rounded-full bg-[#f2f4f7] px-2 py-[3px] text-[12px] font-semibold text-[#475467]">{monthLabel(year, month)}</span>
-          <button className="rounded-lg border border-[#d8dde6] bg-white px-3 py-1.5 text-sm font-semibold text-[#344054] hover:bg-[#f9fafb]" onClick={onBack}>← 返回总览</button>
+          <span className="inline-flex items-center gap-[5px] rounded-full bg-muted px-2 py-[3px] text-[12px] font-semibold text-muted-foreground">{monthLabel(year, month)}</span>
+          <button className="rounded-lg border border-border bg-white px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:bg-muted" onClick={onBack}>← 返回总览</button>
         </div>
       </section>
 
@@ -370,35 +370,35 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
       </section>
 
       <section className="grid grid-cols-[1.55fr_0.85fr] gap-3.5 max-[1200px]:grid-cols-1">
-        <div className="rounded-xl border border-[#e7eaf0] bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-[#eef1f5] px-4 py-[15px]">
+        <div className="rounded-xl border border-border bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
             <div>
               <div className="text-[14px] font-bold">本期消费趋势</div>
-              <div className="mt-[3px] text-[12px] text-[#6b7280]">按日查看费用与请求量变化</div>
+              <div className="mt-[3px] text-[12px] text-muted-foreground">按日查看费用与请求量变化</div>
             </div>
-            <span className="inline-flex items-center gap-[5px] rounded-full bg-[#f2f4f7] px-2 py-[3px] text-[12px] font-semibold text-[#475467]">{trendData[0]?.label} - {trendData[trendData.length - 1]?.label}</span>
+            <span className="inline-flex items-center gap-[5px] rounded-full bg-muted px-2 py-[3px] text-[12px] font-semibold text-muted-foreground">{trendData[0]?.label} - {trendData[trendData.length - 1]?.label}</span>
           </div>
           <div className="h-[270px] px-4 py-3">
             {trendData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={trendData}>
-                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#98a2b3' }} axisLine={{ stroke: '#e5e7eb' }} />
-                  <YAxis tick={{ fontSize: 10, fill: '#98a2b3' }} axisLine={false} tickFormatter={(v: number) => fmtMoney(v)} />
+                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} axisLine={{ stroke: 'var(--border)' }} />
+                  <YAxis tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} axisLine={false} tickFormatter={(v: number) => fmtMoney(v)} />
                   <Tooltip formatter={(val: number, name: string) => name === '请求数' ? String(val) : fmtMoney(val)} />
-                  <Legend wrapperStyle={{ fontSize: 11, color: '#667085' }} verticalAlign="top" />
-                  <Bar dataKey="cost" name="消费金额" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={22} />
-                  <Line type="monotone" dataKey="requests" name="请求数" stroke="#7c3aed" strokeWidth={2} dot={false} />
+                  <Legend wrapperStyle={{ fontSize: 11, color: 'var(--muted-foreground)' }} verticalAlign="top" />
+                  <Bar dataKey="cost" name="消费金额" fill="var(--accent-foreground)" radius={[4, 4, 0, 0]} maxBarSize={22} />
+                  <Line type="monotone" dataKey="requests" name="请求数" stroke="var(--chart-3)" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             ) : <ChartEmpty />}
           </div>
         </div>
 
-        <div className="rounded-xl border border-[#e7eaf0] bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-[#eef1f5] px-4 py-[15px]">
+        <div className="rounded-xl border border-border bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
             <div>
               <div className="text-[14px] font-bold">费用构成</div>
-              <div className="mt-[3px] text-[12px] text-[#6b7280]">本期主要来源</div>
+              <div className="mt-[3px] text-[12px] text-muted-foreground">本期主要来源</div>
             </div>
           </div>
           <div className="space-y-4 px-4 py-4">
@@ -408,8 +408,8 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
                   <span className="font-semibold">{item.name}</span>
                   <span className="tabular-nums">{fmtMoney(item.cost)} · {item.pct.toFixed(1)}%</span>
                 </div>
-                <div className="h-[7px] overflow-hidden rounded-full bg-[#f0f2f5]">
-                  <div className={`h-full rounded-full ${item.color === 'purple' ? 'bg-[#7c3aed]' : item.color === 'green' ? 'bg-[#16a34a]' : item.color === 'amber' ? 'bg-[#d97706]' : 'bg-[#2563eb]'}`} style={{ width: `${item.pct}%` }} />
+                <div className="h-[7px] overflow-hidden rounded-full bg-muted">
+                  <div className={`h-full rounded-full ${item.color === 'purple' ? 'bg-chart-3' : item.color === 'green' ? 'bg-chart-2' : item.color === 'amber' ? 'bg-sidebar-primary' : 'bg-accent-foreground'}`} style={{ width: `${item.pct}%` }} />
                 </div>
               </div>
             ))}
@@ -418,11 +418,11 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
       </section>
 
       <section className="grid grid-cols-2 gap-3.5 max-[1200px]:grid-cols-1">
-        <div className="rounded-xl border border-[#e7eaf0] bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-[#eef1f5] px-4 py-[15px]">
+        <div className="rounded-xl border border-border bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
             <div>
               <div className="text-[14px] font-bold">模型消费分布</div>
-              <div className="mt-[3px] text-[12px] text-[#6b7280]">按实际计费金额排序</div>
+              <div className="mt-[3px] text-[12px] text-muted-foreground">按实际计费金额排序</div>
             </div>
           </div>
           <div className="h-[235px] px-4 py-3">
@@ -432,7 +432,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
                   <Pie data={pieData} cx="34%" cy="52%" innerRadius="48%" outerRadius="72%" dataKey="value" label={false}>
                     {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
                   </Pie>
-                  <Legend verticalAlign="middle" align="right" layout="vertical" iconType="circle" wrapperStyle={{ fontSize: 11, color: '#667085' }} />
+                  <Legend verticalAlign="middle" align="right" layout="vertical" iconType="circle" wrapperStyle={{ fontSize: 11, color: 'var(--muted-foreground)' }} />
                   <Tooltip formatter={(val: number) => fmtMoney(val)} />
                 </PieChart>
               </ResponsiveContainer>
@@ -440,33 +440,33 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
           </div>
         </div>
 
-        <div className="rounded-xl border border-[#e7eaf0] bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-[#eef1f5] px-4 py-[15px]">
+        <div className="rounded-xl border border-border bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
             <div>
               <div className="text-[14px] font-bold">用户与归属信息</div>
-              <div className="mt-[3px] text-[12px] text-[#6b7280]">账单主体是用户；团队归属仅作为关联信息</div>
+              <div className="mt-[3px] text-[12px] text-muted-foreground">账单主体是用户；团队归属仅作为关联信息</div>
             </div>
           </div>
           <div className="px-4 py-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <div className="text-[11px] text-[#6b7280]">用户 ID</div>
+                <div className="text-[11px] text-muted-foreground">用户 ID</div>
                 <div className="break-words font-semibold">{userId}</div>
               </div>
               <div>
-                <div className="text-[11px] text-[#6b7280]">账户类型</div>
+                <div className="text-[11px] text-muted-foreground">账户类型</div>
                 <div className="break-words font-semibold">个人账户</div>
               </div>
             </div>
             {userTeamInfo.length > 0 && (
-              <div className="mt-4 rounded-lg border border-[#e7eaf0] bg-[#fafbfc] p-3">
-                <div className="text-[11px] font-semibold text-[#6b7280]">所属团队</div>
+              <div className="mt-4 rounded-lg border border-border bg-muted p-3">
+                <div className="text-[11px] font-semibold text-muted-foreground">所属团队</div>
                 {userTeamInfo.map((t) => (
                   <div key={t.team_id} className="mt-2 flex items-center gap-2.5">
-                    <div className="grid h-[30px] w-[30px] place-items-center rounded-lg bg-[#eef2ff] text-[11px] font-bold text-[#4f46e5]">{(t.team_name ?? 'TM').slice(0, 2).toUpperCase()}</div>
+                    <div className="grid h-[30px] w-[30px] place-items-center rounded-lg bg-accent text-[11px] font-bold text-accent-foreground">{(t.team_name ?? 'TM').slice(0, 2).toUpperCase()}</div>
                     <div>
-                      <div className="text-[12px] font-semibold text-[#111827]">{t.team_name}</div>
-                      <div className="text-[10px] text-[#6b7280]">{t.team_id}</div>
+                      <div className="text-[12px] font-semibold text-foreground">{t.team_name}</div>
+                      <div className="text-[10px] text-muted-foreground">{t.team_id}</div>
                     </div>
                   </div>
                 ))}
@@ -476,11 +476,11 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
         </div>
       </section>
 
-      <section className="rounded-xl border border-[#e7eaf0] bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-[#eef1f5] px-4 py-[15px]">
+      <section className="rounded-xl border border-border bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
           <div>
             <div className="text-[14px] font-bold">API Key 账单</div>
-            <div className="mt-[3px] text-[12px] text-[#6b7280]">定位具体是哪一个 Key 产生消费，支持追溯请求与模型</div>
+            <div className="mt-[3px] text-[12px] text-muted-foreground">定位具体是哪一个 Key 产生消费，支持追溯请求与模型</div>
           </div>
         </div>
         <div className="overflow-auto">
@@ -488,57 +488,57 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
             <thead>
               <tr>
                 {['名称', '归属', '状态', '请求数', '输入 Token', '缓存命中', '输出 Token', '消费', '最后调用'].map((h) => (
-                  <th key={h} className={`whitespace-nowrap border-b border-[#eef1f5] bg-[#fafbfc] px-3.5 py-[11px] text-[11px] font-bold text-[#667085] ${h === '请求数' || h === '输入 Token' || h === '缓存命中' || h === '输出 Token' || h === '消费' ? 'text-right' : 'text-left'}`}>{h}</th>
+                  <th key={h} className={`whitespace-nowrap border-b border-secondary bg-muted px-3.5 py-[11px] text-[11px] font-bold text-muted-foreground ${h === '请求数' || h === '输入 Token' || h === '缓存命中' || h === '输出 Token' || h === '消费' ? 'text-right' : 'text-left'}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {(apiKeyCosts?.items ?? []).map((key) => (
-                <tr key={key.api_key_name ?? 'unknown'} className="cursor-pointer hover:bg-[#fafcff]" onClick={() => setDrawer({ key: key.api_key_name ?? '', alias: key.api_key_name ?? '', req: fmtShort(key.total_requests), cost: fmtMoney(key.total_cost), model: key.primary_model ?? '-', isTeam: !!key.team_id })}>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px] font-bold text-[#111827]">{key.api_key_name ?? '-'}</td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">
+                <tr key={key.api_key_name ?? 'unknown'} className="cursor-pointer hover:bg-accent" onClick={() => setDrawer({ key: key.api_key_name ?? '', alias: key.api_key_name ?? '', req: fmtShort(key.total_requests), cost: fmtMoney(key.total_cost), model: key.primary_model ?? '-', isTeam: !!key.team_id })}>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-[12px] font-bold text-foreground">{key.api_key_name ?? '-'}</td>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-[12px]">
                     {key.team_id ? (
-                      <span className="inline-block rounded-md bg-[#fff7ed] px-1.5 py-0.5 text-[11px] font-semibold text-[#c2410c]">团队</span>
+                      <span className="inline-block rounded-md bg-chart-1 px-1.5 py-0.5 text-[11px] font-semibold text-sidebar-primary">团队</span>
                     ) : (
-                      <span className="inline-block rounded-md bg-[#f2f4f7] px-1.5 py-0.5 text-[11px] font-semibold text-[#475467]">个人</span>
+                      <span className="inline-block rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground">个人</span>
                     )}
                   </td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-[12px]">
                     {(() => {
-                      if (key.team_id) return <span className="font-semibold text-[#15803d]">● 活跃</span>;
-                      if (key.api_key_enabled === true) return <span className="font-semibold text-[#15803d]">● 活跃</span>;
-                      if (key.api_key_enabled === false) return <span className="font-semibold text-[#dc2626]">● 已禁用</span>;
-                      return <span className="font-semibold text-[#6b7280]">● 已删除</span>;
+                      if (key.team_id) return <span className="font-semibold text-chart-2">● 活跃</span>;
+                      if (key.api_key_enabled === true) return <span className="font-semibold text-chart-2">● 活跃</span>;
+                      if (key.api_key_enabled === false) return <span className="font-semibold text-destructive">● 已禁用</span>;
+                      return <span className="font-semibold text-muted-foreground">● 已删除</span>;
                     })()}
                   </td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.total_requests)}</td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.prompt_tokens ?? 0)}</td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.cache_hit_input_tokens ?? 0)}</td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.completion_tokens ?? 0)}</td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px] font-bold text-[#111827]">{fmtMoney(key.total_cost)}</td>
-                  <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">{key.last_request_at ? new Date(key.last_request_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}</td>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.total_requests)}</td>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.prompt_tokens ?? 0)}</td>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.cache_hit_input_tokens ?? 0)}</td>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px]">{fmtShort(key.completion_tokens ?? 0)}</td>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px] font-bold text-foreground">{fmtMoney(key.total_cost)}</td>
+                  <td className="border-b border-secondary px-3.5 py-[11px] text-[12px]">{key.last_request_at ? new Date(key.last_request_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <div className="flex justify-between px-3.5 py-3 text-[11px] text-[#6b7280]">
+        <div className="flex justify-between px-3.5 py-3 text-[11px] text-muted-foreground">
           <span>共 {totalKeys} 个 API Key · 本期有调用 {activeKeys} 个</span>
           <span>点击行查看 Key 账单详情</span>
         </div>
       </section>
 
-      <section className="rounded-xl border border-[#e7eaf0] bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-[#eef1f5] px-4 py-[15px]">
+      <section className="rounded-xl border border-border bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
           <div>
             <div className="text-[14px] font-bold">账单明细与扣费记录</div>
-            <div className="mt-[3px] text-[12px] text-[#6b7280]">用于对账、审计与单次请求费用追溯</div>
+            <div className="mt-[3px] text-[12px] text-muted-foreground">用于对账、审计与单次请求费用追溯</div>
           </div>
         </div>
 
-        <div className="flex gap-[2px] border-b border-[#eef1f5] bg-white px-4">
+        <div className="flex gap-[2px] border-b border-secondary bg-white px-4">
           {(['model', 'deductions'] as const).map((tab) => (
-            <button key={tab} className={`border-0 bg-transparent px-2.5 py-3 font-semibold ${detailTab === tab ? 'border-b-2 border-[#2563eb] text-[#2563eb]' : 'text-[#6b7280]'}`} onClick={() => setDetailTab(tab)}>
+            <button key={tab} className={`border-0 bg-transparent px-2.5 py-3 font-semibold ${detailTab === tab ? 'border-b-2 border-accent-foreground text-accent-foreground' : 'text-muted-foreground'}`} onClick={() => setDetailTab(tab)}>
               {tab === 'model' ? '模型汇总' : '扣费记录'}
             </button>
           ))}
@@ -549,19 +549,19 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
             <table className="w-full min-w-[900px] border-collapse">
               <thead>
                 <tr>
-                  <th className="whitespace-nowrap border-b border-[#eef1f5] bg-[#fafbfc] px-3.5 py-[11px] text-left text-[11px] font-bold text-[#667085]">模型</th>
-                  <th className="whitespace-nowrap border-b border-[#eef1f5] bg-[#fafbfc] px-3.5 py-[11px] text-right text-[11px] font-bold text-[#667085]">请求数</th>
-                  <th className="whitespace-nowrap border-b border-[#eef1f5] bg-[#fafbfc] px-3.5 py-[11px] text-right text-[11px] font-bold text-[#667085]">消费</th>
-                  <th className="whitespace-nowrap border-b border-[#eef1f5] bg-[#fafbfc] px-3.5 py-[11px] text-right text-[11px] font-bold text-[#667085]">占比</th>
+                  <th className="whitespace-nowrap border-b border-secondary bg-muted px-3.5 py-[11px] text-left text-[11px] font-bold text-muted-foreground">模型</th>
+                  <th className="whitespace-nowrap border-b border-secondary bg-muted px-3.5 py-[11px] text-right text-[11px] font-bold text-muted-foreground">请求数</th>
+                  <th className="whitespace-nowrap border-b border-secondary bg-muted px-3.5 py-[11px] text-right text-[11px] font-bold text-muted-foreground">消费</th>
+                  <th className="whitespace-nowrap border-b border-secondary bg-muted px-3.5 py-[11px] text-right text-[11px] font-bold text-muted-foreground">占比</th>
                 </tr>
               </thead>
               <tbody>
                 {(periodSummary?.by_model ?? []).map((m) => (
                   <tr key={m.model}>
-                    <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]"><span className="mr-[7px] inline-block h-[7px] w-[7px] rounded-sm bg-[#2563eb]" />{m.model}</td>
-                    <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">-</td>
-                    <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px] font-bold text-[#111827]">{fmtMoney(m.cost)}</td>
-                    <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px]">{m.percentage.toFixed(1)}%</td>
+                    <td className="border-b border-secondary px-3.5 py-[11px] text-[12px]"><span className="mr-[7px] inline-block h-[7px] w-[7px] rounded-sm bg-accent-foreground" />{m.model}</td>
+                    <td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px]">-</td>
+                    <td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px] font-bold text-foreground">{fmtMoney(m.cost)}</td>
+                    <td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px]">{m.percentage.toFixed(1)}%</td>
                   </tr>
                 ))}
               </tbody>
@@ -574,19 +574,19 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
             <table className="w-full min-w-[900px] border-collapse">
               <thead>
                 <tr>
-                  <th className="whitespace-nowrap border-b border-[#eef1f5] bg-[#fafbfc] px-3.5 py-[11px] text-left text-[11px] font-bold text-[#667085]">时间</th>
-                  <th className="whitespace-nowrap border-b border-[#eef1f5] bg-[#fafbfc] px-3.5 py-[11px] text-left text-[11px] font-bold text-[#667085]">类型</th>
-                  <th className="whitespace-nowrap border-b border-[#eef1f5] bg-[#fafbfc] px-3.5 py-[11px] text-right text-[11px] font-bold text-[#667085]">变动金额</th>
-                  <th className="whitespace-nowrap border-b border-[#eef1f5] bg-[#fafbfc] px-3.5 py-[11px] text-left text-[11px] font-bold text-[#667085]">方式</th>
+                  <th className="whitespace-nowrap border-b border-secondary bg-muted px-3.5 py-[11px] text-left text-[11px] font-bold text-muted-foreground">时间</th>
+                  <th className="whitespace-nowrap border-b border-secondary bg-muted px-3.5 py-[11px] text-left text-[11px] font-bold text-muted-foreground">类型</th>
+                  <th className="whitespace-nowrap border-b border-secondary bg-muted px-3.5 py-[11px] text-right text-[11px] font-bold text-muted-foreground">变动金额</th>
+                  <th className="whitespace-nowrap border-b border-secondary bg-muted px-3.5 py-[11px] text-left text-[11px] font-bold text-muted-foreground">方式</th>
                 </tr>
               </thead>
               <tbody>
                 {(deductions?.items ?? []).map((d, i) => (
                   <tr key={i}>
-                    <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">{d.time.slice(0, 10)}</td>
-                    <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">请求扣费</td>
-                    <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-right text-[12px] font-bold text-[#111827]">{fmtMoney(d.amount)}</td>
-                    <td className="border-b border-[#eef1f5] px-3.5 py-[11px] text-[12px]">{d.method}</td>
+                    <td className="border-b border-secondary px-3.5 py-[11px] text-[12px]">{d.time.slice(0, 10)}</td>
+                    <td className="border-b border-secondary px-3.5 py-[11px] text-[12px]">请求扣费</td>
+                    <td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px] font-bold text-foreground">{fmtMoney(d.amount)}</td>
+                    <td className="border-b border-secondary px-3.5 py-[11px] text-[12px]">{d.method}</td>
                   </tr>
                 ))}
               </tbody>
@@ -594,21 +594,21 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
           </div>
         </div>
 
-        <div className="flex justify-between px-3.5 py-3 text-[11px] text-[#6b7280]">
+        <div className="flex justify-between px-3.5 py-3 text-[11px] text-muted-foreground">
           <span>账单数据来源：PostgreSQL billing_events 表</span>
           <span>本期数据更新：{new Date().toLocaleString('zh-CN')}</span>
         </div>
       </section>
 
       {drawer && (
-        <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-[rgba(15,23,42,0.38)]" onClick={() => setDrawer(null)}>
-          <div className="flex h-full w-[min(620px,95vw)] flex-col bg-white shadow-[-12px_0_30px_rgba(0,0,0,0.12)]" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-[#e7eaf0] px-5 py-[18px]">
+        <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-[color-mix(in oklab, var(--foreground) 38%, transparent)]" onClick={() => setDrawer(null)}>
+          <div className="flex h-full w-[min(620px,95vw)] flex-col bg-white shadow-[-12px_0_30px_color-mix(in oklab, var(--foreground) 12%, transparent)]" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-border px-5 py-[18px]">
               <div>
                 <div className="text-[16px] font-[750]">Key 账单详情</div>
-                <div className="mt-[3px] text-[12px] text-[#6b7280]">当前计费周期</div>
+                <div className="mt-[3px] text-[12px] text-muted-foreground">当前计费周期</div>
               </div>
-              <button className="flex h-[30px] w-[30px] cursor-pointer items-center justify-center rounded-lg border-0 bg-[#f2f4f7]" onClick={() => setDrawer(null)}>×</button>
+              <button className="flex h-[30px] w-[30px] cursor-pointer items-center justify-center rounded-lg border-0 bg-muted" onClick={() => setDrawer(null)}>×</button>
             </div>
             <div className="overflow-auto px-5 py-[18px]">
               {[
@@ -618,8 +618,8 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
                 { label: '主要模型', value: drawer.model },
                 { label: '消费归属', value: drawer.isTeam ? '团队账单' : '用户个人账单' },
               ].map((item) => (
-                <div key={item.label} className="grid grid-cols-[140px_1fr] gap-3 border-b border-[#eef1f5] py-2.5">
-                  <div className="text-[#6b7280]">{item.label}</div>
+                <div key={item.label} className="grid grid-cols-[140px_1fr] gap-3 border-b border-secondary py-2.5">
+                  <div className="text-muted-foreground">{item.label}</div>
                   <div className="break-all font-semibold">{item.value}</div>
                 </div>
               ))}
@@ -635,23 +635,23 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
 
 function KpiCard({ label, value, note }: { label: string; value: string; note: string }) {
   return (
-    <div className="rounded-xl border border-[#e7eaf0] bg-white p-4 shadow-sm">
-      <div className="text-[12px] text-[#6b7280]">{label}</div>
+    <div className="rounded-xl border border-border bg-white p-4 shadow-sm">
+      <div className="text-[12px] text-muted-foreground">{label}</div>
       <div className="mt-3 text-[23px] font-[750] tracking-tight">{value}</div>
-      {note ? <div className="mt-1 text-[11px] text-[#98a2b3]">{note}</div> : null}
+      {note ? <div className="mt-1 text-[11px] text-muted-foreground">{note}</div> : null}
     </div>
   );
 }
 
 function MetricCard({ label, value, icon, foot }: { label: string; value: string; icon: string; foot: string }) {
   return (
-    <div className="rounded-xl border border-[#e7eaf0] bg-white p-4 shadow-sm">
-      <div className="flex items-center justify-between text-[12px] text-[#6b7280]">
+    <div className="rounded-xl border border-border bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between text-[12px] text-muted-foreground">
         <span>{label}</span>
-        <span className="grid h-[30px] w-[30px] place-items-center rounded-lg bg-[#f2f4f7] font-bold text-[#475467]">{icon}</span>
+        <span className="grid h-[30px] w-[30px] place-items-center rounded-lg bg-muted font-bold text-muted-foreground">{icon}</span>
       </div>
       <div className="mt-3 text-[25px] font-[750] tracking-tight">{value}</div>
-      <div className="mt-1 text-[12px] text-[#98a2b3]">{foot}</div>
+      <div className="mt-1 text-[12px] text-muted-foreground">{foot}</div>
     </div>
   );
 }
@@ -663,15 +663,15 @@ function BreakdownRow({ name, cost, pct, color }: { name: string; cost: number; 
         <span className="font-semibold">{name}</span>
         <span className="tabular-nums">{fmtMoney(cost)} · {pct.toFixed(1)}%</span>
       </div>
-      <div className="h-[7px] overflow-hidden rounded-full bg-[#f0f2f5]">
-        <div className={`h-full rounded-full ${color === 'purple' ? 'bg-[#7c3aed]' : color === 'green' ? 'bg-[#16a34a]' : 'bg-[#2563eb]'}`} style={{ width: `${pct}%` }} />
+      <div className="h-[7px] overflow-hidden rounded-full bg-muted">
+        <div className={`h-full rounded-full ${color === 'purple' ? 'bg-chart-3' : color === 'green' ? 'bg-chart-2' : 'bg-accent-foreground'}`} style={{ width: `${pct}%` }} />
       </div>
     </div>
   );
 }
 
 function ChartEmpty() {
-  return <div className="flex h-full items-center justify-center text-[#98a2b3]">暂无数据</div>;
+  return <div className="flex h-full items-center justify-center text-muted-foreground">暂无数据</div>;
 }
 
 // ── Main Export ───────────────────────────────────

@@ -215,15 +215,15 @@ export default function Models() {
             const lat = hc?.latency_ms;
             return (
               <div key={b.channel_id} className="group relative inline-flex">
-                <span className={cn('inline-block w-2.5 h-2.5 rounded-full cursor-help', hc ? (ok ? 'bg-green-500' : 'bg-destructive') : 'bg-muted-foreground/40')} />
+                <span className={cn('inline-block w-2.5 h-2.5 rounded-full cursor-help', hc ? (ok ? 'bg-chart-2' : 'bg-destructive') : 'bg-muted-foreground/40')} />
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-10">
                   <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg px-3 py-2 text-xs whitespace-nowrap space-y-1">
-                    <div className="flex items-center gap-1.5"><span className={cn('inline-block w-2 h-2 rounded-full', hc ? (ok ? 'bg-green-500' : 'bg-destructive') : 'bg-muted-foreground/40')} /><span className="font-semibold">{channelName(b.channel_id)}</span></div>
+                    <div className="flex items-center gap-1.5"><span className={cn('inline-block w-2 h-2 rounded-full', hc ? (ok ? 'bg-chart-2' : 'bg-destructive') : 'bg-muted-foreground/40')} /><span className="font-semibold">{channelName(b.channel_id)}</span></div>
                     <div className="text-muted-foreground font-mono">{b.channel_id}</div>
                     {hc?.rows?.map((row) => (
                       <div key={`${b.channel_id}-${row.endpoint_url ?? row.id}`} className="flex items-center justify-between gap-3 font-mono">
                         <span className="text-muted-foreground max-w-[220px] truncate">{row.endpoint_url ?? 'channel'}</span>
-                        <span className={cn(row.success ? 'text-green-600' : 'text-destructive')}>
+                        <span className={cn(row.success ? 'text-chart-2' : 'text-destructive')}>
                           {row.success ? `${row.latency_ms}ms` : '失败'}
                         </span>
                       </div>
@@ -251,7 +251,7 @@ export default function Models() {
       </td>
       <td className="px-4 py-4">
         <button onClick={() => publishModel.mutate(m.id, { onError: (err) => toast.error(err.message) })} disabled={publishModel.isPending}
-          className={cn('inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap cursor-pointer transition-all disabled:opacity-50', m.published ? 'bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20 hover:bg-green-500/20' : 'bg-muted text-muted-foreground border hover:bg-muted/80')}>
+          className={cn('inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap cursor-pointer transition-all disabled:opacity-50', m.published ? 'bg-chart-2/10 text-chart-2 dark:text-chart-2 border border-chart-2/20 hover:bg-chart-2/20' : 'bg-muted text-muted-foreground border hover:bg-muted/80')}>
           <span className="w-1.5 h-1.5 rounded-full bg-current" />{m.published ? '已发布' : '未发布'}
         </button>
       </td>
@@ -276,8 +276,8 @@ export default function Models() {
         </div>
         <div className="flex gap-6">
           <div className="text-right"><div className="font-mono text-xl font-semibold">{models?.length ?? '—'}</div><div className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">模型条目</div></div>
-          <div className="text-right"><div className="font-mono text-xl font-semibold text-green-600 dark:text-green-400">{totalPublished}</div><div className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">已发布</div></div>
-          <div className="text-right"><div className={cn('font-mono text-xl font-semibold', totalAlerts > 0 ? 'text-yellow-500' : 'text-muted-foreground')}>{totalAlerts}</div><div className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">渠道告警</div></div>
+          <div className="text-right"><div className="font-mono text-xl font-semibold text-chart-2 dark:text-chart-2">{totalPublished}</div><div className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">已发布</div></div>
+          <div className="text-right"><div className={cn('font-mono text-xl font-semibold', totalAlerts > 0 ? 'text-sidebar-primary' : 'text-muted-foreground')}>{totalAlerts}</div><div className="text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">渠道告警</div></div>
         </div>
       </div>
 

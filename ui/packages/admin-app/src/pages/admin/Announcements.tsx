@@ -84,7 +84,7 @@ export default function AnnouncementsPage() {
                   <div className="flex items-center gap-2 mb-1">
                     <h3 className="font-semibold">{item.title}</h3>
                     {item.published ? (
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 flex items-center gap-1">
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-chart-2/10 text-chart-2 flex items-center gap-1">
                         <Check className="size-3" />{t('announcements.published')}
                       </span>
                     ) : (

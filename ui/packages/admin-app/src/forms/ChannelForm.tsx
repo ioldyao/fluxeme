@@ -104,13 +104,13 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
   }, [fixedBaseUrl]);
 
   function healthStatus(ep: Endpoint): { color: string; title: string } {
-    if (!health) return { color: 'bg-gray-300', title: t('common.unknown') };
+    if (!health) return { color: 'bg-secondary', title: t('common.unknown') };
     const item = health.endpoints.find((h) => h.endpoint_id === ep.id);
-    if (!item) return { color: 'bg-gray-300', title: t('common.unknown') };
-    if (!item.enabled) return { color: 'bg-gray-400', title: t('common.disabled') };
+    if (!item) return { color: 'bg-secondary', title: t('common.unknown') };
+    if (!item.enabled) return { color: 'bg-muted-foreground', title: t('common.disabled') };
     return item.available
-      ? { color: 'bg-green-500', title: t('common.active') }
-      : { color: 'bg-red-500', title: t('common.meltdown') };
+      ? { color: 'bg-chart-2', title: t('common.active') }
+      : { color: 'bg-destructive', title: t('common.meltdown') };
   }
 
   function randomId() {
@@ -348,13 +348,13 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                       </div>
                       <div className="flex gap-3 text-[10px] text-muted-foreground">
                         <span className="inline-flex items-center gap-1">
-                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500" /> 正常
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-chart-2" /> 正常
                         </span>
                         <span className="inline-flex items-center gap-1">
-                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500" /> 熔断
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-destructive" /> 熔断
                         </span>
                         <span className="inline-flex items-center gap-1">
-                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-gray-400" /> 已禁用
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-muted-foreground" /> 已禁用
                         </span>
                       </div>
                     </div>

@@ -143,14 +143,14 @@ export function ModelHealthCheckDialog({ model, open, onOpenChange, channelName,
                   <span className="truncate text-muted-foreground">{binding.upstream_model || model?.name}</span>
                   <div className="text-muted-foreground">
                     {summary.success === undefined ? summary.label : summary.success ? (
-                      <span className="inline-flex items-center gap-1 text-green-600"><CheckCircle2 className="size-4" />{summary.label}</span>
+                      <span className="inline-flex items-center gap-1 text-chart-2"><CheckCircle2 className="size-4" />{summary.label}</span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-destructive"><XCircle className="size-4" />{summary.label}</span>
                     )}
                   </div>
                   <div className="text-right"><Button variant="ghost" size="sm" title="仅检测此渠道的全部端点" disabled={healthCheck.isPending} onClick={() => run([binding.channel_id])}><Activity className="size-4" /></Button></div>
                 </div>
-                {endpoints.map((endpoint, index) => { const item = resultForEndpoint(binding.channel_id, endpoint.url); return <div key={endpoint.id ?? `${endpoint.url}-${index}`} className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(160px,1fr)_120px_90px] items-center bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span /><span className="pl-4">↳ 端点{index + 1}<span className="block truncate">{endpoint.url}</span></span><span /><span>{!item ? '未测试' : item.success ? <span className="inline-flex items-center gap-1 text-green-600"><CheckCircle2 className="size-4" />{item.latency_ms}ms</span> : <span className="inline-flex items-center gap-1 text-destructive" title={item.error ?? undefined}><XCircle className="size-4" />失败</span>}</span><span /></div>; })}
+                {endpoints.map((endpoint, index) => { const item = resultForEndpoint(binding.channel_id, endpoint.url); return <div key={endpoint.id ?? `${endpoint.url}-${index}`} className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(160px,1fr)_120px_90px] items-center bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span /><span className="pl-4">↳ 端点{index + 1}<span className="block truncate">{endpoint.url}</span></span><span /><span>{!item ? '未测试' : item.success ? <span className="inline-flex items-center gap-1 text-chart-2"><CheckCircle2 className="size-4" />{item.latency_ms}ms</span> : <span className="inline-flex items-center gap-1 text-destructive" title={item.error ?? undefined}><XCircle className="size-4" />失败</span>}</span><span /></div>; })}
                 </div>
               );
             })}

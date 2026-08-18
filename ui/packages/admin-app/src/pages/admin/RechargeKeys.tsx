@@ -247,12 +247,12 @@ export default function RechargeKeys() {
                 const isExpired = !isUsed && !!k.expires_at && new Date(k.expires_at) < now;
                 const isRevoked = k.revoked;
                 const statusClass = isUsed
-                  ? 'bg-gray-500/10 text-gray-500'
+                  ? 'bg-muted-foreground/10 text-muted-foreground'
                   : isExpired
-                    ? 'bg-yellow-500/10 text-yellow-600'
+                    ? 'bg-sidebar-primary/10 text-sidebar-primary'
                     : isRevoked
                       ? 'bg-destructive/10 text-destructive'
-                      : 'bg-green-500/10 text-green-600';
+                      : 'bg-chart-2/10 text-chart-2';
                 const statusLabel = isUsed
                   ? t('wallet.statusUsed')
                   : isExpired
