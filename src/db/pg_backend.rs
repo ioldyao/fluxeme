@@ -3634,7 +3634,7 @@ impl DbBackend for PgBackend {
         limit: usize,
         offset: usize,
     ) -> Result<(
-        Vec<(Option<String>, Decimal, u64, u64, u64, u64, u64, Option<String>, Option<String>, Option<String>, Option<bool>)>,
+        Vec<(Option<String>, Decimal, u64, u64, u64, u64, u64, Option<String>, Option<String>, Option<String>, Option<bool>, Option<String>)>,
         usize,
     ), DbError> {
         let start = format!("{}-{:02}-01T00:00:00", year, month);
@@ -3676,7 +3676,7 @@ impl DbBackend for PgBackend {
         };
 
         let rows = if let Some(tid) = team_id {
-            query_as::<_, (Option<String>, f64, i64, i64, i64, i64, i64, Option<String>, Option<String>, Option<String>, Option<bool>)>(
+            query_as::<_, (Option<String>, f64, i64, i64, i64, i64, i64, Option<String>, Option<String>, Option<String>, Option<bool>, Option<String>)>(
                 "WITH key_stats AS ( \
                     SELECT \
                         be.api_key_name, \
@@ -3716,11 +3716,13 @@ impl DbBackend for PgBackend {
                     km.model AS primary_model, \
                     ks.last_request_at, \
                     ks.team_id, \
-                    ak.enabled AS api_key_enabled \
+                    ak.enabled AS api_key_enabled, \
+                    ak.key AS api_key \
                 FROM key_stats ks \
                 LEFT JOIN key_models km \
                   ON km.api_key_name IS NOT DISTINCT FROM ks.api_key_name AND km.rank_no = 1 \
-                LEFT JOIN api_keys ak ON ak.name = ks.api_key_name \
+                LEFT JOIN api_keys ak \
+                  ON ak.name = ks.api_key_name AND ak.user_id = $4 AND ak.team_id = $3 \
                 ORDER BY ks.total_cost DESC, ks.total_requests DESC, ks.api_key_name ASC NULLS LAST \
                 LIMIT $5 OFFSET $6",
             )
@@ -3733,7 +3735,7 @@ impl DbBackend for PgBackend {
             .fetch_all(&self.pool)
             .await?
         } else {
-            query_as::<_, (Option<String>, f64, i64, i64, i64, i64, i64, Option<String>, Option<String>, Option<String>, Option<bool>)>(
+            query_as::<_, (Option<String>, f64, i64, i64, i64, i64, i64, Option<String>, Option<String>, Option<String>, Option<bool>, Option<String>)>(
                 "WITH key_stats AS ( \
                     SELECT \
                         be.api_key_name, \
@@ -3771,11 +3773,13 @@ impl DbBackend for PgBackend {
                     km.model AS primary_model, \
                     ks.last_request_at, \
                     ks.team_id, \
-                    ak.enabled AS api_key_enabled \
+                    ak.enabled AS api_key_enabled, \
+                    ak.key AS api_key \
                 FROM key_stats ks \
                 LEFT JOIN key_models km \
                   ON km.api_key_name IS NOT DISTINCT FROM ks.api_key_name AND km.rank_no = 1 \
-                LEFT JOIN api_keys ak ON ak.name = ks.api_key_name \
+                LEFT JOIN api_keys ak \
+                  ON ak.name = ks.api_key_name AND ak.user_id = $3 \
                 ORDER BY ks.total_cost DESC, ks.total_requests DESC, ks.api_key_name ASC NULLS LAST \
                 LIMIT $4 OFFSET $5",
             )
@@ -3790,7 +3794,7 @@ impl DbBackend for PgBackend {
 
         Ok((
             rows.into_iter()
-                .map(|(api_key_name, total_cost, total_requests, total_tokens, prompt_tokens, completion_tokens, cache_hit_input_tokens, primary_model, last_request_at, team_id, api_key_enabled)| {
+                .map(|(api_key_name, total_cost, total_requests, total_tokens, prompt_tokens, completion_tokens, cache_hit_input_tokens, primary_model, last_request_at, team_id, api_key_enabled, api_key)| {
                     (
                         api_key_name,
                         Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
@@ -3803,6 +3807,7 @@ impl DbBackend for PgBackend {
                         last_request_at,
                         team_id,
                         api_key_enabled,
+                        api_key,
                     )
                 })
                 .collect(),

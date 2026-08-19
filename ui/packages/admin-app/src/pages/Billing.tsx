@@ -487,7 +487,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
           <table className="w-full min-w-[900px] border-collapse">
             <thead>
               <tr>
-                {['名称', '归属', '状态', '请求数', '输入 Token', '缓存命中', '输出 Token', '消费', '最后调用'].map((h) => (
+                {['名称', 'API Key', '归属', '状态', '请求数', '输入 Token', '缓存命中', '输出 Token', '消费', '最后调用'].map((h) => (
                   <th key={h} className={`whitespace-nowrap border-b border-secondary bg-muted px-3.5 py-[11px] text-[11px] font-bold text-muted-foreground ${h === '请求数' || h === '输入 Token' || h === '缓存命中' || h === '输出 Token' || h === '消费' ? 'text-right' : 'text-left'}`}>{h}</th>
                 ))}
               </tr>
@@ -496,6 +496,11 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
               {(apiKeyCosts?.items ?? []).map((key) => (
                 <tr key={key.api_key_name ?? 'unknown'} className="cursor-pointer hover:bg-accent" onClick={() => setDrawer({ key: key.api_key_name ?? '', alias: key.api_key_name ?? '', req: fmtShort(key.total_requests), cost: fmtMoney(key.total_cost), model: key.primary_model ?? '-', isTeam: !!key.team_id })}>
                   <td className="border-b border-secondary px-3.5 py-[11px] text-[12px] font-bold text-foreground">{key.api_key_name ?? '-'}</td>
+                  <td className="border-b border-secondary px-3.5 py-[11px]">
+                    {key.api_key ? (
+                      <code className="font-mono text-[11px] text-foreground">{key.api_key.substring(0, 12)}...{key.api_key.slice(-8)}</code>
+                    ) : '-'}
+                  </td>
                   <td className="border-b border-secondary px-3.5 py-[11px] text-[12px]">
                     {key.team_id ? (
                       <span className="inline-block rounded-md bg-chart-1 px-1.5 py-0.5 text-[11px] font-semibold text-sidebar-primary">团队</span>
