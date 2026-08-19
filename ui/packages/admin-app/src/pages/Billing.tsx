@@ -136,7 +136,7 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <select className="h-9 rounded-lg border border-border bg-white px-[10px] font-medium text-muted-foreground" value={`${year}-${String(month).padStart(2, '0')}`} onChange={handleMonthChange}>
+          <select className="h-9 rounded-lg border border-border bg-card px-[10px] font-medium text-muted-foreground" value={`${year}-${String(month).padStart(2, '0')}`} onChange={handleMonthChange}>
             {(months ?? []).map((m) => {
               const [ys, ms] = m.split('-').map(Number);
               return <option key={m} value={`${ys}-${String(ms).padStart(2, '0')}`}>{ys} 年 {ms} 月</option>;
@@ -155,7 +155,7 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
       </section>
 
       <section className="grid grid-cols-[1.55fr_0.85fr] gap-3.5 max-[1200px]:grid-cols-1">
-        <div className="rounded-xl border border-border bg-white shadow-sm">
+        <div className="rounded-xl border border-border bg-card shadow-sm">
           <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
             <div>
               <div className="text-[14px] font-bold">用户消费趋势</div>
@@ -176,7 +176,7 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
           </div>
         </div>
 
-        <div className="rounded-xl border border-border bg-white shadow-sm">
+        <div className="rounded-xl border border-border bg-card shadow-sm">
           <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
             <div>
               <div className="text-[14px] font-bold">消费集中度</div>
@@ -195,7 +195,7 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
         </div>
       </section>
 
-      <section className="rounded-xl border border-border bg-white shadow-sm">
+      <section className="rounded-xl border border-border bg-card shadow-sm">
         <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
           <div>
             <div className="text-[14px] font-bold">用户账单列表</div>
@@ -205,14 +205,14 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
 
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-secondary px-3.5 py-3">
           <div className="flex flex-wrap items-center gap-2">
-            <input className="h-8 min-w-[220px] rounded-lg border border-border bg-white px-2.5 text-muted-foreground outline-none" placeholder="搜索用户名 / 邮箱 / 用户 ID" value={search} onChange={(e) => setSearch(e.target.value)} />
-            <select className="h-8 rounded-lg border border-border bg-white px-2.5 text-muted-foreground" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+            <input className="h-8 min-w-[220px] rounded-lg border border-border bg-card px-2.5 text-muted-foreground outline-none" placeholder="搜索用户名 / 邮箱 / 用户 ID" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <select className="h-8 rounded-lg border border-border bg-card px-2.5 text-muted-foreground" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
               <option value="cost_desc">按消费降序</option>
               <option value="requests_desc">按请求数降序</option>
               <option value="tokens_desc">按 Token 降序</option>
             </select>
           </div>
-          <button className="rounded-lg border border-border bg-white px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:bg-muted" onClick={() => { setSearch(''); setSortBy('cost_desc'); }}>重置</button>
+          <button className="rounded-lg border border-border bg-card px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:bg-muted" onClick={() => { setSearch(''); setSortBy('cost_desc'); }}>重置</button>
         </div>
 
         <div className="overflow-auto">
@@ -357,7 +357,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
         </div>
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-[5px] rounded-full bg-muted px-2 py-[3px] text-[12px] font-semibold text-muted-foreground">{monthLabel(year, month)}</span>
-          <button className="rounded-lg border border-border bg-white px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:bg-muted" onClick={onBack}>← 返回总览</button>
+          <button className="rounded-lg border border-border bg-card px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:bg-muted" onClick={onBack}>← 返回总览</button>
         </div>
       </section>
 
@@ -370,7 +370,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
       </section>
 
       <section className="grid grid-cols-[1.55fr_0.85fr] gap-3.5 max-[1200px]:grid-cols-1">
-        <div className="rounded-xl border border-border bg-white shadow-sm">
+        <div className="rounded-xl border border-border bg-card shadow-sm">
           <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
             <div>
               <div className="text-[14px] font-bold">本期消费趋势</div>
@@ -394,7 +394,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
           </div>
         </div>
 
-        <div className="rounded-xl border border-border bg-white shadow-sm">
+        <div className="rounded-xl border border-border bg-card shadow-sm">
           <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
             <div>
               <div className="text-[14px] font-bold">费用构成</div>
@@ -418,7 +418,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
       </section>
 
       <section className="grid grid-cols-2 gap-3.5 max-[1200px]:grid-cols-1">
-        <div className="rounded-xl border border-border bg-white shadow-sm">
+        <div className="rounded-xl border border-border bg-card shadow-sm">
           <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
             <div>
               <div className="text-[14px] font-bold">模型消费分布</div>
@@ -440,7 +440,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
           </div>
         </div>
 
-        <div className="rounded-xl border border-border bg-white shadow-sm">
+        <div className="rounded-xl border border-border bg-card shadow-sm">
           <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
             <div>
               <div className="text-[14px] font-bold">用户与归属信息</div>
@@ -476,7 +476,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
         </div>
       </section>
 
-      <section className="rounded-xl border border-border bg-white shadow-sm">
+      <section className="rounded-xl border border-border bg-card shadow-sm">
         <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
           <div>
             <div className="text-[14px] font-bold">API Key 账单</div>
@@ -528,7 +528,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
         </div>
       </section>
 
-      <section className="rounded-xl border border-border bg-white shadow-sm">
+      <section className="rounded-xl border border-border bg-card shadow-sm">
         <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
           <div>
             <div className="text-[14px] font-bold">账单明细与扣费记录</div>
@@ -536,7 +536,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
           </div>
         </div>
 
-        <div className="flex gap-[2px] border-b border-secondary bg-white px-4">
+        <div className="flex gap-[2px] border-b border-secondary bg-card px-4">
           {(['model', 'deductions'] as const).map((tab) => (
             <button key={tab} className={`border-0 bg-transparent px-2.5 py-3 font-semibold ${detailTab === tab ? 'border-b-2 border-accent-foreground text-accent-foreground' : 'text-muted-foreground'}`} onClick={() => setDetailTab(tab)}>
               {tab === 'model' ? '模型汇总' : '扣费记录'}
@@ -602,7 +602,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
 
       {drawer && (
         <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-[color-mix(in oklab, var(--foreground) 38%, transparent)]" onClick={() => setDrawer(null)}>
-          <div className="flex h-full w-[min(620px,95vw)] flex-col bg-white shadow-[-12px_0_30px_color-mix(in oklab, var(--foreground) 12%, transparent)]" onClick={(e) => e.stopPropagation()}>
+          <div className="flex h-full w-[min(620px,95vw)] flex-col bg-card shadow-[-12px_0_30px_color-mix(in oklab, var(--foreground) 12%, transparent)]" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-border px-5 py-[18px]">
               <div>
                 <div className="text-[16px] font-[750]">Key 账单详情</div>
@@ -635,7 +635,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
 
 function KpiCard({ label, value, note }: { label: string; value: string; note: string }) {
   return (
-    <div className="rounded-xl border border-border bg-white p-4 shadow-sm">
+    <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
       <div className="text-[12px] text-muted-foreground">{label}</div>
       <div className="mt-3 text-[23px] font-[750] tracking-tight">{value}</div>
       {note ? <div className="mt-1 text-[11px] text-muted-foreground">{note}</div> : null}
@@ -645,7 +645,7 @@ function KpiCard({ label, value, note }: { label: string; value: string; note: s
 
 function MetricCard({ label, value, icon, foot }: { label: string; value: string; icon: string; foot: string }) {
   return (
-    <div className="rounded-xl border border-border bg-white p-4 shadow-sm">
+    <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
       <div className="flex items-center justify-between text-[12px] text-muted-foreground">
         <span>{label}</span>
         <span className="grid h-[30px] w-[30px] place-items-center rounded-lg bg-muted font-bold text-muted-foreground">{icon}</span>

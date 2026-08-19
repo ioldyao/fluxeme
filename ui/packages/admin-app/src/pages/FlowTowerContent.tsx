@@ -284,14 +284,14 @@ function toneClasses(tone: Tone) {
       };
     case 'yellow':
       return {
-        card: 'border-sidebar-primary/15 bg-[linear-gradient(180deg,var(--card)_0%,#fffaf0_100%)]',
+        card: 'border-sidebar-primary/15 bg-[linear-gradient(180deg,var(--card)_0%,color-mix(in oklab,var(--card)_78%,var(--sidebar-primary))_100%)]',
         badge: 'bg-sidebar-primary/15 text-sidebar-primary',
         value: 'text-sidebar-primary',
         glow: 'bg-sidebar-primary/15',
       };
     case 'red':
       return {
-        card: 'border-destructive/15 bg-[linear-gradient(180deg,var(--card)_0%,#fff6f6_100%)]',
+        card: 'border-destructive/15 bg-[linear-gradient(180deg,var(--card)_0%,color-mix(in oklab,var(--card)_78%,var(--destructive))_100%)]',
         badge: 'bg-destructive/15 text-destructive',
         value: 'text-destructive',
         glow: 'bg-destructive/15',
@@ -681,7 +681,7 @@ export default function FlowTowerContent() {
                     }}
                     className={`rounded-lg px-3 py-1.5 text-xs transition ${
                       selectedRange === option.key
-                        ? 'bg-white text-foreground shadow-sm'
+                        ? 'bg-card text-foreground shadow-sm'
                         : 'text-muted-foreground hover:text-foreground'
                     }`}
                   >
@@ -1054,7 +1054,7 @@ export default function FlowTowerContent() {
                     <>
                       <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
                         {endpointSummaryRows.map((row) => (
-                          <div key={row.label} className="rounded-xl border border-secondary bg-white p-3">
+                          <div key={row.label} className="rounded-xl border border-secondary bg-card p-3">
                             <small className="text-[10px] text-muted-foreground">{row.label}</small>
                             <strong className="mt-1 block text-sm text-foreground">{row.value}</strong>
                           </div>
@@ -1073,7 +1073,7 @@ export default function FlowTowerContent() {
                         </div>
                       ) : null}
 
-                      <div className="overflow-x-auto rounded-xl border border-secondary bg-white">
+                      <div className="overflow-x-auto rounded-xl border border-secondary bg-card">
                         <table className="w-full min-w-[980px] border-collapse">
                           <thead>
                             <tr>
@@ -1142,7 +1142,7 @@ export default function FlowTowerContent() {
                     </div>
                   ) : null}
                   {compareRows.length > 0 ? (
-                    <div className="overflow-x-auto rounded-xl border border-secondary bg-white">
+                    <div className="overflow-x-auto rounded-xl border border-secondary bg-card">
                       <table className="w-full min-w-[980px] border-collapse">
                         <thead>
                           <tr>
@@ -1222,8 +1222,8 @@ export default function FlowTowerContent() {
                         <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${health.badge}`}>{health.label}</span>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-1.5">
-                        <span className="rounded bg-white px-2 py-1 text-[10px] text-muted-foreground">{selectedCatalogModel.config.published ? '已发布' : '未发布'}</span>
-                        {categories.map((category) => <span key={category} className="rounded bg-white px-2 py-1 text-[10px] text-muted-foreground">{category}</span>)}
+                        <span className="rounded bg-card px-2 py-1 text-[10px] text-muted-foreground">{selectedCatalogModel.config.published ? '已发布' : '未发布'}</span>
+                        {categories.map((category) => <span key={category} className="rounded bg-card px-2 py-1 text-[10px] text-muted-foreground">{category}</span>)}
                       </div>
                       <div className="mt-4 grid grid-cols-[1fr_auto] gap-x-4 gap-y-2 text-[10.5px]">
                         <span className="text-muted-foreground">模型 Pattern</span><span className="max-w-[180px] truncate text-right text-muted-foreground">{selectedCatalogModel.config.model_pattern}</span>
@@ -1232,7 +1232,7 @@ export default function FlowTowerContent() {
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-secondary bg-white p-4">
+                    <div className="rounded-xl border border-secondary bg-card p-4">
                       <div className="mb-3 flex items-center justify-between gap-2">
                         <div className="text-[11px] font-semibold text-muted-foreground">Routing Health · 最近 24h</div>
                         {routingHealthQuery.isFetching ? <span className="text-[10px] text-muted-foreground">更新中…</span> : null}
@@ -1261,7 +1261,7 @@ export default function FlowTowerContent() {
                       ) : null}
                     </div>
 
-                    <div className="rounded-xl border border-secondary bg-white p-4">
+                    <div className="rounded-xl border border-secondary bg-card p-4">
                       <div className="mb-3 text-[11px] font-semibold text-muted-foreground">Flow Metrics · 当前选择区间</div>
                       <MetricList rows={historicalInspectorRows} />
                     </div>
