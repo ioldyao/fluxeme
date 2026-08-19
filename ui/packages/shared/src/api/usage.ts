@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useAuth } from '../store/auth';
 import { api } from './client';
 import type { UsageRecord, DailyAggregate, ModelActivity } from '../types';
@@ -41,6 +41,7 @@ export function useUsage(params: UsageParams = {}) {
   return useQuery({
     queryKey: ['usage', 'all', stableKey],
     queryFn: () => api<UsageResponse>(`/usage${qs ? `?${qs}` : ''}`),
+    placeholderData: keepPreviousData,
     refetchInterval: 60_000,
   });
 }
@@ -53,6 +54,7 @@ export function useMyUsage(params: Omit<UsageParams, 'user_id'> = {}) {
   return useQuery({
     queryKey: ['usage', 'self', userId, stableKey],
     queryFn: () => api<UsageResponse>(`/me/usage${qs ? `?${qs}` : ''}`),
+    placeholderData: keepPreviousData,
     refetchInterval: 60_000,
   });
 }

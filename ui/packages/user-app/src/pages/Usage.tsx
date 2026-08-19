@@ -8,6 +8,7 @@ import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
 import { EmptyState } from '@fluxeme/shared/src/components/EmptyState';
 import { Button } from '@fluxeme/shared/src/components/ui/button';
 import { Input } from '@fluxeme/shared/src/components/ui/input';
+import { DateRangePicker } from '@fluxeme/shared/src/components/ui/date-range-picker';
 import { Card, CardContent, CardHeader, CardTitle } from '@fluxeme/shared/src/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@fluxeme/shared/src/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@fluxeme/shared/src/components/ui/select';
@@ -73,6 +74,8 @@ export default function Usage() {
   const [modelFilter, setModelFilter] = useState('');
   const [apiKeyFilter, setApiKeyFilter] = useState('');
   const [apiFormatFilter, setApiFormatFilter] = useState('');
+  const [startDt, setStartDt] = useState('');
+  const [endDt, setEndDt] = useState('');
 
   // ── Date filter (supports ?date=YYYY-MM-DD from wallet navigation) ──
   const [searchParams] = useSearchParams();
@@ -84,6 +87,13 @@ export default function Usage() {
     }
   }, [urlDate]); // eslint-disable-line react-hooks/exhaustive-deps
   const dateParams = useMemo(() => {
+    // Custom datetime range takes priority over quick tabs when set.
+    if (startDt || endDt) {
+      return {
+        ...(startDt ? { start_date: new Date(startDt).toISOString() } : {}),
+        ...(endDt ? { end_date: new Date(endDt).toISOString() } : {}),
+      };
+    }
     if (dateFilter === 'all') return {};
     if (dateFilter === 'today') {
       const now = new Date();
@@ -102,10 +112,10 @@ export default function Usage() {
     const startLocal = new Date(`${dateFilter}T00:00:00`);
     const endLocal = new Date(`${dateFilter}T23:59:59`);
     return { start_date: startLocal.toISOString(), end_date: endLocal.toISOString() };
-  }, [dateFilter]);
+  }, [dateFilter, startDt, endDt]);
   const isCustomDate = dateFilter.length === 10 && dateFilter.includes('-');
 
-  const filtersActive = !!modelFilter || !!apiKeyFilter || !!apiFormatFilter || dateFilter !== 'all';
+  const filtersActive = !!modelFilter || !!apiKeyFilter || !!apiFormatFilter || dateFilter !== 'all' || !!startDt || !!endDt;
   const params = {
     limit, offset,
     ...(modelFilter ? { model: modelFilter } : {}),
@@ -199,27 +209,40 @@ export default function Usage() {
             </div>
           )}
 
-          {/* Date range filter tabs */}
+          {/* Date range filter tabs + custom datetime range */}
           {showFilters && (
-            <div className="flex items-center gap-1 text-xs">
-              {(['today', '7d', '30d', 'all'] as const).map((key) => (
-                <button
-                  key={key}
-                  onClick={() => { setDateFilter(key); setOffset(0); }}
-                  className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
-                    (!isCustomDate && dateFilter === key)
-                      ? 'bg-brand text-white'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-accent'
-                  }`}
-                >
-                  {key === 'today' ? t('usage.dateToday') : key === '7d' ? t('usage.date7d') : key === '30d' ? t('usage.date30d') : t('usage.dateAll')}
-                </button>
-              ))}
-              {isCustomDate && (
-                <span className="px-2.5 py-1 rounded-md bg-brand text-white font-medium">
-                  {dateFilter}
-                </span>
-              )}
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <div className="flex items-center gap-1">
+                {(['today', '7d', '30d', 'all'] as const).map((key) => (
+                  <button
+                    key={key}
+                    onClick={() => { setDateFilter(key); setStartDt(''); setEndDt(''); setOffset(0); }}
+                    className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                      (!isCustomDate && !startDt && !endDt && dateFilter === key)
+                        ? 'bg-brand text-white'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                    }`}
+                  >
+                    {key === 'today' ? t('usage.dateToday') : key === '7d' ? t('usage.date7d') : key === '30d' ? t('usage.date30d') : t('usage.dateAll')}
+                  </button>
+                ))}
+                {isCustomDate && (
+                  <span className="px-2.5 py-1 rounded-md bg-brand text-white font-medium">
+                    {dateFilter}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 ml-auto">
+                <DateRangePicker
+                  start={startDt}
+                  end={endDt}
+                  onStartChange={(v) => { setStartDt(v); setOffset(0); }}
+                  onEndChange={(v) => { setEndDt(v); setOffset(0); }}
+                  startPlaceholder={t('usage.startTime')}
+                  endPlaceholder={t('usage.endTime')}
+                  className="w-auto"
+                />
+              </div>
             </div>
           )}
 
