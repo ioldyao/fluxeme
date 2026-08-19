@@ -4,10 +4,13 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell,
 } from 'recharts';
 import {
-  useAdminBillingSummary, useAdminBillingUserSpendRanking, useAdminBillingDailyTrend, useAdminBillingMonths, useAdminScopedPeriodSummary, useAdminBillingUserApiKeyCosts, useAdminDeductions,
+  useAdminBillingSummary, useAdminBillingUserSpendRanking, useAdminBillingDailyTrend, useAdminBillingMonths, useAdminScopedPeriodSummary, useAdminBillingUserApiKeyCosts, useAdminDeductions, useAdminBillingApiKeyDetail,
 } from '@fluxeme/shared/src/api/billing';
 import { api } from '@fluxeme/shared/src/api/client';
 import { useQuery } from '@tanstack/react-query';
+import { UsageLogDetail } from '@/components/UsageLogDetail';
+import { formatCost, getRecordPricing } from '@fluxeme/shared/src/lib/cost';
+import { parseTimestamp, formatTime } from '@fluxeme/shared/src/lib/date';
 
 // ── helpers ───────────────────────────────────────
 
@@ -266,12 +269,23 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
   const year = parseInt(searchParams.get('year') ?? '', 10) || curYear;
   const month = parseInt(searchParams.get('month') ?? '', 10) || curMonth;
   const [detailTab, setDetailTab] = useState<'model' | 'deductions'>('model');
-  const [drawer, setDrawer] = useState<{ key: string; alias: string; req: string; cost: string; model: string; isTeam: boolean } | null>(null);
+  const [drawer, setDrawer] = useState<{ apiKeyName: string; teamId: string | null; headTail: string; req: string; cost: string; model: string } | null>(null);
+  const [reqDetailId, setReqDetailId] = useState<string | null>(null);
 
   const { data: periodSummary } = useAdminScopedPeriodSummary(year, month, { user_id: userId });
   const { data: trend } = useAdminBillingDailyTrend(year, month, { user_id: userId });
   const { data: apiKeyCosts } = useAdminBillingUserApiKeyCosts(null, userId, year, month, { limit: 50 });
   const { data: deductions } = useAdminDeductions(year, month, 1, 30, { user_id: userId });
+
+  // Deep-dive: per-key model/channel/recent-request breakdown (ClickHouse)
+  const { data: keyDetail, isLoading: keyDetailLoading } = useAdminBillingApiKeyDetail(
+    drawer?.teamId ?? null,
+    userId,
+    drawer?.apiKeyName ?? null,
+    year, month, { limit: 20 },
+    !!drawer,
+  );
+  const maxModelRequests = useMemo(() => Math.max(1, ...(keyDetail?.top_models ?? []).map((m) => m.total_requests)), [keyDetail]);
 
   // Fetch team list to resolve team_id -> team_name
   const { data: teamList } = useQuery({
@@ -494,7 +508,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
             </thead>
             <tbody>
               {(apiKeyCosts?.items ?? []).map((key) => (
-                <tr key={key.api_key_name ?? 'unknown'} className="cursor-pointer hover:bg-accent" onClick={() => setDrawer({ key: key.api_key_name ?? '', alias: key.api_key_name ?? '', req: fmtShort(key.total_requests), cost: fmtMoney(key.total_cost), model: key.primary_model ?? '-', isTeam: !!key.team_id })}>
+                <tr key={key.api_key_name ?? 'unknown'} className="cursor-pointer hover:bg-accent" onClick={() => setDrawer({ apiKeyName: key.api_key_name ?? '', teamId: key.team_id ?? null, headTail: key.api_key ? `${key.api_key.substring(0, 12)}...${key.api_key.slice(-8)}` : '-', req: fmtShort(key.total_requests), cost: fmtMoney(key.total_cost), model: key.primary_model ?? '-' })}>
                   <td className="border-b border-secondary px-3.5 py-[11px] text-[12px] font-bold text-foreground">{key.api_key_name ?? '-'}</td>
                   <td className="border-b border-secondary px-3.5 py-[11px]">
                     {key.api_key ? (
@@ -616,22 +630,104 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
               <button className="flex h-[30px] w-[30px] cursor-pointer items-center justify-center rounded-lg border-0 bg-muted" onClick={() => setDrawer(null)}>×</button>
             </div>
             <div className="overflow-auto px-5 py-[18px]">
-              {[
-                { label: '名称', value: drawer.key },
-                { label: '请求数', value: drawer.req },
-                { label: '本期消费', value: drawer.cost },
-                { label: '主要模型', value: drawer.model },
-                { label: '消费归属', value: drawer.isTeam ? '团队账单' : '用户个人账单' },
-              ].map((item) => (
-                <div key={item.label} className="grid grid-cols-[140px_1fr] gap-3 border-b border-secondary py-2.5">
-                  <div className="text-muted-foreground">{item.label}</div>
-                  <div className="break-all font-semibold">{item.value}</div>
-                </div>
-              ))}
+              {/* Summary */}
+              <div>
+                {[
+                  { label: '名称', value: drawer.apiKeyName },
+                  { label: 'API Key', value: drawer.headTail },
+                  { label: '请求数', value: drawer.req },
+                  { label: '本期消费', value: drawer.cost },
+                  { label: '主要模型', value: drawer.model },
+                  { label: '消费归属', value: drawer.teamId ? '团队账单' : '用户个人账单' },
+                ].map((item) => (
+                  <div key={item.label} className="flex items-center justify-between gap-4 border-b border-secondary py-2.5">
+                    <span className="shrink-0 text-muted-foreground">{item.label}</span>
+                    <span className="break-all text-right font-mono font-semibold">{item.value}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Model distribution */}
+              <div className="mt-5">
+                <div className="text-[13px] font-bold">模型分布</div>
+                {keyDetailLoading ? (
+                  <div className="py-4 text-center text-xs text-muted-foreground">加载中…</div>
+                ) : (keyDetail?.top_models?.length ?? 0) > 0 ? (
+                  <div className="mt-3 space-y-2.5">
+                    {keyDetail!.top_models.map((m) => (
+                      <div key={m.model}>
+                        <div className="mb-[5px] flex justify-between gap-3 text-xs">
+                          <span className="truncate font-semibold">{m.model}</span>
+                          <span className="shrink-0 text-muted-foreground">{m.total_requests} 次 · {fmtShort(m.total_tokens)} Tokens</span>
+                        </div>
+                        <div className="h-[6px] overflow-hidden rounded-full bg-muted">
+                          <div className="h-full rounded-full bg-accent-foreground" style={{ width: `${(m.total_requests / maxModelRequests) * 100}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-4 text-center text-xs text-muted-foreground">暂无模型数据</div>
+                )}
+              </div>
+
+              {/* Channel distribution */}
+              <div className="mt-5">
+                <div className="text-[13px] font-bold">通道分布</div>
+                {keyDetailLoading ? (
+                  <div className="py-4 text-center text-xs text-muted-foreground">加载中…</div>
+                ) : (keyDetail?.top_channels?.length ?? 0) > 0 ? (
+                  <div className="mt-2">
+                    {keyDetail!.top_channels.map((c) => (
+                      <div key={c.channel_id} className="flex items-center justify-between gap-3 border-b border-secondary py-2 text-xs last:border-0">
+                        <span className="truncate font-mono text-muted-foreground">{c.channel_id}</span>
+                        <span className="shrink-0">{c.total_requests} 次</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-4 text-center text-xs text-muted-foreground">暂无通道数据</div>
+                )}
+              </div>
+
+              {/* Recent requests */}
+              <div className="mt-5">
+                <div className="text-[13px] font-bold">最近请求</div>
+                {keyDetailLoading ? (
+                  <div className="py-4 text-center text-xs text-muted-foreground">加载中…</div>
+                ) : (keyDetail?.recent_requests?.length ?? 0) > 0 ? (
+                  <div className="mt-2">
+                    {keyDetail!.recent_requests.map((r) => {
+                      const costStr = formatCost(r.prompt_tokens, r.completion_tokens, r.cache_hit_input_tokens, getRecordPricing(r));
+                      return (
+                        <button key={r.request_id} className="w-full rounded-md px-1 py-2.5 text-left hover:bg-accent/50" onClick={() => setReqDetailId(r.request_id)}>
+                          <div className="flex items-center justify-between gap-3 text-xs">
+                            <span className="truncate font-semibold">{r.original_model ? `${r.original_model} → ${r.model}` : r.model}</span>
+                            <span className="shrink-0 text-muted-foreground">{formatTime(parseTimestamp(r.timestamp))}</span>
+                          </div>
+                          <div className="mt-1 flex items-center justify-between gap-3 text-[11px]">
+                            <span className="truncate font-mono text-muted-foreground">{r.request_id.substring(0, 12)} · 输入 {r.prompt_tokens} · 输出 {r.completion_tokens} · {costStr || '—'}</span>
+                            <span className={`shrink-0 font-medium ${r.success ? 'text-chart-2' : 'text-destructive'}`}>{r.success ? '成功' : '失败'} · {r.status_code}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                    <div className="pt-1 text-center text-[11px] text-muted-foreground">点击请求查看完整详情</div>
+                  </div>
+                ) : (
+                  <div className="py-4 text-center text-xs text-muted-foreground">暂无请求</div>
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
+
+      <UsageLogDetail
+        requestId={reqDetailId}
+        open={!!reqDetailId}
+        onOpenChange={(open) => { if (!open) setReqDetailId(null); }}
+      />
     </div>
   );
 }
