@@ -188,7 +188,7 @@ export default function Dashboard() {
         {/* ── Left Column ── */}
         <div className="space-y-4">
           {/* Traffic / Token Trend */}
-          <Card className="card-hover">
+          <Card>
             <CardHeader className="flex flex-row items-start justify-between gap-3">
               <div>
                 <h2 className="text-base font-semibold leading-none">{t('dash.trafficTokenTrend')}</h2>
@@ -223,7 +223,7 @@ export default function Dashboard() {
           </Card>
 
           {/* Request Logs */}
-          <Card className="card-hover">
+          <Card>
             <CardHeader className="flex flex-row items-start justify-between gap-3">
               <div>
                 <h2 className="text-base font-semibold leading-none">{t('dash.requestLogs')}</h2>
@@ -281,7 +281,7 @@ export default function Dashboard() {
         {/* ── Right Column ── */}
         <div className="space-y-4">
           {/* Capacity & Budget */}
-          <Card className="card-hover">
+          <Card>
             <CardHeader>
               <h2 className="text-base font-semibold leading-none">{t('dash.capacityBudget')}</h2>
               <CardDescription>{t('dash.capacityBudgetSub')}</CardDescription>
@@ -304,7 +304,7 @@ export default function Dashboard() {
           </Card>
 
           {/* Model Distribution */}
-          <Card className="card-hover">
+          <Card>
             <CardHeader>
               <h2 className="text-base font-semibold leading-none">{t('dash.modelDistribution')}</h2>
               <CardDescription>{t('dash.modelDistributionSub')}</CardDescription>
@@ -341,7 +341,7 @@ export default function Dashboard() {
           </Card>
 
           {/* Announcements */}
-          <Card className="card-hover">
+          <Card>
             <CardHeader>
               <h2 className="flex items-center gap-2 text-base font-semibold leading-none">
                 <Bell className="size-4" />
@@ -367,7 +367,7 @@ export default function Dashboard() {
           </Card>
 
           {/* FAQ */}
-          <Card className="card-hover">
+          <Card>
             <CardHeader>
               <h2 className="flex items-center gap-2 text-base font-semibold leading-none">
                 <HelpCircle className="size-4" />

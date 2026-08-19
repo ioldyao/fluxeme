@@ -207,20 +207,6 @@
     font-feature-settings: 'rlig' 1, 'calt' 1;
   }
 
-  /* ── Card hover interaction ── */
-  .card-hover {
-    @apply transition-all duration-200;
-    transition-timing-function: var(--ease-out);
-  }
-  @media (hover: hover) and (pointer: fine) {
-    .card-hover:hover {
-      @apply shadow-md -translate-y-0.5;
-    }
-  }
-  .card-hover:active {
-    transform: scale(0.99);
-  }
-
   /* ── Press feedback utility ── */
   .press-feedback {
     transition: transform 160ms var(--ease-out);
