@@ -12,6 +12,7 @@ mod provider;
 mod ratelimit;
 mod server;
 mod service;
+mod skill_runtime;
 mod sso;
 
 use crate::ch_backend::ClickHouseBackend;
@@ -140,6 +141,20 @@ async fn main() {
     // Initialize database
     if let Err(e) = db.migrate().await {
         tracing::error!("Failed to initialize database: {}", e);
+        std::process::exit(1);
+    }
+
+    // SkillHub 控制面子系统：自洽子系统，独立 schema 迁移，复用 PG 连接池
+    // （业务数据归属 PostgreSQL）。技能包落盘 SKILLHUB_ARTIFACT_DIR（默认
+    // data/skills），将来多实例可换对象存储实现。
+    let skillhub = Arc::new(fluxeme_skillhub::SkillHubModule::new(
+        db.pg_pool().clone(),
+        std::env::var("SKILLHUB_ARTIFACT_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("data/skills")),
+    ));
+    if let Err(e) = skillhub.migrate().await {
+        tracing::error!("Failed to initialize skillhub: {}", e);
         std::process::exit(1);
     }
 
@@ -455,6 +470,25 @@ async fn main() {
         });
     }
 
+    // Skill Runtime 数据面子系统：只依赖 contract Port（目录/鉴权/计量），
+    // 不 import skillhub 代码。poller 后台消费 outbox 任务部署端点。
+    let skill_authorizer = Arc::new(crate::skill_runtime::SkillKeyAuthorizer::new(db.clone()));
+    let skill_meter = Arc::new(crate::skill_runtime::SkillRuntimeMeter::new(Some(ch.clone())));
+    let skill_backing = Arc::new(fluxeme_skill_backing::SkillBackingModule::new(
+        db.pg_pool().clone(),
+        skillhub.clone(),
+        skill_authorizer,
+        skill_meter,
+    ));
+    if let Err(e) = skill_backing.migrate().await {
+        tracing::error!("Failed to initialize skill-backing: {}", e);
+        std::process::exit(1);
+    }
+    {
+        let backing = skill_backing.clone();
+        tokio::spawn(async move { backing.run_poller().await });
+    }
+
     let state = Arc::new(AppState {
         config,
         auth,
@@ -463,6 +497,8 @@ async fn main() {
         rate_limiter,
         usage,
         db,
+        skillhub,
+        skill_backing,
         admin,
         authz,
         team_authz,

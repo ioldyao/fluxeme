@@ -1,0 +1,9 @@
+[package]
+name = "fluxeme-contract"
+version = "0.1.0"
+edition = "2021"
+description = "SkillHub ↔ Skill Runtime 跨域最小契约（唯一共享面）"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+async-trait = "0.1"

@@ -37,6 +37,10 @@ pub struct AppState {
     pub rate_limiter: Arc<RateLimiter>,
     pub usage: UsageService,
     pub db: Arc<crate::db::Database>,
+    /// SkillHub 控制面子系统（目录/版本/安装/包存储）。
+    pub skillhub: Arc<fluxeme_skillhub::SkillHubModule>,
+    /// Skill Runtime 数据面子系统（部署/鉴权/代理/计量）。
+    pub skill_backing: Arc<fluxeme_skill_backing::SkillBackingModule>,
     pub admin: Arc<crate::admin::AdminModule>,
     pub authz: Arc<AuthzModule>,
     /// Team-scoped RBAC enforcer (domain-aware). Independent of `authz`.

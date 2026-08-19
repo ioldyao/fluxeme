@@ -9,7 +9,7 @@ use sqlx_postgres::{PgPool, PgRow, Postgres};
 
 use crate::config::types::GatewayRuntimeConfig;
 use crate::db::backend::DbBackend;
-use crate::db::{AnnouncementRow, DbError, RechargeKeyRow, WalletTransactionRow};
+use crate::db::{AnnouncementRow, ApiKeyScopeRow, DbError, RechargeKeyRow, WalletTransactionRow};
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, ModelChannel, Pricing};
 use crate::domain::moderation::ContentFilterRule;
@@ -368,6 +368,10 @@ impl PgBackend {
 
 #[async_trait]
 impl DbBackend for PgBackend {
+    fn pg_pool(&self) -> &sqlx_postgres::PgPool {
+        &self.pool
+    }
+
     // ── Migration ────────────────────────────────────────────────────────
 
     async fn migrate(&self) -> Result<(), DbError> {
@@ -390,6 +394,20 @@ impl DbBackend for PgBackend {
                 enabled BOOLEAN NOT NULL DEFAULT true,
                 expires_at TEXT
             );
+
+            -- Platform API Key scopes: api_key_id 引用 api_keys.key（sk_...）。
+            -- 例：('key-001','skill','hpc3-slurm-query','invoke')
+            CREATE TABLE IF NOT EXISTS api_key_scopes (
+                id            TEXT PRIMARY KEY,
+                api_key_id    TEXT NOT NULL REFERENCES api_keys(key) ON DELETE CASCADE,
+                resource_type TEXT NOT NULL,
+                resource_id   TEXT NOT NULL,
+                action        TEXT NOT NULL,
+                created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE (api_key_id, resource_type, resource_id, action)
+            );
+            -- 存量库列类型转换（幂等）
+            ALTER TABLE api_key_scopes ALTER COLUMN id TYPE TEXT USING id::text;
 
             CREATE TABLE IF NOT EXISTS channels (
                 id TEXT PRIMARY KEY,
@@ -1706,6 +1724,92 @@ impl DbBackend for PgBackend {
                 (user, api_key)
             })
             .collect())
+    }
+
+    // ── API Key Scopes（Platform API Key） ─────────────────────────────
+
+    async fn list_scopes_by_resource(
+        &self,
+        resource_type: &str,
+        resource_id: &str,
+    ) -> Result<Vec<(ApiKeyScopeRow, String)>, DbError> {
+        let rows = query(
+            "SELECT s.id, s.api_key_id, s.resource_type, s.resource_id, s.action, s.created_at, \
+                    COALESCE(a.name, '') \
+             FROM api_key_scopes s LEFT JOIN api_keys a ON a.key = s.api_key_id \
+             WHERE s.resource_type=$1 AND s.resource_id=$2 ORDER BY s.created_at DESC",
+        )
+        .bind(resource_type)
+        .bind(resource_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| {
+                (
+                    ApiKeyScopeRow {
+                        id: r.get(0),
+                        api_key_id: r.get(1),
+                        resource_type: r.get(2),
+                        resource_id: r.get(3),
+                        action: r.get(4),
+                        created_at: r.get(5),
+                    },
+                    r.get(6),
+                )
+            })
+            .collect())
+    }
+
+    async fn add_api_key_scope(
+        &self,
+        api_key_id: &str,
+        resource_type: &str,
+        resource_id: &str,
+        action: &str,
+    ) -> Result<(), DbError> {
+        query(
+            "INSERT INTO api_key_scopes (id, api_key_id, resource_type, resource_id, action, created_at) \
+             VALUES ($1,$2,$3,$4,$5,$6) \
+             ON CONFLICT (api_key_id, resource_type, resource_id, action) DO NOTHING",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(api_key_id)
+        .bind(resource_type)
+        .bind(resource_id)
+        .bind(action)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_api_key_scope(&self, id: &str) -> Result<(), DbError> {
+        query("DELETE FROM api_key_scopes WHERE id=$1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn api_key_has_scope(
+        &self,
+        api_key_id: &str,
+        resource_type: &str,
+        resource_id: &str,
+        action: &str,
+    ) -> Result<bool, DbError> {
+        let row = query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM api_key_scopes \
+             WHERE api_key_id=$1 AND resource_type=$2 AND resource_id=$3 AND action=$4",
+        )
+        .bind(api_key_id)
+        .bind(resource_type)
+        .bind(resource_id)
+        .bind(action)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row > 0)
     }
 
     // ── Channels & Endpoints ─────────────────────────────────────────────

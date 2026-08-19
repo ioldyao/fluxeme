@@ -1,0 +1,18 @@
+[package]
+name = "fluxeme-skillhub"
+version = "0.1.0"
+edition = "2021"
+description = "SkillHub 控制面子系统：目录 / 版本 / 安装 / 包存储（独立自洽，只依赖 fluxeme-contract）"
+
+[dependencies]
+fluxeme-contract = { path = "../contract" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1", features = ["sync", "fs", "io-util"] }
+tracing = "0.1"
+async-trait = "0.1"
+sqlx-core = { version = "0.8", features = ["_rt-tokio", "_tls-rustls-ring-webpki"] }
+sqlx-postgres = { version = "0.8", features = ["chrono", "uuid"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }

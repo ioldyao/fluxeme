@@ -55,6 +55,24 @@ pub struct UsageEvent {
 
 /// ClickHouse backend for observability data.
 /// Handles writes and queries for the usage_events table.
+/// Row type for the `skill_runtime_calls` ClickHouse table.
+/// Skill Runtime 数据面每次调用的可观测记录（高吞吐 append-only → CH）。
+/// 财务事实（钱包/账单）不在此表，永远以 PG billing_events 为准。
+#[derive(Debug, Clone, Serialize, Row)]
+pub struct SkillRuntimeCall {
+    pub timestamp: u32,
+    pub request_id: String,
+    pub skill_id: String,
+    pub slug: String,
+    pub version: String,
+    pub method: String,
+    pub path: String,
+    pub status_code: u16,
+    pub latency_ms: u64,
+    pub user_id: String,
+    pub api_key_id: String,
+}
+
 pub struct ClickHouseBackend {
     client: Client,
 }
@@ -324,6 +342,26 @@ impl ClickHouseBackend {
     ";
 
     /// Run migrations (idempotent).
+    const CREATE_SKILL_RUNTIME_CALLS: &'static str = "\
+        CREATE TABLE IF NOT EXISTS skill_runtime_calls (\
+            timestamp DateTime,\
+            request_id String,\
+            skill_id String,\
+            slug String,\
+            version String,\
+            method String,\
+            path String,\
+            status_code UInt16,\
+            latency_ms UInt64,\
+            user_id String,\
+            api_key_id String\
+        ) ENGINE = MergeTree()\
+        PARTITION BY toYYYYMM(timestamp)\
+        ORDER BY (slug, timestamp)\
+        TTL toDateTime(timestamp) + INTERVAL 90 DAY \
+        SETTINGS index_granularity = 8192\
+    ";
+
     pub async fn migrate(&self, retention_days: u32) -> Result<(), String> {
         self.client
             .query(Self::CREATE_USAGE_EVENTS)
@@ -356,6 +394,12 @@ impl ClickHouseBackend {
             .execute()
             .await
             .map_err(|e| format!("CH migration probe_results: {e}"))?;
+
+        self.client
+            .query(Self::CREATE_SKILL_RUNTIME_CALLS)
+            .execute()
+            .await
+            .map_err(|e| format!("CH migration skill_runtime_calls: {e}"))?;
 
         // Update TTL to match config
         let ttl_sql = format!(
@@ -520,6 +564,30 @@ impl ClickHouseBackend {
         for event in events {
             inserter
                 .write(event)
+                .await
+                .map_err(|e| format!("CH insert row: {e}"))?;
+        }
+        inserter
+            .end()
+            .await
+            .map_err(|e| format!("CH insert batch end: {e}"))
+    }
+
+    /// Batch insert skill-runtime call records (observability → ClickHouse).
+    pub async fn insert_skill_runtime_calls(
+        &self,
+        rows: &[SkillRuntimeCall],
+    ) -> Result<(), String> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let mut inserter = self
+            .client
+            .insert::<SkillRuntimeCall>("skill_runtime_calls")
+            .map_err(|e| format!("CH inserter: {e}"))?;
+        for row in rows {
+            inserter
+                .write(row)
                 .await
                 .map_err(|e| format!("CH insert row: {e}"))?;
         }

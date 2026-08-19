@@ -28,6 +28,7 @@ pub mod billing;
 pub mod channels;
 pub mod dashboard;
 pub mod health;
+pub mod key_scopes;
 pub mod me;
 pub mod models;
 pub mod moderation;
@@ -35,6 +36,7 @@ pub mod policies;
 pub mod routing;
 pub mod rules;
 pub mod settings;
+pub mod skillhub;
 pub mod sso;
 pub mod teams;
 pub mod usage;
@@ -1023,6 +1025,70 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             "/api/announcements/{id}",
             axum::routing::put(announcements::update_announcement)
                 .delete(announcements::delete_announcement),
+        )
+        // SkillHub 管理端（控制面，admin:skillhub）
+        .route(
+            "/api/admin/skills",
+            axum::routing::get(skillhub::list_skills).post(skillhub::create_skill),
+        )
+        .route(
+            "/api/admin/skills/{id}",
+            axum::routing::get(skillhub::get_skill)
+                .patch(skillhub::update_skill)
+                .delete(skillhub::delete_skill),
+        )
+        .route(
+            "/api/admin/skills/{id}/status",
+            axum::routing::post(skillhub::set_skill_status),
+        )
+        .route(
+            "/api/admin/skills/{id}/versions",
+            axum::routing::get(skillhub::list_versions),
+        )
+        .route(
+            "/api/admin/skills/{id}/versions/upload",
+            axum::routing::post(skillhub::upload_artifact),
+        )
+        // SkillHub 用户端（发布态目录/安装/下载）
+        .route(
+            "/api/skills",
+            axum::routing::get(skillhub::list_published_skills),
+        )
+        .route(
+            "/api/skills/{slug}",
+            axum::routing::get(skillhub::get_published_skill),
+        )
+        .route(
+            "/api/skills/{slug}/download",
+            axum::routing::get(skillhub::download_skill),
+        )
+        .route(
+            "/api/skills/{slug}/install",
+            axum::routing::post(skillhub::install_skill),
+        )
+        .route("/api/me/skills", axum::routing::get(skillhub::my_skills))
+        .route(
+            "/api/skills/runtime-status",
+            axum::routing::get(skillhub::runtime_statuses),
+        )
+        // API Key Scope 管理（skill:{slug}:invoke）
+        .route(
+            "/api/admin/skills/{slug}/scopes",
+            axum::routing::get(key_scopes::list_skill_scopes).post(key_scopes::add_skill_scope),
+        )
+        .route(
+            "/api/admin/skills/{slug}/scopes/{scope_id}",
+            axum::routing::delete(key_scopes::delete_skill_scope),
+        )
+        // Skill Runtime 数据面：/api/skills/{slug}/{*rest} 运行时代理。
+        // 更具体的 /download、/install 静态段优先匹配，不会冲突。
+        .route(
+            "/api/skills/{slug}/{*rest}",
+            axum::routing::get(skillhub::runtime_proxy)
+                .post(skillhub::runtime_proxy)
+                .put(skillhub::runtime_proxy)
+                .patch(skillhub::runtime_proxy)
+                .delete(skillhub::runtime_proxy),
         )
         // Content Moderation
         .route(

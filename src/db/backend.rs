@@ -11,7 +11,7 @@ use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
 use chrono::{DateTime, Utc};
 
-use super::{AnnouncementRow, DbError, RechargeKeyRow, WalletTransactionRow};
+use super::{AnnouncementRow, ApiKeyScopeRow, DbError, RechargeKeyRow, WalletTransactionRow};
 
 /// PostgreSQL persistence contract used by application services.
 ///
@@ -24,6 +24,8 @@ pub trait DbBackend: Send + Sync {
     async fn migrate(&self) -> Result<(), DbError>;
     /// Connectivity check (SELECT 1). Used by readiness probes.
     async fn ping(&self) -> Result<(), DbError>;
+    /// PostgreSQL 连接池（供自洽子系统复用同一连接池）。
+    fn pg_pool(&self) -> &sqlx_postgres::PgPool;
 
     // ── Users ────────────────────────────────────────────────────────────
     async fn list_users(&self, status: Option<&str>) -> Result<Vec<User>, DbError>;
@@ -58,6 +60,29 @@ pub trait DbBackend: Send + Sync {
     async fn update_api_key(&self, key: &ApiKey) -> Result<(), DbError>;
     async fn lookup_key(&self, key: &str) -> Result<Option<(User, ApiKey)>, DbError>;
     async fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError>;
+
+    // ── API Key Scopes（Platform API Key） ─────────────────────────────
+    /// 某资源的所有 scope（join key 名）。
+    async fn list_scopes_by_resource(
+        &self,
+        resource_type: &str,
+        resource_id: &str,
+    ) -> Result<Vec<(ApiKeyScopeRow, String)>, DbError>;
+    async fn add_api_key_scope(
+        &self,
+        api_key_id: &str,
+        resource_type: &str,
+        resource_id: &str,
+        action: &str,
+    ) -> Result<(), DbError>;
+    async fn delete_api_key_scope(&self, id: &str) -> Result<(), DbError>;
+    async fn api_key_has_scope(
+        &self,
+        api_key_id: &str,
+        resource_type: &str,
+        resource_id: &str,
+        action: &str,
+    ) -> Result<bool, DbError>;
 
     // ── Channels & Endpoints ─────────────────────────────────────────────
     async fn list_channels(&self) -> Result<Vec<Channel>, DbError>;

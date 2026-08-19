@@ -129,6 +129,18 @@ pub struct Database {
     pub backend: Box<dyn DbBackend>,
 }
 
+/// `api_key_scopes` 行：把现有 API Key 升级成 Platform API Key
+/// （`resource_type ∈ {skill, model, mcp}`；`action ∈ {invoke, connect}`）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ApiKeyScopeRow {
+    pub id: String,
+    pub api_key_id: String,
+    pub resource_type: String,
+    pub resource_id: String,
+    pub action: String,
+    pub created_at: String,
+}
+
 #[allow(dead_code)]
 impl Database {
     pub async fn new(pg_url: &str) -> Self {
@@ -143,6 +155,12 @@ impl Database {
     // ── Migration ────────────────────────────────────────────────────────
     pub async fn migrate(&self) -> Result<(), DbError> {
         self.backend.migrate().await
+    }
+
+    /// 底层 PostgreSQL 连接池（供自洽子系统如 SkillHub 复用同一连接池，
+    /// 避免重复建池。业务数据归属 PG）。
+    pub fn pg_pool(&self) -> &sqlx_postgres::PgPool {
+        self.backend.pg_pool()
     }
     pub async fn ping(&self) -> Result<(), DbError> {
         self.backend.ping().await
@@ -237,6 +255,42 @@ impl Database {
     }
     pub async fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError> {
         self.backend.all_api_keys().await
+    }
+
+    // ── API Key Scopes（Platform API Key：skill:{slug}:invoke 一等公民） ──
+    pub async fn list_scopes_by_resource(
+        &self,
+        resource_type: &str,
+        resource_id: &str,
+    ) -> Result<Vec<(ApiKeyScopeRow, String)>, DbError> {
+        self.backend
+            .list_scopes_by_resource(resource_type, resource_id)
+            .await
+    }
+    pub async fn add_api_key_scope(
+        &self,
+        api_key_id: &str,
+        resource_type: &str,
+        resource_id: &str,
+        action: &str,
+    ) -> Result<(), DbError> {
+        self.backend
+            .add_api_key_scope(api_key_id, resource_type, resource_id, action)
+            .await
+    }
+    pub async fn delete_api_key_scope(&self, id: &str) -> Result<(), DbError> {
+        self.backend.delete_api_key_scope(id).await
+    }
+    pub async fn api_key_has_scope(
+        &self,
+        api_key_id: &str,
+        resource_type: &str,
+        resource_id: &str,
+        action: &str,
+    ) -> Result<bool, DbError> {
+        self.backend
+            .api_key_has_scope(api_key_id, resource_type, resource_id, action)
+            .await
     }
 
     // ── Channels & Endpoints ─────────────────────────────────────────────

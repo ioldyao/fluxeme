@@ -29,11 +29,24 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositorie
     apk add --no-cache musl-dev openssl-dev pkgconfig openssl-libs-static
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs && \
+# Workspace 成员 manifest：依赖缓存阶段必须能解析 crates/*（否则 cargo 报
+# "failed to load manifest for workspace member"）。
+COPY crates/contract/Cargo.toml crates/contract/Cargo.toml
+COPY crates/skillhub/Cargo.toml crates/skillhub/Cargo.toml
+COPY crates/skill-backing/Cargo.toml crates/skill-backing/Cargo.toml
+RUN mkdir -p src crates/contract/src crates/skillhub/src crates/skill-backing/src && \
+    echo "fn main() {}" > src/main.rs && \
+    echo "" > crates/contract/src/lib.rs && \
+    echo "" > crates/skillhub/src/lib.rs && \
+    echo "" > crates/skill-backing/src/lib.rs && \
     cargo build --release -j $(nproc) && \
-    rm -rf src
+    rm -rf src crates/contract/src crates/skillhub/src crates/skill-backing/src
 COPY src/ src/
-RUN touch src/main.rs && \
+COPY crates/ crates/
+# Docker COPY 保留宿主机 mtime：依赖缓存阶段用空 lib.rs 编译出的假产物可能
+# 比真实源码"更新"，cargo 指纹会误判为已编译（导致引用到空 crate）。
+# 强制 touch 全部 .rs 源，保证必然重编。
+RUN find src crates -name '*.rs' -exec touch {} + && \
     cargo build --release -j $(nproc) && \
     strip target/release/fluxeme
 
