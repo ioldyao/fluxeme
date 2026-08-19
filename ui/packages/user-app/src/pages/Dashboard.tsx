@@ -37,6 +37,13 @@ function fmtLat(ms: number) {
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms.toFixed(0)}ms`;
 }
 
+function fmtCompact(n: number) {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
 export default function Dashboard() {
   const { t } = useTranslation();
   const [days, setDays] = useState(1);
@@ -204,9 +211,9 @@ export default function Dashboard() {
                     <defs><linearGradient id="tf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.3} /><stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} /></linearGradient></defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                     <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} dy={6} />
-                    <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} />
+                    <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} tickFormatter={(v: number) => fmtCompact(v)} />
                     <Tooltip content={<DashboardChartTooltip />} />
-                    <Area type="monotone" dataKey={chartOpt === 'token' ? 'total_tokens' : chartOpt === '请求' ? 'requests' : 'errors'} stroke="var(--chart-1)" strokeWidth={2.5} fill="url(#tf)" dot={{ r: 3 }} activeDot={{ r: 5 }} />
+                    <Area type="monotone" dataKey={chartOpt === 'token' ? 'total_tokens' : chartOpt === '请求' ? 'requests' : 'errors'} name={chartOpt === 'token' ? t('usage.totalTokens') : chartOpt === '请求' ? t('usage.requests') : t('dash.errorRate')} stroke="var(--chart-1)" strokeWidth={2.5} fill="url(#tf)" dot={{ r: 3 }} activeDot={{ r: 5 }} />
                   </AreaChart>
                 </ResponsiveContainer>
               ) : (
