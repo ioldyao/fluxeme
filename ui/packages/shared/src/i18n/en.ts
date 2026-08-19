@@ -145,7 +145,7 @@ const en: Record<string, string> = {
   'dash.errorRate': 'Error Rate',
   'dash.capacityBudget': 'Capacity & Budget',
   'dash.capacityBudgetSub': 'Current quota consumption and balance',
-  'dash.logsFooter': 'Showing recent {{count}} records · Logs retained for 30 days',
+  'dash.logsFooter': 'Showing recent {{count}} records',
   'dash.requestLogs': 'Request Logs',
   'dash.requestLogsSub': 'Recent calls passing through the gateway',
   'dash.apiKeysStatus': 'Active key count',

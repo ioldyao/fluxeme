@@ -145,7 +145,7 @@ const zh: Record<string, string> = {
   'dash.errorRate': '错误率',
   'dash.capacityBudget': '容量与预算',
   'dash.capacityBudgetSub': '当前配额消耗与余额风险',
-  'dash.logsFooter': '显示最近 {{count}} 条记录 · 日志保留 30 天',
+  'dash.logsFooter': '显示最近 {{count}} 条记录',
   'dash.requestLogs': '实时请求日志',
   'dash.requestLogsSub': '最近通过网关的调用记录',
   'dash.apiKeysStatus': '活跃密钥数量',
