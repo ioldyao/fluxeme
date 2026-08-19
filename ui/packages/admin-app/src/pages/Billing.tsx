@@ -463,14 +463,16 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
           </div>
           <div className="px-4 py-4">
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <div className="text-[11px] text-muted-foreground">用户 ID</div>
-                <div className="break-words font-semibold">{userId}</div>
-              </div>
-              <div>
-                <div className="text-[11px] text-muted-foreground">账户类型</div>
-                <div className="break-words font-semibold">个人账户</div>
-              </div>
+              {[
+                { label: '用户名', value: apiKeyCosts?.user_name || '—' },
+                { label: '用户 ID', value: userId },
+                { label: '账户类型', value: '个人账户' },
+              ].map((item) => (
+                <div key={item.label}>
+                  <div className="text-[11px] text-muted-foreground">{item.label}</div>
+                  <div className="break-words font-semibold">{item.value}</div>
+                </div>
+              ))}
             </div>
             {userTeamInfo.length > 0 && (
               <div className="mt-4 rounded-lg border border-border bg-muted p-3">

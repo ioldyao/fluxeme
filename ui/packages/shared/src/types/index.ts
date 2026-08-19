@@ -494,6 +494,7 @@ export interface AdminBillingUserApiKeyCostResponse {
     team_name: string;
   } | null;
   user_id: string;
+  user_name?: string | null;
   year: number;
   month: number;
   stable_key_identity: boolean;

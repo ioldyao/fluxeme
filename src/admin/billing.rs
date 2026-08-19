@@ -675,6 +675,8 @@ pub(crate) struct AdminBillingUserApiKeyCostRow {
 pub(crate) struct AdminBillingUserApiKeyCostResponse {
     team: Option<TeamRef>,
     user_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_name: Option<String>,
     year: i32,
     month: u32,
     stable_key_identity: bool,
@@ -996,12 +998,20 @@ pub(crate) async fn admin_billing_user_api_key_costs(
         })
         .collect();
 
+    let user_name = state
+        .db
+        .get_user(&user_id)
+        .await
+        .map_err(db_err)?
+        .map(|u| u.name);
+
     Ok(Json(AdminBillingUserApiKeyCostResponse {
         team: Some(TeamRef {
             team_id: team.id,
             team_name: team.name,
         }),
         user_id,
+        user_name,
         year,
         month,
         stable_key_identity: false,
@@ -1131,9 +1141,17 @@ pub(crate) async fn admin_billing_user_api_key_costs_global(
         })
         .collect();
 
+    let user_name = state
+        .db
+        .get_user(&user_id)
+        .await
+        .map_err(db_err)?
+        .map(|u| u.name);
+
     Ok(Json(AdminBillingUserApiKeyCostResponse {
         team: None,
         user_id,
+        user_name,
         year,
         month,
         stable_key_identity: false,
