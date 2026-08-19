@@ -1154,6 +1154,9 @@ async fn handle_non_streaming(
     team_id: Option<String>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
+    state
+        .flow_tracker
+        .mark_upstream_started(&request_id, Utc::now().to_rfc3339());
     let max_retries = {
         let gw = state.gateway_config.read().unwrap();
         gw.max_retries
@@ -1362,6 +1365,9 @@ async fn handle_messages_non_streaming(
     team_id: Option<String>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
+    state
+        .flow_tracker
+        .mark_upstream_started(&request_id, Utc::now().to_rfc3339());
     let max_retries = {
         let gw = state.gateway_config.read().unwrap();
         gw.max_retries
