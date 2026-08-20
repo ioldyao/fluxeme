@@ -691,6 +691,7 @@ struct UsageTrackingStream<S> {
     /// drops are not fed into the breaker — they aren't upstream failures.
     balancer: Option<Arc<LoadBalancer>>,
     endpoint_idx: usize,
+    reservation: Option<crate::service::token_reservation::ReservationFinalizer>,
 }
 
 impl<S: Stream<Item = String> + Unpin> Stream for UsageTrackingStream<S> {
@@ -753,6 +754,15 @@ impl<S> UsageTrackingStream<S> {
                     p_tokens = (body.len() / 4).max(1) as u64;
                 }
                 c_tokens = (total_content / 3).max(1) as u64;
+            }
+        }
+
+        if let Some(reservation) = &self.reservation {
+            let units = p_tokens.saturating_add(c_tokens);
+            if completed {
+                reservation.settle_for_units(units, true, "completed");
+            } else {
+                reservation.release("client disconnected");
             }
         }
 
@@ -911,6 +921,7 @@ async fn handle_streaming(
     start: Instant,
     client_ip: String,
     team_id: Option<String>,
+    reservation: Option<crate::service::token_reservation::ReservationFinalizer>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     state
@@ -959,6 +970,7 @@ async fn handle_streaming(
                 original_model: orig_model.clone(),
                 balancer: Some(balancer),
                 endpoint_idx,
+                reservation,
             };
 
             let body_stream =
@@ -1033,6 +1045,7 @@ async fn handle_messages_streaming(
     start: Instant,
     client_ip: String,
     team_id: Option<String>,
+    reservation: Option<crate::service::token_reservation::ReservationFinalizer>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     state
@@ -1080,6 +1093,7 @@ async fn handle_messages_streaming(
                 upstream_started_at: Instant::now(),
                 ttft_ms: None,
                 endpoint_idx,
+                reservation,
             };
 
             let body_stream =
@@ -1152,6 +1166,7 @@ async fn handle_non_streaming(
     cache_key: Option<String>,
     client_ip: String,
     team_id: Option<String>,
+    reservation: Option<crate::service::token_reservation::ReservationFinalizer>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     state
@@ -1194,6 +1209,13 @@ async fn handle_non_streaming(
                     .map(|s| s.to_string());
 
                 let latency_ms = start.elapsed().as_millis() as u64;
+                if let Some(reservation) = &reservation {
+                    reservation.settle_for_units(
+                        prompt_tokens.saturating_add(completion_tokens),
+                        true,
+                        "completed",
+                    );
+                }
                 state.usage.record_with_endpoint(
                     UsageRecord {
                         timestamp: Utc::now().to_rfc3339(),
@@ -1363,6 +1385,7 @@ async fn handle_messages_non_streaming(
     start: Instant,
     client_ip: String,
     team_id: Option<String>,
+    reservation: Option<crate::service::token_reservation::ReservationFinalizer>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     state
@@ -1409,6 +1432,13 @@ async fn handle_messages_non_streaming(
                     });
 
                 let latency_ms = start.elapsed().as_millis() as u64;
+                if let Some(reservation) = &reservation {
+                    reservation.settle_for_units(
+                        prompt_tokens.saturating_add(completion_tokens),
+                        true,
+                        "completed",
+                    );
+                }
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
                     request_id,
@@ -1704,18 +1734,6 @@ pub async fn chat_completions(
             .await?;
     }
 
-    // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
-    if gw_cfg.billing_enabled {
-        check_wallet_balance(
-            &state,
-            match &user.team_id {
-                Some(tid) => WalletAccount::Team(tid),
-                None => WalletAccount::User(&user.user_id),
-            },
-        )
-        .await?;
-    }
-
     let (channel_id, resolved_model, upstream_model) = state
         .routing
         .route(&user.user_id, &model, user.team_id.as_deref())
@@ -1825,6 +1843,28 @@ pub async fn chat_completions(
     }
 
     let handler_timeout = Duration::from_secs(gw_cfg.handler_timeout_secs);
+    let reservation = if gw_cfg.billing_enabled {
+        let expires_at = (Utc::now()
+            + chrono::Duration::seconds(handler_timeout.as_secs() as i64 + 60))
+        .to_rfc3339();
+        Some(
+            crate::service::token_reservation::reserve(
+                state.db.clone(),
+                &request_id,
+                &user.user_id,
+                user.team_id.as_deref(),
+                &resolved_model,
+                &body,
+                false,
+                &expires_at,
+            )
+            .await
+            .map_err(|e| GatewayError::PaymentRequired(e.0))?,
+        )
+    } else {
+        None
+    };
+    let timeout_reservation = reservation.clone();
     let state_clone = state.clone();
     let rid = request_id.clone();
 
@@ -1848,6 +1888,12 @@ pub async fn chat_completions(
                 start,
                 client_ip,
                 user.team_id.clone(),
+                reservation.clone().map(|handle| {
+                    crate::service::token_reservation::ReservationFinalizer::new(
+                        state_clone.db.clone(),
+                        handle,
+                    )
+                }),
             )
             .await
         } else {
@@ -1867,6 +1913,12 @@ pub async fn chat_completions(
                 cache_key,
                 client_ip_clone,
                 user.team_id.clone(),
+                reservation.map(|handle| {
+                    crate::service::token_reservation::ReservationFinalizer::new(
+                        state_clone.db.clone(),
+                        handle,
+                    )
+                }),
             )
             .await
         }
@@ -1876,6 +1928,14 @@ pub async fn chat_completions(
     match result {
         Ok(inner) => inner,
         Err(_) => {
+            if let Some(reservation) = timeout_reservation {
+                let db = state.db.clone();
+                tokio::spawn(async move {
+                    let _ = db
+                        .release_token_request(&reservation.reservation_id, "handler timeout")
+                        .await;
+                });
+            }
             tracing::error!(
                 rid,
                 handler_timeout_s = handler_timeout.as_secs(),
@@ -1930,17 +1990,6 @@ pub async fn messages_count_tokens(
             .rate_limiter
             .check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body))
             .await?;
-    }
-
-    if gw_cfg.billing_enabled {
-        check_wallet_balance(
-            &state,
-            match &user.team_id {
-                Some(tid) => WalletAccount::Team(tid),
-                None => WalletAccount::User(&user.user_id),
-            },
-        )
-        .await?;
     }
 
     let (channel_id, resolved_model, upstream_model) = state
@@ -2179,18 +2228,6 @@ pub async fn messages(
             .await?;
     }
 
-    // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
-    if gw_cfg.billing_enabled {
-        check_wallet_balance(
-            &state,
-            match &user.team_id {
-                Some(tid) => WalletAccount::Team(tid),
-                None => WalletAccount::User(&user.user_id),
-            },
-        )
-        .await?;
-    }
-
     let (channel_id, resolved_model, upstream_model) = state
         .routing
         .route(&user.user_id, &model, user.team_id.as_deref())
@@ -2277,6 +2314,28 @@ pub async fn messages(
     }
 
     let handler_timeout = Duration::from_secs(gw_cfg.handler_timeout_secs);
+    let reservation = if gw_cfg.billing_enabled {
+        let expires_at = (Utc::now()
+            + chrono::Duration::seconds(handler_timeout.as_secs() as i64 + 60))
+        .to_rfc3339();
+        Some(
+            crate::service::token_reservation::reserve(
+                state.db.clone(),
+                &request_id,
+                &user.user_id,
+                user.team_id.as_deref(),
+                &resolved_model,
+                &body,
+                true,
+                &expires_at,
+            )
+            .await
+            .map_err(|e| GatewayError::PaymentRequired(e.0))?,
+        )
+    } else {
+        None
+    };
+    let timeout_reservation = reservation.clone();
     let state_clone = state.clone();
     let rid = request_id.clone();
     let client_ip_clone = client_ip.clone();
@@ -2300,6 +2359,12 @@ pub async fn messages(
                 start,
                 client_ip,
                 user.team_id.clone(),
+                reservation.clone().map(|handle| {
+                    crate::service::token_reservation::ReservationFinalizer::new(
+                        state_clone.db.clone(),
+                        handle,
+                    )
+                }),
             )
             .await
         } else {
@@ -2318,6 +2383,12 @@ pub async fn messages(
                 start,
                 client_ip_clone,
                 user.team_id.clone(),
+                reservation.map(|handle| {
+                    crate::service::token_reservation::ReservationFinalizer::new(
+                        state_clone.db.clone(),
+                        handle,
+                    )
+                }),
             )
             .await
         }
@@ -2327,6 +2398,14 @@ pub async fn messages(
     match result {
         Ok(inner) => inner,
         Err(_) => {
+            if let Some(reservation) = timeout_reservation {
+                let db = state.db.clone();
+                tokio::spawn(async move {
+                    let _ = db
+                        .release_token_request(&reservation.reservation_id, "handler timeout")
+                        .await;
+                });
+            }
             state.flow_tracker.mark_completed(&rid);
             tracing::error!(
                 rid,
@@ -2378,18 +2457,7 @@ async fn relay_to_upstream(
             .await?;
     }
 
-    // ── Wallet balance check (Redis gate_status → local cache → PostgreSQL) ──
     let gw_cfg = state.gateway_config.read().unwrap().clone();
-    if gw_cfg.billing_enabled {
-        check_wallet_balance(
-            state,
-            match &user.team_id {
-                Some(tid) => WalletAccount::Team(tid),
-                None => WalletAccount::User(&user.user_id),
-            },
-        )
-        .await?;
-    }
 
     let (channel_id, resolved_model, upstream_model) =
         state
@@ -2444,6 +2512,28 @@ async fn relay_to_upstream(
         }
     }
 
+    let reservation = if gw_cfg.billing_enabled {
+        let expires_at = (Utc::now() + chrono::Duration::minutes(2)).to_rfc3339();
+        Some(
+            crate::service::token_reservation::reserve(
+                state.db.clone(),
+                &request_id,
+                &user.user_id,
+                user.team_id.as_deref(),
+                &resolved_model,
+                &body,
+                false,
+                &expires_at,
+            )
+            .await
+            .map_err(|e| GatewayError::PaymentRequired(e.0))?,
+        )
+    } else {
+        None
+    };
+    let reservation_finalizer = reservation.map(|handle| {
+        crate::service::token_reservation::ReservationFinalizer::new(state.db.clone(), handle)
+    });
     let req_body = Some(body_str);
     state
         .flow_tracker
@@ -2481,6 +2571,13 @@ async fn relay_to_upstream(
                     .map(|s| s.to_string());
 
                 let latency_ms = start.elapsed().as_millis() as u64;
+                if let Some(reservation) = &reservation_finalizer {
+                    reservation.settle_for_units(
+                        prompt_tokens.saturating_add(completion_tokens),
+                        true,
+                        "completed",
+                    );
+                }
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
                     request_id,
@@ -2659,16 +2756,6 @@ pub async fn responses(
     }
 
     let gw_cfg = state.gateway_config.read().unwrap().clone();
-    if gw_cfg.billing_enabled {
-        check_wallet_balance(
-            &state,
-            match &user.team_id {
-                Some(tid) => WalletAccount::Team(tid),
-                None => WalletAccount::User(&user.user_id),
-            },
-        )
-        .await?;
-    }
 
     let (channel_id, resolved_model, upstream_model) =
         state
@@ -2732,6 +2819,29 @@ pub async fn responses(
         }
     }
 
+    let reservation = if gw_cfg.billing_enabled {
+        let expires_at = (Utc::now() + chrono::Duration::minutes(2)).to_rfc3339();
+        Some(
+            crate::service::token_reservation::reserve(
+                state.db.clone(),
+                &request_id,
+                &user.user_id,
+                user.team_id.as_deref(),
+                &resolved_model,
+                &body,
+                false,
+                &expires_at,
+            )
+            .await
+            .map_err(|e| GatewayError::PaymentRequired(e.0))?,
+        )
+    } else {
+        None
+    };
+    let reservation = reservation.map(|handle| {
+        crate::service::token_reservation::ReservationFinalizer::new(state.db.clone(), handle)
+    });
+
     if is_streaming {
         handle_responses_streaming(
             &state,
@@ -2746,6 +2856,7 @@ pub async fn responses(
             orig_model,
             start,
             client_ip,
+            reservation.clone(),
         )
         .await
     } else {
@@ -2762,6 +2873,7 @@ pub async fn responses(
             orig_model,
             start,
             client_ip,
+            reservation,
         )
         .await
     }
@@ -2782,6 +2894,7 @@ async fn handle_responses_non_streaming(
     orig_model: String,
     start: Instant,
     client_ip: String,
+    reservation: Option<crate::service::token_reservation::ReservationFinalizer>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
     state
@@ -2804,6 +2917,14 @@ async fn handle_responses_non_streaming(
             let cache_hit = resp["usage"]["input_tokens_details"]["cached_tokens"]
                 .as_u64()
                 .unwrap_or(0);
+            if let Some(reservation) = &reservation {
+                reservation.settle(
+                    input_tokens.saturating_add(output_tokens),
+                    Decimal::ZERO,
+                    true,
+                    "completed",
+                );
+            }
 
             state.usage.record(UsageRecord {
                 timestamp: Utc::now().to_rfc3339(),
@@ -2967,6 +3088,7 @@ async fn handle_responses_streaming(
     orig_model: String,
     start: Instant,
     client_ip: String,
+    reservation: Option<crate::service::token_reservation::ReservationFinalizer>,
 ) -> Result<Response, GatewayError> {
     // Inject stream_options so upstream returns usage in the final event
     match body.get_mut("stream_options") {
@@ -3009,6 +3131,7 @@ async fn handle_responses_streaming(
             let eid = route.endpoint.id;
             let eurl = route.endpoint.url.clone();
             let tid = team_id.clone();
+            let reservation_finalizer = reservation.clone();
             let buf2 = resp_buf.clone();
             let rec2 = recorded.clone();
 
@@ -3025,6 +3148,13 @@ async fn handle_responses_streaming(
                 let latency_ms = st.elapsed().as_millis() as u64;
                 let buf = resp_buf.lock().unwrap().clone();
                 let (input_tokens, output_tokens, cache_hit) = parse_responses_sse_usage(&buf);
+                if let Some(reservation) = &reservation_finalizer {
+                    reservation.settle_for_units(
+                        input_tokens.saturating_add(output_tokens),
+                        true,
+                        "completed",
+                    );
+                }
                 usage_state.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
                     request_id: rid,
@@ -3098,6 +3228,9 @@ async fn handle_responses_streaming(
         }
         Err(e) => {
             route.report_failure();
+            if let Some(reservation) = &reservation {
+                reservation.release("responses stream upstream failed");
+            }
             let latency_ms = start.elapsed().as_millis() as u64;
             state.usage.record(UsageRecord {
                 timestamp: Utc::now().to_rfc3339(),

@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useWalletOverview, useWalletTransactions, useRecharge, useRedeemKey, useEstimatedDays } from '@/api/wallet';
+import { useWalletOverview, useWalletTransactions, useRecharge, useRedeemKey, useEstimatedDays, useTokenPackageGrants } from '@/api/wallet';
 import { useCurrency } from '@/store/currency';
 import { PageHeader } from '@/components/PageHeader';
 import { Wallet, CreditCard, KeyRound, Receipt, AlertTriangle, Loader2 } from 'lucide-react';
@@ -13,6 +13,7 @@ export default function WalletPage() {
   const { currency } = useCurrency();
 
   const { data: overview } = useWalletOverview();
+  const { data: tokenPackages } = useTokenPackageGrants();
 
   // ── Transaction filter state ──
   const [dateRange, setDateRange] = useState('today'); // 'today' | '7d' | '30d' | 'all'
@@ -158,7 +159,44 @@ export default function WalletPage() {
         </div>
       </div>
 
-      {/* ── 2. Recharge ── */}
+      {/* ── 2. Token packages ── */}
+      {tokenPackages && tokenPackages.length > 0 && (
+        <div className="px-6 mb-8">
+          <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+            <Receipt className="h-4 w-4" />
+            Token resource packages
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {tokenPackages.map((pkg) => {
+              const remaining = Math.max(0, pkg.total_units - pkg.consumed_units - pkg.reserved_units);
+              const progress = pkg.total_units > 0 ? Math.min(100, (remaining / pkg.total_units) * 100) : 0;
+              return (
+                <div key={pkg.id} className="rounded-xl border p-5 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-semibold">{pkg.plan_id}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {pkg.accounting_mode === 'raw_tokens' ? 'Raw tokens' : 'Standardized credits'}
+                      </div>
+                    </div>
+                    <span className="text-xs rounded-full border px-2 py-1">{pkg.status}</span>
+                  </div>
+                  <div className="text-2xl font-bold">{remaining.toLocaleString()} units</div>
+                  <div className="h-2 rounded-full bg-muted overflow-hidden">
+                    <div className="h-full bg-brand" style={{ width: `${progress}%` }} />
+                  </div>
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Total {pkg.display_token_amount.toLocaleString()} Token</span>
+                    <span>{pkg.expires_at ? `Expires ${new Date(pkg.expires_at).toLocaleDateString()}` : 'No expiry'}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── 3. Recharge ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 px-6 mb-8">
         {/* Manual recharge */}
         <div className="rounded-xl border p-5">

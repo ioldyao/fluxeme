@@ -8,6 +8,23 @@ export interface WalletOverview {
   total_recharged: number;
 }
 
+export interface TokenPackageGrant {
+  id: string;
+  plan_id: string;
+  user_id: string | null;
+  team_id: string | null;
+  accounting_mode: 'raw_tokens' | 'standardized_credits';
+  display_token_amount: number;
+  total_units: number;
+  consumed_units: number;
+  reserved_units: number;
+  priority: number;
+  exhaustion_policy: 'package_then_wallet' | 'package_only';
+  status: string;
+  expires_at: string | null;
+  created_at: string;
+}
+
 export interface WalletTransaction {
   id: string;
   tx_type: string;
@@ -34,6 +51,14 @@ export interface RechargeKeyRow {
   created_at: string;
   expires_at: string | null;
   revoked: boolean;
+}
+
+export function useTokenPackageGrants() {
+  return useQuery({
+    queryKey: ['token-packages', 'mine'],
+    queryFn: () => api<TokenPackageGrant[]>('/me/token-packages'),
+    refetchInterval: 30_000,
+  });
 }
 
 export function useWalletOverview() {

@@ -12,6 +12,10 @@ use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
 use crate::domain::sso::SsoConfigRow;
 use crate::domain::team::{Team, TeamMember};
+use crate::domain::token_package::{
+    TokenPackageGrantRow, TokenPackagePlanRow, TokenReservationHandle, TokenReservationRequest,
+    TokenSettlementRequest,
+};
 use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
 
@@ -830,6 +834,74 @@ impl Database {
         offset: usize,
     ) -> Result<Vec<(String, Decimal, Decimal)>, DbError> {
         self.backend.get_balances_page(limit, offset).await
+    }
+
+    // ── Token resource packages ──────────────────────────────────────────
+    pub async fn list_token_package_plans(&self) -> Result<Vec<TokenPackagePlanRow>, DbError> {
+        self.backend.list_token_package_plans().await
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_token_package_plan(
+        &self,
+        id: &str,
+        code: &str,
+        name: &str,
+        accounting_mode: &str,
+        display_token_amount: i64,
+        total_units: i64,
+        input_credit_factor: Decimal,
+        output_credit_factor: Decimal,
+        cache_credit_factor: Decimal,
+        exhaustion_policy: &str,
+        priority: i32,
+        validity_days: Option<i32>,
+        created_by: &str,
+    ) -> Result<TokenPackagePlanRow, DbError> {
+        self.backend
+            .create_token_package_plan(id, code, name, accounting_mode, display_token_amount, total_units,
+                input_credit_factor, output_credit_factor, cache_credit_factor, exhaustion_policy,
+                priority, validity_days, created_by)
+            .await
+    }
+    pub async fn list_token_package_grants(
+        &self,
+        user_id: Option<&str>,
+        team_id: Option<&str>,
+    ) -> Result<Vec<TokenPackageGrantRow>, DbError> {
+        self.backend.list_token_package_grants(user_id, team_id).await
+    }
+    pub async fn create_token_package_grant(
+        &self,
+        grant_id: &str,
+        plan_id: &str,
+        user_id: Option<&str>,
+        team_id: Option<&str>,
+        source: &str,
+        note: &str,
+        expires_at: Option<&str>,
+    ) -> Result<TokenPackageGrantRow, DbError> {
+        self.backend
+            .create_token_package_grant(grant_id, plan_id, user_id, team_id, source, note, expires_at)
+            .await
+    }
+    pub async fn reserve_token_request(
+        &self,
+        request: &TokenReservationRequest,
+    ) -> Result<TokenReservationHandle, DbError> {
+        self.backend.reserve_token_request(request).await
+    }
+    pub async fn settle_token_request(
+        &self,
+        settlement: &TokenSettlementRequest,
+    ) -> Result<(), DbError> {
+        self.backend.settle_token_request(settlement).await
+    }
+    pub async fn release_token_request(
+        &self,
+        reservation_id: &str,
+        reason: &str,
+    ) -> Result<(), DbError> {
+        self.backend.release_token_request(reservation_id, reason).await
     }
 
     // ── Content Filter Rules ─────────────────────────────────────────────

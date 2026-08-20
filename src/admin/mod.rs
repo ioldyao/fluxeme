@@ -38,6 +38,7 @@ pub mod settings;
 pub mod skillhub;
 pub mod sso;
 pub mod teams;
+pub mod token_packages;
 pub mod usage;
 pub mod users;
 pub mod wallet;
@@ -781,6 +782,23 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         .route(
             "/api/me/rules/{id}",
             axum::routing::delete(me::delete_my_rule),
+        )
+        // Token resource packages
+        .route(
+            "/api/admin/token-packages",
+            axum::routing::get(token_packages::list_plans).post(token_packages::create_plan),
+        )
+        .route(
+            "/api/admin/token-packages/grants",
+            axum::routing::get(token_packages::list_grants).post(token_packages::create_grant),
+        )
+        .route(
+            "/api/admin/token-packages/grants/{id}",
+            axum::routing::get(token_packages::get_grant),
+        )
+        .route(
+            "/api/me/token-packages",
+            axum::routing::get(token_packages::list_my_grants),
         )
         // Usage
         .route("/api/usage", axum::routing::get(usage::get_usage))

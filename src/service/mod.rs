@@ -4,6 +4,7 @@ pub mod health_probe;
 pub mod moderation;
 pub mod oidc;
 pub mod routing;
+pub mod token_reservation;
 pub mod usage;
 
 pub use auth::AuthService;

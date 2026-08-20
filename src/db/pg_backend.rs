@@ -851,6 +851,148 @@ impl DbBackend for PgBackend {
         .await;
         tracing::info!("billing_events table ready");
 
+        // ── Token resource packages / reservations ────────────────────────
+        // Token package accounting is business data and therefore lives in PostgreSQL.
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS token_package_plans (
+                id TEXT PRIMARY KEY,
+                code TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                accounting_mode TEXT NOT NULL CHECK (accounting_mode IN ('raw_tokens','standardized_credits')),
+                display_token_amount BIGINT NOT NULL CHECK (display_token_amount > 0),
+                total_units BIGINT NOT NULL CHECK (total_units > 0),
+                input_credit_factor NUMERIC(20,8) NOT NULL DEFAULT 1,
+                output_credit_factor NUMERIC(20,8) NOT NULL DEFAULT 1,
+                cache_credit_factor NUMERIC(20,8) NOT NULL DEFAULT 0,
+                exhaustion_policy TEXT NOT NULL DEFAULT 'package_then_wallet' CHECK (exhaustion_policy IN ('package_then_wallet','package_only')),
+                priority INTEGER NOT NULL DEFAULT 0,
+                validity_days INTEGER,
+                status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
+                created_by TEXT NOT NULL REFERENCES users(id),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create token_package_plans: {e}")))?;
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS token_package_model_factors (
+                id TEXT PRIMARY KEY,
+                plan_id TEXT NOT NULL REFERENCES token_package_plans(id) ON DELETE CASCADE,
+                model_pattern TEXT NOT NULL,
+                input_factor NUMERIC(20,8) NOT NULL DEFAULT 1,
+                output_factor NUMERIC(20,8) NOT NULL DEFAULT 1,
+                cache_factor NUMERIC(20,8) NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                UNIQUE (plan_id, model_pattern)
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create token_package_model_factors: {e}")))?;
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS token_package_grants (
+                id TEXT PRIMARY KEY,
+                plan_id TEXT NOT NULL REFERENCES token_package_plans(id),
+                user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+                team_id TEXT,
+                accounting_mode TEXT NOT NULL CHECK (accounting_mode IN ('raw_tokens','standardized_credits')),
+                display_token_amount BIGINT NOT NULL CHECK (display_token_amount > 0),
+                total_units BIGINT NOT NULL CHECK (total_units > 0),
+                consumed_units BIGINT NOT NULL DEFAULT 0 CHECK (consumed_units >= 0),
+                reserved_units BIGINT NOT NULL DEFAULT 0 CHECK (reserved_units >= 0),
+                priority INTEGER NOT NULL DEFAULT 0,
+                exhaustion_policy TEXT NOT NULL DEFAULT 'package_then_wallet',
+                status TEXT NOT NULL DEFAULT 'active',
+                source TEXT NOT NULL DEFAULT 'admin_grant',
+                note TEXT NOT NULL DEFAULT '',
+                expires_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                CHECK ((user_id IS NOT NULL AND team_id IS NULL) OR (user_id IS NULL AND team_id IS NOT NULL))
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create token_package_grants: {e}")))?;
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS token_request_reservations (
+                id TEXT PRIMARY KEY,
+                request_id TEXT NOT NULL UNIQUE,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                team_id TEXT,
+                account_type TEXT NOT NULL DEFAULT 'user',
+                package_grant_id TEXT REFERENCES token_package_grants(id),
+                model TEXT NOT NULL DEFAULT '',
+                accounting_mode TEXT,
+                reserved_prompt_tokens BIGINT NOT NULL DEFAULT 0,
+                reserved_completion_tokens BIGINT NOT NULL DEFAULT 0,
+                reserved_package_units BIGINT NOT NULL DEFAULT 0,
+                reserved_wallet_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+                actual_prompt_tokens BIGINT,
+                actual_completion_tokens BIGINT,
+                actual_package_units BIGINT,
+                actual_wallet_amount DOUBLE PRECISION,
+                factor_snapshot TEXT NOT NULL DEFAULT '{}',
+                state TEXT NOT NULL DEFAULT 'reserved',
+                reason TEXT NOT NULL DEFAULT '',
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                settled_at TEXT
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create token_request_reservations: {e}")))?;
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS token_package_ledger (
+                id TEXT PRIMARY KEY,
+                package_grant_id TEXT NOT NULL REFERENCES token_package_grants(id),
+                reservation_id TEXT REFERENCES token_request_reservations(id),
+                request_id TEXT,
+                user_id TEXT,
+                team_id TEXT,
+                entry_type TEXT NOT NULL,
+                units BIGINT NOT NULL,
+                display_tokens BIGINT NOT NULL DEFAULT 0,
+                prompt_tokens BIGINT NOT NULL DEFAULT 0,
+                completion_tokens BIGINT NOT NULL DEFAULT 0,
+                credits BIGINT NOT NULL DEFAULT 0,
+                model TEXT,
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                UNIQUE (package_grant_id, request_id, entry_type)
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create token_package_ledger: {e}")))?;
+        for alter in [
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_wallet_reserved DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "ALTER TABLE team_wallets ADD COLUMN IF NOT EXISTS token_wallet_reserved DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS reservation_id TEXT",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS package_grant_id TEXT",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS accounting_mode TEXT",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS package_units BIGINT NOT NULL DEFAULT 0",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS wallet_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_prompt_tokens BIGINT NOT NULL DEFAULT 0",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_completion_tokens BIGINT NOT NULL DEFAULT 0",
+        ] {
+            let _ = raw_sql(alter).execute(&self.pool).await;
+        }
+        for index in [
+            "CREATE INDEX IF NOT EXISTS idx_token_grants_user ON token_package_grants(user_id, status, expires_at)",
+            "CREATE INDEX IF NOT EXISTS idx_token_grants_team ON token_package_grants(team_id, status, expires_at)",
+            "CREATE INDEX IF NOT EXISTS idx_token_reservations_state ON token_request_reservations(state, expires_at)",
+            "CREATE INDEX IF NOT EXISTS idx_token_ledger_grant ON token_package_ledger(package_grant_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_billing_events_reservation ON billing_events(reservation_id)",
+        ] {
+            let _ = raw_sql(index).execute(&self.pool).await;
+        }
+        tracing::info!("token package tables ready");
+
         // ── Announcements ─────────────────────────────────────────────────
         let _ = raw_sql(
             "CREATE TABLE IF NOT EXISTS announcements (
@@ -5026,6 +5168,32 @@ impl DbBackend for PgBackend {
             .execute(&mut *tx)
             .await?;
 
+            // Requests using reserve+settle already performed their authoritative
+            // package/wallet charge synchronously. The background usage writer only
+            // persists the billing fact and must never debit the wallet again.
+            let has_token_reservation: bool = query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM token_request_reservations WHERE request_id = $1)",
+            )
+            .bind(&record.request_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if has_token_reservation {
+                query(
+                    "UPDATE billing_events be
+                     SET reservation_id = r.id,
+                         package_grant_id = r.package_grant_id,
+                         accounting_mode = r.accounting_mode,
+                         package_units = COALESCE(r.actual_package_units, 0),
+                         wallet_amount = COALESCE(r.actual_wallet_amount, 0)
+                     FROM token_request_reservations r
+                     WHERE be.request_id = r.request_id AND be.request_id = $1",
+                )
+                .bind(&record.request_id)
+                .execute(&mut *tx)
+                .await?;
+                continue;
+            }
+
             if billing_enabled && cost_amount > 0.0 {
                 // Team-scoped records charge the team wallet; personal records
                 // charge the user wallet. The personal path is preserved
@@ -5146,6 +5314,541 @@ impl DbBackend for PgBackend {
 
         tx.commit().await?;
         Ok(deductions)
+    }
+
+    // ── Token resource packages ──────────────────────────────────────────
+
+    async fn create_token_package_plan(
+        &self,
+        id: &str,
+        code: &str,
+        name: &str,
+        accounting_mode: &str,
+        display_token_amount: i64,
+        total_units: i64,
+        input_credit_factor: Decimal,
+        output_credit_factor: Decimal,
+        cache_credit_factor: Decimal,
+        exhaustion_policy: &str,
+        priority: i32,
+        validity_days: Option<i32>,
+        created_by: &str,
+    ) -> Result<crate::domain::token_package::TokenPackagePlanRow, DbError> {
+        if display_token_amount <= 0 || total_units <= 0 {
+            return Err(DbError("package amounts must be positive".to_string()));
+        }
+        if !matches!(accounting_mode, "raw_tokens" | "standardized_credits") {
+            return Err(DbError("unsupported accounting mode".to_string()));
+        }
+        if !matches!(exhaustion_policy, "package_then_wallet" | "package_only") {
+            return Err(DbError("unsupported exhaustion policy".to_string()));
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        let row = query(
+            "INSERT INTO token_package_plans
+             (id, code, name, accounting_mode, display_token_amount, total_units,
+              input_credit_factor, output_credit_factor, cache_credit_factor,
+              exhaustion_policy, priority, validity_days, status, created_by, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'active',$13,$14,$14)
+             RETURNING id, code, name, accounting_mode, display_token_amount, total_units,
+                       input_credit_factor, output_credit_factor, cache_credit_factor,
+                       exhaustion_policy, priority, validity_days, status, created_at, updated_at",
+        )
+        .bind(id).bind(code).bind(name).bind(accounting_mode).bind(display_token_amount)
+        .bind(total_units)
+        .bind(input_credit_factor.to_f64().unwrap_or(1.0))
+        .bind(output_credit_factor.to_f64().unwrap_or(1.0))
+        .bind(cache_credit_factor.to_f64().unwrap_or(0.0))
+        .bind(exhaustion_policy).bind(priority).bind(validity_days).bind(created_by).bind(&now)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(crate::domain::token_package::TokenPackagePlanRow {
+            id: row.try_get(0)?, code: row.try_get(1)?, name: row.try_get(2)?,
+            accounting_mode: row.try_get::<String, _>(3)?.parse().map_err(DbError)?,
+            display_token_amount: row.try_get::<i64, _>(4)?.max(0) as u64,
+            total_units: row.try_get::<i64, _>(5)?.max(0) as u64,
+            input_credit_factor: Decimal::try_from(row.try_get::<f64, _>(6)?).unwrap_or(Decimal::ONE),
+            output_credit_factor: Decimal::try_from(row.try_get::<f64, _>(7)?).unwrap_or(Decimal::ONE),
+            cache_credit_factor: Decimal::try_from(row.try_get::<f64, _>(8)?).unwrap_or(Decimal::ZERO),
+            exhaustion_policy: row.try_get::<String, _>(9)?.parse().map_err(DbError)?, priority: row.try_get(10)?,
+            validity_days: row.try_get(11)?, status: row.try_get(12)?, created_at: row.try_get(13)?, updated_at: row.try_get(14)?,
+        })
+    }
+
+    async fn list_token_package_plans(
+        &self,
+    ) -> Result<Vec<crate::domain::token_package::TokenPackagePlanRow>, DbError> {
+        let rows = query(
+            "SELECT id, code, name, accounting_mode, display_token_amount, total_units,
+                    input_credit_factor, output_credit_factor, cache_credit_factor,
+                    exhaustion_policy, priority, validity_days, status, created_at, updated_at
+             FROM token_package_plans ORDER BY priority DESC, created_at DESC, id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(crate::domain::token_package::TokenPackagePlanRow {
+                    id: row.try_get(0)?, code: row.try_get(1)?, name: row.try_get(2)?,
+                    accounting_mode: row.try_get::<String, _>(3)?.parse().map_err(DbError)?,
+                    display_token_amount: row.try_get::<i64, _>(4)?.max(0) as u64,
+                    total_units: row.try_get::<i64, _>(5)?.max(0) as u64,
+                    input_credit_factor: Decimal::try_from(row.try_get::<f64, _>(6)?).unwrap_or(Decimal::ONE),
+                    output_credit_factor: Decimal::try_from(row.try_get::<f64, _>(7)?).unwrap_or(Decimal::ONE),
+                    cache_credit_factor: Decimal::try_from(row.try_get::<f64, _>(8)?).unwrap_or(Decimal::ZERO),
+                    exhaustion_policy: row.try_get::<String, _>(9)?.parse().map_err(DbError)?,
+                    priority: row.try_get(10)?, validity_days: row.try_get(11)?, status: row.try_get(12)?,
+                    created_at: row.try_get(13)?, updated_at: row.try_get(14)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn list_token_package_grants(
+        &self,
+        user_id: Option<&str>,
+        team_id: Option<&str>,
+    ) -> Result<Vec<crate::domain::token_package::TokenPackageGrantRow>, DbError> {
+        let rows = match (user_id, team_id) {
+            (Some(user_id), None) => query(
+                "SELECT g.id, g.plan_id, g.user_id, g.team_id, g.accounting_mode, \
+                 g.display_token_amount, g.total_units, g.consumed_units, g.reserved_units, \
+                 g.priority, g.exhaustion_policy, g.status, g.expires_at, g.created_at \
+                 FROM token_package_grants g WHERE g.user_id = $1 ORDER BY g.priority DESC, g.expires_at NULLS LAST, g.created_at, g.id",
+            )
+            .bind(user_id)
+            .fetch_all(&self.pool)
+            .await?,
+            (None, Some(team_id)) => query(
+                "SELECT g.id, g.plan_id, g.user_id, g.team_id, g.accounting_mode, \
+                 g.display_token_amount, g.total_units, g.consumed_units, g.reserved_units, \
+                 g.priority, g.exhaustion_policy, g.status, g.expires_at, g.created_at \
+                 FROM token_package_grants g WHERE g.team_id = $1 ORDER BY g.priority DESC, g.expires_at NULLS LAST, g.created_at, g.id",
+            )
+            .bind(team_id)
+            .fetch_all(&self.pool)
+            .await?,
+            _ => return Ok(Vec::new()),
+        };
+        rows.into_iter()
+            .map(|row| {
+                let mode = row
+                    .try_get::<String, _>(4)
+                    .unwrap_or_else(|_| "raw_tokens".to_string())
+                    .parse()
+                    .map_err(|e: String| DbError(e))?;
+                let policy = row
+                    .try_get::<String, _>(10)
+                    .unwrap_or_else(|_| "package_then_wallet".to_string())
+                    .parse()
+                    .map_err(|e: String| DbError(e))?;
+                Ok(crate::domain::token_package::TokenPackageGrantRow {
+                    id: row.try_get(0)?,
+                    plan_id: row.try_get(1)?,
+                    user_id: row.try_get(2)?,
+                    team_id: row.try_get(3)?,
+                    accounting_mode: mode,
+                    display_token_amount: row.try_get::<i64, _>(5)?.max(0) as u64,
+                    total_units: row.try_get::<i64, _>(6)?.max(0) as u64,
+                    consumed_units: row.try_get::<i64, _>(7)?.max(0) as u64,
+                    reserved_units: row.try_get::<i64, _>(8)?.max(0) as u64,
+                    priority: row.try_get(9)?,
+                    exhaustion_policy: policy,
+                    status: row.try_get(11)?,
+                    expires_at: row.try_get(12)?,
+                    created_at: row.try_get(13)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn create_token_package_grant(
+        &self,
+        grant_id: &str,
+        plan_id: &str,
+        user_id: Option<&str>,
+        team_id: Option<&str>,
+        source: &str,
+        note: &str,
+        expires_at: Option<&str>,
+    ) -> Result<crate::domain::token_package::TokenPackageGrantRow, DbError> {
+        if user_id.is_none() == team_id.is_none() {
+            return Err(DbError("exactly one of user_id or team_id is required".to_string()));
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        let row = query(
+            "INSERT INTO token_package_grants
+             (id, plan_id, user_id, team_id, accounting_mode, display_token_amount,
+              total_units, priority, exhaustion_policy, source, note, expires_at, created_at, updated_at)
+             SELECT $1, p.id, $3, $4, p.accounting_mode, p.display_token_amount,
+                    p.total_units, p.priority, p.exhaustion_policy, $5, $6, $7, $8, $8
+             FROM token_package_plans p WHERE p.id = $2 AND p.status = 'active'
+             RETURNING id, plan_id, user_id, team_id, accounting_mode, display_token_amount,
+                       total_units, consumed_units, reserved_units, priority, exhaustion_policy,
+                       status, expires_at, created_at",
+        )
+        .bind(grant_id)
+        .bind(plan_id)
+        .bind(user_id)
+        .bind(team_id)
+        .bind(source)
+        .bind(note)
+        .bind(expires_at)
+        .bind(&now)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| DbError("token package plan not found or inactive".to_string()))?;
+        let mode = row.try_get::<String, _>(4)?.parse().map_err(DbError)?;
+        let policy = row.try_get::<String, _>(10)?.parse().map_err(DbError)?;
+        Ok(crate::domain::token_package::TokenPackageGrantRow {
+            id: row.try_get(0)?, plan_id: row.try_get(1)?, user_id: row.try_get(2)?, team_id: row.try_get(3)?,
+            accounting_mode: mode, display_token_amount: row.try_get::<i64, _>(5)?.max(0) as u64,
+            total_units: row.try_get::<i64, _>(6)?.max(0) as u64, consumed_units: row.try_get::<i64, _>(7)?.max(0) as u64,
+            reserved_units: row.try_get::<i64, _>(8)?.max(0) as u64, priority: row.try_get(9)?, exhaustion_policy: policy,
+            status: row.try_get(11)?, expires_at: row.try_get(12)?, created_at: row.try_get(13)?,
+        })
+    }
+
+    async fn reserve_token_request(
+        &self,
+        request: &crate::domain::token_package::TokenReservationRequest,
+    ) -> Result<crate::domain::token_package::TokenReservationHandle, DbError> {
+        let mut tx = self.pool.begin().await?;
+        if let Some(row) = query(
+            "SELECT id, package_grant_id, accounting_mode, reserved_package_units, reserved_wallet_amount \
+             FROM token_request_reservations WHERE request_id = $1 FOR UPDATE",
+        )
+        .bind(&request.request_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        {
+            let mode = row
+                .try_get::<Option<String>, _>(2)?
+                .and_then(|v| v.parse().ok());
+            return Ok(crate::domain::token_package::TokenReservationHandle {
+                reservation_id: row.try_get(0)?,
+                request_id: request.request_id.clone(),
+                package_grant_id: row.try_get(1)?,
+                accounting_mode: mode,
+                input_factor: Decimal::ONE,
+                output_factor: Decimal::ONE,
+                cache_factor: Decimal::ZERO,
+                reserved_package_units: row.try_get::<i64, _>(3)?.max(0) as u64,
+                reserved_total_units: row.try_get::<i64, _>(3)?.max(0) as u64,
+                reserved_wallet_amount: Decimal::try_from(row.try_get::<f64, _>(4)?)
+                    .unwrap_or(Decimal::ZERO),
+            });
+        }
+
+        let requested_raw = request
+            .prompt_tokens
+            .saturating_add(request.completion_tokens);
+        let grant = if let Some(team_id) = request.team_id.as_deref() {
+            query(
+                "SELECT id, accounting_mode, exhaustion_policy, total_units, consumed_units, reserved_units \
+                 FROM token_package_grants \
+                 WHERE team_id = $1 AND status = 'active' AND (expires_at IS NULL OR expires_at > $2) \
+                   AND total_units - consumed_units - reserved_units > 0 \
+                 ORDER BY priority DESC, expires_at NULLS LAST, created_at, id LIMIT 1 FOR UPDATE",
+            )
+            .bind(team_id)
+            .bind(&request.expires_at)
+            .fetch_optional(&mut *tx)
+            .await?
+        } else {
+            query(
+                "SELECT id, accounting_mode, exhaustion_policy, total_units, consumed_units, reserved_units \
+                 FROM token_package_grants \
+                 WHERE user_id = $1 AND status = 'active' AND (expires_at IS NULL OR expires_at > $2) \
+                   AND total_units - consumed_units - reserved_units > 0 \
+                 ORDER BY priority DESC, expires_at NULLS LAST, created_at, id LIMIT 1 FOR UPDATE",
+            )
+            .bind(&request.user_id)
+            .bind(&request.expires_at)
+            .fetch_optional(&mut *tx)
+            .await?
+        };
+        let available = grant
+            .as_ref()
+            .map(|row| {
+                row.try_get::<i64, _>(3).unwrap_or(0)
+                    - row.try_get::<i64, _>(4).unwrap_or(0)
+                    - row.try_get::<i64, _>(5).unwrap_or(0)
+            })
+            .unwrap_or(0)
+            .max(0) as u64;
+        let grant_id = grant.as_ref().map(|r| r.try_get::<String, _>(0)).transpose()?;
+        let mode_text = grant
+            .as_ref()
+            .and_then(|r| r.try_get::<String, _>(1).ok());
+        let (input_factor, output_factor, cache_factor) = if let Some(id) = grant_id.as_deref() {
+            query_as::<_, (f64, f64, f64)>(
+                "SELECT input_factor, output_factor, cache_factor
+                 FROM token_package_model_factors
+                 WHERE plan_id = (SELECT plan_id FROM token_package_grants WHERE id = $1)
+                   AND ($2 = model_pattern OR ($2 LIKE REPLACE(model_pattern, '*', '%')))
+                 ORDER BY CASE WHEN $2 = model_pattern THEN 0 ELSE 1 END, model_pattern
+                 LIMIT 1",
+            )
+            .bind(id)
+            .bind(&request.model)
+            .fetch_optional(&mut *tx)
+            .await?
+            .map(|(i, o, c)| (
+                Decimal::try_from(i).unwrap_or(Decimal::ONE),
+                Decimal::try_from(o).unwrap_or(Decimal::ONE),
+                Decimal::try_from(c).unwrap_or(Decimal::ZERO),
+            ))
+            .unwrap_or((Decimal::ONE, Decimal::ONE, Decimal::ZERO))
+        } else {
+            (Decimal::ONE, Decimal::ONE, Decimal::ZERO)
+        };
+        let mode = mode_text.as_deref().and_then(|v| v.parse().ok());
+        let requested = if mode == Some(crate::domain::token_package::TokenAccountingMode::StandardizedCredits) {
+            let usage = crate::domain::token_package::TokenUsage {
+                prompt_tokens: request.prompt_tokens,
+                completion_tokens: request.completion_tokens,
+                cache_hit_input_tokens: request.cache_hit_input_tokens,
+            };
+            usage.standardized_credits(input_factor, output_factor, cache_factor)
+        } else {
+            requested_raw
+        };
+        let package_units = requested.min(available);
+        let wallet_units = requested.saturating_sub(package_units);
+        let policy = grant
+            .as_ref()
+            .and_then(|r| r.try_get::<String, _>(2).ok())
+            .unwrap_or_else(|| "package_then_wallet".to_string());
+        if wallet_units > 0 && policy == "package_only" {
+            return Err(DbError("token package quota exceeded".to_string()));
+        }
+        let wallet_hold = if wallet_units > 0 {
+            request.estimated_wallet_amount.max(Decimal::ZERO)
+        } else {
+            Decimal::ZERO
+        };
+        if wallet_hold > Decimal::ZERO {
+            let amount = wallet_hold.to_f64().unwrap_or(f64::MAX);
+            if let Some(team_id) = request.team_id.as_deref() {
+                let updated = query(
+                    "UPDATE team_wallets SET token_wallet_reserved = token_wallet_reserved + $1, updated_at = $2
+                     WHERE team_id = $3 AND balance - frozen - token_wallet_reserved >= $1",
+                )
+                .bind(amount)
+                .bind(chrono::Utc::now().to_rfc3339())
+                .bind(team_id)
+                .execute(&mut *tx)
+                .await?;
+                if updated.rows_affected() != 1 {
+                    return Err(DbError("insufficient team wallet balance".to_string()));
+                }
+            } else {
+                let updated = query(
+                    "UPDATE users SET token_wallet_reserved = token_wallet_reserved + $1
+                     WHERE id = $2 AND balance - frozen - token_wallet_reserved >= $1",
+                )
+                .bind(amount)
+                .bind(&request.user_id)
+                .execute(&mut *tx)
+                .await?;
+                if updated.rows_affected() != 1 {
+                    return Err(DbError("insufficient wallet balance".to_string()));
+                }
+            }
+        }
+        if let Some(id) = grant_id.as_deref() {
+            query("UPDATE token_package_grants SET reserved_units = reserved_units + $1, updated_at = $2 WHERE id = $3")
+                .bind(package_units as i64)
+                .bind(&request.expires_at)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        let reservation_id = uuid::Uuid::new_v4().to_string();
+        query(
+            "INSERT INTO token_request_reservations \
+             (id, request_id, user_id, team_id, account_type, package_grant_id, model, accounting_mode, \
+              reserved_prompt_tokens, reserved_completion_tokens, reserved_package_units, reserved_wallet_amount, \
+              factor_snapshot, expires_at, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+        )
+        .bind(&reservation_id)
+        .bind(&request.request_id)
+        .bind(&request.user_id)
+        .bind(&request.team_id)
+        .bind(if request.team_id.is_some() { "team" } else { "user" })
+        .bind(&grant_id)
+        .bind(&request.model)
+        .bind(&mode_text)
+        .bind(request.prompt_tokens as i64)
+        .bind(request.completion_tokens as i64)
+        .bind(package_units as i64)
+        .bind(wallet_hold.to_f64().unwrap_or(f64::MAX))
+        .bind(serde_json::json!({
+            "input_factor": input_factor,
+            "output_factor": output_factor,
+            "cache_factor": cache_factor,
+        }).to_string())
+        .bind(&request.expires_at)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(crate::domain::token_package::TokenReservationHandle {
+            reservation_id,
+            request_id: request.request_id.clone(),
+            package_grant_id: grant_id,
+            accounting_mode: mode_text.and_then(|v| v.parse().ok()),
+            input_factor,
+            output_factor,
+            cache_factor,
+            reserved_package_units: package_units,
+            reserved_total_units: requested,
+            reserved_wallet_amount: wallet_hold,
+        })
+    }
+
+    async fn settle_token_request(
+        &self,
+        settlement: &crate::domain::token_package::TokenSettlementRequest,
+    ) -> Result<(), DbError> {
+        let mut tx = self.pool.begin().await?;
+        let row = query("SELECT state, package_grant_id, reserved_package_units, reserved_prompt_tokens, reserved_completion_tokens, user_id, team_id, reserved_wallet_amount FROM token_request_reservations WHERE id = $1 FOR UPDATE")
+            .bind(&settlement.reservation_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| DbError("token reservation not found".to_string()))?;
+        if row.try_get::<String, _>(0)? != "reserved" {
+            return Ok(());
+        }
+        let grant_id = row.try_get::<Option<String>, _>(1)?;
+        let reserved = row.try_get::<i64, _>(2)?.max(0) as u64;
+        let reserved_prompt = row.try_get::<i64, _>(3)?.max(0) as u64;
+        let reserved_completion = row.try_get::<i64, _>(4)?.max(0) as u64;
+        let user_id = row.try_get::<String, _>(5)?;
+        let team_id = row.try_get::<Option<String>, _>(6)?;
+        let reserved_wallet = row.try_get::<f64, _>(7)?;
+        let consumed = settlement.actual_package_units.min(reserved);
+        if let Some(id) = grant_id.as_deref() {
+            query("UPDATE token_package_grants SET consumed_units = consumed_units + $1, reserved_units = reserved_units - $2, updated_at = $3 WHERE id = $4")
+                .bind(consumed as i64)
+                .bind(reserved as i64)
+                .bind(chrono::Utc::now().to_rfc3339())
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            query("INSERT INTO token_package_ledger (id, package_grant_id, reservation_id, entry_type, units, created_at) VALUES ($1, $2, $3, 'consume', $4, $5) ON CONFLICT DO NOTHING")
+                .bind(uuid::Uuid::new_v4().to_string())
+                .bind(id)
+                .bind(&settlement.reservation_id)
+                .bind(consumed as i64)
+                .bind(chrono::Utc::now().to_rfc3339())
+                .execute(&mut *tx)
+                .await?;
+        }
+        let wallet_amount = settlement.actual_wallet_amount.to_f64().unwrap_or(0.0);
+        let release_wallet = (reserved_wallet - wallet_amount).max(0.0);
+        if release_wallet > 0.0 {
+            if let Some(team_id) = team_id.as_deref() {
+                query("UPDATE team_wallets SET token_wallet_reserved = GREATEST(0, token_wallet_reserved - $1), updated_at = $2 WHERE team_id = $3")
+                    .bind(release_wallet)
+                    .bind(chrono::Utc::now().to_rfc3339())
+                    .bind(team_id)
+                    .execute(&mut *tx)
+                    .await?;
+            } else {
+                query("UPDATE users SET token_wallet_reserved = GREATEST(0, token_wallet_reserved - $1) WHERE id = $2")
+                    .bind(release_wallet)
+                    .bind(&user_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+        if wallet_amount > 0.0 {
+            let deduction = -wallet_amount;
+            if let Some(team_id) = team_id.as_deref() {
+                let row = query("SELECT balance FROM team_wallets WHERE team_id = $1 FOR UPDATE")
+                    .bind(team_id).fetch_one(&mut *tx).await?;
+                let balance = row.try_get::<f64, _>(0)?;
+                query("UPDATE team_wallets SET balance = balance + $1, token_wallet_reserved = GREATEST(0, token_wallet_reserved - $2), updated_at = $3 WHERE team_id = $4")
+                    .bind(deduction).bind(wallet_amount).bind(chrono::Utc::now().to_rfc3339()).bind(team_id)
+                    .execute(&mut *tx).await?;
+                let _ = balance;
+            } else {
+                let row = query("SELECT balance FROM users WHERE id = $1 FOR UPDATE")
+                    .bind(&user_id).fetch_one(&mut *tx).await?;
+                let balance = row.try_get::<f64, _>(0)?;
+                query("UPDATE users SET balance = balance + $1, token_wallet_reserved = GREATEST(0, token_wallet_reserved - $2) WHERE id = $3")
+                    .bind(deduction).bind(wallet_amount).bind(&user_id)
+                    .execute(&mut *tx).await?;
+                let _ = balance;
+            }
+        }
+        query("UPDATE token_request_reservations SET actual_package_units = $1, actual_wallet_amount = $2, state = $3, reason = $4, settled_at = $5 WHERE id = $6")
+            .bind(consumed as i64)
+            .bind(wallet_amount)
+            .bind(if settlement.success { "settled" } else { "released" })
+            .bind(&settlement.reason)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(&settlement.reservation_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn release_token_request(&self, reservation_id: &str, reason: &str) -> Result<(), DbError> {
+        let mut tx = self.pool.begin().await?;
+        let row = query("SELECT state, package_grant_id, reserved_package_units, reserved_prompt_tokens, reserved_completion_tokens, user_id, team_id, reserved_wallet_amount FROM token_request_reservations WHERE id = $1 FOR UPDATE")
+            .bind(reservation_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let Some(row) = row else { return Ok(()); };
+        if row.try_get::<String, _>(0)? != "reserved" {
+            return Ok(());
+        }
+        let reserved_prompt = row.try_get::<i64, _>(3)?.max(0) as u64;
+        let reserved_completion = row.try_get::<i64, _>(4)?.max(0) as u64;
+        let user_id = row.try_get::<String, _>(5)?;
+        let team_id = row.try_get::<Option<String>, _>(6)?;
+        let reserved_wallet = row.try_get::<f64, _>(7)?;
+        if reserved_wallet > 0.0 {
+            if let Some(team_id) = team_id.as_deref() {
+                query("UPDATE team_wallets SET token_wallet_reserved = GREATEST(0, token_wallet_reserved - $1), updated_at = $2 WHERE team_id = $3")
+                    .bind(reserved_wallet).bind(chrono::Utc::now().to_rfc3339()).bind(team_id)
+                    .execute(&mut *tx).await?;
+            } else {
+                query("UPDATE users SET token_wallet_reserved = GREATEST(0, token_wallet_reserved - $1) WHERE id = $2")
+                    .bind(reserved_wallet).bind(&user_id).execute(&mut *tx).await?;
+            }
+        }
+        if let Some(grant_id) = row.try_get::<Option<String>, _>(1)? {
+            let reserved = row.try_get::<i64, _>(2)?.max(0);
+            query("UPDATE token_package_grants SET reserved_units = GREATEST(0, reserved_units - $1), updated_at = $2 WHERE id = $3")
+                .bind(reserved)
+                .bind(chrono::Utc::now().to_rfc3339())
+                .bind(&grant_id)
+                .execute(&mut *tx)
+                .await?;
+            query("INSERT INTO token_package_ledger (id, package_grant_id, reservation_id, entry_type, units, created_at, note) VALUES ($1, $2, $3, 'release', $4, $5, $6) ON CONFLICT DO NOTHING")
+                .bind(uuid::Uuid::new_v4().to_string())
+                .bind(&grant_id)
+                .bind(reservation_id)
+                .bind(-reserved)
+                .bind(chrono::Utc::now().to_rfc3339())
+                .bind(reason)
+                .execute(&mut *tx)
+                .await?;
+        }
+        query("UPDATE token_request_reservations SET state = 'released', reason = $1, settled_at = $2 WHERE id = $3")
+            .bind(reason)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(reservation_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     // ── Teams ─────────────────────────────────────────────────────────────
