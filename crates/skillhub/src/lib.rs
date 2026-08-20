@@ -238,6 +238,7 @@ impl SkillHubModule {
         version: &str,
         changelog: Option<&str>,
         created_by: &str,
+        original_filename: &str,
         bytes: Vec<u8>,
     ) -> Result<SkillVersionRow, SkillHubError> {
         validate_version(version)?;
@@ -259,7 +260,16 @@ impl SkillHubModule {
         }
         let source_markdown = extract_skill_md(&bytes)?;
         let manifest_yaml = extract_manifest_yaml(&bytes)?;
-        let key = format!("{skill_id}/{version}.zip");
+        // 存储保留原始文件名：`{skill_id}/{version}/{原始文件名}`。
+        // 版本作目录隔离（同名文件不同版本不互相覆盖），文件名保留用户原始命名；
+        // 原始名非法时回退 `{version}.zip`。
+        let filename = sanitize_filename(original_filename);
+        let filename = if filename.is_empty() {
+            format!("{version}.zip")
+        } else {
+            filename
+        };
+        let key = format!("{skill_id}/{version}/{filename}");
         self.store
             .put(&key, bytes.clone())
             .await
@@ -463,6 +473,25 @@ fn validate_slug(s: &str) -> Result<String, SkillHubError> {
         ));
     }
     Ok(s.to_string())
+}
+
+/// 清洗原始上传文件名：去掉路径前缀（浏览器可能带 `C:\fakepath\`），
+/// 丢弃危险字符与过名字符。返回空串 = 非法，调用方回退 `{version}.zip`。
+fn sanitize_filename(name: &str) -> String {
+    let base = name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if base.is_empty()
+        || base.len() > 120
+        || base.contains("..")
+        || base.contains(['/', '\\'])
+    {
+        return String::new();
+    }
+    base
 }
 
 /// 版本：仅 `[0-9A-Za-z._-]`，禁路径分隔符与 `..`（防路径穿越），长度 ≤64。

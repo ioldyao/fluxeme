@@ -228,6 +228,7 @@ pub(crate) async fn upload_artifact(
     let mut version: Option<String> = None;
     let mut changelog: Option<String> = None;
     let mut file_bytes: Option<Vec<u8>> = None;
+    let mut file_name: Option<String> = None;
     while let Some(field) = multipart
         .next_field()
         .await
@@ -245,6 +246,7 @@ pub(crate) async fn upload_artifact(
                 changelog = field.text().await.ok().map(|s| s.trim().to_string());
             }
             Some("file") => {
+                file_name = field.file_name().map(|s| s.to_string());
                 let b = field
                     .bytes()
                     .await
@@ -261,7 +263,14 @@ pub(crate) async fn upload_artifact(
 
     let row = state
         .skillhub
-        .upload_artifact(&skill_id, &version, changelog.as_deref(), &session.user_id, bytes)
+        .upload_artifact(
+            &skill_id,
+            &version,
+            changelog.as_deref(),
+            &session.user_id,
+            file_name.as_deref().unwrap_or(""),
+            bytes,
+        )
         .await
         .map_err(|e| {
             tracing::warn!(skill_id, version, "skillhub upload failed: {e}");

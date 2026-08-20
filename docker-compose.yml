@@ -12,6 +12,8 @@ services:
         hard: 1048576
     volumes:
       - ./config:/app/config:ro
+      # SkillHub 技能包落盘目录（本地持久化，重建容器不丢包）
+      - ./data/skills:/app/data/skills
     environment:
       - TZ=Asia/Shanghai
       - GATEWAY_CONFIG=/app/config/config.yaml

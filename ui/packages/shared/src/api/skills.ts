@@ -202,9 +202,13 @@ export function skillDownloadUrl(slug: string, version?: string) {
   }`;
 }
 
-/** 一键安装命令（curl + unzip 到 ~/.claude/skills/<slug>）。 */
+/** 一键安装命令（curl + unzip 到 ~/.claude/skills/<slug>）。
+ * 命令在用户本地机器执行，URL 必须是绝对地址（相对路径 curl 无法解析）。
+ */
 export function skillInstallCommand(slug: string) {
-  const url = skillDownloadUrl(slug);
+  const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080';
+  const url = `${API_BASE || origin}/api/skills/${encodeURIComponent(slug)}/download`;
   return `mkdir -p ~/.claude/skills/${slug} && curl -sL "${url}" -o /tmp/${slug}.zip && unzip -o /tmp/${slug}.zip -d ~/.claude/skills/${slug} && rm /tmp/${slug}.zip`;
 }
 
