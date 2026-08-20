@@ -6,7 +6,7 @@ use sqlx_core::query_builder::QueryBuilder;
 use sqlx_core::row::Row;
 use sqlx_postgres::{PgPool, PgRow, Postgres};
 
-use crate::domain::{RuntimeTaskRow, SkillInstallRow, SkillRow, SkillVersionRow};
+use crate::domain::{RuntimeTaskRow, SkillRow, SkillVersionRow};
 use crate::error::SkillHubError;
 
 fn map_skill_row(row: &PgRow) -> SkillRow {
@@ -460,79 +460,4 @@ impl SkillRepository {
         Ok(rows.iter().map(map_version_row).collect())
     }
 
-    // ── Installs ──────────────────────────────────────────────────────
-
-    /// UPSERT：同一用户对同一技能只保留一条安装记录，重装更新版本与时间。
-    pub async fn upsert_install(&self, inst: &SkillInstallRow) -> Result<(), SkillHubError> {
-        self.exec(
-            "INSERT INTO agent_skill_installs \
-             (id, skill_id, user_id, version, source, installed_at) \
-             VALUES ($1,$2,$3,$4,$5,$6) \
-             ON CONFLICT (skill_id, user_id) \
-             DO UPDATE SET version=$4, source=$5, installed_at=$6",
-        )
-        .bind(&inst.id)
-        .bind(&inst.skill_id)
-        .bind(&inst.user_id)
-        .bind(&inst.version)
-        .bind(&inst.source)
-        .bind(&inst.installed_at)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    /// 用户的安装记录 + 技能快照（最新安装在前）。用户看到的技能只返回
-    /// 自己装过的；技能可见性由上层过滤（阶段 1 只放行 published）。
-    pub async fn list_installs_by_user(
-        &self,
-        user_id: &str,
-    ) -> Result<Vec<(SkillInstallRow, SkillRow)>, SkillHubError> {
-        let rows = self
-            .exec(
-                "SELECT i.id, i.skill_id, i.user_id, i.version, i.source, i.installed_at, \
-                        s.id, s.slug, s.name, s.description, s.category, s.tags, s.author_id, \
-                        s.version, s.artifact_path, s.artifact_size, s.source_markdown, \
-                        s.visibility, s.status, s.published_at, s.created_at, s.updated_at \
-                 FROM agent_skill_installs i \
-                 JOIN agent_skills s ON s.id = i.skill_id \
-                 WHERE i.user_id = $1 \
-                 ORDER BY i.installed_at DESC",
-            )
-            .bind(user_id)
-            .fetch_all(&self.pool)
-            .await?;
-
-        let mut out = Vec::with_capacity(rows.len());
-        for row in rows.iter() {
-            let install = SkillInstallRow {
-                id: row.try_get::<String, _>(0).unwrap_or_default(),
-                skill_id: row.try_get::<String, _>(1).unwrap_or_default(),
-                user_id: row.try_get::<String, _>(2).unwrap_or_default(),
-                version: row.try_get::<String, _>(3).unwrap_or_default(),
-                source: row.try_get::<String, _>(4).unwrap_or_default(),
-                installed_at: row.try_get::<String, _>(5).unwrap_or_default(),
-            };
-            let skill = SkillRow {
-                id: row.try_get::<String, _>(6).unwrap_or_default(),
-                slug: row.try_get::<String, _>(7).unwrap_or_default(),
-                name: row.try_get::<String, _>(8).unwrap_or_default(),
-                description: row.try_get::<String, _>(9).unwrap_or_default(),
-                category: row.try_get::<String, _>(10).unwrap_or_default(),
-                tags: row.try_get::<Vec<String>, _>(11).unwrap_or_default(),
-                author_id: row.try_get::<String, _>(12).unwrap_or_default(),
-                version: row.try_get::<String, _>(13).unwrap_or_default(),
-                artifact_path: row.try_get::<Option<String>, _>(14).unwrap_or(None),
-                artifact_size: row.try_get::<i64, _>(15).unwrap_or(0),
-                source_markdown: row.try_get::<Option<String>, _>(16).unwrap_or(None),
-                visibility: row.try_get::<String, _>(17).unwrap_or_default(),
-                status: row.try_get::<String, _>(18).unwrap_or_default(),
-                published_at: row.try_get::<Option<String>, _>(19).unwrap_or(None),
-                created_at: row.try_get::<String, _>(20).unwrap_or_default(),
-                updated_at: row.try_get::<String, _>(21).unwrap_or_default(),
-            };
-            out.push((install, skill));
-        }
-        Ok(out)
-    }
 }

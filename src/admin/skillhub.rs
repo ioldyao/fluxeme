@@ -14,8 +14,7 @@ use axum::Json;
 use serde::Deserialize;
 
 use fluxeme_skillhub::domain::{
-    CreateSkill, InstalledSkill, PackageStatus, SkillInstallRow, SkillRow, SkillVersionRow,
-    UpdateSkill, Visibility,
+    CreateSkill, PackageStatus, SkillRow, SkillVersionRow, UpdateSkill, Visibility,
 };
 use fluxeme_skillhub::SkillHubError;
 
@@ -57,12 +56,6 @@ pub(crate) struct UpdateSkillInput {
 #[derive(Deserialize)]
 pub(crate) struct StatusInput {
     status: String,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct InstallInput {
-    #[serde(default)]
-    version: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -352,36 +345,6 @@ pub(crate) async fn download_skill(
             .map_err(|e| AdminError::internal(format!("bad content-length: {e}")))?,
     );
     Ok(resp)
-}
-
-/// 记录安装（开通）。`published AND 包存在` 门禁，UPSERT 幂等。
-pub(crate) async fn install_skill(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(slug): Path<String>,
-    body: Option<Json<InstallInput>>,
-) -> Result<Json<SkillInstallRow>, AdminError> {
-    let session = require_session(&state.admin, &headers).await?;
-    let version = body.and_then(|b| b.0.version);
-    let row = state
-        .skillhub
-        .record_install(&session.user_id, &slug, version.as_deref())
-        .await
-        .map_err(skillhub_err)?;
-    Ok(Json(row))
-}
-
-pub(crate) async fn my_skills(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Result<Json<Vec<InstalledSkill>>, AdminError> {
-    let session = require_session(&state.admin, &headers).await?;
-    let items = state
-        .skillhub
-        .my_skills(&session.user_id)
-        .await
-        .map_err(skillhub_err)?;
-    Ok(Json(items))
 }
 
 /// 技能级运行状态（组合根：调 skill-backing 的 runtime_statuses）。

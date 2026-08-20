@@ -35,20 +35,6 @@ export interface SkillVersionRow {
   created_at: string;
 }
 
-export interface SkillInstallRow {
-  id: string;
-  skill_id: string;
-  user_id: string;
-  version: string;
-  source: string;
-  installed_at: string;
-}
-
-export interface InstalledSkill {
-  install: SkillInstallRow;
-  skill: SkillRow;
-}
-
 export interface CreateSkillInput {
   slug: string;
   name: string;
@@ -205,25 +191,6 @@ export function usePublishedSkillVersions(slug: string | null) {
     queryKey: ['published-skill-versions', slug],
     queryFn: () => api<SkillVersionRow[]>(`/skills/${encodeURIComponent(slug!)}/versions`),
     enabled: !!slug,
-  });
-}
-
-export function useInstallSkill() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ slug, version }: { slug: string; version?: string }) =>
-      api<SkillInstallRow>(`/skills/${encodeURIComponent(slug)}/install`, {
-        method: 'POST',
-        body: version ? { version } : {},
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['my-skills'] }),
-  });
-}
-
-export function useMySkills() {
-  return useQuery({
-    queryKey: ['my-skills'],
-    queryFn: () => api<InstalledSkill[]>('/me/skills'),
   });
 }
 

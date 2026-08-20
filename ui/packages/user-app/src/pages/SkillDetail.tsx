@@ -4,8 +4,6 @@ import { useTranslation } from 'react-i18next';
 import {
   usePublishedSkill,
   usePublishedSkillVersions,
-  useInstallSkill,
-  useMySkills,
   useSkillRuntimeStatuses,
   skillInstallCommand,
   skillDownloadUrl,
@@ -38,9 +36,7 @@ export default function SkillDetail() {
   const { t } = useTranslation();
   const { data: skill, isLoading, isError } = usePublishedSkill(slug);
   const { data: versions } = usePublishedSkillVersions(slug);
-  const { data: mySkills } = useMySkills();
   const { data: runtimeStatuses } = useSkillRuntimeStatuses();
-  const installMutation = useInstallSkill();
   const [tab, setTab] = useState<TabKey>('skillmd');
   const [copied, setCopied] = useState(false);
 
@@ -48,7 +44,6 @@ export default function SkillDetail() {
     () => runtimeStatuses?.find((s) => s.slug === slug)?.state ?? 'pending',
     [runtimeStatuses, slug]
   );
-  const installed = mySkills?.some((m) => m.skill.slug === slug) ?? false;
 
   if (isLoading) {
     return <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>;
@@ -71,16 +66,6 @@ export default function SkillDetail() {
       toast.success(t('skillHub.copied'));
       setTimeout(() => setCopied(false), 1500);
     });
-  };
-
-  const doInstall = () => {
-    installMutation.mutate(
-      { slug: skill.slug },
-      {
-        onSuccess: () => toast.success(t('skillHub.installed')),
-        onError: (e: Error) => toast.error(e.message),
-      }
-    );
   };
 
   return (
@@ -117,19 +102,11 @@ export default function SkillDetail() {
                 ))}
               </div>
             </div>
-            <div className="flex shrink-0 flex-col gap-2">
-              <Button variant="outline" asChild>
-                <a href={skillDownloadUrl(skill.slug)} download>
-                  <Download className="size-4 mr-1" />{t('skillHub.download')}
-                </a>
-              </Button>
-              <Button
-                disabled={installed || installMutation.isPending}
-                onClick={doInstall}
-              >
-                {installed ? t('skillHub.installed') : t('skillHub.install')}
-              </Button>
-            </div>
+            <Button variant="outline" asChild>
+              <a href={skillDownloadUrl(skill.slug)} download>
+                <Download className="size-4 mr-1" />{t('skillHub.download')}
+              </a>
+            </Button>
           </div>
 
           {/* 信息行 */}

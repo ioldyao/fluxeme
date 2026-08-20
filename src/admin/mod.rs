@@ -1066,11 +1066,6 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             axum::routing::get(skillhub::download_skill),
         )
         .route(
-            "/api/skills/{slug}/install",
-            axum::routing::post(skillhub::install_skill),
-        )
-        .route("/api/me/skills", axum::routing::get(skillhub::my_skills))
-        .route(
             "/api/skills/runtime-status",
             axum::routing::get(skillhub::runtime_statuses),
         )

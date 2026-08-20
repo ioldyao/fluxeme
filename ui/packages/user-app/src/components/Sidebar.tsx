@@ -11,7 +11,7 @@ type NavGroup = {
 
 const USER_NAV_GROUPS: NavGroup[] = [
   { label: 'nav.group.overview', items: ['nav.dashboard'] },
-  { label: 'nav.group.models', items: ['nav.modelMarketplace', 'nav.skillHub', 'nav.mySkills'] },
+  { label: 'nav.group.models', items: ['nav.modelMarketplace', 'nav.skillHub'] },
   { label: 'nav.group.developer', items: ['nav.apiKeys', 'nav.myRules', 'nav.myTeams', 'nav.usage'] },
 ];
 

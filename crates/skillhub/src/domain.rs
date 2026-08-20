@@ -109,24 +109,6 @@ pub struct SkillVersionRow {
     pub created_at: String,
 }
 
-/// `agent_skill_installs` 行（开通/下载记录，兼作统计）。
-#[derive(Debug, Clone, Serialize)]
-pub struct SkillInstallRow {
-    pub id: String,
-    pub skill_id: String,
-    pub user_id: String,
-    pub version: String,
-    pub source: String,
-    pub installed_at: String,
-}
-
-/// "我的技能"：安装记录 + 技能快照。
-#[derive(Debug, Clone, Serialize)]
-pub struct InstalledSkill {
-    pub install: SkillInstallRow,
-    pub skill: SkillRow,
-}
-
 /// outbox 传输任务（`agent_skill_runtime_tasks`）。
 ///
 /// 这是**传输/基础设施**，不是域数据：SkillHub（publisher）在状态变更的

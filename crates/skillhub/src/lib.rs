@@ -25,8 +25,7 @@ use fluxeme_contract::{
 
 use crate::artifact::LocalArtifactStore;
 use crate::domain::{
-    CreateSkill, InstalledSkill, PackageStatus, RuntimeTaskRow, SkillInstallRow, SkillRow,
-    SkillVersionRow, UpdateSkill,
+    CreateSkill, PackageStatus, RuntimeTaskRow, SkillRow, SkillVersionRow, UpdateSkill,
 };
 pub use crate::error::SkillHubError;
 use crate::repo::SkillRepository;
@@ -369,46 +368,6 @@ impl SkillHubModule {
         })
     }
 
-    /// 记录安装（开通）。门禁同 download。UPSERT 幂等。
-    pub async fn record_install(
-        &self,
-        user_id: &str,
-        slug: &str,
-        version: Option<&str>,
-    ) -> Result<SkillInstallRow, SkillHubError> {
-        let skill = self
-            .get_published_skill(slug)
-            .await?
-            .ok_or_else(|| SkillHubError::NotFound("skill".into()))?;
-        let version = version.unwrap_or(&skill.version).to_string();
-        self.repo
-            .get_version(&skill.id, &version)
-            .await?
-            .ok_or_else(|| SkillHubError::NotFound("version".into()))?;
-        if skill.artifact_path.is_none() {
-            return Err(SkillHubError::Invalid("skill has no artifact yet".into()));
-        }
-        let now = chrono::Utc::now().to_rfc3339();
-        let row = SkillInstallRow {
-            id: uuid::Uuid::new_v4().to_string(),
-            skill_id: skill.id.clone(),
-            user_id: user_id.to_string(),
-            version,
-            source: "user".to_string(),
-            installed_at: now,
-        };
-        self.repo.upsert_install(&row).await?;
-        Ok(row)
-    }
-
-    /// 我的技能（安装记录 + 技能快照）。
-    pub async fn my_skills(&self, user_id: &str) -> Result<Vec<InstalledSkill>, SkillHubError> {
-        let rows = self.repo.list_installs_by_user(user_id).await?;
-        Ok(rows
-            .into_iter()
-            .map(|(install, skill)| InstalledSkill { install, skill })
-            .collect())
-    }
 }
 
 // ── SkillRuntimeCatalog Port 实现 ───────────────────────────────────────

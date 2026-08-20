@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   usePublishedSkills,
-  useMySkills,
   useSkillRuntimeStatuses,
 } from '@fluxeme/shared/src/api/skills';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
@@ -32,7 +31,6 @@ export default function SkillHub() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { data: skills, isLoading, isError, refetch } = usePublishedSkills();
-  const { data: mySkills } = useMySkills();
   const { data: runtimeStatuses } = useSkillRuntimeStatuses();
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<string | null>(null);
@@ -42,11 +40,6 @@ export default function SkillHub() {
     for (const s of runtimeStatuses ?? []) m.set(s.slug, s.state);
     return m;
   }, [runtimeStatuses]);
-
-  const installedSlugs = useMemo(
-    () => new Set((mySkills ?? []).map((m) => m.skill.slug)),
-    [mySkills]
-  );
 
   const categories = useMemo(() => {
     if (!skills) return [];
@@ -142,7 +135,6 @@ export default function SkillHub() {
                     <Badge className={RUNTIME_BADGE[runtimeBySlug.get(s.slug) ?? 'pending']?.cls}>
                       {t(RUNTIME_BADGE[runtimeBySlug.get(s.slug) ?? 'pending']?.label)}
                     </Badge>
-                    {installedSlugs.has(s.slug) && <Badge className="bg-emerald-100 text-emerald-700">{t('skillHub.installed')}</Badge>}
                   </div>
                 </CardContent>
               </Card>
