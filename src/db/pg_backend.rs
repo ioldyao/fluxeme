@@ -5458,7 +5458,8 @@ impl DbBackend for PgBackend {
                 "SELECT g.id, g.plan_id, p.code, p.name, g.user_id, g.team_id, g.accounting_mode, \
                  g.display_token_amount, g.total_units, g.consumed_units, g.reserved_units, \
                  g.priority, g.exhaustion_policy, g.status, g.expires_at, g.created_at \
-                 FROM token_package_grants g ORDER BY g.created_at DESC, g.id",
+                 FROM token_package_grants g JOIN token_package_plans p ON p.id = g.plan_id \
+                 ORDER BY g.created_at DESC, g.id",
             )
             .fetch_all(&self.pool)
             .await?,
