@@ -66,6 +66,7 @@ impl ReservationFinalizer {
             prompt_tokens,
             completion_tokens,
             cache_hit_input_tokens,
+            if success { 200 } else { 502 },
             success,
             reason,
         );
@@ -78,6 +79,7 @@ impl ReservationFinalizer {
         prompt_tokens: u64,
         completion_tokens: u64,
         cache_hit_input_tokens: u64,
+        status_code: u16,
         success: bool,
         reason: &str,
     ) {
@@ -97,7 +99,7 @@ impl ReservationFinalizer {
                     actual_cache_hit_input_tokens: cache_hit_input_tokens,
                     actual_package_units: actual_units,
                     actual_wallet_amount: wallet_amount,
-                    status_code: if success { 200 } else { 502 },
+                    status_code,
                     success,
                     reason,
                 })
@@ -149,6 +151,7 @@ impl ReservationFinalizer {
             prompt_tokens,
             completion_tokens,
             cache_hit_input_tokens,
+            499,
             false,
             reason,
         );

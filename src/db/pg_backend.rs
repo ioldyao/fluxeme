@@ -6134,7 +6134,7 @@ impl DbBackend for PgBackend {
                wallet_amount = EXCLUDED.wallet_amount",
         )
         .bind(settlement.actual_cache_hit_input_tokens as i64)
-        .bind(actual_units > 0)
+        .bind(settlement.success)
         .bind(settlement.status_code as i32)
         .bind(now)
         .bind(&settlement.reservation_id)
