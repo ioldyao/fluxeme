@@ -906,8 +906,8 @@ impl Database {
     ) -> Result<(), DbError> {
         self.backend.release_token_request(reservation_id, reason).await
     }
-    pub async fn token_request_wallet_amount(&self, request_id: &str) -> Result<Option<Decimal>, DbError> {
-        self.backend.token_request_wallet_amount(request_id).await
+    pub async fn token_request_billing_amount(&self, request_id: &str) -> Result<Option<(bool, Decimal)>, DbError> {
+        self.backend.token_request_billing_amount(request_id).await
     }
 
     // ── Content Filter Rules ─────────────────────────────────────────────
