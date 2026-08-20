@@ -861,9 +861,9 @@ impl DbBackend for PgBackend {
                 accounting_mode TEXT NOT NULL CHECK (accounting_mode IN ('raw_tokens','standardized_credits')),
                 display_token_amount BIGINT NOT NULL CHECK (display_token_amount > 0),
                 total_units BIGINT NOT NULL CHECK (total_units > 0),
-                input_credit_factor NUMERIC(20,8) NOT NULL DEFAULT 1,
-                output_credit_factor NUMERIC(20,8) NOT NULL DEFAULT 1,
-                cache_credit_factor NUMERIC(20,8) NOT NULL DEFAULT 0,
+                input_credit_factor DOUBLE PRECISION NOT NULL DEFAULT 1,
+                output_credit_factor DOUBLE PRECISION NOT NULL DEFAULT 1,
+                cache_credit_factor DOUBLE PRECISION NOT NULL DEFAULT 0,
                 exhaustion_policy TEXT NOT NULL DEFAULT 'package_then_wallet' CHECK (exhaustion_policy IN ('package_then_wallet','package_only')),
                 priority INTEGER NOT NULL DEFAULT 0,
                 validity_days INTEGER,
@@ -881,9 +881,9 @@ impl DbBackend for PgBackend {
                 id TEXT PRIMARY KEY,
                 plan_id TEXT NOT NULL REFERENCES token_package_plans(id) ON DELETE CASCADE,
                 model_pattern TEXT NOT NULL,
-                input_factor NUMERIC(20,8) NOT NULL DEFAULT 1,
-                output_factor NUMERIC(20,8) NOT NULL DEFAULT 1,
-                cache_factor NUMERIC(20,8) NOT NULL DEFAULT 0,
+                input_factor DOUBLE PRECISION NOT NULL DEFAULT 1,
+                output_factor DOUBLE PRECISION NOT NULL DEFAULT 1,
+                cache_factor DOUBLE PRECISION NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 UNIQUE (plan_id, model_pattern)
             )",
@@ -979,6 +979,12 @@ impl DbBackend for PgBackend {
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_prompt_tokens BIGINT NOT NULL DEFAULT 0",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_completion_tokens BIGINT NOT NULL DEFAULT 0",
+            "ALTER TABLE token_package_plans ALTER COLUMN input_credit_factor TYPE DOUBLE PRECISION USING input_credit_factor::double precision",
+            "ALTER TABLE token_package_plans ALTER COLUMN output_credit_factor TYPE DOUBLE PRECISION USING output_credit_factor::double precision",
+            "ALTER TABLE token_package_plans ALTER COLUMN cache_credit_factor TYPE DOUBLE PRECISION USING cache_credit_factor::double precision",
+            "ALTER TABLE token_package_model_factors ALTER COLUMN input_factor TYPE DOUBLE PRECISION USING input_factor::double precision",
+            "ALTER TABLE token_package_model_factors ALTER COLUMN output_factor TYPE DOUBLE PRECISION USING output_factor::double precision",
+            "ALTER TABLE token_package_model_factors ALTER COLUMN cache_factor TYPE DOUBLE PRECISION USING cache_factor::double precision",
         ] {
             let _ = raw_sql(alter).execute(&self.pool).await;
         }
@@ -5351,7 +5357,7 @@ impl DbBackend for PgBackend {
               exhaustion_policy, priority, validity_days, status, created_by, created_at, updated_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'active',$13,$14,$14)
              RETURNING id, code, name, accounting_mode, display_token_amount, total_units,
-                       input_credit_factor, output_credit_factor, cache_credit_factor,
+                       input_credit_factor::text, output_credit_factor::text, cache_credit_factor::text,
                        exhaustion_policy, priority, validity_days, status, created_at, updated_at",
         )
         .bind(id).bind(code).bind(name).bind(accounting_mode).bind(display_token_amount)
@@ -5380,7 +5386,7 @@ impl DbBackend for PgBackend {
     ) -> Result<Vec<crate::domain::token_package::TokenPackagePlanRow>, DbError> {
         let rows = query(
             "SELECT id, code, name, accounting_mode, display_token_amount, total_units,
-                    input_credit_factor, output_credit_factor, cache_credit_factor,
+                    input_credit_factor::text, output_credit_factor::text, cache_credit_factor::text,
                     exhaustion_policy, priority, validity_days, status, created_at, updated_at
              FROM token_package_plans ORDER BY priority DESC, created_at DESC, id",
         )
@@ -5393,9 +5399,9 @@ impl DbBackend for PgBackend {
                     accounting_mode: row.try_get::<String, _>(3)?.parse().map_err(DbError)?,
                     display_token_amount: row.try_get::<i64, _>(4)?.max(0) as u64,
                     total_units: row.try_get::<i64, _>(5)?.max(0) as u64,
-                    input_credit_factor: Decimal::try_from(row.try_get::<f64, _>(6)?).unwrap_or(Decimal::ONE),
-                    output_credit_factor: Decimal::try_from(row.try_get::<f64, _>(7)?).unwrap_or(Decimal::ONE),
-                    cache_credit_factor: Decimal::try_from(row.try_get::<f64, _>(8)?).unwrap_or(Decimal::ZERO),
+                    input_credit_factor: row.try_get::<String, _>(6)?.parse().unwrap_or(Decimal::ONE),
+                    output_credit_factor: row.try_get::<String, _>(7)?.parse().unwrap_or(Decimal::ONE),
+                    cache_credit_factor: row.try_get::<String, _>(8)?.parse().unwrap_or(Decimal::ZERO),
                     exhaustion_policy: row.try_get::<String, _>(9)?.parse().map_err(DbError)?,
                     priority: row.try_get(10)?, validity_days: row.try_get(11)?, status: row.try_get(12)?,
                     created_at: row.try_get(13)?, updated_at: row.try_get(14)?,
