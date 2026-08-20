@@ -63,7 +63,15 @@ pub(crate) async fn create_plan(
         rust_decimal::Decimal::try_from(req.output_credit_factor).unwrap_or(rust_decimal::Decimal::ONE),
         rust_decimal::Decimal::try_from(req.cache_credit_factor).unwrap_or(rust_decimal::Decimal::ZERO),
         &req.exhaustion_policy, req.priority, req.validity_days, &session.user_id,
-    ).await.map_err(db_err)?;
+    )
+    .await
+    .map_err(|error| {
+        if error.0.contains("token_package_plans_code_key") {
+            AdminError::bad_request("A package with this code already exists")
+        } else {
+            db_err(error)
+        }
+    })?;
     Ok(Json(plan))
 }
 
