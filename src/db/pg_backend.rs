@@ -5437,25 +5437,25 @@ impl DbBackend for PgBackend {
     ) -> Result<Vec<crate::domain::token_package::TokenPackageGrantRow>, DbError> {
         let rows = match (user_id, team_id) {
             (Some(user_id), None) => query(
-                "SELECT g.id, g.plan_id, g.user_id, g.team_id, g.accounting_mode, \
+                "SELECT g.id, g.plan_id, p.code, p.name, g.user_id, g.team_id, g.accounting_mode, \
                  g.display_token_amount, g.total_units, g.consumed_units, g.reserved_units, \
                  g.priority, g.exhaustion_policy, g.status, g.expires_at, g.created_at \
-                 FROM token_package_grants g WHERE g.user_id = $1 ORDER BY g.priority DESC, g.expires_at NULLS LAST, g.created_at, g.id",
+                 FROM token_package_grants g JOIN token_package_plans p ON p.id = g.plan_id WHERE g.user_id = $1 ORDER BY g.priority DESC, g.expires_at NULLS LAST, g.created_at, g.id",
             )
             .bind(user_id)
             .fetch_all(&self.pool)
             .await?,
             (None, Some(team_id)) => query(
-                "SELECT g.id, g.plan_id, g.user_id, g.team_id, g.accounting_mode, \
+                "SELECT g.id, g.plan_id, p.code, p.name, g.user_id, g.team_id, g.accounting_mode, \
                  g.display_token_amount, g.total_units, g.consumed_units, g.reserved_units, \
                  g.priority, g.exhaustion_policy, g.status, g.expires_at, g.created_at \
-                 FROM token_package_grants g WHERE g.team_id = $1 ORDER BY g.priority DESC, g.expires_at NULLS LAST, g.created_at, g.id",
+                 FROM token_package_grants g JOIN token_package_plans p ON p.id = g.plan_id WHERE g.team_id = $1 ORDER BY g.priority DESC, g.expires_at NULLS LAST, g.created_at, g.id",
             )
             .bind(team_id)
             .fetch_all(&self.pool)
             .await?,
             (None, None) => query(
-                "SELECT g.id, g.plan_id, g.user_id, g.team_id, g.accounting_mode, \
+                "SELECT g.id, g.plan_id, p.code, p.name, g.user_id, g.team_id, g.accounting_mode, \
                  g.display_token_amount, g.total_units, g.consumed_units, g.reserved_units, \
                  g.priority, g.exhaustion_policy, g.status, g.expires_at, g.created_at \
                  FROM token_package_grants g ORDER BY g.created_at DESC, g.id",
@@ -5479,18 +5479,20 @@ impl DbBackend for PgBackend {
                 Ok(crate::domain::token_package::TokenPackageGrantRow {
                     id: row.try_get(0)?,
                     plan_id: row.try_get(1)?,
-                    user_id: row.try_get(2)?,
-                    team_id: row.try_get(3)?,
+                    plan_code: row.try_get(2)?,
+                    plan_name: row.try_get(3)?,
+                    user_id: row.try_get(4)?,
+                    team_id: row.try_get(5)?,
                     accounting_mode: mode,
-                    display_token_amount: row.try_get::<i64, _>(5)?.max(0) as u64,
-                    total_units: row.try_get::<i64, _>(6)?.max(0) as u64,
-                    consumed_units: row.try_get::<i64, _>(7)?.max(0) as u64,
-                    reserved_units: row.try_get::<i64, _>(8)?.max(0) as u64,
-                    priority: row.try_get(9)?,
+                    display_token_amount: row.try_get::<i64, _>(7)?.max(0) as u64,
+                    total_units: row.try_get::<i64, _>(8)?.max(0) as u64,
+                    consumed_units: row.try_get::<i64, _>(9)?.max(0) as u64,
+                    reserved_units: row.try_get::<i64, _>(10)?.max(0) as u64,
+                    priority: row.try_get(11)?,
                     exhaustion_policy: policy,
-                    status: row.try_get(11)?,
-                    expires_at: row.try_get(12)?,
-                    created_at: row.try_get(13)?,
+                    status: row.try_get(13)?,
+                    expires_at: row.try_get(14)?,
+                    created_at: row.try_get(15)?,
                 })
             })
             .collect()
@@ -5534,9 +5536,15 @@ impl DbBackend for PgBackend {
         .ok_or_else(|| DbError("token package plan not found or inactive".to_string()))?;
         let mode = row.try_get::<String, _>(4)?.parse().map_err(DbError)?;
         let policy = row.try_get::<String, _>(10)?.parse().map_err(DbError)?;
+        let (plan_code, plan_name): (String, String) = query_as(
+            "SELECT code, name FROM token_package_plans WHERE id = $1",
+        )
+        .bind(plan_id)
+        .fetch_one(&self.pool)
+        .await?;
         Ok(crate::domain::token_package::TokenPackageGrantRow {
-            id: row.try_get(0)?, plan_id: row.try_get(1)?, user_id: row.try_get(2)?, team_id: row.try_get(3)?,
-            accounting_mode: mode, display_token_amount: row.try_get::<i64, _>(5)?.max(0) as u64,
+            id: row.try_get(0)?, plan_id: row.try_get(1)?, plan_code, plan_name,
+            user_id: row.try_get(2)?, team_id: row.try_get(3)?, accounting_mode: mode, display_token_amount: row.try_get::<i64, _>(5)?.max(0) as u64,
             total_units: row.try_get::<i64, _>(6)?.max(0) as u64, consumed_units: row.try_get::<i64, _>(7)?.max(0) as u64,
             reserved_units: row.try_get::<i64, _>(8)?.max(0) as u64, priority: row.try_get(9)?, exhaustion_policy: policy,
             status: row.try_get(11)?, expires_at: row.try_get(12)?, created_at: row.try_get(13)?,

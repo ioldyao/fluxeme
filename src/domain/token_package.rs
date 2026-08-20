@@ -143,6 +143,8 @@ pub struct TokenPackagePlanRow {
 pub struct TokenPackageGrantRow {
     pub id: String,
     pub plan_id: String,
+    pub plan_code: String,
+    pub plan_name: String,
     pub user_id: Option<String>,
     pub team_id: Option<String>,
     pub accounting_mode: TokenAccountingMode,
