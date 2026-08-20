@@ -5177,6 +5177,8 @@ impl DbBackend for PgBackend {
             // Requests using reserve+settle already performed their authoritative
             // package/wallet charge synchronously. The background usage writer only
             // persists the billing fact and must never debit the wallet again.
+            // It also rewrites cost_amount to the actual wallet fallback amount so
+            // package-covered requests display zero monetary usage in billing views.
             let has_token_reservation: bool = query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM token_request_reservations WHERE request_id = $1)",
             )
@@ -5190,7 +5192,8 @@ impl DbBackend for PgBackend {
                          package_grant_id = r.package_grant_id,
                          accounting_mode = r.accounting_mode,
                          package_units = COALESCE(r.actual_package_units, 0),
-                         wallet_amount = COALESCE(r.actual_wallet_amount, 0)
+                         wallet_amount = COALESCE(r.actual_wallet_amount, 0),
+                         cost_amount = COALESCE(r.actual_wallet_amount, 0)
                      FROM token_request_reservations r
                      WHERE be.request_id = r.request_id AND be.request_id = $1",
                 )
