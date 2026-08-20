@@ -75,6 +75,23 @@ pub(crate) async fn create_plan(
     Ok(Json(plan))
 }
 
+pub(crate) async fn delete_plan(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:bills").await?;
+    state.db.delete_token_package_plan(&id).await.map_err(|error| {
+        if error.0.contains("active grants") || error.0.contains("not found") {
+            AdminError::bad_request(error.0)
+        } else {
+            db_err(error)
+        }
+    })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 pub(crate) async fn list_plans(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

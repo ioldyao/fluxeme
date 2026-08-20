@@ -452,6 +452,7 @@ pub trait DbBackend: Send + Sync {
 
     // ── Token resource packages ──────────────────────────────────────────
     async fn list_token_package_plans(&self) -> Result<Vec<TokenPackagePlanRow>, DbError>;
+    async fn delete_token_package_plan(&self, plan_id: &str) -> Result<(), DbError>;
     async fn create_token_package_plan(
         &self,
         id: &str,

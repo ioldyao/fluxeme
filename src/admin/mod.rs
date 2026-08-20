@@ -789,6 +789,10 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             axum::routing::get(token_packages::list_plans).post(token_packages::create_plan),
         )
         .route(
+            "/api/admin/token-packages/{id}",
+            axum::routing::delete(token_packages::delete_plan),
+        )
+        .route(
             "/api/admin/token-packages/grants",
             axum::routing::get(token_packages::list_grants).post(token_packages::create_grant),
         )

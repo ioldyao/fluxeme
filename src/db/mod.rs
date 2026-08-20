@@ -840,6 +840,9 @@ impl Database {
     pub async fn list_token_package_plans(&self) -> Result<Vec<TokenPackagePlanRow>, DbError> {
         self.backend.list_token_package_plans().await
     }
+    pub async fn delete_token_package_plan(&self, plan_id: &str) -> Result<(), DbError> {
+        self.backend.delete_token_package_plan(plan_id).await
+    }
     #[allow(clippy::too_many_arguments)]
     pub async fn create_token_package_plan(
         &self,

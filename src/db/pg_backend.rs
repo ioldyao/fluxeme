@@ -5381,6 +5381,26 @@ impl DbBackend for PgBackend {
         })
     }
 
+    async fn delete_token_package_plan(&self, plan_id: &str) -> Result<(), DbError> {
+        let active_grants: i64 = query_scalar(
+            "SELECT COUNT(*) FROM token_package_grants WHERE plan_id = $1 AND status = 'active'",
+        )
+        .bind(plan_id)
+        .fetch_one(&self.pool)
+        .await?;
+        if active_grants > 0 {
+            return Err(DbError("cannot delete a plan with active grants".to_string()));
+        }
+        let deleted = query("DELETE FROM token_package_plans WHERE id = $1")
+            .bind(plan_id)
+            .execute(&self.pool)
+            .await?;
+        if deleted.rows_affected() == 0 {
+            return Err(DbError("token package plan not found".to_string()));
+        }
+        Ok(())
+    }
+
     async fn list_token_package_plans(
         &self,
     ) -> Result<Vec<crate::domain::token_package::TokenPackagePlanRow>, DbError> {
