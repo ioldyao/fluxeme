@@ -35,7 +35,9 @@ pub(crate) async fn set_currency(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:settings").await?;
     if !["usd", "cny"].contains(&req.currency.as_str()) {
-        return Err(AdminError::bad_request("Invalid currency, must be 'usd' or 'cny'"));
+        return Err(AdminError::bad_request(
+            "Invalid currency, must be 'usd' or 'cny'",
+        ));
     }
     state
         .db
@@ -131,7 +133,11 @@ pub(crate) async fn set_oidc_expected_audience(
         .await
         .map_err(db_err)?;
 
-    let aud = if value.is_empty() { None } else { Some(value.clone()) };
+    let aud = if value.is_empty() {
+        None
+    } else {
+        Some(value.clone())
+    };
     state.oidc.set_expected_audience(aud);
     notify_config_changed(&state).await;
 

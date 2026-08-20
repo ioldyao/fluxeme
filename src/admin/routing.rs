@@ -60,9 +60,17 @@ pub(crate) async fn routing_health(
 
             if req > 0 || any_enabled {
                 let configured_channel = state.routing.get_channel(&binding.channel_id);
-                let channel_enabled = configured_channel.as_ref().is_some_and(|channel| channel.enabled);
+                let channel_enabled = configured_channel
+                    .as_ref()
+                    .is_some_and(|channel| channel.enabled);
                 let ch_name = configured_channel
-                    .map(|channel| if channel.name.is_empty() { channel.id } else { channel.name })
+                    .map(|channel| {
+                        if channel.name.is_empty() {
+                            channel.id
+                        } else {
+                            channel.name
+                        }
+                    })
                     .unwrap_or_else(|| binding.channel_id.clone());
 
                 if req > 0 {
@@ -458,9 +466,9 @@ pub(crate) async fn flow_metrics(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:dashboard").await?;
 
-    let start = q.start.unwrap_or_else(|| {
-        (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339()
-    });
+    let start = q
+        .start
+        .unwrap_or_else(|| (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339());
     let end = q.end.unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
     let model = q.model.as_deref().filter(|m| !m.is_empty() && *m != "all");
 

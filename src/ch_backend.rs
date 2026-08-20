@@ -6,11 +6,11 @@ use clickhouse::Row;
 use rust_decimal::Decimal;
 use serde::Serialize;
 
-use crate::config::types::ClickHouseConfig;
 use crate::admin::routing::{
     FlowMetricsClientIp, FlowMetricsHistorical, FlowMetricsModelShare, FlowMetricsPercentiles,
     FlowMetricsTrend,
 };
+use crate::config::types::ClickHouseConfig;
 
 /// Row type for the `usage_events` ClickHouse table.
 /// Contains observability fields plus pre-computed cost_amount.
@@ -237,8 +237,10 @@ pub(crate) fn normalize_clickhouse_datetime(value: &str) -> Result<String, Strin
 }
 
 fn flow_metrics_bucket_granularity(start: &str, end: &str) -> Result<(&'static str, i64), String> {
-    let start_dt = DateTime::parse_from_rfc3339(start).map_err(|_| "invalid start datetime".to_string())?;
-    let end_dt = DateTime::parse_from_rfc3339(end).map_err(|_| "invalid end datetime".to_string())?;
+    let start_dt =
+        DateTime::parse_from_rfc3339(start).map_err(|_| "invalid start datetime".to_string())?;
+    let end_dt =
+        DateTime::parse_from_rfc3339(end).map_err(|_| "invalid end datetime".to_string())?;
     let seconds = (end_dt - start_dt).num_seconds();
     if seconds <= 3600 {
         Ok(("minute", 60))
@@ -1267,7 +1269,14 @@ impl ClickHouseBackend {
             .map_err(|e| format!("CH query_api_key_activity: {e}"))?;
         Ok(rows
             .into_iter()
-            .map(|row| (row.api_key_name, row.total_requests, row.total_tokens, row.last_request_at))
+            .map(|row| {
+                (
+                    row.api_key_name,
+                    row.total_requests,
+                    row.total_tokens,
+                    row.last_request_at,
+                )
+            })
             .collect())
     }
 
@@ -1365,13 +1374,16 @@ impl ClickHouseBackend {
         filter: &crate::domain::usage::UsageFilter,
         limit: usize,
         offset: usize,
-    ) -> Result<(
-        u64,
-        u64,
-        Vec<(String, u64, u64)>,
-        Vec<(String, u64)>,
-        Vec<crate::domain::usage::UsageRecord>,
-    ), String> {
+    ) -> Result<
+        (
+            u64,
+            u64,
+            Vec<(String, u64, u64)>,
+            Vec<(String, u64)>,
+            Vec<crate::domain::usage::UsageRecord>,
+        ),
+        String,
+    > {
         #[derive(clickhouse::Row, serde::Deserialize)]
         struct SummaryRow {
             total_requests: u64,
@@ -1403,15 +1415,27 @@ impl ClickHouseBackend {
             conditions.push("model = ?");
             binds.push(model.to_string());
         }
-        if let Some(api_key_name) = filter.api_key_name.as_deref().filter(|value| !value.is_empty()) {
+        if let Some(api_key_name) = filter
+            .api_key_name
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
             conditions.push("api_key_name = ?");
             binds.push(api_key_name.to_string());
         }
-        if let Some(api_format) = filter.api_format.as_deref().filter(|value| !value.is_empty()) {
+        if let Some(api_format) = filter
+            .api_format
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
             conditions.push("api_format = ?");
             binds.push(api_format.to_string());
         }
-        if let Some(start_date) = filter.start_date.as_deref().filter(|value| !value.is_empty()) {
+        if let Some(start_date) = filter
+            .start_date
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
             conditions.push("usage_events.timestamp >= parseDateTimeBestEffort(?)");
             binds.push(normalize_clickhouse_datetime(start_date)?);
         }
@@ -1710,7 +1734,11 @@ impl ClickHouseBackend {
             .fetch_all::<ModelRow>()
             .await
             .map_err(|e| format!("CH flow_metrics models: {e}"))?;
-        let model_total = model_rows.iter().map(|row| row.requests).sum::<u64>().max(1);
+        let model_total = model_rows
+            .iter()
+            .map(|row| row.requests)
+            .sum::<u64>()
+            .max(1);
         let model_share = model_rows
             .into_iter()
             .map(|row| FlowMetricsModelShare {

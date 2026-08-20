@@ -473,7 +473,9 @@ async fn main() {
     // Skill Runtime 数据面子系统：只依赖 contract Port（目录/鉴权/计量），
     // 不 import skillhub 代码。poller 后台消费 outbox 任务部署端点。
     let skill_authorizer = Arc::new(crate::skill_runtime::SkillKeyAuthorizer::new(db.clone()));
-    let skill_meter = Arc::new(crate::skill_runtime::SkillRuntimeMeter::new(Some(ch.clone())));
+    let skill_meter = Arc::new(crate::skill_runtime::SkillRuntimeMeter::new(Some(
+        ch.clone(),
+    )));
     let skill_backing = Arc::new(fluxeme_skill_backing::SkillBackingModule::new(
         db.pg_pool().clone(),
         skillhub.clone(),
@@ -544,10 +546,7 @@ async fn main() {
                     let _ = poll_state.routing.reload().await;
                     poll_state.auth.reload().await;
                     poll_state.content_filter.reload().await;
-                    poll_state
-                        .oidc
-                        .refresh(&poll_state.sso.providers())
-                        .await;
+                    poll_state.oidc.refresh(&poll_state.sso.providers()).await;
                     let expected_aud = poll_state
                         .db
                         .get_setting("oidc_expected_audience")

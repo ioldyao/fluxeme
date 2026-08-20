@@ -30,8 +30,12 @@ pub(crate) struct PlanRequest {
     pub validity_days: Option<i32>,
 }
 
-fn default_factor() -> f64 { 1.0 }
-fn default_policy() -> String { "package_then_wallet".to_string() }
+fn default_factor() -> f64 {
+    1.0
+}
+fn default_policy() -> String {
+    "package_then_wallet".to_string()
+}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct GrantRequest {
@@ -56,22 +60,34 @@ pub(crate) async fn create_plan(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:bills").await?;
     let total_units = req.total_units.unwrap_or(req.display_token_amount);
-    let plan = state.db.create_token_package_plan(
-        &uuid::Uuid::new_v4().to_string(), &req.code, &req.name, &req.accounting_mode,
-        req.display_token_amount, total_units,
-        rust_decimal::Decimal::try_from(req.input_credit_factor).unwrap_or(rust_decimal::Decimal::ONE),
-        rust_decimal::Decimal::try_from(req.output_credit_factor).unwrap_or(rust_decimal::Decimal::ONE),
-        rust_decimal::Decimal::try_from(req.cache_credit_factor).unwrap_or(rust_decimal::Decimal::ZERO),
-        &req.exhaustion_policy, req.priority, req.validity_days, &session.user_id,
-    )
-    .await
-    .map_err(|error| {
-        if error.0.contains("token_package_plans_code_key") {
-            AdminError::bad_request("A package with this code already exists")
-        } else {
-            db_err(error)
-        }
-    })?;
+    let plan = state
+        .db
+        .create_token_package_plan(
+            &uuid::Uuid::new_v4().to_string(),
+            &req.code,
+            &req.name,
+            &req.accounting_mode,
+            req.display_token_amount,
+            total_units,
+            rust_decimal::Decimal::try_from(req.input_credit_factor)
+                .unwrap_or(rust_decimal::Decimal::ONE),
+            rust_decimal::Decimal::try_from(req.output_credit_factor)
+                .unwrap_or(rust_decimal::Decimal::ONE),
+            rust_decimal::Decimal::try_from(req.cache_credit_factor)
+                .unwrap_or(rust_decimal::Decimal::ZERO),
+            &req.exhaustion_policy,
+            req.priority,
+            req.validity_days,
+            &session.user_id,
+        )
+        .await
+        .map_err(|error| {
+            if error.0.contains("token_package_plans_code_key") {
+                AdminError::bad_request("A package with this code already exists")
+            } else {
+                db_err(error)
+            }
+        })?;
     Ok(Json(plan))
 }
 
@@ -82,13 +98,17 @@ pub(crate) async fn delete_plan(
 ) -> Result<Json<serde_json::Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:bills").await?;
-    state.db.delete_token_package_plan(&id).await.map_err(|error| {
-        if error.0.contains("active grants") || error.0.contains("not found") {
-            AdminError::bad_request(error.0)
-        } else {
-            db_err(error)
-        }
-    })?;
+    state
+        .db
+        .delete_token_package_plan(&id)
+        .await
+        .map_err(|error| {
+            if error.0.contains("active grants") || error.0.contains("not found") {
+                AdminError::bad_request(error.0)
+            } else {
+                db_err(error)
+            }
+        })?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -98,7 +118,9 @@ pub(crate) async fn list_plans(
 ) -> Result<Json<Vec<crate::domain::token_package::TokenPackagePlanRow>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:bills").await?;
-    Ok(Json(state.db.list_token_package_plans().await.map_err(db_err)?))
+    Ok(Json(
+        state.db.list_token_package_plans().await.map_err(db_err)?,
+    ))
 }
 
 pub(crate) async fn list_grants(
@@ -123,7 +145,9 @@ pub(crate) async fn create_grant(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:bills").await?;
     if req.user_id.is_none() == req.team_id.is_none() {
-        return Err(AdminError::bad_request("Exactly one of user_id or team_id is required"));
+        return Err(AdminError::bad_request(
+            "Exactly one of user_id or team_id is required",
+        ));
     }
     if let Some(expires_at) = req.expires_at.as_deref() {
         chrono::DateTime::parse_from_rfc3339(expires_at)

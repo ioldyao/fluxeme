@@ -48,10 +48,7 @@ fn share_percentage(cost: Decimal, total_cost: Decimal) -> f64 {
     }
 }
 
-fn map_model_cost_shares(
-    rows: Vec<(String, Decimal)>,
-    total_cost: Decimal,
-) -> Vec<ModelCostShare> {
+fn map_model_cost_shares(rows: Vec<(String, Decimal)>, total_cost: Decimal) -> Vec<ModelCostShare> {
     rows.into_iter()
         .map(|(model, cost)| ModelCostShare {
             model,
@@ -80,12 +77,14 @@ fn map_token_cost_breakdown(
     total_cost: Decimal,
 ) -> Vec<TokenCostBreakdownRow> {
     rows.into_iter()
-        .map(|(token_type, total_tokens, total_cost_amount)| TokenCostBreakdownRow {
-            token_type,
-            total_tokens,
-            total_cost: total_cost_amount,
-            percentage: share_percentage(total_cost_amount, total_cost),
-        })
+        .map(
+            |(token_type, total_tokens, total_cost_amount)| TokenCostBreakdownRow {
+                token_type,
+                total_tokens,
+                total_cost: total_cost_amount,
+                percentage: share_percentage(total_cost_amount, total_cost),
+            },
+        )
         .collect()
 }
 
@@ -206,14 +205,18 @@ pub(crate) async fn admin_billing_team_spend_ranking(
         .await
         .map_err(db_err)?
         .into_iter()
-        .map(|(team_id, team_name, total_cost, total_requests, total_tokens, active_users)| TeamSpendRankItem {
-            team_id,
-            team_name,
-            total_cost,
-            total_requests,
-            total_tokens,
-            active_users,
-        })
+        .map(
+            |(team_id, team_name, total_cost, total_requests, total_tokens, active_users)| {
+                TeamSpendRankItem {
+                    team_id,
+                    team_name,
+                    total_cost,
+                    total_requests,
+                    total_tokens,
+                    active_users,
+                }
+            },
+        )
         .collect();
 
     Ok(Json(TeamSpendRankingResponse { items }))
@@ -250,16 +253,27 @@ pub(crate) async fn admin_billing_teams(
 
     let items: Vec<TeamBillingRow> = items
         .into_iter()
-        .map(|(team_id, team_name, owner_id, total_cost, total_requests, total_tokens, active_users, last_billed_at)| TeamBillingRow {
-            team_id,
-            team_name,
-            owner_id,
-            total_cost,
-            total_requests,
-            total_tokens,
-            active_users,
-            last_billed_at,
-        })
+        .map(
+            |(
+                team_id,
+                team_name,
+                owner_id,
+                total_cost,
+                total_requests,
+                total_tokens,
+                active_users,
+                last_billed_at,
+            )| TeamBillingRow {
+                team_id,
+                team_name,
+                owner_id,
+                total_cost,
+                total_requests,
+                total_tokens,
+                active_users,
+                last_billed_at,
+            },
+        )
         .collect();
 
     Ok(Json(serde_json::json!({ "items": items, "total": total })))
@@ -296,14 +310,18 @@ pub(crate) async fn admin_billing_team_users(
 
     let items = items
         .into_iter()
-        .map(|(user_id, user_name, total_cost, total_requests, total_tokens, last_billed_at)| TeamBillingUsersRow {
-            user_id,
-            user_name,
-            total_cost,
-            total_requests,
-            total_tokens,
-            last_billed_at,
-        })
+        .map(
+            |(user_id, user_name, total_cost, total_requests, total_tokens, last_billed_at)| {
+                TeamBillingUsersRow {
+                    user_id,
+                    user_name,
+                    total_cost,
+                    total_requests,
+                    total_tokens,
+                    last_billed_at,
+                }
+            },
+        )
         .collect();
 
     Ok(Json(TeamBillingUsersResponse {
@@ -410,19 +428,26 @@ pub(crate) async fn admin_billing_team_user_api_keys(
         tracing::error!("CH team billing api-key count failed: {}", e);
         AdminError::internal("Internal server error")
     })?;
-    let items = ch.query_api_key_activity(&filter, limit, offset).await.map_err(|e| {
-        tracing::error!("CH team billing api-key query failed: {}", e);
-        AdminError::internal("Internal server error")
-    })?;
+    let items = ch
+        .query_api_key_activity(&filter, limit, offset)
+        .await
+        .map_err(|e| {
+            tracing::error!("CH team billing api-key query failed: {}", e);
+            AdminError::internal("Internal server error")
+        })?;
 
     let items = items
         .into_iter()
-        .map(|(api_key_name, total_requests, total_tokens, last_request_at)| BillingApiKeyActivityRow {
-            api_key_name,
-            total_requests,
-            total_tokens,
-            last_request_at: Some(last_request_at),
-        })
+        .map(
+            |(api_key_name, total_requests, total_tokens, last_request_at)| {
+                BillingApiKeyActivityRow {
+                    api_key_name,
+                    total_requests,
+                    total_tokens,
+                    last_request_at: Some(last_request_at),
+                }
+            },
+        )
         .collect();
 
     Ok(Json(BillingApiKeyActivityResponse {
@@ -843,7 +868,12 @@ pub(crate) async fn admin_billing_scoped_period_summary(
 
     let (total_cost, total_requests, total_tokens, token_cost_rows) = state
         .db
-        .admin_billing_scoped_period_summary(year, month, q.team_id.as_deref(), q.user_id.as_deref())
+        .admin_billing_scoped_period_summary(
+            year,
+            month,
+            q.team_id.as_deref(),
+            q.user_id.as_deref(),
+        )
         .await
         .map_err(db_err)?;
     let token_cost_breakdown = map_token_cost_breakdown(token_cost_rows, total_cost);
@@ -851,7 +881,12 @@ pub(crate) async fn admin_billing_scoped_period_summary(
     let by_model = map_model_cost_shares(
         state
             .db
-            .admin_billing_scoped_model_breakdown(year, month, q.team_id.as_deref(), q.user_id.as_deref())
+            .admin_billing_scoped_model_breakdown(
+                year,
+                month,
+                q.team_id.as_deref(),
+                q.user_id.as_deref(),
+            )
             .await
             .map_err(db_err)?,
         total_cost,
@@ -860,7 +895,12 @@ pub(crate) async fn admin_billing_scoped_period_summary(
     let by_channel = map_channel_cost_shares(
         state
             .db
-            .admin_billing_scoped_channel_breakdown(year, month, q.team_id.as_deref(), q.user_id.as_deref())
+            .admin_billing_scoped_channel_breakdown(
+                year,
+                month,
+                q.team_id.as_deref(),
+                q.user_id.as_deref(),
+            )
             .await
             .map_err(db_err)?,
         total_cost,
@@ -898,12 +938,14 @@ pub(crate) async fn admin_billing_daily_trend(
         .await
         .map_err(db_err)?
         .into_iter()
-        .map(|(date, total_cost, total_requests, total_tokens)| BillingTrendPoint {
-            date,
-            total_cost,
-            total_requests,
-            total_tokens,
-        })
+        .map(
+            |(date, total_cost, total_requests, total_tokens)| BillingTrendPoint {
+                date,
+                total_cost,
+                total_requests,
+                total_tokens,
+            },
+        )
         .collect();
 
     Ok(Json(items))
@@ -929,8 +971,8 @@ pub(crate) async fn admin_billing_user_spend_ranking_scoped(
         .await
         .map_err(db_err)?
         .into_iter()
-        .map(|(team_id, team_name, team_count, multi_team, user_id, user_name, total_cost, total_requests, total_tokens, api_key_count, last_billed_at)| {
-            AdminBillingUserSpendRow {
+        .map(
+            |(
                 team_id,
                 team_name,
                 team_count,
@@ -942,8 +984,22 @@ pub(crate) async fn admin_billing_user_spend_ranking_scoped(
                 total_tokens,
                 api_key_count,
                 last_billed_at,
-            }
-        })
+            )| {
+                AdminBillingUserSpendRow {
+                    team_id,
+                    team_name,
+                    team_count,
+                    multi_team,
+                    user_id,
+                    user_name,
+                    total_cost,
+                    total_requests,
+                    total_tokens,
+                    api_key_count,
+                    last_billed_at,
+                }
+            },
+        )
         .collect();
 
     Ok(Json(AdminBillingUserSpendRankingResponse { items }))
@@ -980,8 +1036,8 @@ pub(crate) async fn admin_billing_user_api_key_costs(
 
     let items = items
         .into_iter()
-        .map(|(api_key_name, total_cost, total_requests, total_tokens, prompt_tokens, completion_tokens, cache_hit_input_tokens, primary_model, last_request_at, _team_id, api_key_enabled, api_key)| {
-            AdminBillingUserApiKeyCostRow {
+        .map(
+            |(
                 api_key_name,
                 total_cost,
                 total_requests,
@@ -991,11 +1047,26 @@ pub(crate) async fn admin_billing_user_api_key_costs(
                 cache_hit_input_tokens,
                 primary_model,
                 last_request_at,
-                team_id: _team_id,
+                _team_id,
                 api_key_enabled,
                 api_key,
-            }
-        })
+            )| {
+                AdminBillingUserApiKeyCostRow {
+                    api_key_name,
+                    total_cost,
+                    total_requests,
+                    total_tokens,
+                    prompt_tokens,
+                    completion_tokens,
+                    cache_hit_input_tokens,
+                    primary_model,
+                    last_request_at,
+                    team_id: _team_id,
+                    api_key_enabled,
+                    api_key,
+                }
+            },
+        )
         .collect();
 
     let user_name = state
@@ -1082,18 +1153,22 @@ pub(crate) async fn admin_billing_api_key_detail(
         total_tokens,
         top_models: top_models
             .into_iter()
-            .map(|(model, total_requests, total_tokens)| AdminBillingApiKeyDetailModelRow {
-                model,
-                total_requests,
-                total_tokens,
-            })
+            .map(
+                |(model, total_requests, total_tokens)| AdminBillingApiKeyDetailModelRow {
+                    model,
+                    total_requests,
+                    total_tokens,
+                },
+            )
             .collect(),
         top_channels: top_channels
             .into_iter()
-            .map(|(channel_id, total_requests)| AdminBillingApiKeyDetailChannelRow {
-                channel_id,
-                total_requests,
-            })
+            .map(
+                |(channel_id, total_requests)| AdminBillingApiKeyDetailChannelRow {
+                    channel_id,
+                    total_requests,
+                },
+            )
             .collect(),
         recent_requests,
     }))
@@ -1123,8 +1198,8 @@ pub(crate) async fn admin_billing_user_api_key_costs_global(
 
     let items = items
         .into_iter()
-        .map(|(api_key_name, total_cost, total_requests, total_tokens, prompt_tokens, completion_tokens, cache_hit_input_tokens, primary_model, last_request_at, _team_id, api_key_enabled, api_key)| {
-            AdminBillingUserApiKeyCostRow {
+        .map(
+            |(
                 api_key_name,
                 total_cost,
                 total_requests,
@@ -1134,11 +1209,26 @@ pub(crate) async fn admin_billing_user_api_key_costs_global(
                 cache_hit_input_tokens,
                 primary_model,
                 last_request_at,
-                team_id: _team_id,
+                _team_id,
                 api_key_enabled,
                 api_key,
-            }
-        })
+            )| {
+                AdminBillingUserApiKeyCostRow {
+                    api_key_name,
+                    total_cost,
+                    total_requests,
+                    total_tokens,
+                    prompt_tokens,
+                    completion_tokens,
+                    cache_hit_input_tokens,
+                    primary_model,
+                    last_request_at,
+                    team_id: _team_id,
+                    api_key_enabled,
+                    api_key,
+                }
+            },
+        )
         .collect();
 
     let user_name = state
@@ -1212,18 +1302,22 @@ pub(crate) async fn admin_billing_api_key_detail_global(
         total_tokens,
         top_models: top_models
             .into_iter()
-            .map(|(model, total_requests, total_tokens)| AdminBillingApiKeyDetailModelRow {
-                model,
-                total_requests,
-                total_tokens,
-            })
+            .map(
+                |(model, total_requests, total_tokens)| AdminBillingApiKeyDetailModelRow {
+                    model,
+                    total_requests,
+                    total_tokens,
+                },
+            )
             .collect(),
         top_channels: top_channels
             .into_iter()
-            .map(|(channel_id, total_requests)| AdminBillingApiKeyDetailChannelRow {
-                channel_id,
-                total_requests,
-            })
+            .map(
+                |(channel_id, total_requests)| AdminBillingApiKeyDetailChannelRow {
+                    channel_id,
+                    total_requests,
+                },
+            )
             .collect(),
         recent_requests,
     }))
@@ -1334,7 +1428,12 @@ pub(crate) async fn admin_billing_deductions(
 
     let total = state
         .db
-        .admin_billing_scoped_count_daily_deductions(year, month, q.team_id.as_deref(), q.user_id.as_deref())
+        .admin_billing_scoped_count_daily_deductions(
+            year,
+            month,
+            q.team_id.as_deref(),
+            q.user_id.as_deref(),
+        )
         .await
         .map_err(db_err)?;
     let records = state

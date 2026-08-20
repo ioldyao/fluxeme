@@ -7,11 +7,10 @@
 /// Routing (no format conversion):
 /// - Client `/v1/chat/completions` → DashScope OpenAI Compatible
 /// - Client `/v1/messages` → DashScope Anthropic Compatible
-
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Instant;
 use std::time::Duration;
+use std::time::Instant;
 
 use futures::stream::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
@@ -68,27 +67,28 @@ impl DashScopeAdapter {
             DashScopeMode::OpenAI => {
                 headers.insert(
                     AUTHORIZATION,
-                    HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key))
-                        .map_err(|e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other))?,
+                    HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key)).map_err(
+                        |e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other),
+                    )?,
                 );
             }
             DashScopeMode::Anthropic => {
                 headers.insert(
                     "x-api-key",
-                    HeaderValue::from_str(&endpoint.api_key)
-                        .map_err(|e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other))?,
+                    HeaderValue::from_str(&endpoint.api_key).map_err(|e| {
+                        ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other)
+                    })?,
                 );
-                headers.insert(
-                    "anthropic-version",
-                    HeaderValue::from_static("2023-06-01"),
-                );
+                headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
             }
         }
 
         Ok(headers)
     }
 
-    async fn build_chat_completions_url(endpoint: &EndpointConfig) -> Result<String, ProviderError> {
+    async fn build_chat_completions_url(
+        endpoint: &EndpointConfig,
+    ) -> Result<String, ProviderError> {
         super::validate_endpoint_url(&endpoint.url).await?;
         let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
         Ok(format!("{}/v1/chat/completions", base))
@@ -206,7 +206,11 @@ impl DashScopeAdapter {
             let kind = classify_status(status.as_u16());
             tracing::error!(%status, body = %body_text, "Upstream stream request failed");
             return Err(ProviderError::new(
-                format!("Stream request failed with status {}: {}", status.as_u16(), body_text.trim()),
+                format!(
+                    "Stream request failed with status {}: {}",
+                    status.as_u16(),
+                    body_text.trim()
+                ),
                 kind,
             ));
         }
@@ -233,7 +237,9 @@ impl ProviderAdapter for DashScopeAdapter {
         let url = Self::build_chat_completions_url(endpoint).await?;
         let headers = Self::build_headers(endpoint, &mode)?;
         let timeout = request_timeout(
-            &RequestKind::Unary { body_size: body.to_string().len() },
+            &RequestKind::Unary {
+                body_size: body.to_string().len(),
+            },
             endpoint,
             &default_config(),
         );
@@ -263,7 +269,9 @@ impl ProviderAdapter for DashScopeAdapter {
         let url = Self::build_messages_url(endpoint).await?;
         let headers = Self::build_headers(endpoint, &mode)?;
         let timeout = request_timeout(
-            &RequestKind::Unary { body_size: body.to_string().len() },
+            &RequestKind::Unary {
+                body_size: body.to_string().len(),
+            },
             endpoint,
             &default_config(),
         );
@@ -293,7 +301,9 @@ impl ProviderAdapter for DashScopeAdapter {
         let url = Self::build_count_tokens_url(endpoint).await?;
         let headers = Self::build_headers(endpoint, &mode)?;
         let timeout = request_timeout(
-            &RequestKind::Unary { body_size: body.to_string().len() },
+            &RequestKind::Unary {
+                body_size: body.to_string().len(),
+            },
             endpoint,
             &default_config(),
         );

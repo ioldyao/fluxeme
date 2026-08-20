@@ -75,7 +75,9 @@ impl SkillHubModule {
             return Err(SkillHubError::Invalid("name is required".into()));
         }
         if self.repo.get_skill_by_slug(&slug).await?.is_some() {
-            return Err(SkillHubError::Conflict(format!("slug '{slug}' already exists")));
+            return Err(SkillHubError::Conflict(format!(
+                "slug '{slug}' already exists"
+            )));
         }
         let now = chrono::Utc::now().to_rfc3339();
         let row = SkillRow {
@@ -380,7 +382,6 @@ impl SkillHubModule {
             bytes,
         })
     }
-
 }
 
 // ── SkillRuntimeCatalog Port 实现 ───────────────────────────────────────
@@ -402,7 +403,11 @@ impl SkillRuntimeCatalog for SkillHubModule {
             .map_err(dberr_to_contract)?
             .filter(|s| s.status == "published")
             .ok_or_else(|| ContractError::NotFound(format!("skill {slug}")))?;
-        let version = if version.is_empty() { &skill.version } else { version };
+        let version = if version.is_empty() {
+            &skill.version
+        } else {
+            version
+        };
         let vrow = self
             .repo
             .get_version(&skill.id, version)
@@ -487,11 +492,7 @@ fn sanitize_filename(name: &str) -> String {
         .unwrap_or("")
         .trim()
         .to_string();
-    if base.is_empty()
-        || base.len() > 120
-        || base.contains("..")
-        || base.contains(['/', '\\'])
-    {
+    if base.is_empty() || base.len() > 120 || base.contains("..") || base.contains(['/', '\\']) {
         return String::new();
     }
     base
@@ -500,7 +501,9 @@ fn sanitize_filename(name: &str) -> String {
 /// 版本：仅 `[0-9A-Za-z._-]`，禁路径分隔符与 `..`（防路径穿越），长度 ≤64。
 fn validate_version(v: &str) -> Result<(), SkillHubError> {
     if v.is_empty() || v.len() > 64 {
-        return Err(SkillHubError::Invalid("version must be 1..=64 chars".into()));
+        return Err(SkillHubError::Invalid(
+            "version must be 1..=64 chars".into(),
+        ));
     }
     if v.contains('/') || v.contains('\\') || v.contains("..") {
         return Err(SkillHubError::Invalid("invalid version string".into()));
@@ -545,9 +548,8 @@ fn extract_manifest_yaml(bytes: &[u8]) -> Result<Option<String>, SkillHubError> 
     let entries = list_entries(&mut archive)?;
 
     let find = |name: &str| -> Option<usize> { entries.iter().position(|n| n == name) };
-    let idx = find("fluxeme.yaml").or_else(|| {
-        single_top_dir(&entries).and_then(|p| find(&format!("{p}/fluxeme.yaml")))
-    });
+    let idx = find("fluxeme.yaml")
+        .or_else(|| single_top_dir(&entries).and_then(|p| find(&format!("{p}/fluxeme.yaml"))));
     match idx {
         Some(i) => Ok(Some(read_entry(&mut archive, i)?)),
         None => Ok(None),

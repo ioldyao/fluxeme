@@ -708,6 +708,9 @@ impl<S: Stream<Item = String> + Unpin> Stream for UsageTrackingStream<S> {
                 Poll::Ready(Some(data))
             }
             Poll::Ready(None) => {
+                // A clean EOF is only successful when the stream was not
+                // terminated by the timeout wrapper. Timeout/overflow paths
+                // are represented by Drop and therefore partial-settle.
                 self.record_usage(true);
                 Poll::Ready(None)
             }
@@ -1017,7 +1020,11 @@ async fn handle_streaming(
                 original_model: orig_model.clone(),
                 team_id: team_id.clone(),
                 ttft_ms: None,
-                account_type: team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
+                account_type: team_id
+                    .as_ref()
+                    .map(|_| "team")
+                    .or(Some("user"))
+                    .map(String::from),
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -1140,7 +1147,11 @@ async fn handle_messages_streaming(
                 original_model: orig_model.clone(),
                 team_id: team_id.clone(),
                 ttft_ms: None,
-                account_type: team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
+                account_type: team_id
+                    .as_ref()
+                    .map(|_| "team")
+                    .or(Some("user"))
+                    .map(String::from),
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -1195,7 +1206,9 @@ async fn handle_non_streaming(
                     .as_u64()
                     .unwrap_or(0);
                 // OpenAI prompt_tokens includes cached tokens; subtract them.
-                let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0)
+                let prompt_tokens = resp["usage"]["prompt_tokens"]
+                    .as_u64()
+                    .unwrap_or(0)
                     .saturating_sub(cache_hit + cache_write);
 
                 let reasoning = resp
@@ -1209,7 +1222,13 @@ async fn handle_non_streaming(
 
                 let latency_ms = start.elapsed().as_millis() as u64;
                 if let Some(reservation) = &reservation {
-                    reservation.settle_usage(prompt_tokens, completion_tokens, cache_hit, true, "completed");
+                    reservation.settle_usage(
+                        prompt_tokens,
+                        completion_tokens,
+                        cache_hit,
+                        true,
+                        "completed",
+                    );
                 }
                 state.usage.record_with_endpoint(
                     UsageRecord {
@@ -1224,7 +1243,7 @@ async fn handle_non_streaming(
                         completion_tokens,
                         total_tokens: prompt_tokens + completion_tokens,
                         cache_hit_input_tokens: cache_hit,
-                cache_write_tokens: cache_write,
+                        cache_write_tokens: cache_write,
                         latency_ms,
                         status_code: 200,
                         success: true,
@@ -1243,7 +1262,11 @@ async fn handle_non_streaming(
                         original_model: orig_model.clone(),
                         team_id: team_id.clone(),
                         ttft_ms: None,
-                        account_type: team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
+                        account_type: team_id
+                            .as_ref()
+                            .map(|_| "team")
+                            .or(Some("user"))
+                            .map(String::from),
                     },
                     route.endpoint.id,
                 );
@@ -1283,6 +1306,9 @@ async fn handle_non_streaming(
                 }
             }
             Err(e) => {
+                if let Some(reservation) = &reservation {
+                    reservation.release("upstream non-retryable error");
+                }
                 // Non-retryable (4xx etc.) — don't record failure on the breaker,
                 // return immediately without retrying.
                 let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
@@ -1317,7 +1343,11 @@ async fn handle_non_streaming(
                     original_model: orig_model.clone(),
                     team_id: team_id.clone(),
                     ttft_ms: None,
-                    account_type: team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
+                    account_type: team_id
+                        .as_ref()
+                        .map(|_| "team")
+                        .or(Some("user"))
+                        .map(String::from),
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Upstream request failed");
                 return Err(GatewayError::Upstream(e.0));
@@ -1325,6 +1355,9 @@ async fn handle_non_streaming(
         }
     };
 
+    if let Some(reservation) = &reservation {
+        reservation.release("upstream retries exhausted");
+    }
     // All retry attempts exhausted without success
     let latency_ms = start.elapsed().as_millis() as u64;
     let err_body = serde_json::json!({"error": {"message": &err_msg}}).to_string();
@@ -1358,7 +1391,11 @@ async fn handle_non_streaming(
         original_model: orig_model.clone(),
         team_id: team_id.clone(),
         ttft_ms: None,
-        account_type: team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
+        account_type: team_id
+            .as_ref()
+            .map(|_| "team")
+            .or(Some("user"))
+            .map(String::from),
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -1428,7 +1465,13 @@ async fn handle_messages_non_streaming(
 
                 let latency_ms = start.elapsed().as_millis() as u64;
                 if let Some(reservation) = &reservation {
-                    reservation.settle_usage(prompt_tokens, completion_tokens, cache_hit, true, "completed");
+                    reservation.settle_usage(
+                        prompt_tokens,
+                        completion_tokens,
+                        cache_hit,
+                        true,
+                        "completed",
+                    );
                 }
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
@@ -1441,7 +1484,7 @@ async fn handle_messages_non_streaming(
                     completion_tokens,
                     total_tokens: prompt_tokens + completion_tokens,
                     cache_hit_input_tokens: cache_hit,
-                cache_write_tokens: cache_write,
+                    cache_write_tokens: cache_write,
                     latency_ms,
                     status_code: 200,
                     success: true,
@@ -1460,7 +1503,11 @@ async fn handle_messages_non_streaming(
                     original_model: orig_model.clone(),
                     team_id: team_id.clone(),
                     ttft_ms: None,
-                    account_type: team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
+                    account_type: team_id
+                        .as_ref()
+                        .map(|_| "team")
+                        .or(Some("user"))
+                        .map(String::from),
                 });
 
                 return Ok(Json(resp).into_response());
@@ -1483,6 +1530,9 @@ async fn handle_messages_non_streaming(
                 }
             }
             Err(e) => {
+                if let Some(reservation) = &reservation {
+                    reservation.release("upstream non-retryable error");
+                }
                 let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
                 let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
@@ -1515,7 +1565,11 @@ async fn handle_messages_non_streaming(
                     original_model: orig_model.clone(),
                     team_id: team_id.clone(),
                     ttft_ms: None,
-                    account_type: team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
+                    account_type: team_id
+                        .as_ref()
+                        .map(|_| "team")
+                        .or(Some("user"))
+                        .map(String::from),
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Messages upstream request failed");
                 return Err(GatewayError::Upstream(e.0));
@@ -1555,7 +1609,11 @@ async fn handle_messages_non_streaming(
         original_model: orig_model.clone(),
         team_id: team_id.clone(),
         ttft_ms: None,
-        account_type: team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
+        account_type: team_id
+            .as_ref()
+            .map(|_| "team")
+            .or(Some("user"))
+            .map(String::from),
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -1919,13 +1977,12 @@ pub async fn chat_completions(
     match result {
         Ok(inner) => inner,
         Err(_) => {
-            if let Some(reservation) = timeout_reservation {
-                let db = state.db.clone();
-                tokio::spawn(async move {
-                    let _ = db
-                        .release_token_request(&reservation.reservation_id, "handler timeout")
-                        .await;
-                });
+            if let Some(handle) = timeout_reservation {
+                crate::service::token_reservation::ReservationFinalizer::new(
+                    state.db.clone(),
+                    handle,
+                )
+                .release("handler timeout");
             }
             tracing::error!(
                 rid,
@@ -2389,13 +2446,12 @@ pub async fn messages(
     match result {
         Ok(inner) => inner,
         Err(_) => {
-            if let Some(reservation) = timeout_reservation {
-                let db = state.db.clone();
-                tokio::spawn(async move {
-                    let _ = db
-                        .release_token_request(&reservation.reservation_id, "handler timeout")
-                        .await;
-                });
+            if let Some(handle) = timeout_reservation {
+                crate::service::token_reservation::ReservationFinalizer::new(
+                    state.db.clone(),
+                    handle,
+                )
+                .release("handler timeout");
             }
             state.flow_tracker.mark_completed(&rid);
             tracing::error!(
@@ -2450,11 +2506,10 @@ async fn relay_to_upstream(
 
     let gw_cfg = state.gateway_config.read().unwrap().clone();
 
-    let (channel_id, resolved_model, upstream_model) =
-        state
-            .routing
-            .route(&user.user_id, &model, user.team_id.as_deref())
-            .await?;
+    let (channel_id, resolved_model, upstream_model) = state
+        .routing
+        .route(&user.user_id, &model, user.team_id.as_deref())
+        .await?;
     let orig_model = if model != resolved_model {
         model.clone()
     } else {
@@ -2549,7 +2604,9 @@ async fn relay_to_upstream(
                     .as_u64()
                     .unwrap_or(0);
                 // OpenAI prompt_tokens includes cached tokens; subtract them.
-                let prompt_tokens = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0)
+                let prompt_tokens = resp["usage"]["prompt_tokens"]
+                    .as_u64()
+                    .unwrap_or(0)
                     .saturating_sub(cache_hit + cache_write);
 
                 let reasoning = resp
@@ -2563,7 +2620,13 @@ async fn relay_to_upstream(
 
                 let latency_ms = start.elapsed().as_millis() as u64;
                 if let Some(reservation) = &reservation_finalizer {
-                    reservation.settle_usage(prompt_tokens, completion_tokens, cache_hit, true, "completed");
+                    reservation.settle_usage(
+                        prompt_tokens,
+                        completion_tokens,
+                        cache_hit,
+                        true,
+                        "completed",
+                    );
                 }
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
@@ -2576,7 +2639,7 @@ async fn relay_to_upstream(
                     completion_tokens,
                     total_tokens: prompt_tokens + completion_tokens,
                     cache_hit_input_tokens: cache_hit,
-                cache_write_tokens: cache_write,
+                    cache_write_tokens: cache_write,
                     latency_ms,
                     status_code: 200,
                     success: true,
@@ -2595,7 +2658,12 @@ async fn relay_to_upstream(
                     original_model: orig_model.clone(),
                     team_id: user.team_id.clone(),
                     ttft_ms: None,
-                    account_type: user.team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
+                    account_type: user
+                        .team_id
+                        .as_ref()
+                        .map(|_| "team")
+                        .or(Some("user"))
+                        .map(String::from),
                 });
 
                 return Ok(Json(resp).into_response());
@@ -2609,6 +2677,9 @@ async fn relay_to_upstream(
             }
             Err(e) if is_retryable_error(&e) => {
                 if retry_count >= gw_cfg.max_retries {
+                    if let Some(reservation) = &reservation_finalizer {
+                        reservation.release("relay retries exhausted");
+                    }
                     break e.0;
                 }
                 retry_count += 1;
@@ -2617,6 +2688,9 @@ async fn relay_to_upstream(
                 }
             }
             Err(e) => {
+                if let Some(reservation) = &reservation_finalizer {
+                    reservation.release("upstream non-retryable error");
+                }
                 let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
                 let latency_ms = start.elapsed().as_millis() as u64;
                 state.usage.record(UsageRecord {
@@ -2649,7 +2723,12 @@ async fn relay_to_upstream(
                     original_model: orig_model.clone(),
                     team_id: user.team_id.clone(),
                     ttft_ms: None,
-                    account_type: user.team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
+                    account_type: user
+                        .team_id
+                        .as_ref()
+                        .map(|_| "team")
+                        .or(Some("user"))
+                        .map(String::from),
                 });
                 return Err(GatewayError::from(e));
             }
@@ -2688,7 +2767,12 @@ async fn relay_to_upstream(
         original_model: orig_model.clone(),
         team_id: user.team_id.clone(),
         ttft_ms: None,
-        account_type: user.team_id.as_ref().map(|_| "team").or(Some("user")).map(String::from),
+        account_type: user
+            .team_id
+            .as_ref()
+            .map(|_| "team")
+            .or(Some("user"))
+            .map(String::from),
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -2744,11 +2828,10 @@ pub async fn responses(
 
     let gw_cfg = state.gateway_config.read().unwrap().clone();
 
-    let (channel_id, resolved_model, upstream_model) =
-        state
-            .routing
-            .route(&user.user_id, &model, user.team_id.as_deref())
-            .await?;
+    let (channel_id, resolved_model, upstream_model) = state
+        .routing
+        .route(&user.user_id, &model, user.team_id.as_deref())
+        .await?;
     let orig_model = if model != resolved_model {
         model.clone()
     } else {
@@ -3099,6 +3182,7 @@ async fn handle_responses_streaming(
             // Wrap the stream to capture response.completed usage
             let resp_buf = Arc::new(std::sync::Mutex::new(String::new()));
             let recorded = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let clean_eof = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let usage_state = state.usage.clone();
             let rid = request_id.clone();
             let uid = user_id.clone();
@@ -3114,6 +3198,7 @@ async fn handle_responses_streaming(
             let eurl = route.endpoint.url.clone();
             let tid = team_id.clone();
             let reservation_finalizer = reservation.clone();
+            let clean_eof2 = clean_eof.clone();
             let buf2 = resp_buf.clone();
             let rec2 = recorded.clone();
 
@@ -3130,8 +3215,24 @@ async fn handle_responses_streaming(
                 let latency_ms = st.elapsed().as_millis() as u64;
                 let buf = resp_buf.lock().unwrap().clone();
                 let (input_tokens, output_tokens, cache_hit) = parse_responses_sse_usage(&buf);
+                let completed = clean_eof2.load(std::sync::atomic::Ordering::Acquire);
                 if let Some(reservation) = &reservation_finalizer {
-                    reservation.settle_usage(input_tokens, output_tokens, cache_hit, true, "completed");
+                    if completed {
+                        reservation.settle_usage(
+                            input_tokens,
+                            output_tokens,
+                            cache_hit,
+                            true,
+                            "completed",
+                        );
+                    } else {
+                        reservation.release_partial(
+                            input_tokens,
+                            output_tokens,
+                            cache_hit,
+                            "responses stream dropped",
+                        );
+                    }
                 }
                 usage_state.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
@@ -3146,8 +3247,8 @@ async fn handle_responses_streaming(
                     cache_hit_input_tokens: cache_hit,
                     cache_write_tokens: 0,
                     latency_ms,
-                    status_code: 200,
-                    success: true,
+                    status_code: if completed { 200 } else { 499 },
+                    success: completed,
                     request_body: rbody,
                     response_body: None,
                     reasoning_body: None,
@@ -3170,6 +3271,7 @@ async fn handle_responses_streaming(
             // Wrap in a struct that calls on_done on Drop
             struct TracingStream<S> {
                 inner: S,
+                clean_eof: Arc<std::sync::atomic::AtomicBool>,
                 on_done: Option<Box<dyn FnOnce() + Send>>,
             }
             impl<S: futures::Stream<Item = String> + Unpin> futures::Stream for TracingStream<S> {
@@ -3178,7 +3280,14 @@ async fn handle_responses_streaming(
                     mut self: std::pin::Pin<&mut Self>,
                     cx: &mut std::task::Context<'_>,
                 ) -> std::task::Poll<Option<Self::Item>> {
-                    std::pin::Pin::new(&mut self.inner).poll_next(cx)
+                    let poll = std::pin::Pin::new(&mut self.inner).poll_next(cx);
+                    if matches!(poll, std::task::Poll::Ready(None)) {
+                        // Only a real upstream EOF is a successful response.
+                        // Drop remains the partial/client-disconnect path.
+                        self.clean_eof
+                            .store(true, std::sync::atomic::Ordering::Release);
+                    }
+                    poll
                 }
             }
             impl<S> Drop for TracingStream<S> {
@@ -3191,11 +3300,12 @@ async fn handle_responses_streaming(
 
             let tracing_stream = TracingStream {
                 inner: tracing_stream,
+                clean_eof,
                 on_done: Some(Box::new(on_done)),
             };
 
-            let body_stream = tracing_stream
-                .map(|data| Ok::<_, std::convert::Infallible>(Bytes::from(data)));
+            let body_stream =
+                tracing_stream.map(|data| Ok::<_, std::convert::Infallible>(Bytes::from(data)));
 
             Ok(Response::builder()
                 .header("content-type", "text/event-stream")

@@ -47,8 +47,7 @@ fn map_version_row(row: &PgRow) -> SkillVersionRow {
     }
 }
 
-const SKILL_COLUMNS: &str =
-    "id, slug, name, description, category, tags, author_id, version, \
+const SKILL_COLUMNS: &str = "id, slug, name, description, category, tags, author_id, version, \
      artifact_path, artifact_size, source_markdown, visibility, status, \
      published_at, created_at, updated_at, download_count";
 
@@ -92,11 +91,9 @@ impl SkillRepository {
         .execute(&self.pool)
         .await?;
 
-        self.exec(
-            "CREATE INDEX IF NOT EXISTS idx_agent_skills_slug ON agent_skills(slug)",
-        )
-        .execute(&self.pool)
-        .await?;
+        self.exec("CREATE INDEX IF NOT EXISTS idx_agent_skills_slug ON agent_skills(slug)")
+            .execute(&self.pool)
+            .await?;
         self.exec(
             "CREATE INDEX IF NOT EXISTS idx_agent_skills_status ON agent_skills(status, visibility)",
         )
@@ -127,11 +124,9 @@ impl SkillRepository {
         .execute(&self.pool)
         .await?;
         // 存量库升级：CREATE IF NOT EXISTS 不会给已有表加列，单独补。
-        self.exec(
-            "ALTER TABLE agent_skill_versions ADD COLUMN IF NOT EXISTS manifest_yaml TEXT",
-        )
-        .execute(&self.pool)
-        .await?;
+        self.exec("ALTER TABLE agent_skill_versions ADD COLUMN IF NOT EXISTS manifest_yaml TEXT")
+            .execute(&self.pool)
+            .await?;
         self.exec(
             "CREATE INDEX IF NOT EXISTS idx_agent_skill_versions_skill \
              ON agent_skill_versions(skill_id, version)",
@@ -286,8 +281,9 @@ impl SkillRepository {
         status: Option<&str>,
         visibility: Option<&str>,
     ) -> Result<Vec<SkillRow>, SkillHubError> {
-        let mut qb: QueryBuilder<Postgres> =
-            QueryBuilder::new(format!("SELECT {SKILL_COLUMNS} FROM agent_skills WHERE 1=1"));
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(format!(
+            "SELECT {SKILL_COLUMNS} FROM agent_skills WHERE 1=1"
+        ));
         if let Some(status) = status {
             qb.push(" AND status = ").push_bind(status);
         }
@@ -301,7 +297,9 @@ impl SkillRepository {
 
     pub async fn get_skill_by_id(&self, id: &str) -> Result<Option<SkillRow>, SkillHubError> {
         let row = self
-            .exec(&format!("SELECT {SKILL_COLUMNS} FROM agent_skills WHERE id = $1"))
+            .exec(&format!(
+                "SELECT {SKILL_COLUMNS} FROM agent_skills WHERE id = $1"
+            ))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?;
@@ -310,7 +308,9 @@ impl SkillRepository {
 
     pub async fn get_skill_by_slug(&self, slug: &str) -> Result<Option<SkillRow>, SkillHubError> {
         let row = self
-            .exec(&format!("SELECT {SKILL_COLUMNS} FROM agent_skills WHERE slug = $1"))
+            .exec(&format!(
+                "SELECT {SKILL_COLUMNS} FROM agent_skills WHERE slug = $1"
+            ))
             .bind(slug)
             .fetch_optional(&self.pool)
             .await?;
@@ -473,5 +473,4 @@ impl SkillRepository {
             .await?;
         Ok(rows.iter().map(map_version_row).collect())
     }
-
 }

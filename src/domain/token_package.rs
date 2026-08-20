@@ -53,7 +53,9 @@ impl std::str::FromStr for TokenPackageExhaustionPolicy {
         match value {
             "package_then_wallet" => Ok(Self::PackageThenWallet),
             "package_only" => Ok(Self::PackageOnly),
-            other => Err(format!("unsupported token package exhaustion policy: {other}")),
+            other => Err(format!(
+                "unsupported token package exhaustion policy: {other}"
+            )),
         }
     }
 }

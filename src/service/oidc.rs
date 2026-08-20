@@ -151,9 +151,7 @@ impl OidcResourceServer {
     /// Loaded from the `oidc_expected_audience` setting at startup and on
     /// config changes.
     pub fn set_expected_audience(&self, aud: Option<String>) {
-        let aud = aud
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
+        let aud = aud.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
         *self.expected_audience.write().unwrap() = aud;
     }
 
@@ -385,7 +383,12 @@ ULpqkdDpgi5KInL1jH4XTy1rWw8uGIuqWgghzVRrEh15rpvSeelSxPhBEWnqwK6m\n\
             let sig = parts[2].to_string();
             let mut bytes = sig.into_bytes();
             bytes[0] = if bytes[0] == b'a' { b'b' } else { b'a' };
-            token = format!("{}.{}.{}", parts[0], parts[1], String::from_utf8(bytes).unwrap());
+            token = format!(
+                "{}.{}.{}",
+                parts[0],
+                parts[1],
+                String::from_utf8(bytes).unwrap()
+            );
         }
         token
     }
@@ -409,7 +412,13 @@ ULpqkdDpgi5KInL1jH4XTy1rWw8uGIuqWgghzVRrEh15rpvSeelSxPhBEWnqwK6m\n\
     #[test]
     fn validates_well_signed_token_and_maps_subject() {
         let server = test_server();
-        let token = sign_token(TEST_ISSUER, "dev01-subject-id", 3600, false, "portal-client");
+        let token = sign_token(
+            TEST_ISSUER,
+            "dev01-subject-id",
+            3600,
+            false,
+            "portal-client",
+        );
 
         let subject = server.validate(&token).unwrap();
         assert_eq!(subject.sub, "dev01-subject-id");

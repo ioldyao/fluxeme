@@ -100,13 +100,13 @@ pub(crate) async fn create_team(
         .await
         .map_err(db_err)?;
     // Sync team roles into the team Casbin enforcer.
-    let members = state
-        .db
-        .list_team_members(&team.id)
-        .await
-        .map_err(db_err)?;
+    let members = state.db.list_team_members(&team.id).await.map_err(db_err)?;
     state.team_authz.sync_team_roles(&team.id, &members).await;
-    tracing::info!("admin={} action=create_team team={}", session.user_id, team.id);
+    tracing::info!(
+        "admin={} action=create_team team={}",
+        session.user_id,
+        team.id
+    );
     Ok(Json(team))
 }
 
@@ -141,11 +141,7 @@ pub(crate) async fn delete_team(
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:teams").await?;
-    state
-        .db
-        .delete_team(&team_id)
-        .await
-        .map_err(db_err)?;
+    state.db.delete_team(&team_id).await.map_err(db_err)?;
     // Clear the team's role bindings from the team enforcer.
     state.team_authz.sync_team_roles(&team_id, &[]).await;
     Ok(Json(serde_json::json!({ "deleted": team_id })))
@@ -180,11 +176,7 @@ pub(crate) async fn add_team_member(
         .await
         .map_err(db_err)?;
     // Resync roles after membership change.
-    let members = state
-        .db
-        .list_team_members(&team_id)
-        .await
-        .map_err(db_err)?;
+    let members = state.db.list_team_members(&team_id).await.map_err(db_err)?;
     state.team_authz.sync_team_roles(&team_id, &members).await;
     tracing::info!(
         "admin={} action=add_team_member team={} user={} role={}",
@@ -209,11 +201,7 @@ pub(crate) async fn list_team_members(
 ) -> Result<Json<Vec<TeamMember>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:teams").await?;
-    let members = state
-        .db
-        .list_team_members(&team_id)
-        .await
-        .map_err(db_err)?;
+    let members = state.db.list_team_members(&team_id).await.map_err(db_err)?;
     Ok(Json(members))
 }
 
@@ -240,11 +228,7 @@ pub(crate) async fn set_team_member_role(
         .set_team_member_role(&team_id, &user_id, role)
         .await
         .map_err(db_err)?;
-    let members = state
-        .db
-        .list_team_members(&team_id)
-        .await
-        .map_err(db_err)?;
+    let members = state.db.list_team_members(&team_id).await.map_err(db_err)?;
     state.team_authz.sync_team_roles(&team_id, &members).await;
     Ok(Json(serde_json::json!({ "updated": true })))
 }
@@ -261,15 +245,10 @@ pub(crate) async fn remove_team_member(
         .remove_team_member(&team_id, &user_id)
         .await
         .map_err(db_err)?;
-    let members = state
-        .db
-        .list_team_members(&team_id)
-        .await
-        .map_err(db_err)?;
+    let members = state.db.list_team_members(&team_id).await.map_err(db_err)?;
     state.team_authz.sync_team_roles(&team_id, &members).await;
     Ok(Json(serde_json::json!({ "removed": true })))
 }
-
 
 // ── Team Wallet (admin) ───────────────────────────────────────────
 

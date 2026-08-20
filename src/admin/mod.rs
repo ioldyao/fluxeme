@@ -146,9 +146,7 @@ impl Clone for AdminModule {
             encryption_key: self.encryption_key.clone(),
             rate_limiter: Arc::clone(&self.rate_limiter),
             db: self.db.clone(),
-            oidc: std::sync::RwLock::new(
-                self.oidc.read().unwrap().as_ref().map(Arc::clone),
-            ),
+            oidc: std::sync::RwLock::new(self.oidc.read().unwrap().as_ref().map(Arc::clone)),
         }
     }
 }
@@ -371,10 +369,7 @@ async fn require_session(
 /// issuer + expiry via JWKS) and map its `sub` to the gateway SSO user. Used
 /// by user-facing /api/* endpoints so the portal can fetch its own data with a
 /// Keycloak token, without a gateway session cookie.
-async fn require_oidc_session(
-    admin: &AdminModule,
-    token: &str,
-) -> Result<SessionInfo, AdminError> {
+async fn require_oidc_session(admin: &AdminModule, token: &str) -> Result<SessionInfo, AdminError> {
     let oidc = admin
         .oidc
         .read()

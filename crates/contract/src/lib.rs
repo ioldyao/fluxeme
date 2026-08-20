@@ -80,16 +80,30 @@ pub struct EndpointDecl {
 /// SkillHub 拥有的事件（控制面事实）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SkillHubEvent {
-    SkillPublished { skill: SkillId, version: SkillVersionId },
-    SkillDisabled  { skill: SkillId },
+    SkillPublished {
+        skill: SkillId,
+        version: SkillVersionId,
+    },
+    SkillDisabled {
+        skill: SkillId,
+    },
 }
 
 /// Skill Runtime 拥有的事件（运行面事实）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RuntimeEvent {
-    SkillRuntimeReady    { skill: SkillId, version: SkillVersionId },
-    SkillRuntimeFailed   { skill: SkillId, version: SkillVersionId, reason: String },
-    SkillRuntimeDisabled { skill: SkillId },
+    SkillRuntimeReady {
+        skill: SkillId,
+        version: SkillVersionId,
+    },
+    SkillRuntimeFailed {
+        skill: SkillId,
+        version: SkillVersionId,
+        reason: String,
+    },
+    SkillRuntimeDisabled {
+        skill: SkillId,
+    },
 }
 
 // ── Port 接口 ───────────────────────────────────────────────────────────

@@ -460,11 +460,7 @@ pub(crate) async fn my_team_members(
     {
         return Err(AdminError::not_found("Team not found"));
     }
-    let members = state
-        .db
-        .list_team_members(&team_id)
-        .await
-        .map_err(db_err)?;
+    let members = state.db.list_team_members(&team_id).await.map_err(db_err)?;
     Ok(Json(members))
 }
 
@@ -605,11 +601,7 @@ pub(crate) async fn my_team_rules(
 ) -> Result<Json<Vec<RoutingRule>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     require_team_member(&state, &session, &team_id).await?;
-    let rules = state
-        .db
-        .list_team_rules(&team_id)
-        .await
-        .map_err(db_err)?;
+    let rules = state.db.list_team_rules(&team_id).await.map_err(db_err)?;
     Ok(Json(rules))
 }
 
@@ -629,7 +621,9 @@ pub(crate) async fn create_my_team_rule(
         return Err(AdminError::forbidden("Insufficient team permissions"));
     }
     if rule.source_model.is_empty() || rule.target_model.is_empty() {
-        return Err(AdminError::bad_request("source_model and target_model are required"));
+        return Err(AdminError::bad_request(
+            "source_model and target_model are required",
+        ));
     }
     rule.id = uuid::Uuid::new_v4().to_string();
     rule.scope = "user".to_string();
@@ -653,11 +647,7 @@ pub(crate) async fn delete_my_team_rule(
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     require_team_member(&state, &session, &team_id).await?;
-    let rules = state
-        .db
-        .list_team_rules(&team_id)
-        .await
-        .map_err(db_err)?;
+    let rules = state.db.list_team_rules(&team_id).await.map_err(db_err)?;
     if !rules.iter().any(|r| r.id == rule_id) {
         return Err(AdminError::not_found("Rule not found"));
     }
@@ -677,7 +667,11 @@ async fn require_team_perm(
     perm: &str,
 ) -> Result<(), AdminError> {
     require_team_member(state, session, team_id).await?;
-    if !state.team_authz.enforce(team_id, &session.user_id, perm).await {
+    if !state
+        .team_authz
+        .enforce(team_id, &session.user_id, perm)
+        .await
+    {
         return Err(AdminError::forbidden("Insufficient team permissions"));
     }
     Ok(())
@@ -707,11 +701,7 @@ pub(crate) async fn add_my_team_member(
         .add_team_member(&team_id, &req.user_id, role)
         .await
         .map_err(db_err)?;
-    let members = state
-        .db
-        .list_team_members(&team_id)
-        .await
-        .map_err(db_err)?;
+    let members = state.db.list_team_members(&team_id).await.map_err(db_err)?;
     state.team_authz.sync_team_roles(&team_id, &members).await;
     let member = state
         .db
@@ -734,11 +724,7 @@ pub(crate) async fn remove_my_team_member(
         .remove_team_member(&team_id, &user_id)
         .await
         .map_err(db_err)?;
-    let members = state
-        .db
-        .list_team_members(&team_id)
-        .await
-        .map_err(db_err)?;
+    let members = state.db.list_team_members(&team_id).await.map_err(db_err)?;
     state.team_authz.sync_team_roles(&team_id, &members).await;
     Ok(Json(serde_json::json!({ "removed": true })))
 }
@@ -766,11 +752,7 @@ pub(crate) async fn set_my_team_member_role(
         .set_team_member_role(&team_id, &user_id, role)
         .await
         .map_err(db_err)?;
-    let members = state
-        .db
-        .list_team_members(&team_id)
-        .await
-        .map_err(db_err)?;
+    let members = state.db.list_team_members(&team_id).await.map_err(db_err)?;
     state.team_authz.sync_team_roles(&team_id, &members).await;
     Ok(Json(serde_json::json!({ "updated": true })))
 }

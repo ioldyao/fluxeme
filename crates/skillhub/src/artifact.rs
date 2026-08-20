@@ -21,12 +21,10 @@ impl LocalArtifactStore {
     /// 已在上传层校验（仅 `[0-9A-Za-z._-]`，禁 `/`、`\`、`..`）。这里兜底：
     /// 只要求最终路径落在 root 目录内（允许嵌套，仍阻断 `..`/绝对路径）。
     fn safe_path(&self, key: &str) -> Result<PathBuf, ContractError> {
-        if key.is_empty()
-            || key.contains("..")
-            || key.starts_with('/')
-            || key.contains('\\')
-        {
-            return Err(ContractError::Invalid(format!("unsafe artifact key: {key}")));
+        if key.is_empty() || key.contains("..") || key.starts_with('/') || key.contains('\\') {
+            return Err(ContractError::Invalid(format!(
+                "unsafe artifact key: {key}"
+            )));
         }
         let path = self.root.join(key);
         if !path.starts_with(&self.root) {
@@ -54,14 +52,10 @@ impl SkillArtifactStore for LocalArtifactStore {
 
     async fn get(&self, key: &str) -> Result<Vec<u8>, ContractError> {
         let path = self.safe_path(key)?;
-        tokio::fs::read(&path)
-            .await
-            .map_err(|e| match e.kind() {
-                std::io::ErrorKind::NotFound => {
-                    ContractError::NotFound(format!("artifact {key}"))
-                }
-                _ => ContractError::Storage(format!("read {}: {e}", path.display())),
-            })
+        tokio::fs::read(&path).await.map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => ContractError::NotFound(format!("artifact {key}")),
+            _ => ContractError::Storage(format!("read {}: {e}", path.display())),
+        })
     }
 
     async fn delete(&self, key: &str) -> Result<(), ContractError> {
@@ -69,7 +63,10 @@ impl SkillArtifactStore for LocalArtifactStore {
         match tokio::fs::remove_file(&path).await {
             Ok(_) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(ContractError::Storage(format!("delete {}: {e}", path.display()))),
+            Err(e) => Err(ContractError::Storage(format!(
+                "delete {}: {e}",
+                path.display()
+            ))),
         }
     }
 }

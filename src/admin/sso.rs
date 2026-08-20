@@ -89,11 +89,7 @@ pub(crate) async fn create_sso_config(
         updated_at: now,
     };
 
-    state
-        .db
-        .create_sso_config(&config)
-        .await
-        .map_err(db_err)?;
+    state.db.create_sso_config(&config).await.map_err(db_err)?;
 
     // Reload SSO configs in-memory
     state.sso.reload_configs().await;
@@ -156,11 +152,7 @@ pub(crate) async fn update_sso_config(
         updated_at: now,
     };
 
-    state
-        .db
-        .update_sso_config(&config)
-        .await
-        .map_err(db_err)?;
+    state.db.update_sso_config(&config).await.map_err(db_err)?;
 
     // Reload SSO configs in-memory
     state.sso.reload_configs().await;

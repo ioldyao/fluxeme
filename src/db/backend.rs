@@ -118,6 +118,11 @@ pub trait DbBackend: Send + Sync {
         month: u32,
         user_id: Option<&str>,
     ) -> Result<(Decimal, u64, u64), DbError>;
+    async fn period_summary_since(
+        &self,
+        start: &str,
+        user_id: Option<&str>,
+    ) -> Result<Decimal, DbError>;
     async fn period_model_breakdown(
         &self,
         year: i32,
@@ -177,7 +182,22 @@ pub trait DbBackend: Send + Sync {
         sort_order: Option<&str>,
         limit: usize,
         offset: usize,
-    ) -> Result<(Vec<(String, String, String, Decimal, u64, u64, u64, Option<String>)>, usize), DbError>;
+    ) -> Result<
+        (
+            Vec<(
+                String,
+                String,
+                String,
+                Decimal,
+                u64,
+                u64,
+                u64,
+                Option<String>,
+            )>,
+            usize,
+        ),
+        DbError,
+    >;
     async fn admin_billing_team_users_page(
         &self,
         team_id: &str,
@@ -185,7 +205,13 @@ pub trait DbBackend: Send + Sync {
         month: u32,
         limit: usize,
         offset: usize,
-    ) -> Result<(Vec<(String, String, Decimal, u64, u64, Option<String>)>, usize), DbError>;
+    ) -> Result<
+        (
+            Vec<(String, String, Decimal, u64, u64, Option<String>)>,
+            usize,
+        ),
+        DbError,
+    >;
     async fn admin_billing_scoped_period_summary(
         &self,
         year: i32,
@@ -264,10 +290,26 @@ pub trait DbBackend: Send + Sync {
         month: u32,
         limit: usize,
         offset: usize,
-    ) -> Result<(
-        Vec<(Option<String>, Decimal, u64, u64, u64, u64, u64, Option<String>, Option<String>, Option<String>, Option<bool>, Option<String>)>,
-        usize,
-    ), DbError>;
+    ) -> Result<
+        (
+            Vec<(
+                Option<String>,
+                Decimal,
+                u64,
+                u64,
+                u64,
+                u64,
+                u64,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<bool>,
+                Option<String>,
+            )>,
+            usize,
+        ),
+        DbError,
+    >;
     async fn lookup_model_pricing(
         &self,
         model_name: &str,

@@ -133,7 +133,6 @@ pub struct Database {
     pub backend: Box<dyn DbBackend>,
 }
 
-
 #[allow(dead_code)]
 impl Database {
     pub async fn new(pg_url: &str) -> Self {
@@ -363,6 +362,13 @@ impl Database {
     ) -> Result<(Decimal, u64, u64), DbError> {
         self.backend.period_summary(year, month, user_id).await
     }
+    pub async fn period_summary_since(
+        &self,
+        start: &str,
+        user_id: Option<&str>,
+    ) -> Result<Decimal, DbError> {
+        self.backend.period_summary_since(start, user_id).await
+    }
     pub async fn period_model_breakdown(
         &self,
         year: i32,
@@ -454,7 +460,22 @@ impl Database {
         sort_order: Option<&str>,
         limit: usize,
         offset: usize,
-    ) -> Result<(Vec<(String, String, String, Decimal, u64, u64, u64, Option<String>)>, usize), DbError> {
+    ) -> Result<
+        (
+            Vec<(
+                String,
+                String,
+                String,
+                Decimal,
+                u64,
+                u64,
+                u64,
+                Option<String>,
+            )>,
+            usize,
+        ),
+        DbError,
+    > {
         self.backend
             .admin_billing_teams_page(year, month, search, sort_by, sort_order, limit, offset)
             .await
@@ -466,7 +487,13 @@ impl Database {
         month: u32,
         limit: usize,
         offset: usize,
-    ) -> Result<(Vec<(String, String, Decimal, u64, u64, Option<String>)>, usize), DbError> {
+    ) -> Result<
+        (
+            Vec<(String, String, Decimal, u64, u64, Option<String>)>,
+            usize,
+        ),
+        DbError,
+    > {
         self.backend
             .admin_billing_team_users_page(team_id, year, month, limit, offset)
             .await
@@ -536,7 +563,9 @@ impl Database {
         offset: usize,
     ) -> Result<Vec<(String, Decimal, u64)>, DbError> {
         self.backend
-            .admin_billing_scoped_daily_deductions_paginated(year, month, team_id, user_id, limit, offset)
+            .admin_billing_scoped_daily_deductions_paginated(
+                year, month, team_id, user_id, limit, offset,
+            )
             .await
     }
     pub async fn admin_billing_scoped_period_summary_all(
@@ -581,10 +610,26 @@ impl Database {
         month: u32,
         limit: usize,
         offset: usize,
-    ) -> Result<(
-        Vec<(Option<String>, Decimal, u64, u64, u64, u64, u64, Option<String>, Option<String>, Option<String>, Option<bool>, Option<String>)>,
-        usize,
-    ), DbError> {
+    ) -> Result<
+        (
+            Vec<(
+                Option<String>,
+                Decimal,
+                u64,
+                u64,
+                u64,
+                u64,
+                u64,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<bool>,
+                Option<String>,
+            )>,
+            usize,
+        ),
+        DbError,
+    > {
         self.backend
             .admin_billing_user_api_keys_page(team_id, user_id, year, month, limit, offset)
             .await
@@ -758,7 +803,10 @@ impl Database {
     pub async fn get_sso_config(&self, id: &str) -> Result<Option<SsoConfigRow>, DbError> {
         self.backend.get_sso_config(id).await
     }
-    pub async fn get_sso_config_by_team(&self, team_id: &str) -> Result<Option<SsoConfigRow>, DbError> {
+    pub async fn get_sso_config_by_team(
+        &self,
+        team_id: &str,
+    ) -> Result<Option<SsoConfigRow>, DbError> {
         self.backend.get_sso_config_by_team(team_id).await
     }
     pub async fn create_sso_config(&self, config: &SsoConfigRow) -> Result<(), DbError> {
@@ -773,7 +821,11 @@ impl Database {
     pub async fn list_sso_user_orgs(&self) -> Result<Vec<(String, String)>, DbError> {
         self.backend.list_sso_user_orgs().await
     }
-    pub async fn upsert_sso_user_orgs(&self, user_id: &str, orgs_json: &str) -> Result<(), DbError> {
+    pub async fn upsert_sso_user_orgs(
+        &self,
+        user_id: &str,
+        orgs_json: &str,
+    ) -> Result<(), DbError> {
         self.backend.upsert_sso_user_orgs(user_id, orgs_json).await
     }
 
@@ -861,9 +913,21 @@ impl Database {
         created_by: &str,
     ) -> Result<TokenPackagePlanRow, DbError> {
         self.backend
-            .create_token_package_plan(id, code, name, accounting_mode, display_token_amount, total_units,
-                input_credit_factor, output_credit_factor, cache_credit_factor, exhaustion_policy,
-                priority, validity_days, created_by)
+            .create_token_package_plan(
+                id,
+                code,
+                name,
+                accounting_mode,
+                display_token_amount,
+                total_units,
+                input_credit_factor,
+                output_credit_factor,
+                cache_credit_factor,
+                exhaustion_policy,
+                priority,
+                validity_days,
+                created_by,
+            )
             .await
     }
     pub async fn list_token_package_grants(
@@ -871,7 +935,9 @@ impl Database {
         user_id: Option<&str>,
         team_id: Option<&str>,
     ) -> Result<Vec<TokenPackageGrantRow>, DbError> {
-        self.backend.list_token_package_grants(user_id, team_id).await
+        self.backend
+            .list_token_package_grants(user_id, team_id)
+            .await
     }
     pub async fn create_token_package_grant(
         &self,
@@ -884,7 +950,9 @@ impl Database {
         expires_at: Option<&str>,
     ) -> Result<TokenPackageGrantRow, DbError> {
         self.backend
-            .create_token_package_grant(grant_id, plan_id, user_id, team_id, source, note, expires_at)
+            .create_token_package_grant(
+                grant_id, plan_id, user_id, team_id, source, note, expires_at,
+            )
             .await
     }
     pub async fn reserve_token_request(
@@ -904,13 +972,31 @@ impl Database {
         reservation_id: &str,
         reason: &str,
     ) -> Result<(), DbError> {
-        self.backend.release_token_request(reservation_id, reason).await
+        self.backend
+            .release_token_request(reservation_id, reason)
+            .await
     }
-    pub async fn token_request_billing_amount(&self, request_id: &str) -> Result<Option<(bool, Decimal)>, DbError> {
+    pub async fn token_request_billing_amount(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<(bool, Decimal)>, DbError> {
         self.backend.token_request_billing_amount(request_id).await
     }
-    pub async fn settle_released_token_request(&self, request_id: &str, prompt_tokens: u64, completion_tokens: u64, cache_hit_input_tokens: u64) -> Result<(), DbError> {
-        self.backend.settle_released_token_request(request_id, prompt_tokens, completion_tokens, cache_hit_input_tokens).await
+    pub async fn settle_released_token_request(
+        &self,
+        request_id: &str,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        cache_hit_input_tokens: u64,
+    ) -> Result<(), DbError> {
+        self.backend
+            .settle_released_token_request(
+                request_id,
+                prompt_tokens,
+                completion_tokens,
+                cache_hit_input_tokens,
+            )
+            .await
     }
 
     // ── Content Filter Rules ─────────────────────────────────────────────

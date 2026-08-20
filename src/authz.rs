@@ -205,7 +205,11 @@ impl TeamAuthzModule {
                 .unwrap_or(&[]);
             for perm in perms {
                 let _ = e
-                    .add_policy(vec![role.to_string(), team_id.to_string(), perm.to_string()])
+                    .add_policy(vec![
+                        role.to_string(),
+                        team_id.to_string(),
+                        perm.to_string(),
+                    ])
                     .await;
             }
         }
@@ -232,7 +236,10 @@ impl TeamAuthzModule {
         let mut by_team: std::collections::HashMap<String, Vec<TeamMember>> =
             std::collections::HashMap::new();
         for m in &members {
-            by_team.entry(m.team_id.clone()).or_default().push(m.clone());
+            by_team
+                .entry(m.team_id.clone())
+                .or_default()
+                .push(m.clone());
         }
         for (team_id, team_members) in &by_team {
             self.sync_team_roles(team_id, team_members).await;
@@ -251,7 +258,7 @@ impl Clone for TeamAuthzModule {
 
 #[cfg(test)]
 mod team_authz_tests {
-    use super::{TEAM_ROLE_PERMISSIONS, TeamAuthzModule};
+    use super::{TeamAuthzModule, TEAM_ROLE_PERMISSIONS};
     use crate::domain::team::TeamMember;
 
     fn member(user_id: &str, role: &str) -> TeamMember {

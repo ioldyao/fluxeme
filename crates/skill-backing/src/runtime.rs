@@ -235,14 +235,22 @@ impl SkillBackingModule {
 
         // ① API Key 鉴权 + ③ scope 校验（skill:{slug}:invoke）
         let principal = match self.bearer(headers) {
-            Some(bearer) => match self.authorizer.authorize(&bearer, "skill", slug, "invoke").await
+            Some(bearer) => match self
+                .authorizer
+                .authorize(&bearer, "skill", slug, "invoke")
+                .await
             {
                 Ok(p) => p,
                 Err(_) => {
                     return json_error(
                         StatusCode::UNAUTHORIZED,
                         "unauthorized: API key lacks skill:{slug}:invoke scope",
-                        start, slug, method, rest_path, "", "",
+                        start,
+                        slug,
+                        method,
+                        rest_path,
+                        "",
+                        "",
                     )
                 }
             },
@@ -250,7 +258,12 @@ impl SkillBackingModule {
                 return json_error(
                     StatusCode::UNAUTHORIZED,
                     "missing Authorization: Bearer <api-key>",
-                    start, slug, method, rest_path, "", "",
+                    start,
+                    slug,
+                    method,
+                    rest_path,
+                    "",
+                    "",
                 )
             }
         };
@@ -262,7 +275,12 @@ impl SkillBackingModule {
                 return json_error(
                     StatusCode::NOT_FOUND,
                     "skill not found or not published",
-                    start, slug, method, rest_path, &principal.user_id, &principal.api_key_id,
+                    start,
+                    slug,
+                    method,
+                    rest_path,
+                    &principal.user_id,
+                    &principal.api_key_id,
                 )
             }
         };
@@ -283,7 +301,12 @@ impl SkillBackingModule {
                 return json_error(
                     StatusCode::NOT_FOUND,
                     "endpoint not found",
-                    start, slug, method, rest_path, &principal.user_id, &principal.api_key_id,
+                    start,
+                    slug,
+                    method,
+                    rest_path,
+                    &principal.user_id,
+                    &principal.api_key_id,
                 )
             }
         };
@@ -292,7 +315,12 @@ impl SkillBackingModule {
             return json_error(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 &e.to_string(),
-                start, slug, method, rest_path, &principal.user_id, &principal.api_key_id,
+                start,
+                slug,
+                method,
+                rest_path,
+                &principal.user_id,
+                &principal.api_key_id,
             );
         }
 
@@ -325,7 +353,12 @@ impl SkillBackingModule {
                 return json_error(
                     StatusCode::BAD_GATEWAY,
                     &msg,
-                    start, slug, method, rest_path, &principal.user_id, &principal.api_key_id,
+                    start,
+                    slug,
+                    method,
+                    rest_path,
+                    &principal.user_id,
+                    &principal.api_key_id,
                 );
             }
         };
@@ -340,13 +373,26 @@ impl SkillBackingModule {
                 return json_error(
                     StatusCode::BAD_GATEWAY,
                     "upstream body read error",
-                    start, slug, method, rest_path, &principal.user_id, &principal.api_key_id,
+                    start,
+                    slug,
+                    method,
+                    rest_path,
+                    &principal.user_id,
+                    &principal.api_key_id,
                 );
             }
         };
 
-        self.meter(start, slug, &manifest, method, &path, status.as_u16(), &principal)
-            .await;
+        self.meter(
+            start,
+            slug,
+            &manifest,
+            method,
+            &path,
+            status.as_u16(),
+            &principal,
+        )
+        .await;
 
         let mut resp = Response::new(Body::from(body));
         *resp.status_mut() = status;
@@ -423,7 +469,9 @@ fn json_error(
     .to_string();
     let mut resp = Response::new(Body::from(body));
     *resp.status_mut() = status;
-    resp.headers_mut()
-        .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
     resp
 }

@@ -173,52 +173,6 @@ pub(crate) async fn dashboard_aggregations(
         Some(&session.user_id)
     };
 
-    // Load model pricing map once
-    let models = state.db.list_models().await.unwrap_or_default();
-    let mut pricing: std::collections::HashMap<String, (Decimal, Decimal, Decimal)> =
-        std::collections::HashMap::new();
-    for m in &models {
-        pricing.insert(
-            m.name.clone(),
-            (
-                m.pricing.prompt_price,
-                m.pricing.completion_price,
-                m.pricing.cache_read_price,
-            ),
-        );
-        pricing.insert(
-            m.model_pattern.clone(),
-            (
-                m.pricing.prompt_price,
-                m.pricing.completion_price,
-                m.pricing.cache_read_price,
-            ),
-        );
-    }
-
-    // Build sorted prefix list for glob pattern matching (O(log n) per lookup)
-    let mut prefix_prices: Vec<(&str, (Decimal, Decimal, Decimal))> = pricing
-        .iter()
-        .filter_map(|(k, v)| k.strip_suffix('*').map(|p| (p, *v)))
-        .collect();
-    prefix_prices.sort_by_key(|b| std::cmp::Reverse(b.0.len())); // most specific first
-
-    fn lookup_price<'a>(
-        model_name: &str,
-        pricing: &'a std::collections::HashMap<String, (Decimal, Decimal, Decimal)>,
-        prefix_prices: &'a [(&str, (Decimal, Decimal, Decimal))],
-    ) -> (Decimal, Decimal, Decimal) {
-        if let Some(price) = pricing.get(model_name) {
-            return *price;
-        }
-        for (prefix, price) in prefix_prices {
-            if model_name.starts_with(prefix) {
-                return *price;
-            }
-        }
-        (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO)
-    }
-
     // All-time totals remain on PostgreSQL billing metadata because ClickHouse
     // data is TTL-limited. This does not read the PostgreSQL observability API.
     let billing_months = if let Some(uid) = user_filter {
@@ -261,24 +215,19 @@ pub(crate) async fn dashboard_aggregations(
         }));
     }
 
-    // Compute cost from 24h records (loads only token + model columns).
+    // Cost is a PostgreSQL billing fact. ClickHouse supplies only telemetry;
+    // never re-price historical or package-backed requests with current model prices.
+    let total_cost_24h = state
+        .db
+        .period_summary_since(&since_24h, user_filter)
+        .await
+        .map_err(db_err)?;
     let records = ch
         .query_usage_since(&since_24h, user_filter)
         .await
         .map_err(AdminError::internal)?;
-    let mut total_cost_24h = Decimal::ZERO;
     let mut model_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for r in &records {
-        let (pp, cp, crp) = if r.prompt_price > Decimal::ZERO || r.completion_price > Decimal::ZERO
-        {
-            (r.prompt_price, r.completion_price, r.cache_read_price)
-        } else {
-            lookup_price(&r.model, &pricing, &prefix_prices)
-        };
-        let cost = (Decimal::from(r.prompt_tokens) / Decimal::from(1000000) * pp)
-            + (Decimal::from(r.completion_tokens) / Decimal::from(1000000) * cp)
-            + (Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000) * crp);
-        total_cost_24h += cost;
         *model_counts.entry(r.model.clone()).or_default() += 1;
     }
 
@@ -335,50 +284,6 @@ pub(crate) async fn self_dashboard_aggregations(
     let since_24h = since_local_days_ago(1, offset);
     let user_filter: Option<&str> = Some(&session.user_id);
 
-    let models = state.db.list_models().await.unwrap_or_default();
-    let mut pricing: std::collections::HashMap<String, (Decimal, Decimal, Decimal)> =
-        std::collections::HashMap::new();
-    for m in &models {
-        pricing.insert(
-            m.name.clone(),
-            (
-                m.pricing.prompt_price,
-                m.pricing.completion_price,
-                m.pricing.cache_read_price,
-            ),
-        );
-        pricing.insert(
-            m.model_pattern.clone(),
-            (
-                m.pricing.prompt_price,
-                m.pricing.completion_price,
-                m.pricing.cache_read_price,
-            ),
-        );
-    }
-
-    let mut prefix_prices: Vec<(&str, (Decimal, Decimal, Decimal))> = pricing
-        .iter()
-        .filter_map(|(k, v)| k.strip_suffix('*').map(|p| (p, *v)))
-        .collect();
-    prefix_prices.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
-
-    fn lookup_price<'a>(
-        model_name: &str,
-        pricing: &'a std::collections::HashMap<String, (Decimal, Decimal, Decimal)>,
-        prefix_prices: &'a [(&str, (Decimal, Decimal, Decimal))],
-    ) -> (Decimal, Decimal, Decimal) {
-        if let Some(price) = pricing.get(model_name) {
-            return *price;
-        }
-        for (prefix, price) in prefix_prices {
-            if model_name.starts_with(prefix) {
-                return *price;
-            }
-        }
-        (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO)
-    }
-
     let billing_months = state
         .db
         .period_summary_for_user(&session.user_id)
@@ -415,23 +320,17 @@ pub(crate) async fn self_dashboard_aggregations(
         }));
     }
 
+    let total_cost_24h = state
+        .db
+        .period_summary_since(&since_24h, user_filter)
+        .await
+        .map_err(db_err)?;
     let records = ch
         .query_usage_since(&since_24h, user_filter)
         .await
         .map_err(AdminError::internal)?;
-    let mut total_cost_24h = Decimal::ZERO;
     let mut model_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for r in &records {
-        let (pp, cp, crp) = if r.prompt_price > Decimal::ZERO || r.completion_price > Decimal::ZERO
-        {
-            (r.prompt_price, r.completion_price, r.cache_read_price)
-        } else {
-            lookup_price(&r.model, &pricing, &prefix_prices)
-        };
-        let cost = (Decimal::from(r.prompt_tokens) / Decimal::from(1000000) * pp)
-            + (Decimal::from(r.completion_tokens) / Decimal::from(1000000) * cp)
-            + (Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000) * crp);
-        total_cost_24h += cost;
         *model_counts.entry(r.model.clone()).or_default() += 1;
     }
 

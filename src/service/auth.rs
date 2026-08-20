@@ -142,9 +142,10 @@ impl AuthService {
                         Some(user) if user.status == USER_STATUS_ACTIVE => Ok(AuthResult {
                             user_id: user.id.clone(),
                             user_name: user.name.clone(),
-                            rate_limits: user.rate_limits.as_ref().map(|rl| {
-                                (rl.rpm.unwrap_or(u64::MAX), rl.tpm.unwrap_or(u64::MAX))
-                            }),
+                            rate_limits: user
+                                .rate_limits
+                                .as_ref()
+                                .map(|rl| (rl.rpm.unwrap_or(u64::MAX), rl.tpm.unwrap_or(u64::MAX))),
                             allowed_models: None,
                             api_key_name: "oidc".to_string(),
                             concurrency_limit: user.concurrency_limit,
@@ -160,7 +161,8 @@ impl AuthService {
                                 "Valid OIDC token but no matching SSO user; log into the gateway SSO once first"
                             );
                             Err(AuthError(
-                                "OIDC identity has no gateway account; sign in via SSO first".into(),
+                                "OIDC identity has no gateway account; sign in via SSO first"
+                                    .into(),
                             ))
                         }
                     };

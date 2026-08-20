@@ -163,10 +163,22 @@ pub(crate) async fn auth_session(
 
     // Build granted permissions list
     let all_known = [
-        "admin:dashboard", "admin:users", "admin:channels", "admin:models",
-        "admin:model-pricing", "admin:rules", "admin:moderation", "admin:usage",
-        "admin:bills", "admin:recharge-keys", "admin:health", "admin:settings",
-        "admin:gateway", "admin:policies", "admin:announcements", "admin:teams",
+        "admin:dashboard",
+        "admin:users",
+        "admin:channels",
+        "admin:models",
+        "admin:model-pricing",
+        "admin:rules",
+        "admin:moderation",
+        "admin:usage",
+        "admin:bills",
+        "admin:recharge-keys",
+        "admin:health",
+        "admin:settings",
+        "admin:gateway",
+        "admin:policies",
+        "admin:announcements",
+        "admin:teams",
     ];
     let mut permissions = Vec::new();
     for perm in &all_known {

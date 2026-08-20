@@ -214,11 +214,22 @@ impl SsoModule {
     }
 
     pub fn providers(&self) -> Vec<LiveSsoConfig> {
-        self.configs.read().unwrap().iter().filter(|c| c.enabled).cloned().collect()
+        self.configs
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|c| c.enabled)
+            .cloned()
+            .collect()
     }
 
     pub fn find_config(&self, config_id: &str) -> Option<LiveSsoConfig> {
-        self.configs.read().unwrap().iter().find(|c| c.id == config_id).cloned()
+        self.configs
+            .read()
+            .unwrap()
+            .iter()
+            .find(|c| c.id == config_id)
+            .cloned()
     }
 
     /// Find the first enabled config matching an optional team_id.
@@ -420,9 +431,7 @@ impl SsoModule {
                 };
                 db.add_team_member(team_id, &user.id, role)
                     .await
-                    .map_err(|e| {
-                        AdminError::internal(format!("Failed to auto-join team: {e}"))
-                    })?;
+                    .map_err(|e| AdminError::internal(format!("Failed to auto-join team: {e}")))?;
                 tracing::info!(
                     "SSO auto-joined user {} to team {} with role {}",
                     user.id,

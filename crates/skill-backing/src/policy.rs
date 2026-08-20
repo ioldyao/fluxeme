@@ -102,7 +102,9 @@ impl UpstreamPolicy {
                 self.check_ip(&addr.ip())?;
             }
             if !found {
-                return Err(PolicyError::Invalid(format!("dns resolve {host}: no addresses")));
+                return Err(PolicyError::Invalid(format!(
+                    "dns resolve {host}: no addresses"
+                )));
             }
         }
         Ok(u)

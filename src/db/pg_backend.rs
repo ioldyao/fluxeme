@@ -929,6 +929,7 @@ impl DbBackend for PgBackend {
                 reserved_prompt_tokens BIGINT NOT NULL DEFAULT 0,
                 reserved_completion_tokens BIGINT NOT NULL DEFAULT 0,
                 reserved_package_units BIGINT NOT NULL DEFAULT 0,
+                reserved_total_units BIGINT NOT NULL DEFAULT 0,
                 reserved_wallet_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
                 actual_prompt_tokens BIGINT,
                 actual_completion_tokens BIGINT,
@@ -979,6 +980,7 @@ impl DbBackend for PgBackend {
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_prompt_tokens BIGINT NOT NULL DEFAULT 0",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_completion_tokens BIGINT NOT NULL DEFAULT 0",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_total_units BIGINT NOT NULL DEFAULT 0",
             "ALTER TABLE token_package_plans ALTER COLUMN input_credit_factor TYPE DOUBLE PRECISION USING input_credit_factor::double precision",
             "ALTER TABLE token_package_plans ALTER COLUMN output_credit_factor TYPE DOUBLE PRECISION USING output_credit_factor::double precision",
             "ALTER TABLE token_package_plans ALTER COLUMN cache_credit_factor TYPE DOUBLE PRECISION USING cache_credit_factor::double precision",
@@ -1076,6 +1078,7 @@ impl DbBackend for PgBackend {
                 team_id TEXT PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
                 balance DOUBLE PRECISION NOT NULL DEFAULT 0.0,
                 frozen DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                token_wallet_reserved DOUBLE PRECISION NOT NULL DEFAULT 0.0,
                 updated_at TEXT NOT NULL DEFAULT (now() AT TIME ZONE 'utc')
             )",
         )
@@ -2643,6 +2646,28 @@ impl DbBackend for PgBackend {
         ))
     }
 
+    async fn period_summary_since(
+        &self,
+        start: &str,
+        user_id: Option<&str>,
+    ) -> Result<Decimal, DbError> {
+        let cost: f64 = if let Some(uid) = user_id {
+            query_scalar("SELECT COALESCE(SUM(cost_amount), 0) FROM billing_events WHERE timestamp >= $1 AND user_id = $2")
+                .bind(start)
+                .bind(uid)
+                .fetch_one(&self.pool)
+                .await?
+        } else {
+            query_scalar(
+                "SELECT COALESCE(SUM(cost_amount), 0) FROM billing_events WHERE timestamp >= $1",
+            )
+            .bind(start)
+            .fetch_one(&self.pool)
+            .await?
+        };
+        Ok(Decimal::try_from(cost).unwrap_or(Decimal::ZERO))
+    }
+
     async fn period_model_breakdown(
         &self,
         year: i32,
@@ -2980,16 +3005,18 @@ impl DbBackend for PgBackend {
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(team_id, team_name, total_cost, total_requests, total_tokens, active_users)| {
-                (
-                    team_id,
-                    team_name,
-                    Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
-                    total_requests as u64,
-                    total_tokens as u64,
-                    active_users as u64,
-                )
-            })
+            .map(
+                |(team_id, team_name, total_cost, total_requests, total_tokens, active_users)| {
+                    (
+                        team_id,
+                        team_name,
+                        Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
+                        total_requests as u64,
+                        total_tokens as u64,
+                        active_users as u64,
+                    )
+                },
+            )
             .collect())
     }
 
@@ -3002,21 +3029,80 @@ impl DbBackend for PgBackend {
         sort_order: Option<&str>,
         limit: usize,
         offset: usize,
-    ) -> Result<(Vec<(String, String, String, Decimal, u64, u64, u64, Option<String>)>, usize), DbError> {
+    ) -> Result<
+        (
+            Vec<(
+                String,
+                String,
+                String,
+                Decimal,
+                u64,
+                u64,
+                u64,
+                Option<String>,
+            )>,
+            usize,
+        ),
+        DbError,
+    > {
         let start = format!("{}-{:02}-01T00:00:00", year, month);
         let end = if month == 12 {
             format!("{}-01-01T00:00:00", year + 1)
         } else {
             format!("{}-{:02}-01T00:00:00", year, month + 1)
         };
-        let search_term = search.filter(|value| !value.trim().is_empty()).map(|value| format!("%{}%", value.trim()));
+        let search_term = search
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| format!("%{}%", value.trim()));
         let (sort_expr, sort_dir) = match sort_by.unwrap_or("total_cost") {
-            "team_name" => ("team_name", if sort_order == Some("asc") { "ASC" } else { "DESC" }),
-            "total_requests" => ("total_requests", if sort_order == Some("asc") { "ASC" } else { "DESC" }),
-            "total_tokens" => ("total_tokens", if sort_order == Some("asc") { "ASC" } else { "DESC" }),
-            "active_users" => ("active_users", if sort_order == Some("asc") { "ASC" } else { "DESC" }),
-            "last_billed_at" => ("last_billed_at", if sort_order == Some("asc") { "ASC" } else { "DESC" }),
-            _ => ("total_cost", if sort_order == Some("asc") { "ASC" } else { "DESC" }),
+            "team_name" => (
+                "team_name",
+                if sort_order == Some("asc") {
+                    "ASC"
+                } else {
+                    "DESC"
+                },
+            ),
+            "total_requests" => (
+                "total_requests",
+                if sort_order == Some("asc") {
+                    "ASC"
+                } else {
+                    "DESC"
+                },
+            ),
+            "total_tokens" => (
+                "total_tokens",
+                if sort_order == Some("asc") {
+                    "ASC"
+                } else {
+                    "DESC"
+                },
+            ),
+            "active_users" => (
+                "active_users",
+                if sort_order == Some("asc") {
+                    "ASC"
+                } else {
+                    "DESC"
+                },
+            ),
+            "last_billed_at" => (
+                "last_billed_at",
+                if sort_order == Some("asc") {
+                    "ASC"
+                } else {
+                    "DESC"
+                },
+            ),
+            _ => (
+                "total_cost",
+                if sort_order == Some("asc") {
+                    "ASC"
+                } else {
+                    "DESC"
+                },
+            ),
         };
 
         let base_cte = "WITH team_billing AS ( \
@@ -3095,18 +3181,29 @@ impl DbBackend for PgBackend {
 
         Ok((
             rows.into_iter()
-                .map(|(team_id, team_name, owner_id, total_cost, total_requests, total_tokens, active_users, last_billed_at)| {
-                    (
+                .map(
+                    |(
                         team_id,
                         team_name,
                         owner_id,
-                        Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
-                        total_requests as u64,
-                        total_tokens as u64,
-                        active_users as u64,
+                        total_cost,
+                        total_requests,
+                        total_tokens,
+                        active_users,
                         last_billed_at,
-                    )
-                })
+                    )| {
+                        (
+                            team_id,
+                            team_name,
+                            owner_id,
+                            Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
+                            total_requests as u64,
+                            total_tokens as u64,
+                            active_users as u64,
+                            last_billed_at,
+                        )
+                    },
+                )
                 .collect(),
             total as usize,
         ))
@@ -3119,7 +3216,13 @@ impl DbBackend for PgBackend {
         month: u32,
         limit: usize,
         offset: usize,
-    ) -> Result<(Vec<(String, String, Decimal, u64, u64, Option<String>)>, usize), DbError> {
+    ) -> Result<
+        (
+            Vec<(String, String, Decimal, u64, u64, Option<String>)>,
+            usize,
+        ),
+        DbError,
+    > {
         let start = format!("{}-{:02}-01T00:00:00", year, month);
         let end = if month == 12 {
             format!("{}-01-01T00:00:00", year + 1)
@@ -3165,16 +3268,25 @@ impl DbBackend for PgBackend {
 
         Ok((
             rows.into_iter()
-                .map(|(user_id, user_name, total_cost, total_requests, total_tokens, last_billed_at)| {
-                    (
+                .map(
+                    |(
                         user_id,
                         user_name,
-                        Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
-                        total_requests as u64,
-                        total_tokens as u64,
+                        total_cost,
+                        total_requests,
+                        total_tokens,
                         last_billed_at,
-                    )
-                })
+                    )| {
+                        (
+                            user_id,
+                            user_name,
+                            Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
+                            total_requests as u64,
+                            total_tokens as u64,
+                            last_billed_at,
+                        )
+                    },
+                )
                 .collect(),
             total as usize,
         ))
@@ -3193,7 +3305,17 @@ impl DbBackend for PgBackend {
         } else {
             format!("{}-{:02}-01T00:00:00", year, month + 1)
         };
-        let (cost, count, tokens, prompt_tokens, prompt_cost, cache_tokens, cache_cost, completion_tokens, completion_cost): (f64, i64, i64, i64, f64, i64, f64, i64, f64) = if let Some(uid) = user_id {
+        let (
+            cost,
+            count,
+            tokens,
+            prompt_tokens,
+            prompt_cost,
+            cache_tokens,
+            cache_cost,
+            completion_tokens,
+            completion_cost,
+        ): (f64, i64, i64, i64, f64, i64, f64, i64, f64) = if let Some(uid) = user_id {
             if let Some(tid) = team_id {
                 query_as(
                     "SELECT COALESCE(SUM(cost_amount), 0), \
@@ -3835,22 +3957,36 @@ impl DbBackend for PgBackend {
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(team_id, team_name, team_count, multi_team, user_id, user_name, total_cost, total_requests, total_tokens, api_key_count, last_billed_at)| {
-                let fallback_user_name = user_id.clone();
-                (
+            .map(
+                |(
                     team_id,
                     team_name,
-                    team_count as u64,
+                    team_count,
                     multi_team,
                     user_id,
-                    user_name.unwrap_or(fallback_user_name),
-                    Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
-                    total_requests as u64,
-                    total_tokens as u64,
-                    api_key_count as u64,
+                    user_name,
+                    total_cost,
+                    total_requests,
+                    total_tokens,
+                    api_key_count,
                     last_billed_at,
-                )
-            })
+                )| {
+                    let fallback_user_name = user_id.clone();
+                    (
+                        team_id,
+                        team_name,
+                        team_count as u64,
+                        multi_team,
+                        user_id,
+                        user_name.unwrap_or(fallback_user_name),
+                        Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
+                        total_requests as u64,
+                        total_tokens as u64,
+                        api_key_count as u64,
+                        last_billed_at,
+                    )
+                },
+            )
             .collect())
     }
 
@@ -3862,10 +3998,26 @@ impl DbBackend for PgBackend {
         month: u32,
         limit: usize,
         offset: usize,
-    ) -> Result<(
-        Vec<(Option<String>, Decimal, u64, u64, u64, u64, u64, Option<String>, Option<String>, Option<String>, Option<bool>, Option<String>)>,
-        usize,
-    ), DbError> {
+    ) -> Result<
+        (
+            Vec<(
+                Option<String>,
+                Decimal,
+                u64,
+                u64,
+                u64,
+                u64,
+                u64,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<bool>,
+                Option<String>,
+            )>,
+            usize,
+        ),
+        DbError,
+    > {
         let start = format!("{}-{:02}-01T00:00:00", year, month);
         let end = if month == 12 {
             format!("{}-01-01T00:00:00", year + 1)
@@ -4023,22 +4175,37 @@ impl DbBackend for PgBackend {
 
         Ok((
             rows.into_iter()
-                .map(|(api_key_name, total_cost, total_requests, total_tokens, prompt_tokens, completion_tokens, cache_hit_input_tokens, primary_model, last_request_at, team_id, api_key_enabled, api_key)| {
-                    (
+                .map(
+                    |(
                         api_key_name,
-                        Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
-                        total_requests as u64,
-                        total_tokens as u64,
-                        prompt_tokens as u64,
-                        completion_tokens as u64,
-                        cache_hit_input_tokens as u64,
+                        total_cost,
+                        total_requests,
+                        total_tokens,
+                        prompt_tokens,
+                        completion_tokens,
+                        cache_hit_input_tokens,
                         primary_model,
                         last_request_at,
                         team_id,
                         api_key_enabled,
                         api_key,
-                    )
-                })
+                    )| {
+                        (
+                            api_key_name,
+                            Decimal::try_from(total_cost).unwrap_or(Decimal::ZERO),
+                            total_requests as u64,
+                            total_tokens as u64,
+                            prompt_tokens as u64,
+                            completion_tokens as u64,
+                            cache_hit_input_tokens as u64,
+                            primary_model,
+                            last_request_at,
+                            team_id,
+                            api_key_enabled,
+                            api_key,
+                        )
+                    },
+                )
                 .collect(),
             total as usize,
         ))
@@ -5130,7 +5297,7 @@ impl DbBackend for PgBackend {
                 .account_type
                 .clone()
                 .unwrap_or_else(|| "user".to_string());
-            query(
+            let billing_inserted = query(
                 "INSERT INTO billing_events (\
                  timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, cache_hit_input_tokens, \
@@ -5173,6 +5340,9 @@ impl DbBackend for PgBackend {
             .bind(&account_type)
             .execute(&mut *tx)
             .await?;
+            if billing_inserted.rows_affected() == 0 {
+                continue;
+            }
 
             // Requests using reserve+settle already performed their authoritative
             // package/wallet charge synchronously. The background usage writer only
@@ -5215,8 +5385,12 @@ impl DbBackend for PgBackend {
                     .fetch_one(&mut *tx)
                     .await?;
 
-                    let reserved: f64 = query_scalar("SELECT token_wallet_reserved FROM team_wallets WHERE team_id = $1")
-                        .bind(team_id).fetch_one(&mut *tx).await?;
+                    let reserved: f64 = query_scalar(
+                        "SELECT token_wallet_reserved FROM team_wallets WHERE team_id = $1",
+                    )
+                    .bind(team_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
                     let spendable = balance - frozen - reserved;
                     if spendable < cost_amount {
                         return Err(DbError("insufficient team wallet balance".to_string()));
@@ -5369,15 +5543,24 @@ impl DbBackend for PgBackend {
         .fetch_one(&self.pool)
         .await?;
         Ok(crate::domain::token_package::TokenPackagePlanRow {
-            id: row.try_get(0)?, code: row.try_get(1)?, name: row.try_get(2)?,
+            id: row.try_get(0)?,
+            code: row.try_get(1)?,
+            name: row.try_get(2)?,
             accounting_mode: row.try_get::<String, _>(3)?.parse().map_err(DbError)?,
             display_token_amount: row.try_get::<i64, _>(4)?.max(0) as u64,
             total_units: row.try_get::<i64, _>(5)?.max(0) as u64,
-            input_credit_factor: Decimal::try_from(row.try_get::<f64, _>(6)?).unwrap_or(Decimal::ONE),
-            output_credit_factor: Decimal::try_from(row.try_get::<f64, _>(7)?).unwrap_or(Decimal::ONE),
-            cache_credit_factor: Decimal::try_from(row.try_get::<f64, _>(8)?).unwrap_or(Decimal::ZERO),
-            exhaustion_policy: row.try_get::<String, _>(9)?.parse().map_err(DbError)?, priority: row.try_get(10)?,
-            validity_days: row.try_get(11)?, status: row.try_get(12)?, created_at: row.try_get(13)?, updated_at: row.try_get(14)?,
+            input_credit_factor: Decimal::try_from(row.try_get::<f64, _>(6)?)
+                .unwrap_or(Decimal::ONE),
+            output_credit_factor: Decimal::try_from(row.try_get::<f64, _>(7)?)
+                .unwrap_or(Decimal::ONE),
+            cache_credit_factor: Decimal::try_from(row.try_get::<f64, _>(8)?)
+                .unwrap_or(Decimal::ZERO),
+            exhaustion_policy: row.try_get::<String, _>(9)?.parse().map_err(DbError)?,
+            priority: row.try_get(10)?,
+            validity_days: row.try_get(11)?,
+            status: row.try_get(12)?,
+            created_at: row.try_get(13)?,
+            updated_at: row.try_get(14)?,
         })
     }
 
@@ -5389,7 +5572,9 @@ impl DbBackend for PgBackend {
         .fetch_one(&self.pool)
         .await?;
         if active_grants > 0 {
-            return Err(DbError("cannot delete a plan with active grants".to_string()));
+            return Err(DbError(
+                "cannot delete a plan with active grants".to_string(),
+            ));
         }
         let deleted = query("DELETE FROM token_package_plans WHERE id = $1")
             .bind(plan_id)
@@ -5415,16 +5600,30 @@ impl DbBackend for PgBackend {
         rows.into_iter()
             .map(|row| {
                 Ok(crate::domain::token_package::TokenPackagePlanRow {
-                    id: row.try_get(0)?, code: row.try_get(1)?, name: row.try_get(2)?,
+                    id: row.try_get(0)?,
+                    code: row.try_get(1)?,
+                    name: row.try_get(2)?,
                     accounting_mode: row.try_get::<String, _>(3)?.parse().map_err(DbError)?,
                     display_token_amount: row.try_get::<i64, _>(4)?.max(0) as u64,
                     total_units: row.try_get::<i64, _>(5)?.max(0) as u64,
-                    input_credit_factor: row.try_get::<String, _>(6)?.parse().unwrap_or(Decimal::ONE),
-                    output_credit_factor: row.try_get::<String, _>(7)?.parse().unwrap_or(Decimal::ONE),
-                    cache_credit_factor: row.try_get::<String, _>(8)?.parse().unwrap_or(Decimal::ZERO),
+                    input_credit_factor: row
+                        .try_get::<String, _>(6)?
+                        .parse()
+                        .unwrap_or(Decimal::ONE),
+                    output_credit_factor: row
+                        .try_get::<String, _>(7)?
+                        .parse()
+                        .unwrap_or(Decimal::ONE),
+                    cache_credit_factor: row
+                        .try_get::<String, _>(8)?
+                        .parse()
+                        .unwrap_or(Decimal::ZERO),
                     exhaustion_policy: row.try_get::<String, _>(9)?.parse().map_err(DbError)?,
-                    priority: row.try_get(10)?, validity_days: row.try_get(11)?, status: row.try_get(12)?,
-                    created_at: row.try_get(13)?, updated_at: row.try_get(14)?,
+                    priority: row.try_get(10)?,
+                    validity_days: row.try_get(11)?,
+                    status: row.try_get(12)?,
+                    created_at: row.try_get(13)?,
+                    updated_at: row.try_get(14)?,
                 })
             })
             .collect()
@@ -5510,7 +5709,9 @@ impl DbBackend for PgBackend {
         expires_at: Option<&str>,
     ) -> Result<crate::domain::token_package::TokenPackageGrantRow, DbError> {
         if user_id.is_none() == team_id.is_none() {
-            return Err(DbError("exactly one of user_id or team_id is required".to_string()));
+            return Err(DbError(
+                "exactly one of user_id or team_id is required".to_string(),
+            ));
         }
         let now = chrono::Utc::now().to_rfc3339();
         let row = query(
@@ -5537,18 +5738,28 @@ impl DbBackend for PgBackend {
         .ok_or_else(|| DbError("token package plan not found or inactive".to_string()))?;
         let mode = row.try_get::<String, _>(4)?.parse().map_err(DbError)?;
         let policy = row.try_get::<String, _>(10)?.parse().map_err(DbError)?;
-        let (plan_code, plan_name): (String, String) = query_as(
-            "SELECT code, name FROM token_package_plans WHERE id = $1",
-        )
-        .bind(plan_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let (plan_code, plan_name): (String, String) =
+            query_as("SELECT code, name FROM token_package_plans WHERE id = $1")
+                .bind(plan_id)
+                .fetch_one(&self.pool)
+                .await?;
         Ok(crate::domain::token_package::TokenPackageGrantRow {
-            id: row.try_get(0)?, plan_id: row.try_get(1)?, plan_code, plan_name,
-            user_id: row.try_get(2)?, team_id: row.try_get(3)?, accounting_mode: mode, display_token_amount: row.try_get::<i64, _>(5)?.max(0) as u64,
-            total_units: row.try_get::<i64, _>(6)?.max(0) as u64, consumed_units: row.try_get::<i64, _>(7)?.max(0) as u64,
-            reserved_units: row.try_get::<i64, _>(8)?.max(0) as u64, priority: row.try_get(9)?, exhaustion_policy: policy,
-            status: row.try_get(11)?, expires_at: row.try_get(12)?, created_at: row.try_get(13)?,
+            id: row.try_get(0)?,
+            plan_id: row.try_get(1)?,
+            plan_code,
+            plan_name,
+            user_id: row.try_get(2)?,
+            team_id: row.try_get(3)?,
+            accounting_mode: mode,
+            display_token_amount: row.try_get::<i64, _>(5)?.max(0) as u64,
+            total_units: row.try_get::<i64, _>(6)?.max(0) as u64,
+            consumed_units: row.try_get::<i64, _>(7)?.max(0) as u64,
+            reserved_units: row.try_get::<i64, _>(8)?.max(0) as u64,
+            priority: row.try_get(9)?,
+            exhaustion_policy: policy,
+            status: row.try_get(11)?,
+            expires_at: row.try_get(12)?,
+            created_at: row.try_get(13)?,
         })
     }
 
@@ -5558,7 +5769,7 @@ impl DbBackend for PgBackend {
     ) -> Result<crate::domain::token_package::TokenReservationHandle, DbError> {
         let mut tx = self.pool.begin().await?;
         if let Some(row) = query(
-            "SELECT id, package_grant_id, accounting_mode, reserved_package_units, reserved_wallet_amount \
+            "SELECT id, package_grant_id, accounting_mode, reserved_package_units, reserved_total_units, reserved_wallet_amount, factor_snapshot \
              FROM token_request_reservations WHERE request_id = $1 FOR UPDATE",
         )
         .bind(&request.request_id)
@@ -5573,12 +5784,15 @@ impl DbBackend for PgBackend {
                 request_id: request.request_id.clone(),
                 package_grant_id: row.try_get(1)?,
                 accounting_mode: mode,
-                input_factor: Decimal::ONE,
-                output_factor: Decimal::ONE,
-                cache_factor: Decimal::ZERO,
+                input_factor: serde_json::from_str::<serde_json::Value>(&row.try_get::<String, _>(6).unwrap_or_default())
+                    .ok().and_then(|v| v["input_factor"].as_f64()).and_then(|v| Decimal::try_from(v).ok()).unwrap_or(Decimal::ONE),
+                output_factor: serde_json::from_str::<serde_json::Value>(&row.try_get::<String, _>(6).unwrap_or_default())
+                    .ok().and_then(|v| v["output_factor"].as_f64()).and_then(|v| Decimal::try_from(v).ok()).unwrap_or(Decimal::ONE),
+                cache_factor: serde_json::from_str::<serde_json::Value>(&row.try_get::<String, _>(6).unwrap_or_default())
+                    .ok().and_then(|v| v["cache_factor"].as_f64()).and_then(|v| Decimal::try_from(v).ok()).unwrap_or(Decimal::ZERO),
                 reserved_package_units: row.try_get::<i64, _>(3)?.max(0) as u64,
-                reserved_total_units: row.try_get::<i64, _>(3)?.max(0) as u64,
-                reserved_wallet_amount: Decimal::try_from(row.try_get::<f64, _>(4)?)
+                reserved_total_units: row.try_get::<i64, _>(4)?.max(0) as u64,
+                reserved_wallet_amount: Decimal::try_from(row.try_get::<f64, _>(5)?)
                     .unwrap_or(Decimal::ZERO),
             });
         }
@@ -5620,10 +5834,11 @@ impl DbBackend for PgBackend {
             })
             .unwrap_or(0)
             .max(0) as u64;
-        let grant_id = grant.as_ref().map(|r| r.try_get::<String, _>(0)).transpose()?;
-        let mode_text = grant
+        let grant_id = grant
             .as_ref()
-            .and_then(|r| r.try_get::<String, _>(1).ok());
+            .map(|r| r.try_get::<String, _>(0))
+            .transpose()?;
+        let mode_text = grant.as_ref().and_then(|r| r.try_get::<String, _>(1).ok());
         let (input_factor, output_factor, cache_factor) = if let Some(id) = grant_id.as_deref() {
             query_as::<_, (f64, f64, f64)>(
                 "SELECT input_factor, output_factor, cache_factor
@@ -5637,17 +5852,21 @@ impl DbBackend for PgBackend {
             .bind(&request.model)
             .fetch_optional(&mut *tx)
             .await?
-            .map(|(i, o, c)| (
-                Decimal::try_from(i).unwrap_or(Decimal::ONE),
-                Decimal::try_from(o).unwrap_or(Decimal::ONE),
-                Decimal::try_from(c).unwrap_or(Decimal::ZERO),
-            ))
+            .map(|(i, o, c)| {
+                (
+                    Decimal::try_from(i).unwrap_or(Decimal::ONE),
+                    Decimal::try_from(o).unwrap_or(Decimal::ONE),
+                    Decimal::try_from(c).unwrap_or(Decimal::ZERO),
+                )
+            })
             .unwrap_or((Decimal::ONE, Decimal::ONE, Decimal::ZERO))
         } else {
             (Decimal::ONE, Decimal::ONE, Decimal::ZERO)
         };
         let mode = mode_text.as_deref().and_then(|v| v.parse().ok());
-        let requested = if mode == Some(crate::domain::token_package::TokenAccountingMode::StandardizedCredits) {
+        let requested = if mode
+            == Some(crate::domain::token_package::TokenAccountingMode::StandardizedCredits)
+        {
             let usage = crate::domain::token_package::TokenUsage {
                 prompt_tokens: request.prompt_tokens,
                 completion_tokens: request.completion_tokens,
@@ -5712,9 +5931,9 @@ impl DbBackend for PgBackend {
         query(
             "INSERT INTO token_request_reservations \
              (id, request_id, user_id, team_id, account_type, package_grant_id, model, accounting_mode, \
-              reserved_prompt_tokens, reserved_completion_tokens, reserved_package_units, reserved_wallet_amount, \
+              reserved_prompt_tokens, reserved_completion_tokens, reserved_package_units, reserved_total_units, reserved_wallet_amount, \
               factor_snapshot, expires_at, created_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
         )
         .bind(&reservation_id)
         .bind(&request.request_id)
@@ -5727,6 +5946,7 @@ impl DbBackend for PgBackend {
         .bind(request.prompt_tokens as i64)
         .bind(request.completion_tokens as i64)
         .bind(package_units as i64)
+        .bind(requested as i64)
         .bind(wallet_hold.to_f64().unwrap_or(f64::MAX))
         .bind(serde_json::json!({
             "input_factor": input_factor,
@@ -5757,7 +5977,7 @@ impl DbBackend for PgBackend {
         settlement: &crate::domain::token_package::TokenSettlementRequest,
     ) -> Result<(), DbError> {
         let mut tx = self.pool.begin().await?;
-        let row = query("SELECT state, package_grant_id, reserved_package_units, reserved_prompt_tokens, reserved_completion_tokens, user_id, team_id, reserved_wallet_amount FROM token_request_reservations WHERE id = $1 FOR UPDATE")
+        let row = query("SELECT state, package_grant_id, reserved_package_units, reserved_total_units, reserved_prompt_tokens, reserved_completion_tokens, user_id, team_id, reserved_wallet_amount, accounting_mode, factor_snapshot FROM token_request_reservations WHERE id = $1 FOR UPDATE")
             .bind(&settlement.reservation_id)
             .fetch_optional(&mut *tx)
             .await?
@@ -5767,12 +5987,45 @@ impl DbBackend for PgBackend {
         }
         let grant_id = row.try_get::<Option<String>, _>(1)?;
         let reserved = row.try_get::<i64, _>(2)?.max(0) as u64;
-        let reserved_prompt = row.try_get::<i64, _>(3)?.max(0) as u64;
-        let reserved_completion = row.try_get::<i64, _>(4)?.max(0) as u64;
-        let user_id = row.try_get::<String, _>(5)?;
-        let team_id = row.try_get::<Option<String>, _>(6)?;
-        let reserved_wallet = row.try_get::<f64, _>(7)?;
-        let consumed = settlement.actual_package_units.min(reserved);
+        let reserved_total = row.try_get::<i64, _>(3)?.max(0) as u64;
+        let user_id = row.try_get::<String, _>(6)?;
+        let team_id = row.try_get::<Option<String>, _>(7)?;
+        let reserved_wallet = row.try_get::<f64, _>(8)?;
+        let accounting_mode = row.try_get::<Option<String>, _>(9)?;
+        let factor_snapshot = row
+            .try_get::<String, _>(10)
+            .unwrap_or_else(|_| "{}".to_string());
+        let (input_factor, output_factor, cache_factor) =
+            serde_json::from_str::<serde_json::Value>(&factor_snapshot)
+                .ok()
+                .map(|v| {
+                    (
+                        v["input_factor"]
+                            .as_f64()
+                            .and_then(|value| Decimal::try_from(value).ok())
+                            .unwrap_or(Decimal::ONE),
+                        v["output_factor"]
+                            .as_f64()
+                            .and_then(|value| Decimal::try_from(value).ok())
+                            .unwrap_or(Decimal::ONE),
+                        v["cache_factor"]
+                            .as_f64()
+                            .and_then(|value| Decimal::try_from(value).ok())
+                            .unwrap_or(Decimal::ZERO),
+                    )
+                })
+                .unwrap_or((Decimal::ONE, Decimal::ONE, Decimal::ZERO));
+        let actual_usage = crate::domain::token_package::TokenUsage {
+            prompt_tokens: settlement.actual_prompt_tokens,
+            completion_tokens: settlement.actual_completion_tokens,
+            cache_hit_input_tokens: settlement.actual_cache_hit_input_tokens,
+        };
+        let actual_units = if accounting_mode.as_deref() == Some("standardized_credits") {
+            actual_usage.standardized_credits(input_factor, output_factor, cache_factor)
+        } else {
+            actual_usage.raw_units()
+        };
+        let consumed = actual_units.min(reserved);
         if let Some(id) = grant_id.as_deref() {
             query("UPDATE token_package_grants SET consumed_units = consumed_units + $1, reserved_units = reserved_units - $2, updated_at = $3 WHERE id = $4")
                 .bind(consumed as i64)
@@ -5790,7 +6043,12 @@ impl DbBackend for PgBackend {
                 .execute(&mut *tx)
                 .await?;
         }
-        let wallet_amount = settlement.actual_wallet_amount.to_f64().unwrap_or(0.0);
+        let wallet_units = actual_units.saturating_sub(reserved);
+        let wallet_amount = if wallet_units == 0 || reserved_total == 0 {
+            0.0
+        } else {
+            reserved_wallet * wallet_units.min(reserved_total) as f64 / reserved_total as f64
+        };
         let now = chrono::Utc::now().to_rfc3339();
         let release_wallet = (reserved_wallet - wallet_amount).max(0.0);
         if release_wallet > 0.0 {
@@ -5813,7 +6071,9 @@ impl DbBackend for PgBackend {
             let deduction = -wallet_amount;
             if let Some(team_id) = team_id.as_deref() {
                 let row = query("SELECT balance FROM team_wallets WHERE team_id = $1 FOR UPDATE")
-                    .bind(team_id).fetch_one(&mut *tx).await?;
+                    .bind(team_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
                 let balance = row.try_get::<f64, _>(0)?;
                 query("UPDATE team_wallets SET balance = balance + $1, token_wallet_reserved = GREATEST(0, token_wallet_reserved - $2), updated_at = $3 WHERE team_id = $4")
                     .bind(deduction).bind(wallet_amount).bind(chrono::Utc::now().to_rfc3339()).bind(team_id)
@@ -5823,7 +6083,9 @@ impl DbBackend for PgBackend {
                     .bind("Token package wallet fallback").bind(&now).bind(team_id).execute(&mut *tx).await?;
             } else {
                 let row = query("SELECT balance FROM users WHERE id = $1 FOR UPDATE")
-                    .bind(&user_id).fetch_one(&mut *tx).await?;
+                    .bind(&user_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
                 let balance = row.try_get::<f64, _>(0)?;
                 query("UPDATE users SET balance = balance + $1, token_wallet_reserved = GREATEST(0, token_wallet_reserved - $2) WHERE id = $3")
                     .bind(deduction).bind(wallet_amount).bind(&user_id)
@@ -5831,25 +6093,64 @@ impl DbBackend for PgBackend {
                 query("INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at, team_id, account_type) VALUES ($1,$2,'deduction',$3,$4,$5,'token_package','completed',$6,$7,NULL,'user')")
                     .bind(uuid::Uuid::new_v4().to_string()).bind(&user_id).bind(deduction).bind(balance).bind(balance + deduction)
                     .bind("Token package wallet fallback").bind(&now).execute(&mut *tx).await?;
-                query("INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at, team_id, account_type) VALUES ($1,$2,'deduction',$3,$4,$5,'token_package','completed',$6,$7,NULL,'user')")
-                    .bind(uuid::Uuid::new_v4().to_string()).bind(&user_id).bind(deduction).bind(balance).bind(balance + deduction)
-                    .bind("Token package wallet fallback").bind(&now).execute(&mut *tx).await?;
             }
         }
-        query("UPDATE token_request_reservations SET actual_package_units = $1, actual_wallet_amount = $2, state = $3, reason = $4, settled_at = $5 WHERE id = $6")
+        query("UPDATE token_request_reservations SET actual_prompt_tokens = $1, actual_completion_tokens = $2, actual_package_units = $3, actual_wallet_amount = $4, state = $5, reason = $6, settled_at = $7 WHERE id = $8")
+            .bind(settlement.actual_prompt_tokens as i64)
+            .bind(settlement.actual_completion_tokens as i64)
             .bind(consumed as i64)
             .bind(wallet_amount)
-            .bind(if settlement.success { "settled" } else { "released" })
+            .bind(if actual_units > 0 { "settled" } else { "released" })
             .bind(&settlement.reason)
             .bind(chrono::Utc::now().to_rfc3339())
             .bind(&settlement.reservation_id)
             .execute(&mut *tx)
             .await?;
+        query(
+            "INSERT INTO billing_events (request_id, user_id, user_name, channel_id, model,
+             prompt_tokens, completion_tokens, total_tokens, cache_hit_input_tokens,
+             cost_amount, success, status_code, timestamp, reservation_id, package_grant_id,
+             accounting_mode, package_units, wallet_amount, team_id, account_type)
+             SELECT r.request_id, r.user_id, u.name, '', r.model,
+                    COALESCE(r.actual_prompt_tokens, 0), COALESCE(r.actual_completion_tokens, 0),
+                    COALESCE(r.actual_prompt_tokens, 0) + COALESCE(r.actual_completion_tokens, 0),
+                    COALESCE($1, 0), COALESCE(r.actual_wallet_amount, 0), $2, $3, COALESCE(r.created_at, $4),
+                    r.id, r.package_grant_id, r.accounting_mode, COALESCE(r.actual_package_units, 0),
+                    COALESCE(r.actual_wallet_amount, 0), r.team_id, r.account_type
+             FROM token_request_reservations r JOIN users u ON u.id = r.user_id
+             WHERE r.id = $5
+             ON CONFLICT (request_id) DO UPDATE SET
+               prompt_tokens = EXCLUDED.prompt_tokens,
+               completion_tokens = EXCLUDED.completion_tokens,
+               total_tokens = EXCLUDED.total_tokens,
+               cache_hit_input_tokens = EXCLUDED.cache_hit_input_tokens,
+               cost_amount = EXCLUDED.cost_amount,
+               success = EXCLUDED.success,
+               status_code = EXCLUDED.status_code,
+               reservation_id = EXCLUDED.reservation_id,
+               package_grant_id = EXCLUDED.package_grant_id,
+               accounting_mode = EXCLUDED.accounting_mode,
+               package_units = EXCLUDED.package_units,
+               wallet_amount = EXCLUDED.wallet_amount",
+        )
+        .bind(settlement.actual_cache_hit_input_tokens as i64)
+        .bind(actual_units > 0)
+        .bind(settlement.status_code as i32)
+        .bind(now)
+        .bind(&settlement.reservation_id)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(())
     }
 
-    async fn settle_released_token_request(&self, request_id: &str, prompt_tokens: u64, completion_tokens: u64, cache_hit_input_tokens: u64) -> Result<(), DbError> {
+    async fn settle_released_token_request(
+        &self,
+        request_id: &str,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        cache_hit_input_tokens: u64,
+    ) -> Result<(), DbError> {
         let mut tx = self.pool.begin().await?;
         let row = query_as::<_, (String, String, i64, Option<String>)>(
             "SELECT id, state, reserved_package_units, package_grant_id
@@ -5858,11 +6159,17 @@ impl DbBackend for PgBackend {
         .bind(request_id)
         .fetch_optional(&mut *tx)
         .await?;
-        let Some((reservation_id, state, reserved, package_grant_id)) = row else { return Ok(()); };
-        if state != "released" || package_grant_id.is_none() || reserved <= 0 { return Ok(()); }
+        let Some((reservation_id, state, reserved, package_grant_id)) = row else {
+            return Ok(());
+        };
+        if state != "released" || package_grant_id.is_none() || reserved <= 0 {
+            return Ok(());
+        }
         let actual = prompt_tokens.saturating_add(completion_tokens);
         let consume = (actual as i64).min(reserved).max(0);
-        if consume == 0 { return Ok(()); }
+        if consume == 0 {
+            return Ok(());
+        }
         let grant_id = package_grant_id.unwrap();
         query("UPDATE token_package_grants SET consumed_units = consumed_units + $1, reserved_units = GREATEST(0, reserved_units - $1), updated_at = $2 WHERE id = $3")
             .bind(consume)
@@ -5887,7 +6194,10 @@ impl DbBackend for PgBackend {
         Ok(())
     }
 
-    async fn token_request_billing_amount(&self, request_id: &str) -> Result<Option<(bool, Decimal)>, DbError> {
+    async fn token_request_billing_amount(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<(bool, Decimal)>, DbError> {
         let row = query_as::<_, (Option<String>, Option<f64>)>(
             "SELECT package_grant_id, actual_wallet_amount
              FROM token_request_reservations
@@ -5897,19 +6207,27 @@ impl DbBackend for PgBackend {
         .bind(request_id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|(package_id, amount)| (
-            package_id.is_some(),
-            Decimal::try_from(amount.unwrap_or(0.0)).unwrap_or(Decimal::ZERO),
-        )))
+        Ok(row.map(|(package_id, amount)| {
+            (
+                package_id.is_some(),
+                Decimal::try_from(amount.unwrap_or(0.0)).unwrap_or(Decimal::ZERO),
+            )
+        }))
     }
 
-    async fn release_token_request(&self, reservation_id: &str, reason: &str) -> Result<(), DbError> {
+    async fn release_token_request(
+        &self,
+        reservation_id: &str,
+        reason: &str,
+    ) -> Result<(), DbError> {
         let mut tx = self.pool.begin().await?;
         let row = query("SELECT state, package_grant_id, reserved_package_units, reserved_prompt_tokens, reserved_completion_tokens, user_id, team_id, reserved_wallet_amount FROM token_request_reservations WHERE id = $1 FOR UPDATE")
             .bind(reservation_id)
             .fetch_optional(&mut *tx)
             .await?;
-        let Some(row) = row else { return Ok(()); };
+        let Some(row) = row else {
+            return Ok(());
+        };
         if row.try_get::<String, _>(0)? != "reserved" {
             return Ok(());
         }
@@ -6351,7 +6669,24 @@ impl DbBackend for PgBackend {
     // ── SSO Configs ─────────────────────────────────────────────────────────
 
     async fn list_sso_configs(&self) -> Result<Vec<SsoConfigRow>, DbError> {
-        let rows = query_as::<_, (String, Option<String>, String, String, String, String, String, bool, bool, Option<String>, String, String, String)>(
+        let rows = query_as::<
+            _,
+            (
+                String,
+                Option<String>,
+                String,
+                String,
+                String,
+                String,
+                String,
+                bool,
+                bool,
+                Option<String>,
+                String,
+                String,
+                String,
+            ),
+        >(
             "SELECT id, team_id, provider_name, issuer_url, client_id, \
              client_secret_encrypted, redirect_url, enabled, auto_create_user, \
              domain_restrictions, default_role, created_at, updated_at \
@@ -6363,7 +6698,82 @@ impl DbBackend for PgBackend {
 
         Ok(rows
             .into_iter()
-            .map(|(id, team_id, provider_name, issuer_url, client_id, client_secret_encrypted, redirect_url, enabled, auto_create_user, domain_restrictions, default_role, created_at, updated_at)| SsoConfigRow {
+            .map(
+                |(
+                    id,
+                    team_id,
+                    provider_name,
+                    issuer_url,
+                    client_id,
+                    client_secret_encrypted,
+                    redirect_url,
+                    enabled,
+                    auto_create_user,
+                    domain_restrictions,
+                    default_role,
+                    created_at,
+                    updated_at,
+                )| SsoConfigRow {
+                    id,
+                    team_id,
+                    provider_name,
+                    issuer_url,
+                    client_id,
+                    client_secret_encrypted: Some(client_secret_encrypted),
+                    redirect_url,
+                    enabled,
+                    auto_create_user,
+                    domain_restrictions,
+                    default_role,
+                    created_at,
+                    updated_at,
+                },
+            )
+            .collect())
+    }
+
+    async fn get_sso_config(&self, id: &str) -> Result<Option<SsoConfigRow>, DbError> {
+        let row: Option<(
+            String,
+            Option<String>,
+            String,
+            String,
+            String,
+            String,
+            String,
+            bool,
+            bool,
+            Option<String>,
+            String,
+            String,
+            String,
+        )> = query_as(
+            "SELECT id, team_id, provider_name, issuer_url, client_id, \
+             client_secret_encrypted, redirect_url, enabled, auto_create_user, \
+             domain_restrictions, default_role, created_at, updated_at \
+             FROM sso_configs WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Failed to get sso config: {}", e)))?;
+
+        Ok(row.map(
+            |(
+                id,
+                team_id,
+                provider_name,
+                issuer_url,
+                client_id,
+                client_secret_encrypted,
+                redirect_url,
+                enabled,
+                auto_create_user,
+                domain_restrictions,
+                default_role,
+                created_at,
+                updated_at,
+            )| SsoConfigRow {
                 id,
                 team_id,
                 provider_name,
@@ -6377,41 +6787,26 @@ impl DbBackend for PgBackend {
                 default_role,
                 created_at,
                 updated_at,
-            })
-            .collect())
-    }
-
-    async fn get_sso_config(&self, id: &str) -> Result<Option<SsoConfigRow>, DbError> {
-        let row: Option<(String, Option<String>, String, String, String, String, String, bool, bool, Option<String>, String, String, String)> = query_as(
-            "SELECT id, team_id, provider_name, issuer_url, client_id, \
-             client_secret_encrypted, redirect_url, enabled, auto_create_user, \
-             domain_restrictions, default_role, created_at, updated_at \
-             FROM sso_configs WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| DbError(format!("Failed to get sso config: {}", e)))?;
-
-        Ok(row.map(|(id, team_id, provider_name, issuer_url, client_id, client_secret_encrypted, redirect_url, enabled, auto_create_user, domain_restrictions, default_role, created_at, updated_at)| SsoConfigRow {
-            id,
-            team_id,
-            provider_name,
-            issuer_url,
-            client_id,
-            client_secret_encrypted: Some(client_secret_encrypted),
-            redirect_url,
-            enabled,
-            auto_create_user,
-            domain_restrictions,
-            default_role,
-            created_at,
-            updated_at,
-        }))
+            },
+        ))
     }
 
     async fn get_sso_config_by_team(&self, team_id: &str) -> Result<Option<SsoConfigRow>, DbError> {
-        let row: Option<(String, Option<String>, String, String, String, String, String, bool, bool, Option<String>, String, String, String)> = query_as(
+        let row: Option<(
+            String,
+            Option<String>,
+            String,
+            String,
+            String,
+            String,
+            String,
+            bool,
+            bool,
+            Option<String>,
+            String,
+            String,
+            String,
+        )> = query_as(
             "SELECT id, team_id, provider_name, issuer_url, client_id, \
              client_secret_encrypted, redirect_url, enabled, auto_create_user, \
              domain_restrictions, default_role, created_at, updated_at \
@@ -6422,21 +6817,37 @@ impl DbBackend for PgBackend {
         .await
         .map_err(|e| DbError(format!("Failed to get sso config by team: {}", e)))?;
 
-        Ok(row.map(|(id, team_id, provider_name, issuer_url, client_id, client_secret_encrypted, redirect_url, enabled, auto_create_user, domain_restrictions, default_role, created_at, updated_at)| SsoConfigRow {
-            id,
-            team_id,
-            provider_name,
-            issuer_url,
-            client_id,
-            client_secret_encrypted: Some(client_secret_encrypted),
-            redirect_url,
-            enabled,
-            auto_create_user,
-            domain_restrictions,
-            default_role,
-            created_at,
-            updated_at,
-        }))
+        Ok(row.map(
+            |(
+                id,
+                team_id,
+                provider_name,
+                issuer_url,
+                client_id,
+                client_secret_encrypted,
+                redirect_url,
+                enabled,
+                auto_create_user,
+                domain_restrictions,
+                default_role,
+                created_at,
+                updated_at,
+            )| SsoConfigRow {
+                id,
+                team_id,
+                provider_name,
+                issuer_url,
+                client_id,
+                client_secret_encrypted: Some(client_secret_encrypted),
+                redirect_url,
+                enabled,
+                auto_create_user,
+                domain_restrictions,
+                default_role,
+                created_at,
+                updated_at,
+            },
+        ))
     }
 
     async fn create_sso_config(&self, config: &SsoConfigRow) -> Result<(), DbError> {
