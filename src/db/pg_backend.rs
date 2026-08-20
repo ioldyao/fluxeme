@@ -5468,12 +5468,12 @@ impl DbBackend for PgBackend {
         rows.into_iter()
             .map(|row| {
                 let mode = row
-                    .try_get::<String, _>(4)
+                    .try_get::<String, _>(6)
                     .unwrap_or_else(|_| "raw_tokens".to_string())
                     .parse()
                     .map_err(|e: String| DbError(e))?;
                 let policy = row
-                    .try_get::<String, _>(10)
+                    .try_get::<String, _>(12)
                     .unwrap_or_else(|_| "package_then_wallet".to_string())
                     .parse()
                     .map_err(|e: String| DbError(e))?;
