@@ -706,7 +706,7 @@ impl DbBackend for PgBackend {
 
         match result {
             Ok(_) => tracing::info!("models.name UNIQUE constraint created"),
-            Err(e) if e.to_string().contains("already exists") => {
+            Err(e) if e.to_string().contains("already exists") || e.to_string().contains("duplicate key value") => {
                 tracing::info!("models.name UNIQUE constraint already exists, skipping");
             }
             Err(e) => {
@@ -2687,11 +2687,11 @@ impl DbBackend for PgBackend {
         let rows = if let Some(uid) = user_id {
             query(
                 "SELECT timestamp, request_id, user_id, user_name, model, channel_id,
-                 COALESCE(activity_status, CASE WHEN status_code = 499 THEN 'interrupted' WHEN success THEN 'success' ELSE 'failed' END),
+                 CASE WHEN status_code = 499 THEN 'interrupted' WHEN success = false THEN 'failed' WHEN activity_status IN ('unknown', '') THEN CASE WHEN cost_amount = 0 AND package_units = 0 THEN 'zero_cost' ELSE 'success' END ELSE activity_status END,
                  COALESCE(status_reason, ''), status_code, success, prompt_tokens, completion_tokens,
                  cache_hit_input_tokens, cache_write_tokens, total_tokens, package_units,
                  package_grant_id, COALESCE(wallet_amount, 0), COALESCE(priced_cost_amount, cost_amount),
-                 COALESCE(charge_source, CASE WHEN package_units > 0 THEN 'package' WHEN cost_amount > 0 THEN 'wallet' ELSE 'unknown' END),
+                 CASE WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 OR cost_amount > 0 THEN 'wallet' WHEN priced_cost_amount = 0 AND cost_amount = 0 THEN 'zero_cost' ELSE COALESCE(charge_source, 'unknown') END,
                  account_type, team_id, api_key_name, latency_ms, reservation_id
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3
                  ORDER BY timestamp DESC LIMIT $4 OFFSET $5",
@@ -2701,11 +2701,11 @@ impl DbBackend for PgBackend {
         } else {
             query(
                 "SELECT timestamp, request_id, user_id, user_name, model, channel_id,
-                 COALESCE(activity_status, CASE WHEN status_code = 499 THEN 'interrupted' WHEN success THEN 'success' ELSE 'failed' END),
+                 CASE WHEN status_code = 499 THEN 'interrupted' WHEN success = false THEN 'failed' WHEN activity_status IN ('unknown', '') THEN CASE WHEN cost_amount = 0 AND package_units = 0 THEN 'zero_cost' ELSE 'success' END ELSE activity_status END,
                  COALESCE(status_reason, ''), status_code, success, prompt_tokens, completion_tokens,
                  cache_hit_input_tokens, cache_write_tokens, total_tokens, package_units,
                  package_grant_id, COALESCE(wallet_amount, 0), COALESCE(priced_cost_amount, cost_amount),
-                 COALESCE(charge_source, CASE WHEN package_units > 0 THEN 'package' WHEN cost_amount > 0 THEN 'wallet' ELSE 'unknown' END),
+                 CASE WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 OR cost_amount > 0 THEN 'wallet' WHEN priced_cost_amount = 0 AND cost_amount = 0 THEN 'zero_cost' ELSE COALESCE(charge_source, 'unknown') END,
                  account_type, team_id, api_key_name, latency_ms, reservation_id
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2
                  ORDER BY timestamp DESC LIMIT $3 OFFSET $4",
@@ -5489,8 +5489,10 @@ impl DbBackend for PgBackend {
                          package_units = COALESCE(r.actual_package_units, 0),
                          wallet_amount = COALESCE(r.actual_wallet_amount, 0),
                          cost_amount = COALESCE(r.actual_wallet_amount, 0),
-                         activity_status = CASE WHEN r.actual_package_units > 0 OR r.actual_wallet_amount > 0 THEN 'success' ELSE be.activity_status END,
-                         charge_source = CASE WHEN r.actual_package_units > 0 AND r.actual_wallet_amount > 0 THEN 'package_and_wallet' WHEN r.actual_package_units > 0 THEN 'package' WHEN r.actual_wallet_amount > 0 THEN 'wallet' ELSE be.charge_source END
+                         activity_status = CASE WHEN be.status_code = 499 THEN 'interrupted' WHEN be.success = false THEN 'failed' WHEN r.actual_package_units > 0 OR r.actual_wallet_amount > 0 THEN 'success' ELSE be.activity_status END,
+                         status_reason = COALESCE(r.reason, be.status_reason),
+                         charge_source = CASE WHEN r.actual_package_units > 0 AND r.actual_wallet_amount > 0 THEN 'package_and_wallet' WHEN r.actual_package_units > 0 THEN 'package' WHEN r.actual_wallet_amount > 0 THEN 'wallet' ELSE be.charge_source END,
+                         priced_cost_amount = COALESCE(be.priced_cost_amount, be.cost_amount)
                      FROM token_request_reservations r
                      WHERE be.request_id = r.request_id AND be.request_id = $1",
                 )

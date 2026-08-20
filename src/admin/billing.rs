@@ -471,6 +471,7 @@ pub(crate) struct PeriodQuery {
     month: Option<u32>,
     limit: Option<usize>,
     offset: Option<usize>,
+    user_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -868,7 +869,7 @@ pub(crate) async fn admin_billing_activities(
         .list_billing_activities(
             &start,
             &end,
-            None,
+            q.user_id.as_deref(),
             q.limit.unwrap_or(100),
             q.offset.unwrap_or(0),
         )
@@ -876,7 +877,7 @@ pub(crate) async fn admin_billing_activities(
         .map_err(db_err)?;
     let total = state
         .db
-        .count_billing_activities(&start, &end, None)
+        .count_billing_activities(&start, &end, q.user_id.as_deref())
         .await
         .map_err(db_err)?;
     Ok(Json(BillingActivityResponse { activities: activities.into_iter().map(|a| serde_json::json!({

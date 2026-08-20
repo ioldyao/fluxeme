@@ -14,11 +14,13 @@ import { parseTimestamp, formatTime } from '@fluxeme/shared/src/lib/date';
 
 // ── helpers ───────────────────────────────────────
 
-const fmtMoney = (n: number) => {
-  const abs = Math.abs(n);
+const fmtMoney = (value: unknown) => {
+  const n = typeof value === 'number' ? value : Number(value ?? 0);
+  const safe = Number.isFinite(n) ? n : 0;
+  const abs = Math.abs(safe);
   if (abs === 0) return '¥0.00';
   if (abs < 0.01) return `¥${abs.toFixed(6)}`;
-  return `¥${n < 0 ? '-' : ''}${abs.toFixed(2)}`;
+  return `¥${safe < 0 ? '-' : ''}${abs.toFixed(2)}`;
 };
 const fmtShort = (n: number) => {
   if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(2) + 'B';
@@ -269,11 +271,15 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
   const [searchParams] = useSearchParams();
   const year = parseInt(searchParams.get('year') ?? '', 10) || curYear;
   const month = parseInt(searchParams.get('month') ?? '', 10) || curMonth;
-  const [detailTab, setDetailTab] = useState<'model' | 'deductions'>('model');
+  const [detailTab, setDetailTab] = useState<'model' | 'activities' | 'deductions'>('activities');
   const [drawer, setDrawer] = useState<{ apiKeyName: string; teamId: string | null; headTail: string; req: string; cost: string; model: string } | null>(null);
   const [reqDetailId, setReqDetailId] = useState<string | null>(null);
 
   const { data: periodSummary } = useAdminScopedPeriodSummary(year, month, { user_id: userId });
+  const [activityPage, setActivityPage] = useState(1);
+  const ACTIVITY_PAGE_SIZE = 50;
+  const { data: userActivities } = useAdminBillingActivities(year, month, ACTIVITY_PAGE_SIZE, (activityPage - 1) * ACTIVITY_PAGE_SIZE, userId);
+  const activityTotalPages = Math.max(1, Math.ceil((userActivities?.total ?? 0) / ACTIVITY_PAGE_SIZE));
   const { data: trend } = useAdminBillingDailyTrend(year, month, { user_id: userId });
   const { data: apiKeyCosts } = useAdminBillingUserApiKeyCosts(null, userId, year, month, { limit: 50 });
   const { data: deductions } = useAdminDeductions(year, month, 1, 30, { user_id: userId });
@@ -357,13 +363,18 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
 
   const activeKeys = (apiKeyCosts?.items ?? []).filter((k) => k.total_requests > 0).length;
   const totalKeys = apiKeyCosts?.total ?? 0;
+  const selectedActivities = userActivities?.activities ?? [];
+  const activityStatusCounts = useMemo(() => selectedActivities.reduce((acc, item) => {
+    acc[item.activity_status] = (acc[item.activity_status] ?? 0) + 1;
+    return acc;
+  }, {} as Record<string, number>), [selectedActivities]);
 
   return (
     <div className="space-y-4">
       <section className="flex items-start justify-between gap-5">
         <div>
-          <h1 className="m-0 text-[22px] font-bold leading-tight">用户本期账单详情</h1>
-          <p className="mt-[7px] text-[13px] text-muted-foreground">查看该用户在当前计费周期内的独立消费、请求、Token、API Key 与费用明细。</p>
+          <h1 className="m-0 text-[22px] font-bold leading-tight">用户本期账单活动详情</h1>
+          <p className="mt-[7px] text-[13px] text-muted-foreground">查看该用户在当前计费周期内的活动状态、Token、资源包结算与钱包实际扣款。</p>
           <div className="mt-[10px] flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-[5px] rounded-full bg-chart-2/15 px-2 py-[3px] text-[12px] font-semibold text-chart-2">● 正常</span>
             <span className="inline-flex items-center gap-[5px] rounded-full bg-muted px-2 py-[3px] text-[12px] font-semibold text-muted-foreground">用户 ID: {userId}</span>
@@ -377,11 +388,11 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
       </section>
 
       <section className="grid grid-cols-5 gap-3 max-[1200px]:grid-cols-3 max-[850px]:grid-cols-2">
-        <MetricCard label="本期消费" value={m ? fmtMoney(m.cost) : '-'} icon="¥" foot="当前计费周期" />
-        <MetricCard label="API 请求" value={m ? fmtShort(m.req) : '-'} icon="↗" foot={m ? `成功率 ${(((m.req - 0) / Math.max(m.req, 1)) * 100).toFixed(1)}%` : ''} />
-        <MetricCard label="总 Token" value={m ? fmtShort(m.tok) : '-'} icon="T" foot={m ? `输入 ${fmtShort(m.inputTok)} · 输出 ${fmtShort(m.outputTok)}` : ''} />
-        <MetricCard label="缓存命中 Token" value={m ? fmtShort(m.cacheTok) : '-'} icon="C" foot={m ? `节省约 ${fmtMoney(m.cacheSave)}` : ''} />
-        <MetricCard label="活跃 API Key" value={m ? `${activeKeys} / ${totalKeys}` : '-'} icon="K" foot="本期有调用" />
+        <MetricCard label="钱包实际扣款" value={m ? fmtMoney(selectedActivities.reduce((sum, item) => sum + item.wallet_amount, 0)) : '-'} icon="¥" foot="资源包和免费活动不产生钱包扣款" />
+        <MetricCard label="账单活动" value={m ? fmtShort(userActivities?.total ?? 0) : '-'} icon="↗" foot={m ? `成功 ${activityStatusCounts.success ?? 0} · 失败 ${activityStatusCounts.failed ?? 0} · 中断 ${activityStatusCounts.interrupted ?? 0}` : ''} />
+        <MetricCard label="活动 Token" value={m ? fmtShort(selectedActivities.reduce((sum, item) => sum + item.total_tokens, 0)) : '-'} icon="T" foot="包含免费与资源包活动" />
+        <MetricCard label="资源包 units" value={m ? fmtShort(selectedActivities.reduce((sum, item) => sum + item.package_units, 0)) : '-'} icon="P" foot="实际资源包结算量" />
+        <MetricCard label="活动 API Key" value={m ? `${activeKeys} / ${totalKeys}` : '-'} icon="K" foot="活动记录关联的 Key" />
       </section>
 
       <section className="grid grid-cols-[1.55fr_0.85fr] gap-3.5 max-[1200px]:grid-cols-1">
@@ -497,7 +508,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
         <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
           <div>
             <div className="text-[14px] font-bold">API Key 账单</div>
-            <div className="mt-[3px] text-[12px] text-muted-foreground">定位具体是哪一个 Key 产生消费，支持追溯请求与模型</div>
+            <div className="mt-[3px] text-[12px] text-muted-foreground">按 API Key 查看活动状态、Token、资源包结算和钱包扣款</div>
           </div>
         </div>
         <div className="overflow-auto">
@@ -545,7 +556,7 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
           </table>
         </div>
         <div className="flex justify-between px-3.5 py-3 text-[11px] text-muted-foreground">
-          <span>共 {totalKeys} 个 API Key · 本期有调用 {activeKeys} 个</span>
+          <span>共 {totalKeys} 个 API Key · 活动记录和结算来源均保留</span>
           <span>点击行查看 Key 账单详情</span>
         </div>
       </section>
@@ -559,11 +570,15 @@ function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => v
         </div>
 
         <div className="flex gap-[2px] border-b border-secondary bg-card px-4">
-          {(['model', 'deductions'] as const).map((tab) => (
+          {(['activities', 'model', 'deductions'] as const).map((tab) => (
             <button key={tab} className={`border-0 bg-transparent px-2.5 py-3 font-semibold ${detailTab === tab ? 'border-b-2 border-accent-foreground text-accent-foreground' : 'text-muted-foreground'}`} onClick={() => setDetailTab(tab)}>
-              {tab === 'model' ? '模型汇总' : '扣费记录'}
+              {tab === 'activities' ? '活动状态' : tab === 'model' ? '模型汇总' : '钱包扣款'}
             </button>
           ))}
+        </div>
+
+        <div style={{ display: detailTab === 'activities' ? 'block' : 'none' }}>
+          <div className="overflow-auto"><table className="w-full min-w-[1000px] border-collapse"><thead><tr>{['时间', '模型', '状态', 'Token', '资源包 units', '钱包扣款', '来源', '原因'].map((h) => <th key={h} className="whitespace-nowrap border-b border-secondary bg-muted px-3.5 py-[11px] text-left text-[11px] font-bold text-muted-foreground">{h}</th>)}</tr></thead><tbody>{selectedActivities.map((item) => <tr key={item.request_id}><td className="border-b border-secondary px-3.5 py-[11px] text-[12px]">{new Date(item.timestamp).toLocaleString('zh-CN')}</td><td className="border-b border-secondary px-3.5 py-[11px] text-[12px]">{item.model}</td><td className="border-b border-secondary px-3.5 py-[11px] text-[12px]"><span className={`rounded-full px-2 py-1 text-xs ${item.activity_status === 'success' ? 'bg-chart-2/15 text-chart-2' : item.activity_status === 'interrupted' || item.activity_status === 'failed' ? 'bg-destructive/15 text-destructive' : 'bg-muted'}`}>{item.activity_status === 'success' ? '成功' : item.activity_status === 'interrupted' ? '客户端中断' : item.activity_status === 'failed' ? '失败' : item.activity_status === 'zero_cost' ? '零金额活动' : item.activity_status} · {item.status_code}</span></td><td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px]">{fmtShort(item.total_tokens)}</td><td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px]">{fmtShort(item.package_units)}</td><td className="border-b border-secondary px-3.5 py-[11px] text-right text-[12px]">{fmtMoney(item.wallet_amount)}</td><td className="border-b border-secondary px-3.5 py-[11px] text-[12px]">{item.charge_source}</td><td className="border-b border-secondary px-3.5 py-[11px] text-[12px] text-muted-foreground">{item.status_reason || '—'}</td></tr>)}</tbody></table></div><div className="flex items-center justify-between border-t px-3.5 py-3 text-xs text-muted-foreground"><span>第 {activityPage} / {activityTotalPages} 页 · 共 {userActivities?.total ?? 0} 条活动</span><div className="flex gap-2"><button className="rounded border px-3 py-1 disabled:opacity-40" disabled={activityPage <= 1} onClick={() => setActivityPage((page) => page - 1)}>上一页</button><button className="rounded border px-3 py-1 disabled:opacity-40" disabled={activityPage >= activityTotalPages} onClick={() => setActivityPage((page) => page + 1)}>下一页</button></div></div>
         </div>
 
         <div style={{ display: detailTab === 'model' ? 'block' : 'none' }}>

@@ -6,6 +6,11 @@ import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@fluxeme/shared/src/components/ui/dialog';
 import { Wallet, Receipt, Activity, ChevronDown, BarChart3 } from 'lucide-react';
 
+function asBillingNumber(value: unknown): number {
+  const parsed = typeof value === 'number' ? value : Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 export default function Bills() {
   const { t, i18n } = useTranslation();
   const { data: rawMonths } = useBillingMonths();
@@ -20,12 +25,16 @@ export default function Bills() {
   const { data: period } = usePeriodSummary(active.year, active.month);
   const [dedPage, setDedPage] = useState(1);
   const { data: deductionsData } = useDeductions(active.year, active.month, dedPage, 15);
-  const { data: activitiesData } = useBillingActivities(active.year, active.month, 100, 0);
+  const [activityPage, setActivityPage] = useState(1);
+  const ACTIVITY_PAGE_SIZE = 50;
+  const { data: activitiesData } = useBillingActivities(active.year, active.month, ACTIVITY_PAGE_SIZE, (activityPage - 1) * ACTIVITY_PAGE_SIZE);
   const activities = activitiesData?.activities ?? [];
+  const activityTotalPages = Math.max(1, Math.ceil((activitiesData?.total ?? 0) / ACTIVITY_PAGE_SIZE));
   const activityCounts = useMemo(() => activities.reduce((acc, item) => {
     acc[item.activity_status] = (acc[item.activity_status] ?? 0) + 1;
     return acc;
   }, {} as Record<string, number>), [activities]);
+  const walletActivityAmount = activitiesData?.activities.reduce((sum, item) => sum + asBillingNumber(item.wallet_amount), 0) ?? 0;
   const deductions = deductionsData?.items;
   const dedTotal = deductionsData?.total ?? 0;
   const dedTotalPages = Math.max(1, Math.ceil(dedTotal / 15));
@@ -34,9 +43,10 @@ export default function Bills() {
   const [compareOpen, setCompareOpen] = useState(false);
   const { data: allMonths } = usePeriodSummaryAll();
 
-  const fmt = (usd: number) => {
+  const fmt = (value: unknown) => {
+    const safeUsd = asBillingNumber(value);
     const s = currency === 'cny' ? '¥' : '$';
-    return usd === 0 ? `${s}0` : `${s}${usd.toFixed(6)}`;
+    return safeUsd === 0 ? `${s}0` : `${s}${safeUsd.toFixed(6)}`;
   };
 
   const cardStyle = 'rounded-xl border p-5 space-y-2';
@@ -60,7 +70,7 @@ export default function Bills() {
             <Receipt className="h-4 w-4" />
             <span className="text-xs font-medium uppercase tracking-wider">本期钱包扣款</span>
           </div>
-          <div className="text-2xl font-bold">{activities.length ? fmt(activities.reduce((sum, item) => sum + item.wallet_amount, 0)) : '—'}</div>
+          <div className="text-2xl font-bold">{activities.length ? fmt(walletActivityAmount) : '—'}</div>
           <div className="text-xs text-muted-foreground">资源包和免费活动不产生钱包扣款</div>
         </div>
         <div className={cardStyle}>
@@ -174,7 +184,10 @@ export default function Bills() {
             <span className="text-xs text-muted-foreground ml-auto">免费、资源包和钱包活动均会记录</span>
           </div>
           {activities.length > 0 ? (
-            <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-xs text-muted-foreground"><th className="text-left px-5 py-3">时间</th><th className="text-left px-5 py-3">模型</th><th className="text-left px-5 py-3">状态</th><th className="text-right px-5 py-3">Token</th><th className="text-right px-5 py-3">资源包 units</th><th className="text-right px-5 py-3">钱包扣款</th><th className="text-left px-5 py-3">结算来源</th></tr></thead><tbody>{activities.map((item) => <tr key={item.request_id} className="border-b last:border-0"><td className="px-5 py-3 text-muted-foreground">{new Date(item.timestamp).toLocaleString()}</td><td className="px-5 py-3">{item.model}</td><td className="px-5 py-3"><span className="rounded-full bg-muted px-2 py-1 text-xs">{item.activity_status}</span></td><td className="px-5 py-3 text-right font-mono">{item.total_tokens.toLocaleString()}</td><td className="px-5 py-3 text-right font-mono">{item.package_units.toLocaleString()}</td><td className="px-5 py-3 text-right font-mono">{fmt(item.wallet_amount)}</td><td className="px-5 py-3">{item.charge_source}</td></tr>)}</tbody></table></div>
+            <>
+              <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-xs text-muted-foreground"><th className="text-left px-5 py-3">时间</th><th className="text-left px-5 py-3">模型</th><th className="text-left px-5 py-3">状态</th><th className="text-right px-5 py-3">Token</th><th className="text-right px-5 py-3">资源包 units</th><th className="text-right px-5 py-3">钱包扣款</th><th className="text-left px-5 py-3">结算来源</th></tr></thead><tbody>{activities.map((item) => <tr key={item.request_id} className="border-b last:border-0"><td className="px-5 py-3 text-muted-foreground">{new Date(item.timestamp).toLocaleString()}</td><td className="px-5 py-3">{item.model}</td><td className="px-5 py-3"><span className="rounded-full bg-muted px-2 py-1 text-xs">{item.activity_status}</span></td><td className="px-5 py-3 text-right font-mono">{item.total_tokens.toLocaleString()}</td><td className="px-5 py-3 text-right font-mono">{item.package_units.toLocaleString()}</td><td className="px-5 py-3 text-right font-mono">{fmt(item.wallet_amount)}</td><td className="px-5 py-3">{item.charge_source}</td></tr>)}</tbody></table></div>
+              <div className="flex items-center justify-between border-t px-5 py-3 text-xs text-muted-foreground"><span>第 {activityPage} / {activityTotalPages} 页 · 共 {activitiesData?.total ?? 0} 条活动</span><div className="flex gap-2"><button className="rounded border px-3 py-1 disabled:opacity-40" disabled={activityPage <= 1} onClick={() => setActivityPage((page) => page - 1)}>上一页</button><button className="rounded border px-3 py-1 disabled:opacity-40" disabled={activityPage >= activityTotalPages} onClick={() => setActivityPage((page) => page + 1)}>下一页</button></div></div>
+            </>
           ) : deductions && deductions.length > 0 ? (
             <div>
               <div className="overflow-x-auto">

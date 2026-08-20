@@ -55,10 +55,10 @@ export function useBillingActivities(year: number, month: number, limit = 50, of
   });
 }
 
-export function useAdminBillingActivities(year: number, month: number, limit = 100, offset = 0) {
+export function useAdminBillingActivities(year: number, month: number, limit = 100, offset = 0, userId?: string | null) {
   return useQuery({
-    queryKey: ['admin-billing', 'activities', year, month, limit, offset],
-    queryFn: () => api<BillingActivityResponse>(`/admin/billing/activities?year=${year}&month=${month}&limit=${limit}&offset=${offset}`),
+    queryKey: ['admin-billing', 'activities', year, month, limit, offset, userId],
+    queryFn: () => api<BillingActivityResponse>(`/admin/billing/activities?year=${year}&month=${month}&limit=${limit}&offset=${offset}${userId ? `&user_id=${encodeURIComponent(userId)}` : ''}`),
   });
 }
 
