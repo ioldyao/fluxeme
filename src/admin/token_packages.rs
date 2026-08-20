@@ -54,7 +54,7 @@ pub(crate) async fn create_plan(
     Json(req): Json<PlanRequest>,
 ) -> Result<Json<crate::domain::token_package::TokenPackagePlanRow>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    check_perm(&state.authz, &session, "admin:billing").await?;
+    check_perm(&state.authz, &session, "admin:bills").await?;
     let total_units = req.total_units.unwrap_or(req.display_token_amount);
     let plan = state.db.create_token_package_plan(
         &uuid::Uuid::new_v4().to_string(), &req.code, &req.name, &req.accounting_mode,
@@ -72,7 +72,7 @@ pub(crate) async fn list_plans(
     headers: HeaderMap,
 ) -> Result<Json<Vec<crate::domain::token_package::TokenPackagePlanRow>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    check_perm(&state.authz, &session, "admin:billing").await?;
+    check_perm(&state.authz, &session, "admin:bills").await?;
     Ok(Json(state.db.list_token_package_plans().await.map_err(db_err)?))
 }
 
@@ -81,8 +81,12 @@ pub(crate) async fn list_grants(
     headers: HeaderMap,
 ) -> Result<Json<Vec<TokenPackageGrantRow>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    check_perm(&state.authz, &session, "admin:billing").await?;
-    let grants = state.db.list_token_package_grants(None, None).await.map_err(db_err)?;
+    check_perm(&state.authz, &session, "admin:bills").await?;
+    let grants = state
+        .db
+        .list_token_package_grants(None, None)
+        .await
+        .map_err(db_err)?;
     Ok(Json(grants))
 }
 
@@ -92,7 +96,7 @@ pub(crate) async fn create_grant(
     Json(req): Json<GrantRequest>,
 ) -> Result<Json<GrantResponse>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    check_perm(&state.authz, &session, "admin:billing").await?;
+    check_perm(&state.authz, &session, "admin:bills").await?;
     if req.user_id.is_none() == req.team_id.is_none() {
         return Err(AdminError::bad_request("Exactly one of user_id or team_id is required"));
     }
@@ -135,7 +139,7 @@ pub(crate) async fn get_grant(
     Path(id): Path<String>,
 ) -> Result<Json<TokenPackageGrantRow>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    check_perm(&state.authz, &session, "admin:billing").await?;
+    check_perm(&state.authz, &session, "admin:bills").await?;
     let grant = state
         .db
         .list_token_package_grants(None, None)

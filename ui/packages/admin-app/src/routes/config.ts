@@ -55,6 +55,7 @@ export const adminRoutes: RouteConfig[] = [
   { path: '/recharge-keys', Component: lazy(() => import('@/pages/admin/RechargeKeys')), guard: 'admin', label: 'nav.rechargeKeys', icon: KeyRound, nav: true, perm: 'admin:recharge-keys' },
   { path: '/announcements', Component: lazy(() => import('@/pages/admin/Announcements')), guard: 'admin', label: 'nav.announcements', icon: Bell, nav: true, perm: 'admin:announcements' },
   { path: '/skills', Component: lazy(() => import('@/pages/SkillHubAdmin')), guard: 'admin', label: 'nav.skillHubAdmin', icon: Package, nav: true, perm: 'admin:skillhub' },
+  { path: '/token-packages', Component: lazy(() => import('@/pages/TokenPackages')), guard: 'admin', label: 'nav.tokenPackages', icon: Package, nav: true, perm: 'admin:bills' },
   { path: '/gateway-settings', Component: lazy(() => import('@/pages/admin/AdminSettings')), guard: 'admin', label: 'nav.adminSettings', icon: Cog, nav: true, perm: 'admin:settings' },
 ];
 

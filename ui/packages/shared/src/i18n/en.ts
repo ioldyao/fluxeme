@@ -480,6 +480,7 @@ const en: Record<string, string> = {
   'nav.profile': 'Profile',
   'nav.skillHub': 'Skill Hub',
   'nav.skillHubAdmin': 'Skill Hub',
+  'nav.tokenPackages': 'Token Packages',
   'skillHub.subtitle': 'Browse Agent Skill packages and install them to your local agent in one click',
   'skillHub.search': 'Search skills…',
   'skillHub.empty': 'No skills available',
