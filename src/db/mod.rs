@@ -909,6 +909,9 @@ impl Database {
     pub async fn token_request_billing_amount(&self, request_id: &str) -> Result<Option<(bool, Decimal)>, DbError> {
         self.backend.token_request_billing_amount(request_id).await
     }
+    pub async fn settle_released_token_request(&self, request_id: &str, prompt_tokens: u64, completion_tokens: u64, cache_hit_input_tokens: u64) -> Result<(), DbError> {
+        self.backend.settle_released_token_request(request_id, prompt_tokens, completion_tokens, cache_hit_input_tokens).await
+    }
 
     // ── Content Filter Rules ─────────────────────────────────────────────
     pub async fn list_filter_rules(&self) -> Result<Vec<ContentFilterRule>, DbError> {

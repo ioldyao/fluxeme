@@ -762,7 +762,7 @@ impl<S> UsageTrackingStream<S> {
             if completed {
                 reservation.settle_for_units(units, true, "completed");
             } else {
-                reservation.release("client disconnected");
+                reservation.release_partial(p_tokens, c_tokens, cache_hit, "client disconnected");
             }
         }
 

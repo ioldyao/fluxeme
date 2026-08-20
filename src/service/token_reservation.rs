@@ -69,6 +69,18 @@ impl ReservationFinalizer {
         self.settle(actual_units, wallet_amount, success, reason);
     }
 
+    pub fn release_partial(&self, prompt_tokens: u64, completion_tokens: u64, cache_hit_input_tokens: u64, reason: &str) {
+        if self.finalized.swap(true, Ordering::AcqRel) { return; }
+        let db = self.db.clone();
+        let request_id = self.handle.request_id.clone();
+        let reason = reason.to_string();
+        task::spawn(async move {
+            if let Err(error) = db.settle_released_token_request(&request_id, prompt_tokens, completion_tokens, cache_hit_input_tokens).await {
+                tracing::error!(%error, %reason, "partial token reservation settlement failed");
+            }
+        });
+    }
+
     pub fn release(&self, reason: &str) {
         if self.finalized.swap(true, Ordering::AcqRel) {
             return;

@@ -501,6 +501,13 @@ pub trait DbBackend: Send + Sync {
         &self,
         request_id: &str,
     ) -> Result<Option<(bool, Decimal)>, DbError>;
+    async fn settle_released_token_request(
+        &self,
+        request_id: &str,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        cache_hit_input_tokens: u64,
+    ) -> Result<(), DbError>;
 
     // ── Teams ─────────────────────────────────────────────────────────────
     async fn create_team(&self, team: &Team, owner_id: &str) -> Result<(), DbError>;

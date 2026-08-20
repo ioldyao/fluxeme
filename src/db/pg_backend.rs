@@ -5844,6 +5844,44 @@ impl DbBackend for PgBackend {
         Ok(())
     }
 
+    async fn settle_released_token_request(&self, request_id: &str, prompt_tokens: u64, completion_tokens: u64, cache_hit_input_tokens: u64) -> Result<(), DbError> {
+        let mut tx = self.pool.begin().await?;
+        let row = query_as::<_, (String, String, i64, Option<String>)>(
+            "SELECT id, state, reserved_package_units, package_grant_id
+             FROM token_request_reservations WHERE request_id = $1 FOR UPDATE",
+        )
+        .bind(request_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((reservation_id, state, reserved, package_grant_id)) = row else { return Ok(()); };
+        if state != "released" || package_grant_id.is_none() || reserved <= 0 { return Ok(()); }
+        let actual = prompt_tokens.saturating_add(completion_tokens);
+        let consume = (actual as i64).min(reserved).max(0);
+        if consume == 0 { return Ok(()); }
+        let grant_id = package_grant_id.unwrap();
+        query("UPDATE token_package_grants SET consumed_units = consumed_units + $1, reserved_units = GREATEST(0, reserved_units - $1), updated_at = $2 WHERE id = $3")
+            .bind(consume)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(&grant_id)
+            .execute(&mut *tx)
+            .await?;
+        query("UPDATE token_request_reservations SET actual_prompt_tokens = $1, actual_completion_tokens = $2, actual_package_units = $3, state = 'settled', reason = 'client disconnected after partial output', settled_at = $4 WHERE id = $5 AND state = 'released'")
+            .bind(prompt_tokens as i64)
+            .bind(completion_tokens as i64)
+            .bind(consume)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(&reservation_id)
+            .execute(&mut *tx)
+            .await?;
+        query("INSERT INTO token_package_ledger (id, package_grant_id, reservation_id, request_id, entry_type, units, display_tokens, prompt_tokens, completion_tokens, credits, created_at, note) VALUES ($1,$2,$3,$4,'consume',$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING")
+            .bind(uuid::Uuid::new_v4().to_string()).bind(&grant_id).bind(&reservation_id).bind(request_id)
+            .bind(consume).bind(prompt_tokens.saturating_add(completion_tokens) as i64).bind(prompt_tokens as i64).bind(completion_tokens as i64).bind(consume)
+            .bind(chrono::Utc::now().to_rfc3339()).bind("partial stream output")
+            .execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     async fn token_request_billing_amount(&self, request_id: &str) -> Result<Option<(bool, Decimal)>, DbError> {
         let row = query_as::<_, (Option<String>, Option<f64>)>(
             "SELECT package_grant_id, actual_wallet_amount
