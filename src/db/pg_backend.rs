@@ -977,6 +977,13 @@ impl DbBackend for PgBackend {
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS accounting_mode TEXT",
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS package_units BIGINT NOT NULL DEFAULT 0",
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS wallet_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS activity_status TEXT NOT NULL DEFAULT 'unknown'",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS status_reason TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS charge_source TEXT NOT NULL DEFAULT 'unknown'",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS priced_cost_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "UPDATE billing_events SET priced_cost_amount = cost_amount WHERE priced_cost_amount = 0 AND cost_amount <> 0",
+            "UPDATE billing_events SET activity_status = CASE WHEN status_code = 499 THEN 'interrupted' WHEN success THEN 'success' ELSE 'failed' END WHERE activity_status = 'unknown' OR activity_status = ''",
+            "UPDATE billing_events SET charge_source = CASE WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN cost_amount = 0 THEN 'unknown' ELSE 'wallet' END WHERE charge_source = 'unknown' OR charge_source = ''",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_prompt_tokens BIGINT NOT NULL DEFAULT 0",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_completion_tokens BIGINT NOT NULL DEFAULT 0",
@@ -996,6 +1003,7 @@ impl DbBackend for PgBackend {
             "CREATE INDEX IF NOT EXISTS idx_token_reservations_state ON token_request_reservations(state, expires_at)",
             "CREATE INDEX IF NOT EXISTS idx_token_ledger_grant ON token_package_ledger(package_grant_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_billing_events_reservation ON billing_events(reservation_id)",
+            "CREATE INDEX IF NOT EXISTS idx_billing_events_activity ON billing_events(user_id, timestamp DESC, activity_status, charge_source)",
         ] {
             let _ = raw_sql(index).execute(&self.pool).await;
         }
@@ -2666,6 +2674,120 @@ impl DbBackend for PgBackend {
             .await?
         };
         Ok(Decimal::try_from(cost).unwrap_or(Decimal::ZERO))
+    }
+
+    async fn list_billing_activities(
+        &self,
+        start: &str,
+        end: &str,
+        user_id: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<crate::db::BillingActivityRow>, DbError> {
+        let rows = if let Some(uid) = user_id {
+            query(
+                "SELECT timestamp, request_id, user_id, user_name, model, channel_id,
+                 COALESCE(activity_status, CASE WHEN status_code = 499 THEN 'interrupted' WHEN success THEN 'success' ELSE 'failed' END),
+                 COALESCE(status_reason, ''), status_code, success, prompt_tokens, completion_tokens,
+                 cache_hit_input_tokens, cache_write_tokens, total_tokens, package_units,
+                 package_grant_id, COALESCE(wallet_amount, 0), COALESCE(priced_cost_amount, cost_amount),
+                 COALESCE(charge_source, CASE WHEN package_units > 0 THEN 'package' WHEN cost_amount > 0 THEN 'wallet' ELSE 'unknown' END),
+                 account_type, team_id, api_key_name, latency_ms, reservation_id
+                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3
+                 ORDER BY timestamp DESC LIMIT $4 OFFSET $5",
+            )
+            .bind(start).bind(end).bind(uid).bind(limit as i64).bind(offset as i64)
+            .fetch_all(&self.pool).await?
+        } else {
+            query(
+                "SELECT timestamp, request_id, user_id, user_name, model, channel_id,
+                 COALESCE(activity_status, CASE WHEN status_code = 499 THEN 'interrupted' WHEN success THEN 'success' ELSE 'failed' END),
+                 COALESCE(status_reason, ''), status_code, success, prompt_tokens, completion_tokens,
+                 cache_hit_input_tokens, cache_write_tokens, total_tokens, package_units,
+                 package_grant_id, COALESCE(wallet_amount, 0), COALESCE(priced_cost_amount, cost_amount),
+                 COALESCE(charge_source, CASE WHEN package_units > 0 THEN 'package' WHEN cost_amount > 0 THEN 'wallet' ELSE 'unknown' END),
+                 account_type, team_id, api_key_name, latency_ms, reservation_id
+                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2
+                 ORDER BY timestamp DESC LIMIT $3 OFFSET $4",
+            )
+            .bind(start).bind(end).bind(limit as i64).bind(offset as i64)
+            .fetch_all(&self.pool).await?
+        };
+        rows.into_iter()
+            .map(|row| {
+                Ok(crate::db::BillingActivityRow {
+                    timestamp: row.try_get(0)?,
+                    request_id: row.try_get(1)?,
+                    user_id: row.try_get(2)?,
+                    user_name: row.try_get(3)?,
+                    model: row.try_get(4)?,
+                    channel_id: row.try_get(5)?,
+                    activity_status: row.try_get(6)?,
+                    status_reason: row.try_get(7)?,
+                    status_code: row.try_get::<i32, _>(8)? as u16,
+                    success: row.try_get(9)?,
+                    prompt_tokens: row.try_get::<i64, _>(10)?.max(0) as u64,
+                    completion_tokens: row.try_get::<i64, _>(11)?.max(0) as u64,
+                    cache_hit_input_tokens: row.try_get::<i64, _>(12)?.max(0) as u64,
+                    cache_write_tokens: row.try_get::<i64, _>(13)?.max(0) as u64,
+                    total_tokens: row.try_get::<i64, _>(14)?.max(0) as u64,
+                    package_units: row.try_get::<i64, _>(15)?.max(0) as u64,
+                    package_grant_id: row.try_get(16)?,
+                    wallet_amount: Decimal::try_from(row.try_get::<f64, _>(17)?)
+                        .unwrap_or(Decimal::ZERO),
+                    priced_cost_amount: Decimal::try_from(row.try_get::<f64, _>(18)?)
+                        .unwrap_or(Decimal::ZERO),
+                    charge_source: row.try_get(19)?,
+                    account_type: row.try_get(20)?,
+                    team_id: row.try_get(21)?,
+                    api_key_name: row.try_get(22)?,
+                    latency_ms: row.try_get::<i64, _>(23)?.max(0) as u64,
+                    reservation_id: row.try_get(24)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn count_billing_activities(
+        &self,
+        start: &str,
+        end: &str,
+        user_id: Option<&str>,
+    ) -> Result<usize, DbError> {
+        let count: i64 = if let Some(uid) = user_id {
+            query_scalar("SELECT COUNT(*)::bigint FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3")
+                .bind(start).bind(end).bind(uid).fetch_one(&self.pool).await?
+        } else {
+            query_scalar("SELECT COUNT(*)::bigint FROM billing_events WHERE timestamp >= $1 AND timestamp < $2")
+                .bind(start).bind(end).fetch_one(&self.pool).await?
+        };
+        Ok(count.max(0) as usize)
+    }
+
+    async fn period_token_breakdown(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, u64, Decimal)>, DbError> {
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let rows: (i64, i64, f64) = if let Some(uid) = user_id {
+            query_as("SELECT COALESCE(SUM(prompt_tokens),0)::bigint, COALESCE(SUM(cache_hit_input_tokens),0)::bigint, COALESCE(SUM(completion_tokens),0)::double precision FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3")
+                .bind(&start).bind(&end).bind(uid).fetch_one(&self.pool).await?
+        } else {
+            query_as("SELECT COALESCE(SUM(prompt_tokens),0)::bigint, COALESCE(SUM(cache_hit_input_tokens),0)::bigint, COALESCE(SUM(completion_tokens),0)::double precision FROM billing_events WHERE timestamp >= $1 AND timestamp < $2")
+                .bind(&start).bind(&end).fetch_one(&self.pool).await?
+        };
+        Ok(vec![
+            ("input".into(), rows.0.max(0) as u64, Decimal::ZERO),
+            ("cache_hit".into(), rows.1.max(0) as u64, Decimal::ZERO),
+            ("output".into(), rows.2.max(0.0) as u64, Decimal::ZERO),
+        ])
     }
 
     async fn period_model_breakdown(
@@ -5304,10 +5426,10 @@ impl DbBackend for PgBackend {
                  prompt_price, completion_price, cache_read_price, cost_amount, \
                  api_key_name, api_format, stream, client_ip, endpoint_id, \
                  request_body, response_body, reasoning_body, original_model, \
-                 success, status_code, team_id, account_type) \
+                 success, status_code, team_id, account_type, activity_status, charge_source, priced_cost_amount) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, \
                  $12, $13, $14, $15, $16, $17, $18, $19, $20, \
-                 $21, $22, $23, $24, $25, $26, $27, $28) \
+                 $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31) \
                  ON CONFLICT (request_id) DO NOTHING",
             )
             .bind(&record.timestamp)
@@ -5338,6 +5460,9 @@ impl DbBackend for PgBackend {
             .bind(record.status_code as i32)
             .bind(&record.team_id)
             .bind(&account_type)
+            .bind(if record.status_code == 499 { "interrupted" } else if record.success { "success" } else { "failed" })
+            .bind(if cost_amount > 0.0 { "wallet" } else { "unknown" })
+            .bind(cost_amount)
             .execute(&mut *tx)
             .await?;
             if billing_inserted.rows_affected() == 0 {
@@ -5363,7 +5488,9 @@ impl DbBackend for PgBackend {
                          accounting_mode = r.accounting_mode,
                          package_units = COALESCE(r.actual_package_units, 0),
                          wallet_amount = COALESCE(r.actual_wallet_amount, 0),
-                         cost_amount = COALESCE(r.actual_wallet_amount, 0)
+                         cost_amount = COALESCE(r.actual_wallet_amount, 0),
+                         activity_status = CASE WHEN r.actual_package_units > 0 OR r.actual_wallet_amount > 0 THEN 'success' ELSE be.activity_status END,
+                         charge_source = CASE WHEN r.actual_package_units > 0 AND r.actual_wallet_amount > 0 THEN 'package_and_wallet' WHEN r.actual_package_units > 0 THEN 'package' WHEN r.actual_wallet_amount > 0 THEN 'wallet' ELSE be.charge_source END
                      FROM token_request_reservations r
                      WHERE be.request_id = r.request_id AND be.request_id = $1",
                 )

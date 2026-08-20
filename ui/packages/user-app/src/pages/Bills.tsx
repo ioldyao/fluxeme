@@ -1,10 +1,10 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useBillingSummary, usePeriodSummary, useDeductions, useBillingMonths, usePeriodSummaryAll } from '@fluxeme/shared/src/api/billing';
+import { useBillingSummary, usePeriodSummary, useBillingActivities, useDeductions, useBillingMonths, usePeriodSummaryAll } from '@fluxeme/shared/src/api/billing';
 import { useCurrency } from '@fluxeme/shared/src/store/currency';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@fluxeme/shared/src/components/ui/dialog';
-import { Wallet, Receipt, Activity, TrendingDown, ChevronDown, BarChart3 } from 'lucide-react';
+import { Wallet, Receipt, Activity, ChevronDown, BarChart3 } from 'lucide-react';
 
 export default function Bills() {
   const { t, i18n } = useTranslation();
@@ -19,12 +19,16 @@ export default function Bills() {
   const { data: summary } = useBillingSummary();
   const { data: period } = usePeriodSummary(active.year, active.month);
   const [dedPage, setDedPage] = useState(1);
-  const DED_PAGE_SIZE = 15;
-  useEffect(() => { setDedPage(1); }, [sel]);
-  const { data: deductionsData } = useDeductions(active.year, active.month, dedPage, DED_PAGE_SIZE);
+  const { data: deductionsData } = useDeductions(active.year, active.month, dedPage, 15);
+  const { data: activitiesData } = useBillingActivities(active.year, active.month, 100, 0);
+  const activities = activitiesData?.activities ?? [];
+  const activityCounts = useMemo(() => activities.reduce((acc, item) => {
+    acc[item.activity_status] = (acc[item.activity_status] ?? 0) + 1;
+    return acc;
+  }, {} as Record<string, number>), [activities]);
   const deductions = deductionsData?.items;
   const dedTotal = deductionsData?.total ?? 0;
-  const dedTotalPages = Math.max(1, Math.ceil(dedTotal / DED_PAGE_SIZE));
+  const dedTotalPages = Math.max(1, Math.ceil(dedTotal / 15));
   const { currency } = useCurrency();
   const [open, setOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
@@ -41,7 +45,7 @@ export default function Bills() {
     <div>
       <PageHeader title={t('bills.title')} description={t('bills.subtitle')} />
 
-      {/* Summary cards row */}
+      {/* Activity summary row */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 px-6 mb-8">
         <div className={cardStyle}>
           <div className="flex items-center gap-2 text-muted-foreground">
@@ -54,18 +58,18 @@ export default function Bills() {
         <div className={cardStyle}>
           <div className="flex items-center gap-2 text-muted-foreground">
             <Receipt className="h-4 w-4" />
-            <span className="text-xs font-medium uppercase tracking-wider">{t('bills.totalUsage')}</span>
+            <span className="text-xs font-medium uppercase tracking-wider">本期钱包扣款</span>
           </div>
-          <div className="text-2xl font-bold">{summary ? fmt(summary.total_cost) : '—'}</div>
-          <div className="text-xs text-muted-foreground">{t('bills.totalConsumed')}</div>
+          <div className="text-2xl font-bold">{activities.length ? fmt(activities.reduce((sum, item) => sum + item.wallet_amount, 0)) : '—'}</div>
+          <div className="text-xs text-muted-foreground">资源包和免费活动不产生钱包扣款</div>
         </div>
         <div className={cardStyle}>
           <div className="flex items-center gap-2 text-muted-foreground">
             <Activity className="h-4 w-4" />
-            <span className="text-xs font-medium uppercase tracking-wider">{t('bills.apiRequests')}</span>
+            <span className="text-xs font-medium uppercase tracking-wider">本期活动记录</span>
           </div>
-          <div className="text-2xl font-bold">{summary ? summary.total_requests.toLocaleString() : '—'}</div>
-          <div className="text-xs text-muted-foreground">{t('bills.totalRequests')}</div>
+          <div className="text-2xl font-bold">{activitiesData ? activitiesData.total.toLocaleString() : '—'}</div>
+          <div className="text-xs text-muted-foreground">成功 {activityCounts.success ?? 0} · 失败 {activityCounts.failed ?? 0} · 中断 {activityCounts.interrupted ?? 0}</div>
         </div>
       </div>
 
@@ -161,15 +165,17 @@ export default function Bills() {
         </div>
       </div>
 
-      {/* Deduction records */}
+      {/* Activity records */}
       <div className="px-6 mb-8">
         <div className="rounded-xl border">
           <div className="border-b px-5 py-3 flex items-center gap-2">
-            <TrendingDown className="h-4 w-4 text-muted-foreground" />
-            <h3 className="font-semibold text-sm">{t('bills.deductions')}</h3>
-            <span className="text-xs text-muted-foreground ml-auto">{t('wallet.txTotal', { total: dedTotal })}</span>
+            <Activity className="h-4 w-4 text-muted-foreground" />
+            <h3 className="font-semibold text-sm">本期账单活动记录</h3>
+            <span className="text-xs text-muted-foreground ml-auto">免费、资源包和钱包活动均会记录</span>
           </div>
-          {deductions && deductions.length > 0 ? (
+          {activities.length > 0 ? (
+            <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-xs text-muted-foreground"><th className="text-left px-5 py-3">时间</th><th className="text-left px-5 py-3">模型</th><th className="text-left px-5 py-3">状态</th><th className="text-right px-5 py-3">Token</th><th className="text-right px-5 py-3">资源包 units</th><th className="text-right px-5 py-3">钱包扣款</th><th className="text-left px-5 py-3">结算来源</th></tr></thead><tbody>{activities.map((item) => <tr key={item.request_id} className="border-b last:border-0"><td className="px-5 py-3 text-muted-foreground">{new Date(item.timestamp).toLocaleString()}</td><td className="px-5 py-3">{item.model}</td><td className="px-5 py-3"><span className="rounded-full bg-muted px-2 py-1 text-xs">{item.activity_status}</span></td><td className="px-5 py-3 text-right font-mono">{item.total_tokens.toLocaleString()}</td><td className="px-5 py-3 text-right font-mono">{item.package_units.toLocaleString()}</td><td className="px-5 py-3 text-right font-mono">{fmt(item.wallet_amount)}</td><td className="px-5 py-3">{item.charge_source}</td></tr>)}</tbody></table></div>
+          ) : deductions && deductions.length > 0 ? (
             <div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">

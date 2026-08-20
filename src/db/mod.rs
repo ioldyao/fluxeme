@@ -67,6 +67,35 @@ pub struct WalletTransactionRow {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct BillingActivityRow {
+    pub timestamp: String,
+    pub request_id: String,
+    pub user_id: String,
+    pub user_name: String,
+    pub model: String,
+    pub channel_id: String,
+    pub activity_status: String,
+    pub status_reason: String,
+    pub status_code: u16,
+    pub success: bool,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub cache_hit_input_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub total_tokens: u64,
+    pub package_units: u64,
+    pub package_grant_id: Option<String>,
+    pub wallet_amount: Decimal,
+    pub priced_cost_amount: Decimal,
+    pub charge_source: String,
+    pub account_type: String,
+    pub team_id: Option<String>,
+    pub api_key_name: Option<String>,
+    pub latency_ms: u64,
+    pub reservation_id: Option<String>,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RechargeKeyRow {
     pub key: String,
@@ -368,6 +397,38 @@ impl Database {
         user_id: Option<&str>,
     ) -> Result<Decimal, DbError> {
         self.backend.period_summary_since(start, user_id).await
+    }
+    pub async fn list_billing_activities(
+        &self,
+        start: &str,
+        end: &str,
+        user_id: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<BillingActivityRow>, DbError> {
+        self.backend
+            .list_billing_activities(start, end, user_id, limit, offset)
+            .await
+    }
+    pub async fn count_billing_activities(
+        &self,
+        start: &str,
+        end: &str,
+        user_id: Option<&str>,
+    ) -> Result<usize, DbError> {
+        self.backend
+            .count_billing_activities(start, end, user_id)
+            .await
+    }
+    pub async fn period_token_breakdown(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, u64, Decimal)>, DbError> {
+        self.backend
+            .period_token_breakdown(year, month, user_id)
+            .await
     }
     pub async fn period_model_breakdown(
         &self,

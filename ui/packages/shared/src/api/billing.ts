@@ -15,6 +15,53 @@ import type {
   UsageRecord,
 } from '../types';
 
+export interface BillingActivity {
+  timestamp: string;
+  request_id: string;
+  user_id?: string;
+  user_name?: string;
+  model: string;
+  channel_id: string;
+  activity_status: string;
+  status_reason: string;
+  status_code: number;
+  success: boolean;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cache_hit_input_tokens: number;
+  cache_write_tokens: number;
+  total_tokens: number;
+  package_units: number;
+  package_grant_id?: string | null;
+  wallet_amount: number;
+  priced_cost_amount: number;
+  charge_source: string;
+  account_type: string;
+  team_id?: string | null;
+  api_key_name?: string | null;
+  latency_ms: number;
+  reservation_id?: string | null;
+}
+
+export interface BillingActivityResponse {
+  activities: BillingActivity[];
+  total: number;
+}
+
+export function useBillingActivities(year: number, month: number, limit = 50, offset = 0) {
+  return useQuery({
+    queryKey: ['billing', 'activities', year, month, limit, offset],
+    queryFn: () => api<BillingActivityResponse>(`/billing/activities?year=${year}&month=${month}&limit=${limit}&offset=${offset}`),
+  });
+}
+
+export function useAdminBillingActivities(year: number, month: number, limit = 100, offset = 0) {
+  return useQuery({
+    queryKey: ['admin-billing', 'activities', year, month, limit, offset],
+    queryFn: () => api<BillingActivityResponse>(`/admin/billing/activities?year=${year}&month=${month}&limit=${limit}&offset=${offset}`),
+  });
+}
+
 export interface PeriodSummary {
   year: number;
   month: number;

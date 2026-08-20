@@ -469,6 +469,8 @@ pub(crate) async fn admin_billing_team_user_api_keys(
 pub(crate) struct PeriodQuery {
     year: Option<i32>,
     month: Option<u32>,
+    limit: Option<usize>,
+    offset: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -516,6 +518,12 @@ pub(crate) struct BillingApiKeyDetailQuery {
     limit: Option<usize>,
     offset: Option<usize>,
     api_format: Option<String>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct BillingActivityResponse {
+    activities: Vec<serde_json::Value>,
+    total: usize,
 }
 
 #[derive(Serialize)]
@@ -739,6 +747,49 @@ pub(crate) struct AdminBillingApiKeyDetailResponse {
     recent_requests: Vec<crate::domain::usage::UsageRecord>,
 }
 
+pub(crate) async fn billing_activities(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<PeriodQuery>,
+) -> Result<Json<BillingActivityResponse>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    let now = chrono::Utc::now();
+    let year = q.year.unwrap_or_else(|| now.year());
+    let month = q.month.unwrap_or_else(|| now.month());
+    validate_year_month(year, month)?;
+    let start = format!("{}-{:02}-01T00:00:00", year, month);
+    let end = if month == 12 {
+        format!("{}-01-01T00:00:00", year + 1)
+    } else {
+        format!("{}-{:02}-01T00:00:00", year, month + 1)
+    };
+    let activities = state
+        .db
+        .list_billing_activities(
+            &start,
+            &end,
+            Some(&session.user_id),
+            q.limit.unwrap_or(50),
+            q.offset.unwrap_or(0),
+        )
+        .await
+        .map_err(db_err)?;
+    let total = state
+        .db
+        .count_billing_activities(&start, &end, Some(&session.user_id))
+        .await
+        .map_err(db_err)?;
+    Ok(Json(BillingActivityResponse { activities: activities.into_iter().map(|a| serde_json::json!({
+        "timestamp": a.timestamp, "request_id": a.request_id, "model": a.model, "channel_id": a.channel_id,
+        "activity_status": a.activity_status, "status_reason": a.status_reason, "status_code": a.status_code, "success": a.success,
+        "prompt_tokens": a.prompt_tokens, "completion_tokens": a.completion_tokens, "cache_hit_input_tokens": a.cache_hit_input_tokens,
+        "cache_write_tokens": a.cache_write_tokens, "total_tokens": a.total_tokens, "package_units": a.package_units,
+        "package_grant_id": a.package_grant_id, "wallet_amount": a.wallet_amount, "priced_cost_amount": a.priced_cost_amount,
+        "charge_source": a.charge_source, "account_type": a.account_type, "team_id": a.team_id, "api_key_name": a.api_key_name,
+        "latency_ms": a.latency_ms, "reservation_id": a.reservation_id,
+    })).collect(), total }))
+}
+
 pub(crate) async fn billing_period_summary(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -757,11 +808,11 @@ pub(crate) async fn billing_period_summary(
         .await
         .map_err(db_err)?;
     let token_cost_breakdown = map_token_cost_breakdown(
-        vec![
-            ("input".to_string(), 0, Decimal::ZERO),
-            ("cache_hit".to_string(), 0, Decimal::ZERO),
-            ("output".to_string(), 0, Decimal::ZERO),
-        ],
+        state
+            .db
+            .period_token_breakdown(year, month, Some(uid))
+            .await
+            .map_err(db_err)?,
         total_cost,
     );
 
@@ -795,6 +846,50 @@ pub(crate) async fn billing_period_summary(
     }))
 }
 
+pub(crate) async fn admin_billing_activities(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<PeriodQuery>,
+) -> Result<Json<BillingActivityResponse>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:bills").await?;
+    let now = chrono::Utc::now();
+    let year = q.year.unwrap_or_else(|| now.year());
+    let month = q.month.unwrap_or_else(|| now.month());
+    validate_year_month(year, month)?;
+    let start = format!("{}-{:02}-01T00:00:00", year, month);
+    let end = if month == 12 {
+        format!("{}-01-01T00:00:00", year + 1)
+    } else {
+        format!("{}-{:02}-01T00:00:00", year, month + 1)
+    };
+    let activities = state
+        .db
+        .list_billing_activities(
+            &start,
+            &end,
+            None,
+            q.limit.unwrap_or(100),
+            q.offset.unwrap_or(0),
+        )
+        .await
+        .map_err(db_err)?;
+    let total = state
+        .db
+        .count_billing_activities(&start, &end, None)
+        .await
+        .map_err(db_err)?;
+    Ok(Json(BillingActivityResponse { activities: activities.into_iter().map(|a| serde_json::json!({
+        "timestamp": a.timestamp, "request_id": a.request_id, "user_id": a.user_id, "user_name": a.user_name,
+        "model": a.model, "channel_id": a.channel_id, "activity_status": a.activity_status, "status_reason": a.status_reason,
+        "status_code": a.status_code, "success": a.success, "prompt_tokens": a.prompt_tokens, "completion_tokens": a.completion_tokens,
+        "cache_hit_input_tokens": a.cache_hit_input_tokens, "cache_write_tokens": a.cache_write_tokens, "total_tokens": a.total_tokens,
+        "package_units": a.package_units, "package_grant_id": a.package_grant_id, "wallet_amount": a.wallet_amount,
+        "priced_cost_amount": a.priced_cost_amount, "charge_source": a.charge_source, "account_type": a.account_type,
+        "team_id": a.team_id, "api_key_name": a.api_key_name, "latency_ms": a.latency_ms, "reservation_id": a.reservation_id,
+    })).collect(), total }))
+}
+
 pub(crate) async fn admin_billing_period_summary(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -814,11 +909,11 @@ pub(crate) async fn admin_billing_period_summary(
         .await
         .map_err(db_err)?;
     let token_cost_breakdown = map_token_cost_breakdown(
-        vec![
-            ("input".to_string(), 0, Decimal::ZERO),
-            ("cache_hit".to_string(), 0, Decimal::ZERO),
-            ("output".to_string(), 0, Decimal::ZERO),
-        ],
+        state
+            .db
+            .period_token_breakdown(year, month, None)
+            .await
+            .map_err(db_err)?,
         total_cost,
     );
 

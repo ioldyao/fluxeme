@@ -123,6 +123,26 @@ pub trait DbBackend: Send + Sync {
         start: &str,
         user_id: Option<&str>,
     ) -> Result<Decimal, DbError>;
+    async fn list_billing_activities(
+        &self,
+        start: &str,
+        end: &str,
+        user_id: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<crate::db::BillingActivityRow>, DbError>;
+    async fn count_billing_activities(
+        &self,
+        start: &str,
+        end: &str,
+        user_id: Option<&str>,
+    ) -> Result<usize, DbError>;
+    async fn period_token_breakdown(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+    ) -> Result<Vec<(String, u64, Decimal)>, DbError>;
     async fn period_model_breakdown(
         &self,
         year: i32,

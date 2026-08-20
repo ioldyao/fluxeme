@@ -846,6 +846,10 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             axum::routing::get(billing::billing_period_summary),
         )
         .route(
+            "/api/billing/activities",
+            axum::routing::get(billing::billing_activities),
+        )
+        .route(
             "/api/billing/deductions",
             axum::routing::get(billing::billing_deductions),
         )
@@ -916,6 +920,10 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         .route(
             "/api/admin/billing/period-summary",
             axum::routing::get(billing::admin_billing_period_summary),
+        )
+        .route(
+            "/api/admin/billing/activities",
+            axum::routing::get(billing::admin_billing_activities),
         )
         .route(
             "/api/admin/billing/scoped-period-summary",

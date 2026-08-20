@@ -4,7 +4,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell,
 } from 'recharts';
 import {
-  useAdminBillingSummary, useAdminBillingUserSpendRanking, useAdminBillingDailyTrend, useAdminBillingMonths, useAdminScopedPeriodSummary, useAdminBillingUserApiKeyCosts, useAdminDeductions, useAdminBillingApiKeyDetail,
+  useAdminBillingSummary, useAdminBillingUserSpendRanking, useAdminBillingDailyTrend, useAdminBillingMonths, useAdminScopedPeriodSummary, useAdminBillingUserApiKeyCosts, useAdminDeductions, useAdminBillingApiKeyDetail, useAdminBillingActivities,
 } from '@fluxeme/shared/src/api/billing';
 import { api } from '@fluxeme/shared/src/api/client';
 import { useQuery } from '@tanstack/react-query';
@@ -77,6 +77,8 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
   const [sortBy, setSortBy] = useState('cost_desc');
 
   const { data: summary } = useAdminBillingSummary();
+  void summary;
+  const { data: activitiesData } = useAdminBillingActivities(year, month, 100, 0);
   const { data: ranking } = useAdminBillingUserSpendRanking(year, month, 100);
   const { data: trend } = useAdminBillingDailyTrend(year, month);
   const { data: months } = useAdminBillingMonths();
@@ -119,12 +121,11 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
     setSearchParams({ year: String(y), month: String(m) });
   };
 
-  const totalCost = summary?.total_cost ?? 0;
-  const totalRequests = summary?.total_requests ?? 0;
-  const totalTokens = summary?.total_tokens ?? 0;
-  const activeUsers = ranking?.items.length ?? 0;
-  const totalKeys = ranking?.items.reduce((s, i) => s + i.api_key_count, 0) ?? 0;
   const totalUsers = ranking?.items.length ?? 0;
+  const activitySourceCounts = useMemo(() => (activitiesData?.activities ?? []).reduce((acc, item) => {
+    acc[item.charge_source] = (acc[item.charge_source] ?? 0) + 1;
+    return acc;
+  }, {} as Record<string, number>), [activitiesData]);
 
   return (
     <div className="space-y-4">
@@ -135,7 +136,7 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
           <div className="mt-[10px] flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-[5px] rounded-full bg-accent px-2 py-[3px] text-[12px] font-semibold text-accent-foreground">{monthLabel(year, month)}</span>
             <span className="inline-flex items-center gap-[5px] rounded-full bg-muted px-2 py-[3px] text-[12px] font-semibold text-muted-foreground">共 {totalUsers} 个用户</span>
-            <span className="inline-flex items-center gap-[5px] rounded-full bg-chart-2/15 px-2 py-[3px] text-[12px] font-semibold text-chart-2">{activeUsers} 个本期有消费</span>
+            <span className="inline-flex items-center gap-[5px] rounded-full bg-chart-2/15 px-2 py-[3px] text-[12px] font-semibold text-chart-2">{activitiesData?.total ?? 0} 条账单活动</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -149,12 +150,12 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
       </section>
 
       <section className="grid grid-cols-6 gap-3 max-[1400px]:grid-cols-3 max-[850px]:grid-cols-2">
-        <KpiCard label="本期用户总消费" value={fmtMoney(totalCost)} note={`总请求 ${fmtShort(totalRequests)}`} />
-        <KpiCard label="本期总请求" value={fmtShort(totalRequests)} note={totalRequests > 0 ? `成功率 ${(((totalRequests - 0) / totalRequests) * 100).toFixed(1)}%` : ''} />
-        <KpiCard label="总 Token" value={fmtShort(totalTokens)} note={`输入 ${fmtShort(Math.round(totalTokens * 0.8))} · 输出 ${fmtShort(Math.round(totalTokens * 0.2))}`} />
-        <KpiCard label="本期有消费用户" value={String(activeUsers)} note={`共 ${totalUsers} 个用户`} />
-        <KpiCard label="活跃 API Key" value={String(totalKeys)} note="总计" />
-        <KpiCard label="预算告警用户" value="-" note="待对接" />
+        <KpiCard label="本期钱包扣款" value={fmtMoney((activitiesData?.activities ?? []).reduce((sum, item) => sum + item.wallet_amount, 0))} note="以账单活动实际结算为准" />
+        <KpiCard label="本期账单活动" value={fmtShort(activitiesData?.total ?? 0)} note={`成功 ${activitySourceCounts.package ?? 0} 条资源包活动`} />
+        <KpiCard label="账单活动 Token" value={fmtShort((activitiesData?.activities ?? []).reduce((sum, item) => sum + item.total_tokens, 0))} note="包含免费与资源包活动" />
+        <KpiCard label="本期活动主体" value={String(totalUsers)} note={`共 ${activitiesData?.total ?? 0} 条账单活动`} />
+        <KpiCard label="资源包活动" value={String(activitySourceCounts.package ?? 0)} note={`混合 ${activitySourceCounts.package_and_wallet ?? 0} · 免费/其他 ${activitySourceCounts.unknown ?? 0}`} />
+        <KpiCard label="钱包活动" value={String(activitySourceCounts.wallet ?? 0)} note="按活动记录统计" />
       </section>
 
       <section className="grid grid-cols-[1.55fr_0.85fr] gap-3.5 max-[1200px]:grid-cols-1">
@@ -201,8 +202,8 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
       <section className="rounded-xl border border-border bg-card shadow-sm">
         <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
           <div>
-            <div className="text-[14px] font-bold">用户账单列表</div>
-            <div className="mt-[3px] text-[12px] text-muted-foreground">账单主体按用户独立统计；团队仅作为可选关联维度，不影响用户账单本身</div>
+            <div className="text-[14px] font-bold">用户账单活动主体</div>
+            <div className="mt-[3px] text-[12px] text-muted-foreground">按用户查看本期活动状态、Token、资源包结算与钱包扣款记录</div>
           </div>
         </div>
 
