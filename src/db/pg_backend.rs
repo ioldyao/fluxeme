@@ -5844,6 +5844,17 @@ impl DbBackend for PgBackend {
         Ok(())
     }
 
+    async fn token_request_wallet_amount(&self, request_id: &str) -> Result<Option<Decimal>, DbError> {
+        let amount = query_scalar::<_, Option<f64>>(
+            "SELECT actual_wallet_amount FROM token_request_reservations
+             WHERE request_id = $1 AND state = 'settled'",
+        )
+        .bind(request_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(amount.flatten().map(|value| Decimal::try_from(value).unwrap_or(Decimal::ZERO)))
+    }
+
     async fn release_token_request(&self, reservation_id: &str, reason: &str) -> Result<(), DbError> {
         let mut tx = self.pool.begin().await?;
         let row = query("SELECT state, package_grant_id, reserved_package_units, reserved_prompt_tokens, reserved_completion_tokens, user_id, team_id, reserved_wallet_amount FROM token_request_reservations WHERE id = $1 FOR UPDATE")

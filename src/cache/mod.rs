@@ -505,12 +505,18 @@ pub async fn start_obs_consumer(
             else {
                 continue;
             };
-            let cost_amount = (Decimal::from(r.prompt_tokens) / Decimal::from(1000000)
-                * prompt_price
-                + Decimal::from(r.completion_tokens) / Decimal::from(1000000) * completion_price
-                + Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000)
-                    * cache_read_price
-                + Decimal::from(r.cache_write_tokens) / Decimal::from(1000000) * cache_write_price)
+            let package_wallet_amount = db
+                .token_request_wallet_amount(&r.request_id)
+                .await
+                .ok()
+                .flatten();
+            let cost_amount = package_wallet_amount
+                .unwrap_or_else(|| {
+                    Decimal::from(r.prompt_tokens) / Decimal::from(1000000) * prompt_price
+                        + Decimal::from(r.completion_tokens) / Decimal::from(1000000) * completion_price
+                        + Decimal::from(r.cache_hit_input_tokens) / Decimal::from(1000000) * cache_read_price
+                        + Decimal::from(r.cache_write_tokens) / Decimal::from(1000000) * cache_write_price
+                })
                 .to_f64()
                 .unwrap_or(0.0);
             events.push(crate::ch_backend::UsageEvent {
@@ -531,9 +537,9 @@ pub async fn start_obs_consumer(
                 stream: if r.stream { 1 } else { 0 },
                 cache_hit_input_tokens: r.cache_hit_input_tokens,
                 cache_write_tokens: r.cache_write_tokens,
-                prompt_price: prompt_price.to_f64().unwrap_or(0.0),
-                completion_price: completion_price.to_f64().unwrap_or(0.0),
-                cache_read_price: cache_read_price.to_f64().unwrap_or(0.0),
+                prompt_price: if package_wallet_amount.is_some() { 0.0 } else { prompt_price.to_f64().unwrap_or(0.0) },
+                completion_price: if package_wallet_amount.is_some() { 0.0 } else { completion_price.to_f64().unwrap_or(0.0) },
+                cache_read_price: if package_wallet_amount.is_some() { 0.0 } else { cache_read_price.to_f64().unwrap_or(0.0) },
                 cost_amount,
                 client_ip: r.client_ip.clone(),
                 endpoint_id: r.endpoint_id,

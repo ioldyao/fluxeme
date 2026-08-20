@@ -497,6 +497,7 @@ pub trait DbBackend: Send + Sync {
         reservation_id: &str,
         reason: &str,
     ) -> Result<(), DbError>;
+    async fn token_request_wallet_amount(&self, request_id: &str) -> Result<Option<Decimal>, DbError>;
 
     // ── Teams ─────────────────────────────────────────────────────────────
     async fn create_team(&self, team: &Team, owner_id: &str) -> Result<(), DbError>;
