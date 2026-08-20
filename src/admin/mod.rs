@@ -1058,6 +1058,10 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             axum::routing::get(skillhub::get_published_skill),
         )
         .route(
+            "/api/skills/{slug}/versions",
+            axum::routing::get(skillhub::list_published_versions),
+        )
+        .route(
             "/api/skills/{slug}/download",
             axum::routing::get(skillhub::download_skill),
         )

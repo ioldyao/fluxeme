@@ -199,6 +199,15 @@ export function usePublishedSkill(slug: string | null) {
   });
 }
 
+/** 发布态技能的版本列表（详情页 Versions Tab）。 */
+export function usePublishedSkillVersions(slug: string | null) {
+  return useQuery({
+    queryKey: ['published-skill-versions', slug],
+    queryFn: () => api<SkillVersionRow[]>(`/skills/${encodeURIComponent(slug!)}/versions`),
+    enabled: !!slug,
+  });
+}
+
 export function useInstallSkill() {
   const qc = useQueryClient();
   return useMutation({

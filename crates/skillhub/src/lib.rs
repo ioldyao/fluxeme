@@ -326,6 +326,20 @@ impl SkillHubModule {
         Ok(skill.filter(|s| s.status == "published"))
     }
 
+    /// 发布态技能的版本列表（用户端详情页用，仅已发布技能可见）。
+    pub async fn list_published_versions(
+        &self,
+        slug: &str,
+    ) -> Result<Vec<SkillVersionRow>, SkillHubError> {
+        let skill = self
+            .repo
+            .get_skill_by_slug(slug)
+            .await?
+            .filter(|s| s.status == "published")
+            .ok_or_else(|| SkillHubError::NotFound("skill".into()))?;
+        self.repo.list_versions(&skill.id).await
+    }
+
     /// 下载技能包。门禁：`published AND 包已上传`。
     /// 阶段 1 以"包存在"代理 runtime_ready（阶段 2 由 Skill Runtime 接管）。
     pub async fn download(

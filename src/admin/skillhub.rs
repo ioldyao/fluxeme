@@ -307,6 +307,21 @@ pub(crate) async fn get_published_skill(
     Ok(Json(row))
 }
 
+/// 发布态技能的版本列表（用户端详情页）。
+pub(crate) async fn list_published_versions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+) -> Result<Json<Vec<SkillVersionRow>>, AdminError> {
+    let _session = require_session(&state.admin, &headers).await?;
+    let items = state
+        .skillhub
+        .list_published_versions(&slug)
+        .await
+        .map_err(skillhub_err)?;
+    Ok(Json(items))
+}
+
 /// 下载技能包 zip（attachment）。版本缺省 = 当前发布版本。
 pub(crate) async fn download_skill(
     State(state): State<Arc<AppState>>,

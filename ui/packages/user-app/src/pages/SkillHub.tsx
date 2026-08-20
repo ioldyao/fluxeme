@@ -1,12 +1,10 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   usePublishedSkills,
-  useInstallSkill,
   useMySkills,
   useSkillRuntimeStatuses,
-  skillInstallCommand,
-  skillDownloadUrl,
 } from '@fluxeme/shared/src/api/skills';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
 import { EmptyState } from '@fluxeme/shared/src/components/EmptyState';
@@ -14,16 +12,7 @@ import { Button } from '@fluxeme/shared/src/components/ui/button';
 import { Input } from '@fluxeme/shared/src/components/ui/input';
 import { Card, CardContent } from '@fluxeme/shared/src/components/ui/card';
 import { Badge } from '@fluxeme/shared/src/components/ui/badge';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@fluxeme/shared/src/components/ui/dialog';
-import { Search, RefreshCw, Download, Terminal, Check } from 'lucide-react';
-import { toast } from 'sonner';
-import type { SkillRow } from '@fluxeme/shared/src/api/skills';
+import { Search, RefreshCw } from 'lucide-react';
 
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   draft: { label: 'skillHub.status.draft', cls: 'bg-muted text-muted-foreground' },
@@ -41,20 +30,18 @@ const RUNTIME_BADGE: Record<string, { label: string; cls: string }> = {
 
 export default function SkillHub() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { data: skills, isLoading, isError, refetch } = usePublishedSkills();
   const { data: mySkills } = useMySkills();
   const { data: runtimeStatuses } = useSkillRuntimeStatuses();
-  const installMutation = useInstallSkill();
   const [query, setQuery] = useState('');
+  const [category, setCategory] = useState<string | null>(null);
 
   const runtimeBySlug = useMemo(() => {
     const m = new Map<string, string>();
     for (const s of runtimeStatuses ?? []) m.set(s.slug, s.state);
     return m;
   }, [runtimeStatuses]);
-  const [category, setCategory] = useState<string | null>(null);
-  const [detail, setDetail] = useState<SkillRow | null>(null);
-  const [copied, setCopied] = useState(false);
 
   const installedSlugs = useMemo(
     () => new Set((mySkills ?? []).map((m) => m.skill.slug)),
@@ -80,26 +67,6 @@ export default function SkillHub() {
       );
     });
   }, [skills, query, category]);
-
-  const copyCommand = () => {
-    if (!detail) return;
-    navigator.clipboard.writeText(skillInstallCommand(detail.slug)).then(() => {
-      setCopied(true);
-      toast.success(t('skillHub.copied'));
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
-
-  const doInstall = () => {
-    if (!detail) return;
-    installMutation.mutate(
-      { slug: detail.slug },
-      {
-        onSuccess: () => toast.success(t('skillHub.installed')),
-        onError: (e: Error) => toast.error(e.message),
-      }
-    );
-  };
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -155,7 +122,11 @@ export default function SkillHub() {
           {filtered.map((s) => {
             const badge = STATUS_BADGE[s.status] ?? STATUS_BADGE.draft;
             return (
-              <Card key={s.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setDetail(s)}>
+              <Card
+                key={s.id}
+                className="cursor-pointer hover:shadow-md transition-shadow"
+                onClick={() => navigate(`/skills/${encodeURIComponent(s.slug)}`)}
+              >
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between gap-2 mb-1.5">
                     <div className="min-w-0">
@@ -179,86 +150,6 @@ export default function SkillHub() {
           })}
         </div>
       )}
-
-      {/* 详情弹窗 */}
-      <Dialog open={!!detail} onOpenChange={(o) => { if (!o) setDetail(null); }}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          {detail && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2 flex-wrap">
-                  {detail.name}
-                  <span className="text-sm font-mono text-muted-foreground">@{detail.slug}</span>
-                  <Badge className={STATUS_BADGE[detail.status]?.cls}>{t(STATUS_BADGE[detail.status]?.label ?? 'skillHub.status.draft')}</Badge>
-                  <Badge className={RUNTIME_BADGE[runtimeBySlug.get(detail.slug) ?? 'pending']?.cls}>
-                    {t(RUNTIME_BADGE[runtimeBySlug.get(detail.slug) ?? 'pending']?.label)}
-                  </Badge>
-                  <Badge variant="outline">v{detail.version}</Badge>
-                </DialogTitle>
-              </DialogHeader>
-
-              <div className="text-sm text-muted-foreground">{detail.description || '—'}</div>
-
-              {detail.tags.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {detail.tags.map((tag) => (
-                    <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
-                  ))}
-                </div>
-              )}
-
-              {/* 一键安装命令 */}
-              <div className="space-y-2">
-                <div className="text-sm font-semibold">{t('skillHub.installCommand')}</div>
-                <div className="relative">
-                  <pre className="rounded-lg bg-muted p-3 pr-10 text-xs overflow-x-auto whitespace-pre-wrap font-mono">
-                    {skillInstallCommand(detail.slug)}
-                  </pre>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-1 top-1 size-8"
-                    onClick={copyCommand}
-                    title={t('skillHub.copy')}
-                  >
-                    {copied ? <Check className="size-4 text-emerald-600" /> : <Terminal className="size-4" />}
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">{t('skillHub.installHint')}</p>
-              </div>
-
-              {/* SKILL.md 预览 */}
-              {detail.source_markdown && (
-                <div className="space-y-2">
-                  <div className="text-sm font-semibold">{t('skillHub.skillmd')}</div>
-                  <pre className="rounded-lg bg-muted/50 p-3 text-xs whitespace-pre-wrap max-h-64 overflow-y-auto">
-                    {detail.source_markdown}
-                  </pre>
-                </div>
-              )}
-
-              <DialogFooter className="flex gap-2">
-                <Button
-                  variant="outline"
-                  asChild
-                  className="flex-1"
-                >
-                  <a href={skillDownloadUrl(detail.slug)} download>
-                    <Download className="size-4 mr-1" />{t('skillHub.download')}
-                  </a>
-                </Button>
-                <Button
-                  className="flex-1"
-                  disabled={installedSlugs.has(detail.slug) || installMutation.isPending}
-                  onClick={doInstall}
-                >
-                  {installedSlugs.has(detail.slug) ? t('skillHub.installed') : t('skillHub.install')}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

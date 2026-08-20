@@ -293,6 +293,7 @@ const en: Record<string, string> = {
   'common.edit': 'Edit',
   'common.delete': 'Delete',
   'common.refresh': 'Refresh',
+  'common.back': 'Back',
   'common.enabled': 'Enabled',
   'common.active': 'Active',
   'common.disabled': 'Disabled',
