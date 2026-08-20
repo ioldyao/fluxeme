@@ -5434,6 +5434,14 @@ impl DbBackend for PgBackend {
             .bind(team_id)
             .fetch_all(&self.pool)
             .await?,
+            (None, None) => query(
+                "SELECT g.id, g.plan_id, g.user_id, g.team_id, g.accounting_mode, \
+                 g.display_token_amount, g.total_units, g.consumed_units, g.reserved_units, \
+                 g.priority, g.exhaustion_policy, g.status, g.expires_at, g.created_at \
+                 FROM token_package_grants g ORDER BY g.created_at DESC, g.id",
+            )
+            .fetch_all(&self.pool)
+            .await?,
             _ => return Ok(Vec::new()),
         };
         rows.into_iter()
