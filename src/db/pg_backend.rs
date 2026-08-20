@@ -5848,7 +5848,8 @@ impl DbBackend for PgBackend {
         let row = query_as::<_, (Option<String>, Option<f64>)>(
             "SELECT package_grant_id, actual_wallet_amount
              FROM token_request_reservations
-             WHERE request_id = $1 AND state = 'settled'",
+             WHERE request_id = $1 AND state IN ('reserved', 'settled', 'released', 'expired')
+             ORDER BY created_at DESC LIMIT 1",
         )
         .bind(request_id)
         .fetch_optional(&self.pool)
