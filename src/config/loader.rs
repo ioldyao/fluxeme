@@ -324,6 +324,7 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
                 spend_limit: None,
                 allowed_models: None,
                 team_id: None,
+                scopes: None,
             };
             if let Err(e) = db.create_api_key(&ak).await {
                 tracing::warn!("Seed api_key for {}: {}", t.id, e);

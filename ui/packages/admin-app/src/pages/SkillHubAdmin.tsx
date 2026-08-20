@@ -9,9 +9,6 @@ import {
   useSkillVersions,
   useUploadSkillArtifact,
   useSkillRuntimeStatuses,
-  useSkillScopes,
-  useAddSkillScope,
-  useDeleteSkillScope,
 } from '@fluxeme/shared/src/api/skills';
 import type { SkillRow } from '@fluxeme/shared/src/api/skills';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
@@ -29,7 +26,7 @@ import {
   DialogFooter,
 } from '@fluxeme/shared/src/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@fluxeme/shared/src/components/ui/select';
-import { Plus, RefreshCw, Upload, Pencil, Trash2, ListTree, Check, Package, ShieldCheck, KeyRound } from 'lucide-react';
+import { Plus, RefreshCw, Upload, Pencil, Trash2, ListTree, Check, Package } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatTimestamp } from '@fluxeme/shared/src/lib/date';
 
@@ -71,7 +68,6 @@ export default function SkillHubAdmin() {
   const { data: runtimeStatuses } = useSkillRuntimeStatuses();
 
   const [statusFilter, setStatusFilter] = useState('');
-  const [scoping, setScoping] = useState<SkillRow | null>(null);
 
   const runtimeBySkill = useMemo(() => {
     const m = new Map<string, string>();
@@ -275,9 +271,6 @@ export default function SkillHubAdmin() {
                                 {t(`skillHub.status.${next}`)}
                               </Button>
                             )}
-                            <Button size="icon" variant="ghost" title={t('skillHub.scope')} onClick={() => setScoping(s)}>
-                              <ShieldCheck className="size-4" />
-                            </Button>
                             <Button size="icon" variant="ghost" title={t('skillHub.upload')} onClick={() => { setUploading(s); setUVersion(''); setUChangelog(''); setUFile(null); }}>
                               <Upload className="size-4" />
                             </Button>
@@ -368,9 +361,6 @@ export default function SkillHubAdmin() {
 
       {/* 版本列表 */}
       <VersionsDialog skill={versionsOf} onClose={() => setVersionsOf(null)} />
-
-      {/* 授权管理 */}
-      <ScopeDialog skill={scoping} onClose={() => setScoping(null)} />
     </div>
   );
 }
@@ -461,70 +451,3 @@ function VersionsDialog({ skill, onClose }: { skill: SkillRow | null; onClose: (
   );
 }
 
-/** 授权管理：让指定 API Key 可调用此技能数据面（skill:{slug}:invoke）。 */
-function ScopeDialog({ skill, onClose }: { skill: SkillRow | null; onClose: () => void }) {
-  const { t } = useTranslation();
-  const slug = skill?.slug ?? null;
-  const { data: scopes, isLoading } = useSkillScopes(slug);
-  const addMutation = useAddSkillScope();
-  const deleteMutation = useDeleteSkillScope();
-  const [key, setKey] = useState('');
-
-  const submit = () => {
-    if (!slug || !key.trim()) return;
-    addMutation.mutate(
-      { slug, key: key.trim() },
-      {
-        onSuccess: () => { setKey(''); toast.success('OK'); },
-        onError: (e: Error) => toast.error(e.message),
-      }
-    );
-  };
-
-  return (
-    <Dialog open={!!skill} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <KeyRound className="size-4" />{t('skillHub.scopeManage')} · {skill?.name}
-          </DialogTitle>
-        </DialogHeader>
-        <p className="text-xs text-muted-foreground">{t('skillHub.scopeHint').replace('{slug}', skill?.slug ?? '')}</p>
-
-        {/* 已授权列表 */}
-        {isLoading ? (
-          <div className="p-4 text-center text-muted-foreground">{t('common.loading')}</div>
-        ) : !scopes || scopes.length === 0 ? (
-          <div className="p-4 text-center text-muted-foreground text-sm">{t('skillHub.scopeNone')}</div>
-        ) : (
-          <div className="space-y-2">
-            {scopes.map((s) => (
-              <div key={s.id} className="flex items-center justify-between gap-2 p-2.5 rounded-lg border">
-                <div className="min-w-0">
-                  <div className="font-mono text-xs truncate">{s.api_key_id}</div>
-                  <div className="text-[11px] text-muted-foreground">{s.key_name || '—'} · {s.action}</div>
-                </div>
-                <Button size="icon" variant="ghost" className="text-destructive shrink-0" onClick={() => deleteMutation.mutate({ slug: skill!.slug, scopeId: s.id })}>
-                  <Trash2 className="size-4" />
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* 添加 */}
-        <div className="flex items-center gap-2">
-          <Input
-            placeholder={t('skillHub.scopeKey')}
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-          />
-          <Button onClick={submit} disabled={addMutation.isPending || !key.trim()}>
-            <ShieldCheck className="size-4 mr-1" />{t('skillHub.scopeAdd')}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}

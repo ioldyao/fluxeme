@@ -25,6 +25,7 @@ export function ApiKeyForm({ open, onOpenChange, onSubmit, createdKey, editKey, 
   const [expiresAt, setExpiresAt] = useState('');
   const [spendLimit, setSpendLimit] = useState('');
   const [allowedModels, setAllowedModels] = useState('');
+  const [scopes, setScopes] = useState<string[]>(['model', 'skill']);
 
   const isEdit = !!editKey;
 
@@ -42,7 +43,12 @@ export function ApiKeyForm({ open, onOpenChange, onSubmit, createdKey, editKey, 
       setSpendLimit('');
       setAllowedModels('');
     }
+    setScopes(['model', 'skill']);
   }, [editKey, open]);
+
+  const toggleScope = (v: string) => {
+    setScopes((prev) => (prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]));
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,6 +58,7 @@ export function ApiKeyForm({ open, onOpenChange, onSubmit, createdKey, editKey, 
       expires_at: expiresAt || null,
       spend_limit: spendLimit ? Number(spendLimit) : null,
       allowed_models: allowedModels ? allowedModels.split(',').map((m) => m.trim()).filter(Boolean) : null,
+      scopes,
     };
     onSubmit(data);
   };
@@ -62,6 +69,7 @@ export function ApiKeyForm({ open, onOpenChange, onSubmit, createdKey, editKey, 
     setExpiresAt('');
     setSpendLimit('');
     setAllowedModels('');
+    setScopes(['model', 'skill']);
     onOpenChange(false);
   };
 
@@ -109,6 +117,18 @@ export function ApiKeyForm({ open, onOpenChange, onSubmit, createdKey, editKey, 
               <Label>模型限制</Label>
               <Input value={allowedModels} onChange={(e) => setAllowedModels(e.target.value)} placeholder="gpt-4, gpt-3.5-turbo" />
               <p className="text-xs text-muted-foreground">留空表示无限制，多个模型用逗号分隔</p>
+            </div>
+            <div className="space-y-2">
+              <Label>{t('keyScope.scopeLabel')}</Label>
+              <div className="flex flex-col gap-2 rounded-lg border p-3">
+                {(['model', 'skill', 'mcp'] as const).map((s) => (
+                  <label key={s} className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={scopes.includes(s)} onCheckedChange={() => toggleScope(s)} />
+                    {t(`keyScope.${s}`)}
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">{t('keyScope.hint')}</p>
             </div>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={handleClose}>{t('common.cancel')}</Button>

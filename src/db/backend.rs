@@ -11,7 +11,7 @@ use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User};
 use chrono::{DateTime, Utc};
 
-use super::{AnnouncementRow, ApiKeyScopeRow, DbError, RechargeKeyRow, WalletTransactionRow};
+use super::{AnnouncementRow, DbError, RechargeKeyRow, WalletTransactionRow};
 
 /// PostgreSQL persistence contract used by application services.
 ///
@@ -62,12 +62,6 @@ pub trait DbBackend: Send + Sync {
     async fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError>;
 
     // ── API Key Scopes（Platform API Key） ─────────────────────────────
-    /// 某资源的所有 scope（join key 名）。
-    async fn list_scopes_by_resource(
-        &self,
-        resource_type: &str,
-        resource_id: &str,
-    ) -> Result<Vec<(ApiKeyScopeRow, String)>, DbError>;
     async fn add_api_key_scope(
         &self,
         api_key_id: &str,
@@ -75,12 +69,11 @@ pub trait DbBackend: Send + Sync {
         resource_id: &str,
         action: &str,
     ) -> Result<(), DbError>;
-    async fn delete_api_key_scope(&self, id: &str) -> Result<(), DbError>;
-    async fn api_key_has_scope(
+    /// key 是否有该资源类型的访问范围（任意 resource_id，资源类型级）。
+    async fn api_key_has_resource_scope(
         &self,
         api_key_id: &str,
         resource_type: &str,
-        resource_id: &str,
         action: &str,
     ) -> Result<bool, DbError>;
 

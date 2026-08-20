@@ -129,17 +129,6 @@ pub struct Database {
     pub backend: Box<dyn DbBackend>,
 }
 
-/// `api_key_scopes` 行：把现有 API Key 升级成 Platform API Key
-/// （`resource_type ∈ {skill, model, mcp}`；`action ∈ {invoke, connect}`）。
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ApiKeyScopeRow {
-    pub id: String,
-    pub api_key_id: String,
-    pub resource_type: String,
-    pub resource_id: String,
-    pub action: String,
-    pub created_at: String,
-}
 
 #[allow(dead_code)]
 impl Database {
@@ -257,16 +246,10 @@ impl Database {
         self.backend.all_api_keys().await
     }
 
-    // ── API Key Scopes（Platform API Key：skill:{slug}:invoke 一等公民） ──
-    pub async fn list_scopes_by_resource(
-        &self,
-        resource_type: &str,
-        resource_id: &str,
-    ) -> Result<Vec<(ApiKeyScopeRow, String)>, DbError> {
-        self.backend
-            .list_scopes_by_resource(resource_type, resource_id)
-            .await
-    }
+    // ── API Key Scopes（Platform API Key：访问范围 = 资源类型） ──────────
+    // 语义：key 创建时勾选可访问的资源类型（model / skill / mcp），
+    // 存为 api_key_scopes(resource_id='*')。Skill Runtime 鉴权按资源类型
+    // 放行（取消按单个技能授权）。
     pub async fn add_api_key_scope(
         &self,
         api_key_id: &str,
@@ -278,18 +261,14 @@ impl Database {
             .add_api_key_scope(api_key_id, resource_type, resource_id, action)
             .await
     }
-    pub async fn delete_api_key_scope(&self, id: &str) -> Result<(), DbError> {
-        self.backend.delete_api_key_scope(id).await
-    }
-    pub async fn api_key_has_scope(
+    pub async fn api_key_has_resource_scope(
         &self,
         api_key_id: &str,
         resource_type: &str,
-        resource_id: &str,
         action: &str,
     ) -> Result<bool, DbError> {
         self.backend
-            .api_key_has_scope(api_key_id, resource_type, resource_id, action)
+            .api_key_has_resource_scope(api_key_id, resource_type, action)
             .await
     }
 

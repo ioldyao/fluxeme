@@ -270,7 +270,10 @@ pub(crate) async fn upload_artifact(
         .skillhub
         .upload_artifact(&skill_id, &version, changelog.as_deref(), &session.user_id, bytes)
         .await
-        .map_err(skillhub_err)?;
+        .map_err(|e| {
+            tracing::warn!(skill_id, version, "skillhub upload failed: {e}");
+            skillhub_err(e)
+        })?;
     Ok(Json(row))
 }
 

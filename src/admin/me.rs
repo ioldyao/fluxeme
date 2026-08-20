@@ -206,6 +206,9 @@ pub(crate) struct CreateMyKeyReq {
     spend_limit: Option<Decimal>,
     #[serde(default)]
     allowed_models: Option<Vec<String>>,
+    /// 访问范围 = 资源类型（model / skill / mcp）。缺省 model+skill。
+    #[serde(default)]
+    scopes: Option<Vec<String>>,
 }
 
 pub(crate) async fn create_my_key(
@@ -225,9 +228,24 @@ pub(crate) async fn create_my_key(
         spend_limit: req.spend_limit,
         allowed_models: req.allowed_models,
         team_id: None,
+        scopes: None,
     };
 
     state.db.create_api_key(&ak).await.map_err(db_err)?;
+    // 访问范围：缺省 model+skill；写入 api_key_scopes(resource_id='*')。
+    let scopes = req
+        .scopes
+        .clone()
+        .unwrap_or_else(|| vec!["model".to_string(), "skill".to_string()]);
+    for scope in scopes {
+        if matches!(scope.as_str(), "model" | "skill" | "mcp") {
+            state
+                .db
+                .add_api_key_scope(&ak.key, &scope, "*", "invoke")
+                .await
+                .map_err(db_err)?;
+        }
+    }
     state.auth.reload().await;
     notify_config_changed(&state).await;
 
@@ -277,6 +295,7 @@ pub(crate) async fn update_my_key(
         spend_limit: req.spend_limit.or(existing.spend_limit),
         allowed_models: req.allowed_models.or(existing.allowed_models.clone()),
         team_id: existing.team_id.clone(),
+        scopes: None,
     };
 
     state.db.update_api_key(&ak).await.map_err(db_err)?;
@@ -341,6 +360,7 @@ pub(crate) async fn toggle_my_key(
         spend_limit: None,
         allowed_models: None,
         team_id: None,
+        scopes: None,
     };
     state.db.update_api_key(&ak).await.map_err(db_err)?;
     state.auth.reload().await;
@@ -533,6 +553,7 @@ pub(crate) async fn create_my_team_api_key(
         spend_limit: req.spend_limit,
         allowed_models: req.allowed_models,
         team_id: Some(team_id.clone()),
+        scopes: None,
     };
     state.db.create_api_key(&ak).await.map_err(db_err)?;
     state.auth.reload().await;

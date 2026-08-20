@@ -85,6 +85,7 @@ export default function ApiKeys() {
                     <th className="text-left py-3 px-4">{t('apikey.expires')}</th>
                     <th className="text-right py-3 px-4">费用限制</th>
                     <th className="text-left py-3 px-4">模型限制</th>
+                    <th className="text-left py-3 px-4">{t('keyScope.scopeLabel')}</th>
                     <th className="text-right py-3 px-4">{t('table.actions')}</th>
                   </tr>
                 </thead>
@@ -117,6 +118,11 @@ export default function ApiKeys() {
                       </td>
                       <td className="py-3 px-4 text-xs text-muted-foreground max-w-[150px] truncate">
                         {k.allowed_models && k.allowed_models.length > 0 ? k.allowed_models.join(', ') : '-'}
+                      </td>
+                      <td className="py-3 px-4 text-xs">
+                        {k.scopes && k.scopes.length > 0
+                          ? k.scopes.map((s: string) => t(`keyScope.${s}`)).join(', ')
+                          : '-'}
                       </td>
                       <td className="py-3 px-4 text-right">
                         <Button variant="ghost" size="sm" onClick={() => setEditKey(k)}>

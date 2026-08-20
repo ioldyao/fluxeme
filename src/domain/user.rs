@@ -63,6 +63,10 @@ pub struct ApiKey {
     /// Team scope for this key. `None` = personal key (existing behavior).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team_id: Option<String>,
+    /// 访问范围 = 资源类型（model / skill / mcp）。来自 api_key_scopes 表。
+    /// `None` = 未加载（创建/内部路径不设置；列表路径填充）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<String>>,
 }
 
 fn default_enabled() -> bool {

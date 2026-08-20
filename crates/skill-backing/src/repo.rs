@@ -91,8 +91,8 @@ impl BackingRepository {
                 upstream_path    TEXT,
                 timeout_ms       INT  NOT NULL DEFAULT 30000,
                 status           TEXT NOT NULL DEFAULT 'pending',
-                created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+                created_at       TEXT NOT NULL DEFAULT now(),
+                updated_at       TEXT NOT NULL DEFAULT now(),
                 UNIQUE (skill_id, skill_version_id, public_path, method)
             )",
         )
@@ -121,8 +121,8 @@ impl BackingRepository {
                 status       TEXT NOT NULL DEFAULT 'pending',
                 attempts     INT  NOT NULL DEFAULT 0,
                 last_error   TEXT,
-                created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-                processed_at TIMESTAMPTZ
+                created_at   TEXT NOT NULL DEFAULT now(),
+                processed_at TEXT
             )",
         )
         .execute(&self.pool)
@@ -141,7 +141,7 @@ impl BackingRepository {
                 version_id TEXT,
                 event_type TEXT NOT NULL,
                 detail     TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                created_at TEXT NOT NULL DEFAULT now()
             )",
         )
         .execute(&self.pool)
@@ -166,6 +166,11 @@ impl BackingRepository {
             "ALTER TABLE agent_skill_runtime_events ALTER COLUMN id TYPE TEXT USING id::text",
             "ALTER TABLE agent_skill_runtime_events ALTER COLUMN skill_id TYPE TEXT USING skill_id::text",
             "ALTER TABLE agent_skill_runtime_events ALTER COLUMN version_id TYPE TEXT USING version_id::text",
+            "ALTER TABLE agent_skill_endpoints ALTER COLUMN created_at TYPE TEXT USING created_at::text",
+            "ALTER TABLE agent_skill_endpoints ALTER COLUMN updated_at TYPE TEXT USING updated_at::text",
+            "ALTER TABLE agent_skill_runtime_tasks ALTER COLUMN created_at TYPE TEXT USING created_at::text",
+            "ALTER TABLE agent_skill_runtime_tasks ALTER COLUMN processed_at TYPE TEXT USING processed_at::text",
+            "ALTER TABLE agent_skill_runtime_events ALTER COLUMN created_at TYPE TEXT USING created_at::text",
         ] {
             self.exec(sql).execute(&self.pool).await?;
         }
@@ -195,7 +200,7 @@ impl BackingRepository {
         for t in &tasks {
             sqlx_core::query::query(
                 "UPDATE agent_skill_runtime_tasks \
-                 SET status='processing', attempts=attempts+1, processed_at=now() WHERE id=$1",
+                 SET status='processing', attempts=attempts+1, processed_at=now()::text WHERE id=$1",
             )
             .bind(&t.id)
             .execute(&mut *tx)
@@ -213,7 +218,7 @@ impl BackingRepository {
         last_error: Option<&str>,
     ) -> Result<(), BackingError> {
         self.exec(
-            "UPDATE agent_skill_runtime_tasks SET status=$2, last_error=$3, processed_at=now() \
+            "UPDATE agent_skill_runtime_tasks SET status=$2, last_error=$3, processed_at=now()::text \
              WHERE id=$1",
         )
         .bind(id)
@@ -271,7 +276,7 @@ impl BackingRepository {
     /// 取消发布：禁用该技能全部端点。
     pub async fn disable_endpoints(&self, skill_id: &str) -> Result<(), BackingError> {
         self.exec(
-            "UPDATE agent_skill_endpoints SET status='disabled', updated_at=now() WHERE skill_id=$1",
+            "UPDATE agent_skill_endpoints SET status='disabled', updated_at=now()::text WHERE skill_id=$1",
         )
         .bind(skill_id)
         .execute(&self.pool)

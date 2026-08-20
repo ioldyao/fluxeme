@@ -31,7 +31,7 @@ impl ApiKeyAuthorizer for SkillKeyAuthorizer {
         &self,
         bearer: &str,
         resource_type: &str,
-        resource_id: &str,
+        _resource_id: &str,
         action: &str,
     ) -> Result<RuntimePrincipal, ContractError> {
         let (user, key) = self
@@ -40,9 +40,10 @@ impl ApiKeyAuthorizer for SkillKeyAuthorizer {
             .await
             .map_err(|e| ContractError::Internal(e.to_string()))?
             .ok_or_else(|| ContractError::NotFound("invalid api key".into()))?;
+        // 访问范围 = 资源类型级：key 勾选了该资源类型即放行（不按单技能授权）。
         let has = self
             .db
-            .api_key_has_scope(&key.key, resource_type, resource_id, action)
+            .api_key_has_resource_scope(&key.key, resource_type, action)
             .await
             .map_err(|e| ContractError::Internal(e.to_string()))?;
         if !has {

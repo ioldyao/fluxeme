@@ -28,7 +28,6 @@ pub mod billing;
 pub mod channels;
 pub mod dashboard;
 pub mod health;
-pub mod key_scopes;
 pub mod me;
 pub mod models;
 pub mod moderation;
@@ -1070,15 +1069,6 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         .route(
             "/api/skills/runtime-status",
             axum::routing::get(skillhub::runtime_statuses),
-        )
-        // API Key Scope 管理（skill:{slug}:invoke）
-        .route(
-            "/api/admin/skills/{slug}/scopes",
-            axum::routing::get(key_scopes::list_skill_scopes).post(key_scopes::add_skill_scope),
-        )
-        .route(
-            "/api/admin/skills/{slug}/scopes/{scope_id}",
-            axum::routing::delete(key_scopes::delete_skill_scope),
         )
         // Skill Runtime 数据面：/api/skills/{slug}/{*rest} 运行时代理。
         // 更具体的 /download、/install 静态段优先匹配，不会冲突。

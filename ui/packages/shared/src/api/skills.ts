@@ -166,7 +166,11 @@ export function useUploadSkillArtifact() {
       }).then(async (res) => {
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          throw new Error(data.error?.message || data.message || 'Upload failed');
+          const message =
+            typeof data.error === 'string'
+              ? data.error
+              : data.error?.message || data.message || 'Upload failed';
+          throw new Error(message);
         }
         return res.json() as Promise<SkillVersionRow>;
       });
@@ -246,43 +250,3 @@ export function useSkillRuntimeStatuses() {
   });
 }
 
-export interface SkillScopeRow {
-  id: string;
-  api_key_id: string;
-  key_name: string;
-  resource_type: string;
-  resource_id: string;
-  action: string;
-  created_at: string;
-}
-
-export function useSkillScopes(slug: string | null) {
-  return useQuery({
-    queryKey: ['skill-scopes', slug],
-    queryFn: () => api<SkillScopeRow[]>(`/admin/skills/${encodeURIComponent(slug!)}/scopes`),
-    enabled: !!slug,
-  });
-}
-
-export function useAddSkillScope() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ slug, key, action }: { slug: string; key: string; action?: string }) =>
-      api<SkillScopeRow>(`/admin/skills/${encodeURIComponent(slug)}/scopes`, {
-        method: 'POST',
-        body: { key, action: action ?? 'invoke' },
-      }),
-    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['skill-scopes', v.slug] }),
-  });
-}
-
-export function useDeleteSkillScope() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ slug, scopeId }: { slug: string; scopeId: string }) =>
-      api<{ ok: boolean }>(`/admin/skills/${encodeURIComponent(slug)}/scopes/${scopeId}`, {
-        method: 'DELETE',
-      }),
-    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['skill-scopes', v.slug] }),
-  });
-}

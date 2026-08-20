@@ -17,8 +17,9 @@ impl LocalArtifactStore {
         Self { root }
     }
 
-    /// 防止路径穿越：key 由 `{uuid}/{version}.zip` 构成，version 已在上传层
-    /// 校验过（仅 `[0-9A-Za-z._-]`，禁 `/`、`\`、`..`）。这里再兜底一道。
+    /// 防止路径穿越：key 为 `{skill_id}/{version}.zip`（两层嵌套），version
+    /// 已在上传层校验（仅 `[0-9A-Za-z._-]`，禁 `/`、`\`、`..`）。这里兜底：
+    /// 只要求最终路径落在 root 目录内（允许嵌套，仍阻断 `..`/绝对路径）。
     fn safe_path(&self, key: &str) -> Result<PathBuf, ContractError> {
         if key.is_empty()
             || key.contains("..")
@@ -28,8 +29,10 @@ impl LocalArtifactStore {
             return Err(ContractError::Invalid(format!("unsafe artifact key: {key}")));
         }
         let path = self.root.join(key);
-        if path.parent() != Some(self.root.as_path()) {
-            return Err(ContractError::Invalid(format!("artifact key escapes root: {key}")));
+        if !path.starts_with(&self.root) {
+            return Err(ContractError::Invalid(format!(
+                "artifact key escapes root: {key}"
+            )));
         }
         Ok(path)
     }

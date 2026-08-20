@@ -39,6 +39,8 @@ export interface ApiKey {
   allowed_models?: string[] | null;
   /** Team scope. Present when this is a team-shared key. */
   team_id?: string | null;
+  /** 访问范围 = 资源类型（model / skill / mcp）。 */
+  scopes?: string[] | null;
 }
 
 export type TeamRole = 'owner' | 'admin' | 'member';
@@ -311,6 +313,8 @@ export interface CreateKeyReq {
   expires_at?: string | null;
   spend_limit?: number | null;
   allowed_models?: string[] | null;
+  /** 访问范围 = 资源类型（model / skill / mcp）。 */
+  scopes?: string[] | null;
 }
 
 export type CreateMyKeyReq = CreateKeyReq;

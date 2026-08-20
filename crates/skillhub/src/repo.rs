@@ -82,9 +82,9 @@ impl SkillRepository {
                 source_markdown TEXT,
                 visibility      TEXT NOT NULL DEFAULT 'internal',
                 status          TEXT NOT NULL DEFAULT 'draft',
-                published_at    TIMESTAMPTZ,
-                created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+                published_at    TEXT,
+                created_at      TEXT NOT NULL DEFAULT now(),
+                updated_at      TEXT NOT NULL DEFAULT now()
             )",
         )
         .execute(&self.pool)
@@ -118,7 +118,7 @@ impl SkillRepository {
                 manifest_yaml   TEXT,
                 status          TEXT NOT NULL DEFAULT 'draft',
                 created_by      TEXT NOT NULL,
-                created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+                created_at      TEXT NOT NULL DEFAULT now(),
                 UNIQUE (skill_id, version)
             )",
         )
@@ -149,8 +149,8 @@ impl SkillRepository {
                 status       TEXT NOT NULL DEFAULT 'pending',
                 attempts     INT  NOT NULL DEFAULT 0,
                 last_error   TEXT,
-                created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-                processed_at TIMESTAMPTZ
+                created_at   TEXT NOT NULL DEFAULT now(),
+                processed_at TEXT
             )",
         )
         .execute(&self.pool)
@@ -169,7 +169,7 @@ impl SkillRepository {
                 user_id      TEXT NOT NULL,
                 version      TEXT NOT NULL,
                 source       TEXT NOT NULL DEFAULT 'user',
-                installed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                installed_at TEXT NOT NULL DEFAULT now(),
                 UNIQUE (skill_id, user_id)
             )",
         )
@@ -204,6 +204,13 @@ impl SkillRepository {
             "ALTER TABLE agent_skill_versions ADD UNIQUE (skill_id, version)",
             "ALTER TABLE agent_skill_installs ADD CONSTRAINT agent_skill_installs_skill_id_fkey FOREIGN KEY (skill_id) REFERENCES agent_skills(id) ON DELETE CASCADE",
             "ALTER TABLE agent_skill_installs ADD UNIQUE (skill_id, user_id)",
+            "ALTER TABLE agent_skills ALTER COLUMN published_at TYPE TEXT USING published_at::text",
+            "ALTER TABLE agent_skills ALTER COLUMN created_at TYPE TEXT USING created_at::text",
+            "ALTER TABLE agent_skills ALTER COLUMN updated_at TYPE TEXT USING updated_at::text",
+            "ALTER TABLE agent_skill_versions ALTER COLUMN created_at TYPE TEXT USING created_at::text",
+            "ALTER TABLE agent_skill_runtime_tasks ALTER COLUMN created_at TYPE TEXT USING created_at::text",
+            "ALTER TABLE agent_skill_runtime_tasks ALTER COLUMN processed_at TYPE TEXT USING processed_at::text",
+            "ALTER TABLE agent_skill_installs ALTER COLUMN installed_at TYPE TEXT USING installed_at::text",
         ] {
             self.exec(sql).execute(&self.pool).await?;
         }
@@ -315,7 +322,7 @@ impl SkillRepository {
     ) -> Result<(), SkillHubError> {
         let mut tx = self.pool.begin().await?;
         sqlx_core::query::query(
-            "UPDATE agent_skills SET status=$2, published_at=$3, updated_at=now() WHERE id=$1",
+            "UPDATE agent_skills SET status=$2, published_at=$3, updated_at=now()::text WHERE id=$1",
         )
         .bind(id)
         .bind(status)
@@ -403,7 +410,7 @@ impl SkillRepository {
         .await?;
         sqlx_core::query::query(
             "UPDATE agent_skills SET version=$2, artifact_path=$3, artifact_size=$4, \
-             source_markdown=$5, updated_at=now() WHERE id=$1",
+             source_markdown=$5, updated_at=now()::text WHERE id=$1",
         )
         .bind(&v.skill_id)
         .bind(&v.version)

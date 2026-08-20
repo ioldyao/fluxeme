@@ -9,7 +9,7 @@ use sqlx_postgres::{PgPool, PgRow, Postgres};
 
 use crate::config::types::GatewayRuntimeConfig;
 use crate::db::backend::DbBackend;
-use crate::db::{AnnouncementRow, ApiKeyScopeRow, DbError, RechargeKeyRow, WalletTransactionRow};
+use crate::db::{AnnouncementRow, DbError, RechargeKeyRow, WalletTransactionRow};
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, ModelChannel, Pricing};
 use crate::domain::moderation::ContentFilterRule;
@@ -403,11 +403,12 @@ impl DbBackend for PgBackend {
                 resource_type TEXT NOT NULL,
                 resource_id   TEXT NOT NULL,
                 action        TEXT NOT NULL,
-                created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                created_at    TEXT NOT NULL DEFAULT '',
                 UNIQUE (api_key_id, resource_type, resource_id, action)
             );
-            -- 存量库列类型转换（幂等）
+            -- 存量库列类型转换（幂等）：id / created_at 均改 TEXT（对齐项目约定）
             ALTER TABLE api_key_scopes ALTER COLUMN id TYPE TEXT USING id::text;
+            ALTER TABLE api_key_scopes ALTER COLUMN created_at TYPE TEXT USING created_at::text;
 
             CREATE TABLE IF NOT EXISTS channels (
                 id TEXT PRIMARY KEY,
@@ -1547,7 +1548,7 @@ impl DbBackend for PgBackend {
         .bind(user_id)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows
+        let mut keys: Vec<ApiKey> = rows
             .iter()
             .map(|r| {
                 let allowed_models_str: Option<String> = r.get(6);
@@ -1564,9 +1565,26 @@ impl DbBackend for PgBackend {
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                     team_id: r.get(7),
+                    scopes: None,
                 }
             })
-            .collect())
+            .collect();
+        // 填充每个 key 的访问范围（资源类型，来自 api_key_scopes 表）
+        let scope_rows = query(
+            "SELECT api_key_id, resource_type FROM api_key_scopes \
+             WHERE action='invoke' AND api_key_id = ANY($1)",
+        )
+        .bind(keys.iter().map(|k| k.key.clone()).collect::<Vec<String>>())
+        .fetch_all(&self.pool)
+        .await?;
+        let mut scope_map: std::collections::HashMap<String, Vec<String>> = Default::default();
+        for row in scope_rows.iter() {
+            scope_map.entry(row.get(0)).or_default().push(row.get(1));
+        }
+        for k in &mut keys {
+            k.scopes = scope_map.get(&k.key).cloned();
+        }
+        Ok(keys)
     }
 
     async fn create_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
@@ -1636,6 +1654,7 @@ impl DbBackend for PgBackend {
                     .filter(|s| !s.is_empty())
                     .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                 team_id: r.get(18),
+                scopes: None,
             };
             let user = {
                 let rpm: Option<i64> = r.get(2);
@@ -1693,6 +1712,7 @@ impl DbBackend for PgBackend {
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                     team_id: r.get(18),
+                    scopes: None,
                 };
                 let user = {
                     let rpm: Option<i64> = r.get(2);
@@ -1728,39 +1748,6 @@ impl DbBackend for PgBackend {
 
     // ── API Key Scopes（Platform API Key） ─────────────────────────────
 
-    async fn list_scopes_by_resource(
-        &self,
-        resource_type: &str,
-        resource_id: &str,
-    ) -> Result<Vec<(ApiKeyScopeRow, String)>, DbError> {
-        let rows = query(
-            "SELECT s.id, s.api_key_id, s.resource_type, s.resource_id, s.action, s.created_at, \
-                    COALESCE(a.name, '') \
-             FROM api_key_scopes s LEFT JOIN api_keys a ON a.key = s.api_key_id \
-             WHERE s.resource_type=$1 AND s.resource_id=$2 ORDER BY s.created_at DESC",
-        )
-        .bind(resource_type)
-        .bind(resource_id)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows
-            .iter()
-            .map(|r| {
-                (
-                    ApiKeyScopeRow {
-                        id: r.get(0),
-                        api_key_id: r.get(1),
-                        resource_type: r.get(2),
-                        resource_id: r.get(3),
-                        action: r.get(4),
-                        created_at: r.get(5),
-                    },
-                    r.get(6),
-                )
-            })
-            .collect())
-    }
-
     async fn add_api_key_scope(
         &self,
         api_key_id: &str,
@@ -1784,28 +1771,18 @@ impl DbBackend for PgBackend {
         Ok(())
     }
 
-    async fn delete_api_key_scope(&self, id: &str) -> Result<(), DbError> {
-        query("DELETE FROM api_key_scopes WHERE id=$1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    async fn api_key_has_scope(
+    async fn api_key_has_resource_scope(
         &self,
         api_key_id: &str,
         resource_type: &str,
-        resource_id: &str,
         action: &str,
     ) -> Result<bool, DbError> {
         let row = query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM api_key_scopes \
-             WHERE api_key_id=$1 AND resource_type=$2 AND resource_id=$3 AND action=$4",
+             WHERE api_key_id=$1 AND resource_type=$2 AND action=$3",
         )
         .bind(api_key_id)
         .bind(resource_type)
-        .bind(resource_id)
         .bind(action)
         .fetch_one(&self.pool)
         .await?;
@@ -5525,6 +5502,7 @@ impl DbBackend for PgBackend {
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                     team_id: r.get(7),
+                    scopes: None,
                 }
             })
             .collect())

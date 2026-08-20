@@ -387,6 +387,9 @@ pub(crate) struct CreateKeyReq {
     /// Team scope for this key. `Some` = team-shared key, `None` = personal.
     #[serde(default)]
     pub(crate) team_id: Option<String>,
+    /// 访问范围 = 资源类型（model / skill / mcp）。缺省 model+skill。
+    #[serde(default)]
+    pub(crate) scopes: Option<Vec<String>>,
 }
 
 pub(crate) async fn create_user_key(
@@ -408,9 +411,24 @@ pub(crate) async fn create_user_key(
         spend_limit: req.spend_limit,
         allowed_models: req.allowed_models,
         team_id: req.team_id,
+        scopes: None,
     };
 
     state.db.create_api_key(&ak).await.map_err(db_err)?;
+    // 访问范围：缺省 model+skill；写入 api_key_scopes(resource_id='*')。
+    let scopes = req
+        .scopes
+        .clone()
+        .unwrap_or_else(|| vec!["model".to_string(), "skill".to_string()]);
+    for scope in scopes {
+        if matches!(scope.as_str(), "model" | "skill" | "mcp") {
+            state
+                .db
+                .add_api_key_scope(&ak.key, &scope, "*", "invoke")
+                .await
+                .map_err(db_err)?;
+        }
+    }
     state.auth.reload().await;
     notify_config_changed(&state).await;
 
@@ -453,6 +471,7 @@ pub(crate) async fn update_user_key(
         spend_limit: req.spend_limit.or(existing.spend_limit),
         allowed_models: req.allowed_models.or(existing.allowed_models.clone()),
         team_id: req.team_id.or(existing.team_id.clone()),
+        scopes: None,
     };
 
     state.db.update_api_key(&ak).await.map_err(db_err)?;

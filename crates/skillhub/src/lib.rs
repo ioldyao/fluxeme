@@ -509,47 +509,96 @@ fn validate_version(v: &str) -> Result<(), SkillHubError> {
     Ok(())
 }
 
-/// 从 zip 中提取根目录 `SKILL.md`（Agent Skill 标准要求 SKILL.md 位于根）。
+/// 从 zip 中提取 `SKILL.md`（Agent Skill 标准）。
+///
+/// 容忍两种打包方式：`SKILL.md` 位于根目录，或位于**单个顶层目录**内
+/// （用户常见地把技能包先包进一层文件夹再 zip）。报错信息明确到原因。
 fn extract_skill_md(bytes: &[u8]) -> Result<String, SkillHubError> {
-    let cursor = std::io::Cursor::new(bytes);
-    let mut archive = zip::ZipArchive::new(cursor)
-        .map_err(|e| SkillHubError::Invalid(format!("invalid zip: {e}")))?;
-    for i in 0..archive.len() {
-        let mut entry = archive
-            .by_index(i)
-            .map_err(|e| SkillHubError::Invalid(format!("zip read error: {e}")))?;
-        if entry.name() == "SKILL.md" {
-            let mut text = String::new();
-            entry
-                .read_to_string(&mut text)
-                .map_err(|e| SkillHubError::Invalid(format!("SKILL.md must be utf-8: {e}")))?;
-            return Ok(text);
+    let mut archive = open_zip(bytes)?;
+    let entries = list_entries(&mut archive)?;
+
+    // 1) 根目录 SKILL.md
+    if let Some(idx) = entries.iter().position(|n| n == "SKILL.md") {
+        return read_entry(&mut archive, idx);
+    }
+    // 2) 单个顶层目录内的 SKILL.md
+    if let Some(prefix) = single_top_dir(&entries) {
+        let target = format!("{prefix}/SKILL.md");
+        if let Some(idx) = entries.iter().position(|n| n == &target) {
+            return read_entry(&mut archive, idx);
         }
     }
     Err(SkillHubError::Invalid(
-        "zip must contain SKILL.md at its root".into(),
+        "zip 缺少 SKILL.md：请把 SKILL.md 放在 zip 根目录（或仅包一层文件夹）".into(),
     ))
 }
 
-/// 从 zip 中提取根目录 `fluxeme.yaml`（backing-api 运行时声明，可选）。
-/// SkillHub 原样保存，解释权在 Skill Runtime。
+/// 从 zip 中提取 `fluxeme.yaml`（backing-api 运行时声明，可选）。
+/// 同样容忍根目录或单层目录。
 fn extract_manifest_yaml(bytes: &[u8]) -> Result<Option<String>, SkillHubError> {
+    let mut archive = open_zip(bytes)?;
+    let entries = list_entries(&mut archive)?;
+
+    let find = |name: &str| -> Option<usize> { entries.iter().position(|n| n == name) };
+    let idx = find("fluxeme.yaml").or_else(|| {
+        single_top_dir(&entries).and_then(|p| find(&format!("{p}/fluxeme.yaml")))
+    });
+    match idx {
+        Some(i) => Ok(Some(read_entry(&mut archive, i)?)),
+        None => Ok(None),
+    }
+}
+
+fn open_zip(bytes: &[u8]) -> Result<zip::ZipArchive<std::io::Cursor<&[u8]>>, SkillHubError> {
     let cursor = std::io::Cursor::new(bytes);
-    let mut archive = zip::ZipArchive::new(cursor)
-        .map_err(|e| SkillHubError::Invalid(format!("invalid zip: {e}")))?;
+    zip::ZipArchive::new(cursor)
+        .map_err(|e| SkillHubError::Invalid(format!("无效的 zip 文件：{e}")))
+}
+
+fn list_entries(
+    archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>,
+) -> Result<Vec<String>, SkillHubError> {
+    let mut names = Vec::with_capacity(archive.len());
     for i in 0..archive.len() {
-        let mut entry = archive
+        let name = archive
             .by_index(i)
-            .map_err(|e| SkillHubError::Invalid(format!("zip read error: {e}")))?;
-        if entry.name() == "fluxeme.yaml" {
-            let mut text = String::new();
-            entry
-                .read_to_string(&mut text)
-                .map_err(|e| SkillHubError::Invalid(format!("fluxeme.yaml must be utf-8: {e}")))?;
-            return Ok(Some(text));
+            .map_err(|e| SkillHubError::Invalid(format!("zip 读取错误：{e}")))?
+            .name()
+            .to_string();
+        names.push(name);
+    }
+    Ok(names)
+}
+
+/// 若所有条目都在同一个顶层目录下，返回该目录名。
+fn single_top_dir(entries: &[String]) -> Option<String> {
+    let mut dirs = std::collections::HashSet::new();
+    for n in entries {
+        if let Some(first) = n.split('/').next() {
+            if !first.is_empty() {
+                dirs.insert(first.to_string());
+            }
         }
     }
-    Ok(None)
+    if dirs.len() == 1 {
+        dirs.into_iter().next()
+    } else {
+        None
+    }
+}
+
+fn read_entry(
+    archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>,
+    idx: usize,
+) -> Result<String, SkillHubError> {
+    let mut entry = archive
+        .by_index(idx)
+        .map_err(|e| SkillHubError::Invalid(format!("zip 读取错误：{e}")))?;
+    let mut text = String::new();
+    entry
+        .read_to_string(&mut text)
+        .map_err(|e| SkillHubError::Invalid(format!("文件必须为 utf-8：{e}")))?;
+    Ok(text)
 }
 
 fn storage_err(e: fluxeme_contract::ContractError) -> SkillHubError {
