@@ -25,7 +25,22 @@ impl ReservationFinalizer {
         }
     }
 
-    pub fn settle(&self, actual_units: u64, wallet_amount: Decimal, success: bool, reason: &str) {
+    pub fn settle_usage(&self, prompt_tokens: u64, completion_tokens: u64, cache_hit_input_tokens: u64, success: bool, reason: &str) {
+        let actual_units = if self.handle.accounting_mode == Some(crate::domain::token_package::TokenAccountingMode::StandardizedCredits) {
+            crate::domain::token_package::TokenUsage { prompt_tokens, completion_tokens, cache_hit_input_tokens }
+                .standardized_credits(self.handle.input_factor, self.handle.output_factor, self.handle.cache_factor)
+        } else {
+            prompt_tokens.saturating_add(completion_tokens)
+        };
+        let reserved_total = self.handle.reserved_total_units.max(1);
+        let wallet_units = actual_units.saturating_sub(self.handle.reserved_package_units);
+        let wallet_amount = if wallet_units == 0 { Decimal::ZERO } else {
+            self.handle.reserved_wallet_amount * Decimal::from(wallet_units.min(reserved_total)) / Decimal::from(reserved_total)
+        };
+        self.settle(actual_units, wallet_amount, prompt_tokens, completion_tokens, cache_hit_input_tokens, success, reason);
+    }
+
+    fn settle(&self, actual_units: u64, wallet_amount: Decimal, prompt_tokens: u64, completion_tokens: u64, cache_hit_input_tokens: u64, success: bool, reason: &str) {
         if self.finalized.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -36,6 +51,9 @@ impl ReservationFinalizer {
             let result = db
                 .settle_token_request(&TokenSettlementRequest {
                     reservation_id,
+                    actual_prompt_tokens: prompt_tokens,
+                    actual_completion_tokens: completion_tokens,
+                    actual_cache_hit_input_tokens: cache_hit_input_tokens,
                     actual_package_units: actual_units,
                     actual_wallet_amount: wallet_amount,
                     status_code: if success { 200 } else { 502 },
@@ -47,26 +65,6 @@ impl ReservationFinalizer {
                 tracing::error!(%error, "token reservation settlement failed");
             }
         });
-    }
-
-    pub fn settle_for_units(&self, actual_units: u64, success: bool, reason: &str) {
-        let reserved_total = self.handle.reserved_total_units.max(1);
-        let actual_units = if self.handle.accounting_mode
-            == Some(crate::domain::token_package::TokenAccountingMode::StandardizedCredits)
-        {
-            actual_units
-        } else {
-            actual_units
-        };
-        let wallet_units = actual_units.saturating_sub(self.handle.reserved_package_units);
-        let wallet_amount = if wallet_units == 0 || self.handle.reserved_wallet_amount <= Decimal::ZERO {
-            Decimal::ZERO
-        } else {
-            self.handle.reserved_wallet_amount
-                * Decimal::from(wallet_units.min(reserved_total))
-                / Decimal::from(reserved_total)
-        };
-        self.settle(actual_units, wallet_amount, success, reason);
     }
 
     pub fn release_partial(&self, prompt_tokens: u64, completion_tokens: u64, cache_hit_input_tokens: u64, reason: &str) {
@@ -118,12 +116,13 @@ pub fn estimate_input_tokens(body: &Value, anthropic: bool) -> u64 {
 pub fn estimated_cost(
     prompt_tokens: u64,
     completion_tokens: u64,
+    cache_hit_input_tokens: u64,
     pricing: (Decimal, Decimal, Decimal, Decimal),
 ) -> Decimal {
     let (prompt, completion, cache_read, _) = pricing;
     (Decimal::from(prompt_tokens) / Decimal::from(1_000_000u64)) * prompt
         + (Decimal::from(completion_tokens) / Decimal::from(1_000_000u64)) * completion
-        + (Decimal::from(completion_tokens) / Decimal::from(1_000_000u64)) * cache_read
+        + (Decimal::from(cache_hit_input_tokens) / Decimal::from(1_000_000u64)) * cache_read
 }
 
 pub async fn reserve(
@@ -147,7 +146,7 @@ pub async fn reserve(
         prompt_tokens: prompt,
         completion_tokens: completion,
         cache_hit_input_tokens: 0,
-        estimated_wallet_amount: estimated_cost(prompt, completion, pricing),
+        estimated_wallet_amount: estimated_cost(prompt, completion, 0, pricing),
         expires_at: expires_at.to_string(),
     })
     .await

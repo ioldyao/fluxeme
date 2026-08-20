@@ -758,9 +758,8 @@ impl<S> UsageTrackingStream<S> {
         }
 
         if let Some(reservation) = &self.reservation {
-            let units = p_tokens.saturating_add(c_tokens);
             if completed {
-                reservation.settle_for_units(units, true, "completed");
+                reservation.settle_usage(p_tokens, c_tokens, cache_hit, true, "completed");
             } else {
                 reservation.release_partial(p_tokens, c_tokens, cache_hit, "client disconnected");
             }
@@ -1210,11 +1209,7 @@ async fn handle_non_streaming(
 
                 let latency_ms = start.elapsed().as_millis() as u64;
                 if let Some(reservation) = &reservation {
-                    reservation.settle_for_units(
-                        prompt_tokens.saturating_add(completion_tokens),
-                        true,
-                        "completed",
-                    );
+                    reservation.settle_usage(prompt_tokens, completion_tokens, cache_hit, true, "completed");
                 }
                 state.usage.record_with_endpoint(
                     UsageRecord {
@@ -1433,11 +1428,7 @@ async fn handle_messages_non_streaming(
 
                 let latency_ms = start.elapsed().as_millis() as u64;
                 if let Some(reservation) = &reservation {
-                    reservation.settle_for_units(
-                        prompt_tokens.saturating_add(completion_tokens),
-                        true,
-                        "completed",
-                    );
+                    reservation.settle_usage(prompt_tokens, completion_tokens, cache_hit, true, "completed");
                 }
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
@@ -2572,11 +2563,7 @@ async fn relay_to_upstream(
 
                 let latency_ms = start.elapsed().as_millis() as u64;
                 if let Some(reservation) = &reservation_finalizer {
-                    reservation.settle_for_units(
-                        prompt_tokens.saturating_add(completion_tokens),
-                        true,
-                        "completed",
-                    );
+                    reservation.settle_usage(prompt_tokens, completion_tokens, cache_hit, true, "completed");
                 }
                 state.usage.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),
@@ -2918,12 +2905,7 @@ async fn handle_responses_non_streaming(
                 .as_u64()
                 .unwrap_or(0);
             if let Some(reservation) = &reservation {
-                reservation.settle(
-                    input_tokens.saturating_add(output_tokens),
-                    Decimal::ZERO,
-                    true,
-                    "completed",
-                );
+                reservation.settle_usage(input_tokens, output_tokens, cache_hit, true, "completed");
             }
 
             state.usage.record(UsageRecord {
@@ -3149,11 +3131,7 @@ async fn handle_responses_streaming(
                 let buf = resp_buf.lock().unwrap().clone();
                 let (input_tokens, output_tokens, cache_hit) = parse_responses_sse_usage(&buf);
                 if let Some(reservation) = &reservation_finalizer {
-                    reservation.settle_for_units(
-                        input_tokens.saturating_add(output_tokens),
-                        true,
-                        "completed",
-                    );
+                    reservation.settle_usage(input_tokens, output_tokens, cache_hit, true, "completed");
                 }
                 usage_state.record(UsageRecord {
                     timestamp: Utc::now().to_rfc3339(),

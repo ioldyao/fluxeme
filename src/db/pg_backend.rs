@@ -5215,16 +5215,11 @@ impl DbBackend for PgBackend {
                     .fetch_one(&mut *tx)
                     .await?;
 
-                    let spendable = balance - frozen;
+                    let reserved: f64 = query_scalar("SELECT token_wallet_reserved FROM team_wallets WHERE team_id = $1")
+                        .bind(team_id).fetch_one(&mut *tx).await?;
+                    let spendable = balance - frozen - reserved;
                     if spendable < cost_amount {
-                        tracing::warn!(
-                            team_id,
-                            balance,
-                            frozen,
-                            cost_amount,
-                            "Insufficient team balance — skipping deduction"
-                        );
-                        continue;
+                        return Err(DbError("insufficient team wallet balance".to_string()));
                     }
 
                     let new_balance = balance - cost_amount;
@@ -5265,13 +5260,15 @@ impl DbBackend for PgBackend {
                         Decimal::try_from(frozen).unwrap_or(Decimal::ZERO),
                     ));
                 } else {
-                    let (balance, frozen): (f64, f64) =
-                        query_as("SELECT balance, frozen FROM users WHERE id = $1 FOR UPDATE")
+                    let (balance, frozen, reserved): (f64, f64, f64) =
+                        query_as("SELECT balance, frozen, token_wallet_reserved FROM users WHERE id = $1 FOR UPDATE")
                             .bind(&record.user_id)
                             .fetch_one(&mut *tx)
                             .await?;
-
-                    let spendable = balance - frozen;
+                    let spendable = balance - frozen - reserved;
+                    if spendable < cost_amount {
+                        return Err(DbError("insufficient wallet balance".to_string()));
+                    }
                     if spendable < cost_amount {
                         tracing::warn!(
                             user_id = &record.user_id,
@@ -5794,6 +5791,7 @@ impl DbBackend for PgBackend {
                 .await?;
         }
         let wallet_amount = settlement.actual_wallet_amount.to_f64().unwrap_or(0.0);
+        let now = chrono::Utc::now().to_rfc3339();
         let release_wallet = (reserved_wallet - wallet_amount).max(0.0);
         if release_wallet > 0.0 {
             if let Some(team_id) = team_id.as_deref() {
@@ -5820,7 +5818,9 @@ impl DbBackend for PgBackend {
                 query("UPDATE team_wallets SET balance = balance + $1, token_wallet_reserved = GREATEST(0, token_wallet_reserved - $2), updated_at = $3 WHERE team_id = $4")
                     .bind(deduction).bind(wallet_amount).bind(chrono::Utc::now().to_rfc3339()).bind(team_id)
                     .execute(&mut *tx).await?;
-                let _ = balance;
+                query("INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at, team_id, account_type) VALUES ($1,$2,'deduction',$3,$4,$5,'token_package','completed',$6,$7,$8,'team')")
+                    .bind(uuid::Uuid::new_v4().to_string()).bind(&user_id).bind(deduction).bind(balance).bind(balance + deduction)
+                    .bind("Token package wallet fallback").bind(&now).bind(team_id).execute(&mut *tx).await?;
             } else {
                 let row = query("SELECT balance FROM users WHERE id = $1 FOR UPDATE")
                     .bind(&user_id).fetch_one(&mut *tx).await?;
@@ -5828,7 +5828,12 @@ impl DbBackend for PgBackend {
                 query("UPDATE users SET balance = balance + $1, token_wallet_reserved = GREATEST(0, token_wallet_reserved - $2) WHERE id = $3")
                     .bind(deduction).bind(wallet_amount).bind(&user_id)
                     .execute(&mut *tx).await?;
-                let _ = balance;
+                query("INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at, team_id, account_type) VALUES ($1,$2,'deduction',$3,$4,$5,'token_package','completed',$6,$7,NULL,'user')")
+                    .bind(uuid::Uuid::new_v4().to_string()).bind(&user_id).bind(deduction).bind(balance).bind(balance + deduction)
+                    .bind("Token package wallet fallback").bind(&now).execute(&mut *tx).await?;
+                query("INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at, team_id, account_type) VALUES ($1,$2,'deduction',$3,$4,$5,'token_package','completed',$6,$7,NULL,'user')")
+                    .bind(uuid::Uuid::new_v4().to_string()).bind(&user_id).bind(deduction).bind(balance).bind(balance + deduction)
+                    .bind("Token package wallet fallback").bind(&now).execute(&mut *tx).await?;
             }
         }
         query("UPDATE token_request_reservations SET actual_package_units = $1, actual_wallet_amount = $2, state = $3, reason = $4, settled_at = $5 WHERE id = $6")

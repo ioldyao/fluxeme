@@ -99,6 +99,9 @@ pub struct TokenReservationRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenSettlementRequest {
     pub reservation_id: String,
+    pub actual_prompt_tokens: u64,
+    pub actual_completion_tokens: u64,
+    pub actual_cache_hit_input_tokens: u64,
     pub actual_package_units: u64,
     pub actual_wallet_amount: Decimal,
     pub status_code: u16,
