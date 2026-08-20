@@ -89,6 +89,8 @@ pub struct SkillRow {
     pub published_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// 累计下载次数（download 成功后自增，管理端展示）。
+    pub download_count: i64,
 }
 
 /// `agent_skill_versions` 行（版本历史，独立于 skill 当前版本）。

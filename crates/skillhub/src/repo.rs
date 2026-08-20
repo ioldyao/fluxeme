@@ -27,6 +27,7 @@ fn map_skill_row(row: &PgRow) -> SkillRow {
         published_at: row.try_get::<Option<String>, _>(13).unwrap_or(None),
         created_at: row.try_get::<String, _>(14).unwrap_or_default(),
         updated_at: row.try_get::<String, _>(15).unwrap_or_default(),
+        download_count: row.try_get::<i64, _>(16).unwrap_or(0),
     }
 }
 
@@ -49,7 +50,7 @@ fn map_version_row(row: &PgRow) -> SkillVersionRow {
 const SKILL_COLUMNS: &str =
     "id, slug, name, description, category, tags, author_id, version, \
      artifact_path, artifact_size, source_markdown, visibility, status, \
-     published_at, created_at, updated_at";
+     published_at, created_at, updated_at, download_count";
 
 pub struct SkillRepository {
     pool: PgPool,
@@ -84,7 +85,8 @@ impl SkillRepository {
                 status          TEXT NOT NULL DEFAULT 'draft',
                 published_at    TEXT,
                 created_at      TEXT NOT NULL DEFAULT now(),
-                updated_at      TEXT NOT NULL DEFAULT now()
+                updated_at      TEXT NOT NULL DEFAULT now(),
+                download_count  BIGINT NOT NULL DEFAULT 0
             )",
         )
         .execute(&self.pool)
@@ -211,6 +213,7 @@ impl SkillRepository {
             "ALTER TABLE agent_skill_runtime_tasks ALTER COLUMN created_at TYPE TEXT USING created_at::text",
             "ALTER TABLE agent_skill_runtime_tasks ALTER COLUMN processed_at TYPE TEXT USING processed_at::text",
             "ALTER TABLE agent_skill_installs ALTER COLUMN installed_at TYPE TEXT USING installed_at::text",
+            "ALTER TABLE agent_skills ADD COLUMN IF NOT EXISTS download_count BIGINT NOT NULL DEFAULT 0",
         ] {
             self.exec(sql).execute(&self.pool).await?;
         }
@@ -226,8 +229,8 @@ impl SkillRepository {
             "INSERT INTO agent_skills \
              (id, slug, name, description, category, tags, author_id, version, \
               artifact_path, artifact_size, source_markdown, visibility, status, \
-              published_at, created_at, updated_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
+              published_at, created_at, updated_at, download_count) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)",
         )
         .bind(&s.id)
         .bind(&s.slug)
@@ -245,9 +248,20 @@ impl SkillRepository {
         .bind(&s.published_at)
         .bind(&s.created_at)
         .bind(&s.updated_at)
+        .bind(s.download_count)
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// 成功下载后自增，返回自增后的值（管理端统计）。
+    pub async fn increment_download_count(&self, skill_id: &str) -> Result<i64, SkillHubError> {
+        let row = self
+            .exec("UPDATE agent_skills SET download_count=download_count+1 WHERE id=$1 RETURNING download_count")
+            .bind(skill_id)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.try_get::<i64, _>(0).unwrap_or(0))
     }
 
     pub async fn update_skill(&self, s: &SkillRow) -> Result<(), SkillHubError> {

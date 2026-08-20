@@ -99,6 +99,7 @@ impl SkillHubModule {
             published_at: None,
             created_at: now.clone(),
             updated_at: now,
+            download_count: 0,
         };
         self.repo.insert_skill(&row).await?;
         Ok(row)
@@ -370,6 +371,8 @@ impl SkillHubModule {
             .artifact_path
             .ok_or_else(|| SkillHubError::NotFound("artifact".into()))?;
         let bytes = self.store.get(&path).await.map_err(storage_err)?;
+        // 只在文件成功读取后计数，失败下载不污染统计。
+        let _ = self.repo.increment_download_count(&skill.id).await?;
         Ok(DownloadPayload {
             filename: format!("{slug}-{version}.zip"),
             content_type: "application/zip".to_string(),

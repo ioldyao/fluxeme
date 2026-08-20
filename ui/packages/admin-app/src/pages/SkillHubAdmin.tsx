@@ -1,15 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import {
-  useAdminSkills,
-  useCreateSkill,
-  useUpdateSkill,
-  useDeleteSkill,
-  useSetSkillStatus,
-  useSkillVersions,
-  useUploadSkillArtifact,
-  useSkillRuntimeStatuses,
-} from '@fluxeme/shared/src/api/skills';
+import { useAdminSkills, useCreateSkill, useUpdateSkill, useDeleteSkill, useSetSkillStatus, useSkillVersions, useUploadSkillArtifact, useSkillRuntimeStatuses } from '@fluxeme/shared/src/api/skills';
 import type { SkillRow } from '@fluxeme/shared/src/api/skills';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
 import { EmptyState } from '@fluxeme/shared/src/components/EmptyState';
@@ -18,436 +9,65 @@ import { Input } from '@fluxeme/shared/src/components/ui/input';
 import { Textarea } from '@fluxeme/shared/src/components/ui/textarea';
 import { Badge } from '@fluxeme/shared/src/components/ui/badge';
 import { Card, CardContent } from '@fluxeme/shared/src/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@fluxeme/shared/src/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@fluxeme/shared/src/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@fluxeme/shared/src/components/ui/select';
-import { Plus, RefreshCw, Upload, Pencil, Trash2, ListTree, Check, Package } from 'lucide-react';
+import { Check, FileArchive, MoreHorizontal, Package, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatTimestamp } from '@fluxeme/shared/src/lib/date';
 
-const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
+const STATUS: Record<string, { label: string; cls: string }> = {
   draft: { label: 'skillHub.status.draft', cls: 'bg-muted text-muted-foreground' },
   reviewing: { label: 'skillHub.status.reviewing', cls: 'bg-amber-100 text-amber-700' },
   approved: { label: 'skillHub.status.approved', cls: 'bg-blue-100 text-blue-700' },
   published: { label: 'skillHub.status.published', cls: 'bg-emerald-100 text-emerald-700' },
 };
-
-const VIS_LABEL: Record<string, string> = {
-  public: 'skillHub.visibility.public',
-  internal: 'skillHub.visibility.internal',
-  private: 'skillHub.visibility.private',
-};
-
-const STATUS_FLOW: Record<string, string[]> = {
-  draft: ['reviewing'],
-  reviewing: ['approved'],
-  approved: ['published'],
-  published: ['draft'],
-};
-
-const RUNTIME_BADGE: Record<string, { label: string; cls: string }> = {
+const RUNTIME: Record<string, { label: string; cls: string }> = {
   pending: { label: 'skillHub.runtime.pending', cls: 'bg-muted text-muted-foreground' },
   ready: { label: 'skillHub.runtime.ready', cls: 'bg-emerald-100 text-emerald-700' },
   failed: { label: 'skillHub.runtime.failed', cls: 'bg-red-100 text-red-700' },
   disabled: { label: 'skillHub.runtime.disabled', cls: 'bg-muted text-muted-foreground' },
 };
+const NEXT: Record<string, string> = { draft: 'reviewing', reviewing: 'approved', approved: 'published', published: 'draft' };
+type Tab = 'basic' | 'package' | 'preview' | 'versions';
+
+const count = (n: number) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+const recent = (value: string) => { const time = Date.parse(value); return Number.isFinite(time) && Date.now() - time <= 7 * 86400000; };
 
 export default function SkillHubAdmin() {
   const { t } = useTranslation();
   const { data: skills, isLoading, isError, refetch } = useAdminSkills();
-  const createMutation = useCreateSkill();
-  const updateMutation = useUpdateSkill();
-  const deleteMutation = useDeleteSkill();
-  const statusMutation = useSetSkillStatus();
-  const uploadMutation = useUploadSkillArtifact();
-  const { data: runtimeStatuses } = useSkillRuntimeStatuses();
+  const { data: runtimes } = useSkillRuntimeStatuses();
+  const create = useCreateSkill(); const update = useUpdateSkill(); const remove = useDeleteSkill(); const setStatus = useSetSkillStatus(); const upload = useUploadSkillArtifact();
+  const [query, setQuery] = useState(''); const [status, setStatusFilter] = useState(''); const [visibility, setVisibility] = useState('');
+  const [editing, setEditing] = useState<SkillRow | null>(null); const [createOpen, setCreateOpen] = useState(false); const [tab, setTab] = useState<Tab>('basic'); const [more, setMore] = useState<SkillRow | null>(null);
+  const [slug, setSlug] = useState(''); const [name, setName] = useState(''); const [desc, setDesc] = useState(''); const [category, setCategory] = useState('general'); const [tags, setTags] = useState(''); const [vis, setVis] = useState('internal');
+  const [version, setVersion] = useState(''); const [changelog, setChangelog] = useState(''); const [file, setFile] = useState<File | null>(null);
+  const runtimeMap = useMemo(() => new Map((runtimes ?? []).map((item) => [item.skill_id, item.state])), [runtimes]);
+  const rows = useMemo(() => (skills ?? []).filter((item) => { const q = query.trim().toLowerCase(); return (!q || [item.name, item.slug, item.category, ...item.tags].join(' ').toLowerCase().includes(q)) && (!status || item.status === status) && (!visibility || item.visibility === visibility); }), [skills, query, status, visibility]);
+  const kpis = useMemo(() => ({ total: (skills ?? []).length, published: (skills ?? []).filter((s) => s.status === 'published').length, draft: (skills ?? []).filter((s) => s.status === 'draft').length, updated: (skills ?? []).filter((s) => recent(s.updated_at)).length }), [skills]);
+  const reset = () => { setSlug(''); setName(''); setDesc(''); setCategory('general'); setTags(''); setVis('internal'); setVersion(''); setChangelog(''); setFile(null); };
+  const edit = (skill: SkillRow, nextTab: Tab = 'basic') => { setSlug(skill.slug); setName(skill.name); setDesc(skill.description); setCategory(skill.category); setTags(skill.tags.join(', ')); setVis(skill.visibility); setVersion(''); setChangelog(''); setFile(null); setTab(nextTab); setEditing(skill); setMore(null); };
+  const submitCreate = () => { if (!slug.trim() || !name.trim()) return toast.error(t('skillHub.formRequired')); create.mutate({ slug: slug.trim(), name: name.trim(), description: desc.trim(), category: category.trim() || 'general', tags: tags.split(',').map((v) => v.trim()).filter(Boolean), visibility: vis as 'public' | 'internal' | 'private' }, { onSuccess: () => { setCreateOpen(false); toast.success(t('skillHub.created')); }, onError: (e: Error) => toast.error(e.message) }); };
+  const submitUpdate = () => { if (!editing) return; update.mutate({ id: editing.id, data: { name: name.trim(), description: desc.trim(), category: category.trim() || 'general', tags: tags.split(',').map((v) => v.trim()).filter(Boolean), visibility: vis as 'public' | 'internal' | 'private' } }, { onSuccess: () => { setEditing(null); toast.success(t('skillHub.saved')); }, onError: (e: Error) => toast.error(e.message) }); };
+  const submitUpload = () => { if (!editing || !version.trim() || !file) return; upload.mutate({ skillId: editing.id, version: version.trim(), changelog: changelog.trim(), file }, { onSuccess: () => { setVersion(''); setChangelog(''); setFile(null); toast.success(t('skillHub.uploaded')); }, onError: (e: Error) => toast.error(e.message) }); };
+  const advance = (skill: SkillRow) => { const next = NEXT[skill.status]; if (!next) return; setStatus.mutate({ id: skill.id, status: next }, { onSuccess: () => toast.success(t('skillHub.saved')), onError: (e: Error) => toast.error(e.message) }); };
+  const deleteSkill = (skill: SkillRow) => { if (!window.confirm(`${t('skillHub.confirmDelete')}${skill.name}${t('confirm.suffix')}`)) return; remove.mutate(skill.id, { onSuccess: () => toast.success(t('skillHub.deleted')), onError: (e: Error) => toast.error(e.message) }); };
 
-  const [statusFilter, setStatusFilter] = useState('');
-
-  const runtimeBySkill = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const s of runtimeStatuses ?? []) m.set(s.skill_id, s.state);
-    return m;
-  }, [runtimeStatuses]);
-  const [editing, setEditing] = useState<SkillRow | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [uploading, setUploading] = useState<SkillRow | null>(null);
-  const [versionsOf, setVersionsOf] = useState<SkillRow | null>(null);
-
-  // create form
-  const [fSlug, setFSlug] = useState('');
-  const [fName, setFName] = useState('');
-  const [fDesc, setFDesc] = useState('');
-  const [fCategory, setFCategory] = useState('');
-  const [fTags, setFTags] = useState('');
-  const [fVisibility, setFVisibility] = useState('internal');
-
-  // upload form
-  const [uVersion, setUVersion] = useState('');
-  const [uChangelog, setUChangelog] = useState('');
-  const [uFile, setUFile] = useState<File | null>(null);
-
-  const filtered = useMemo(() => {
-    if (!skills) return [];
-    return statusFilter ? skills.filter((s) => s.status === statusFilter) : skills;
-  }, [skills, statusFilter]);
-
-  const openCreate = () => {
-    setFSlug(''); setFName(''); setFDesc(''); setFCategory(''); setFTags(''); setFVisibility('internal');
-    setCreateOpen(true);
-  };
-
-  const submitCreate = () => {
-    if (!fSlug.trim() || !fName.trim()) {
-      toast.error(t('err.loadFailed'));
-      return;
-    }
-    createMutation.mutate(
-      {
-        slug: fSlug.trim(),
-        name: fName.trim(),
-        description: fDesc,
-        category: fCategory,
-        tags: fTags.split(',').map((x) => x.trim()).filter(Boolean),
-        visibility: fVisibility as 'public' | 'internal' | 'private',
-      },
-      {
-        onSuccess: () => { setCreateOpen(false); toast.success(t('common.add')); },
-        onError: (e: Error) => toast.error(e.message),
-      }
-    );
-  };
-
-  const submitUpdate = () => {
-    if (!editing) return;
-    updateMutation.mutate(
-      {
-        id: editing.id,
-        data: {
-          name: fName.trim(),
-          description: fDesc,
-          category: fCategory,
-          tags: fTags.split(',').map((x) => x.trim()).filter(Boolean),
-          visibility: fVisibility as 'public' | 'internal' | 'private',
-        },
-      },
-      {
-        onSuccess: () => { setEditing(null); toast.success('OK'); },
-        onError: (e: Error) => toast.error(e.message),
-      }
-    );
-  };
-
-  const openEdit = (s: SkillRow) => {
-    setFName(s.name); setFDesc(s.description); setFCategory(s.category);
-    setFTags(s.tags.join(',')); setFVisibility(s.visibility);
-    setEditing(s);
-  };
-
-  const submitUpload = () => {
-    if (!uploading || !uVersion.trim() || !uFile) return;
-    uploadMutation.mutate(
-      { skillId: uploading.id, version: uVersion.trim(), changelog: uChangelog, file: uFile },
-      {
-        onSuccess: () => {
-          setUploading(null); setUVersion(''); setUChangelog(''); setUFile(null);
-          toast.success('OK');
-        },
-        onError: (e: Error) => toast.error(e.message),
-      }
-    );
-  };
-
-  const advanceStatus = (s: SkillRow, next: string) => {
-    statusMutation.mutate(
-      { id: s.id, status: next },
-      {
-        onSuccess: () => toast.success('OK'),
-        onError: (e: Error) => toast.error(e.message),
-      }
-    );
-  };
-
-  const confirmDelete = (s: SkillRow) => {
-    if (window.confirm(`${t('skillHub.confirmDelete')}${s.name}${t('confirm.suffix')}`)) {
-      deleteMutation.mutate(s.id, {
-        onSuccess: () => toast.success('OK'),
-        onError: (e: Error) => toast.error(e.message),
-      });
-    }
-  };
-
-  return (
-    <div className="space-y-4 animate-fade-in">
-      <PageHeader
-        title={t('nav.skillHubAdmin')}
-        description={t('skillHub.manageSubtitle')}
-        actions={
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => refetch()}>
-              <RefreshCw className="size-4 mr-1" />{t('common.refresh')}
-            </Button>
-            <Button size="sm" onClick={openCreate}>
-              <Plus className="size-4 mr-1" />{t('skillHub.create')}
-            </Button>
-          </div>
-        }
-      />
-
-      {/* 状态筛选 */}
-      <div className="flex items-center gap-2">
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-44 h-9">
-            <SelectValue placeholder={t('skillHub.status')} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="">All</SelectItem>
-            <SelectItem value="draft">{t('skillHub.status.draft')}</SelectItem>
-            <SelectItem value="reviewing">{t('skillHub.status.reviewing')}</SelectItem>
-            <SelectItem value="approved">{t('skillHub.status.approved')}</SelectItem>
-            <SelectItem value="published">{t('skillHub.status.published')}</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
-      <Card>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>
-          ) : isError ? (
-            <div className="flex items-center justify-center p-8">
-              <div className="text-center">
-                <p className="text-destructive mb-2">{t('err.loadFailed')}</p>
-                <Button variant="outline" onClick={() => refetch()}>{t('common.refresh')}</Button>
-              </div>
-            </div>
-          ) : filtered.length === 0 ? (
-            <EmptyState message={t('skillHub.empty')} />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-muted-foreground">
-                    <th className="text-left py-3 px-4">{t('skillHub.name')}</th>
-                    <th className="text-left py-3 px-4">{t('skillHub.slug')}</th>
-                    <th className="text-left py-3 px-4">{t('skillHub.category')}</th>
-                    <th className="text-left py-3 px-4">{t('skillHub.status')}</th>
-                    <th className="text-left py-3 px-4">{t('skillHub.runtimeStatus')}</th>
-                    <th className="text-left py-3 px-4">{t('skillHub.version')}</th>
-                    <th className="text-left py-3 px-4">{t('skillHub.updatedAt')}</th>
-                    <th className="text-right py-3 px-4">{t('skillHub.actions')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((s) => {
-                    const badge = STATUS_BADGE[s.status] ?? STATUS_BADGE.draft;
-                    const next = (STATUS_FLOW[s.status] ?? [])[0];
-                    return (
-                      <tr key={s.id} className="border-b last:border-0 hover:bg-muted/50">
-                        <td className="py-3 px-4">
-                          <div className="font-medium">{s.name}</div>
-                          <div className="text-xs text-muted-foreground">{t(VIS_LABEL[s.visibility] ?? 'skillHub.visibility.internal')}</div>
-                        </td>
-                        <td className="py-3 px-4 font-mono text-xs">{s.slug}</td>
-                        <td className="py-3 px-4"><Badge variant="outline">{s.category}</Badge></td>
-                        <td className="py-3 px-4"><Badge className={badge.cls}>{t(badge.label)}</Badge></td>
-                        <td className="py-3 px-4">
-                          <Badge className={RUNTIME_BADGE[runtimeBySkill.get(s.id) ?? 'pending']?.cls}>
-                            {t(RUNTIME_BADGE[runtimeBySkill.get(s.id) ?? 'pending']?.label)}
-                          </Badge>
-                        </td>
-                        <td className="py-3 px-4 font-mono text-xs">{s.version}</td>
-                        <td className="py-3 px-4 text-xs text-muted-foreground">{formatTimestamp(s.updated_at)}</td>
-                        <td className="py-3 px-4">
-                          <div className="flex items-center justify-end gap-1">
-                            {next && (
-                              <Button size="sm" variant="outline" disabled={statusMutation.isPending} onClick={() => advanceStatus(s, next)}>
-                                <Check className="size-3.5 mr-1" />
-                                {t(`skillHub.status.${next}`)}
-                              </Button>
-                            )}
-                            <Button size="icon" variant="ghost" title={t('skillHub.upload')} onClick={() => { setUploading(s); setUVersion(''); setUChangelog(''); setUFile(null); }}>
-                              <Upload className="size-4" />
-                            </Button>
-                            <Button size="icon" variant="ghost" title={t('skillHub.versions')} onClick={() => setVersionsOf(s)}>
-                              <ListTree className="size-4" />
-                            </Button>
-                            <Button size="icon" variant="ghost" title={t('skillHub.edit')} onClick={() => openEdit(s)}>
-                              <Pencil className="size-4" />
-                            </Button>
-                            <Button size="icon" variant="ghost" className="text-destructive" title={t('skillHub.delete')} onClick={() => confirmDelete(s)}>
-                              <Trash2 className="size-4" />
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* 新建 */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{t('skillHub.create')}</DialogTitle></DialogHeader>
-          <SkillForm
-            slug={fSlug} onSlug={setFSlug}
-            name={fName} onName={setFName}
-            desc={fDesc} onDesc={setFDesc}
-            category={fCategory} onCategory={setFCategory}
-            tags={fTags} onTags={setFTags}
-            visibility={fVisibility} onVisibility={setFVisibility}
-            showSlug
-          />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>{t('common.cancel')}</Button>
-            <Button onClick={submitCreate} disabled={createMutation.isPending}>{t('skillHub.create')}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* 编辑 */}
-      <Dialog open={!!editing} onOpenChange={(o) => { if (!o) setEditing(null); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{t('skillHub.edit')}</DialogTitle></DialogHeader>
-          <SkillForm
-            name={fName} onName={setFName}
-            desc={fDesc} onDesc={setFDesc}
-            category={fCategory} onCategory={setFCategory}
-            tags={fTags} onTags={setFTags}
-            visibility={fVisibility} onVisibility={setFVisibility}
-          />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditing(null)}>{t('common.cancel')}</Button>
-            <Button onClick={submitUpdate} disabled={updateMutation.isPending}>{t('common.save')}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* 上传包 */}
-      <Dialog open={!!uploading} onOpenChange={(o) => { if (!o) setUploading(null); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Package className="size-4" />{t('skillHub.upload')} {uploading ? `· ${uploading.name}` : ''}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <label className="block text-sm font-medium">{t('skillHub.uploadVersion')}</label>
-            <Input value={uVersion} onChange={(e) => setUVersion(e.target.value)} placeholder="1.0.0" />
-            <label className="block text-sm font-medium">{t('skillHub.uploadChangelog')}</label>
-            <Textarea value={uChangelog} onChange={(e) => setUChangelog(e.target.value)} rows={3} />
-            <label className="block text-sm font-medium">{t('skillHub.uploadFile')}</label>
-            <Input type="file" accept=".zip" onChange={(e) => setUFile(e.target.files?.[0] ?? null)} />
-            <p className="text-xs text-muted-foreground">{t('skillHub.uploadHint')}</p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setUploading(null)}>{t('common.cancel')}</Button>
-            <Button onClick={submitUpload} disabled={uploadMutation.isPending || !uVersion.trim() || !uFile}>
-              <Upload className="size-4 mr-1" />{t('skillHub.upload')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* 版本列表 */}
-      <VersionsDialog skill={versionsOf} onClose={() => setVersionsOf(null)} />
-    </div>
-  );
+  return <div className="space-y-5 animate-fade-in">
+    <PageHeader title={t('skillHub.manage')} description={t('skillHub.manageSubtitle')} actions={<div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => refetch()}><RefreshCw className="mr-1.5 size-4" />{t('common.refresh')}</Button><Button size="sm" onClick={() => { reset(); setCreateOpen(true); }}><Plus className="mr-1.5 size-4" />{t('skillHub.create')}</Button></div>} />
+    <div className="grid grid-cols-2 gap-3 xl:grid-cols-4"><Kpi label={t('skillHub.kpi.total')} value={kpis.total} hint={t('skillHub.kpi.totalHint')} /><Kpi label={t('skillHub.kpi.published')} value={kpis.published} hint={t('skillHub.kpi.publishedHint')} tone="green" /><Kpi label={t('skillHub.kpi.draft')} value={kpis.draft} hint={t('skillHub.kpi.draftHint')} tone="amber" /><Kpi label={t('skillHub.kpi.updated')} value={kpis.updated} hint={t('skillHub.kpi.updatedHint')} tone="blue" /></div>
+    <Card className="overflow-hidden border-border/80 shadow-sm"><div className="flex flex-col gap-3 border-b px-4 py-4 lg:flex-row lg:items-center lg:justify-between"><div><h2 className="text-sm font-semibold">Skills</h2><p className="mt-1 text-xs text-muted-foreground">{t('skillHub.tableHint')}</p></div><div className="flex flex-wrap gap-2"><div className="relative min-w-[220px]"><Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('skillHub.searchAdmin')} className="h-9 pl-8" /></div><Select value={status || 'all'} onValueChange={(v) => setStatusFilter(v === 'all' ? '' : v)}><SelectTrigger className="h-9 w-36"><SelectValue placeholder={t('skillHub.status')} /></SelectTrigger><SelectContent><SelectItem value="all">{t('skillHub.allStatus')}</SelectItem>{Object.entries(STATUS).map(([key, item]) => <SelectItem key={key} value={key}>{t(item.label)}</SelectItem>)}</SelectContent></Select><Select value={visibility || 'all'} onValueChange={(v) => setVisibility(v === 'all' ? '' : v)}><SelectTrigger className="h-9 w-36"><SelectValue placeholder={t('skillHub.visibility')} /></SelectTrigger><SelectContent><SelectItem value="all">{t('skillHub.allVisibility')}</SelectItem><SelectItem value="public">{t('skillHub.visibility.public')}</SelectItem><SelectItem value="internal">{t('skillHub.visibility.internal')}</SelectItem><SelectItem value="private">{t('skillHub.visibility.private')}</SelectItem></SelectContent></Select></div></div>
+      {isLoading ? <div className="p-10 text-center text-sm text-muted-foreground">{t('common.loading')}</div> : isError ? <div className="p-10 text-center"><p className="mb-3 text-sm text-destructive">{t('err.loadFailed')}</p><Button variant="outline" onClick={() => refetch()}>{t('common.refresh')}</Button></div> : rows.length === 0 ? <EmptyState message={t('skillHub.empty')} /> : <div className="overflow-x-auto"><table className="w-full min-w-[1080px] text-sm"><thead><tr className="border-b bg-muted/30 text-xs text-muted-foreground"><th className="px-4 py-3 text-left">{t('skillHub.skillColumn')}</th><th className="px-3 py-3 text-left">{t('skillHub.category')}</th><th className="px-3 py-3 text-left">{t('skillHub.status')}</th><th className="px-3 py-3 text-left">{t('skillHub.visibility')}</th><th className="px-3 py-3 text-left">{t('skillHub.version')}</th><th className="px-3 py-3 text-right">{t('skillHub.downloads')}</th><th className="px-3 py-3 text-left">{t('skillHub.updatedAt')}</th><th className="px-4 py-3 text-right">{t('skillHub.actions')}</th></tr></thead><tbody>{rows.map((skill) => { const state = STATUS[skill.status] ?? STATUS.draft; const runtime = RUNTIME[runtimeMap.get(skill.id) ?? 'pending'] ?? RUNTIME.pending; return <tr key={skill.id} className="border-b last:border-0 hover:bg-muted/20"><td className="px-4 py-3"><div className="flex min-w-[240px] items-center gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-lg border bg-muted/50"><Package className="size-4 text-muted-foreground" /></div><div className="min-w-0"><div className="truncate font-semibold">{skill.name}</div><div className="truncate font-mono text-[11px] text-muted-foreground">{skill.slug}</div></div></div></td><td className="px-3 py-3"><Badge variant="outline" className="font-normal">{skill.category}</Badge></td><td className="px-3 py-3"><div className="flex flex-col items-start gap-1"><Badge className={state.cls}>{t(state.label)}</Badge><span className="text-[10px] text-muted-foreground">{t(runtime.label)}</span></div></td><td className="px-3 py-3"><Badge className={skill.visibility === 'public' ? 'bg-emerald-50 text-emerald-700' : 'bg-muted text-muted-foreground'}>{t(`skillHub.visibility.${skill.visibility}`)}</Badge></td><td className="px-3 py-3 font-mono text-xs">{skill.version}</td><td className="px-3 py-3 text-right font-mono text-xs">{count(skill.download_count)}</td><td className="px-3 py-3 text-xs text-muted-foreground">{formatTimestamp(skill.updated_at)}</td><td className="px-4 py-3"><div className="flex justify-end gap-1">{NEXT[skill.status] && <Button size="sm" variant="outline" className="h-8" disabled={setStatus.isPending} onClick={() => advance(skill)}><Check className="mr-1 size-3.5" />{t(`skillHub.status.${NEXT[skill.status]}`)}</Button>}<Button size="icon" variant="ghost" className="size-8" title={t('skillHub.edit')} onClick={() => edit(skill)}><Pencil className="size-3.5" /></Button><Button size="icon" variant="ghost" className="size-8" title={t('skillHub.upload')} onClick={() => edit(skill, 'package')}><Upload className="size-3.5" /></Button><Button size="icon" variant="ghost" className="size-8" onClick={() => setMore(more?.id === skill.id ? null : skill)}><MoreHorizontal className="size-3.5" /></Button></div></td></tr>; })}</tbody></table></div>}
+    </Card>
+    {more && <div className="fixed inset-0 z-20" onClick={() => setMore(null)}><div className="absolute right-8 top-56 z-30 w-32 rounded-lg border bg-popover p-1 shadow-lg" onClick={(e) => e.stopPropagation()}><button className="w-full rounded px-3 py-2 text-left text-xs hover:bg-muted" onClick={() => edit(more)}>编辑</button><button className="w-full rounded px-3 py-2 text-left text-xs text-destructive hover:bg-muted" onClick={() => deleteSkill(more)}>删除</button></div></div>}
+    <Dialog open={createOpen} onOpenChange={setCreateOpen}><DialogContent className="max-w-xl"><DialogHeader><DialogTitle>{t('skillHub.create')}</DialogTitle></DialogHeader><SkillForm slug={slug} onSlug={setSlug} showSlug name={name} onName={setName} desc={desc} onDesc={setDesc} category={category} onCategory={setCategory} tags={tags} onTags={setTags} visibility={vis} onVisibility={setVis} /><DialogFooter><Button variant="outline" onClick={() => setCreateOpen(false)}>{t('common.cancel')}</Button><Button onClick={submitCreate} disabled={create.isPending}>{t('skillHub.create')}</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={!!editing} onOpenChange={(open) => { if (!open) setEditing(null); }}><DialogContent className="fixed left-auto right-0 top-0 h-screen max-h-screen w-full max-w-2xl translate-x-0 translate-y-0 gap-0 rounded-none border-y-0 border-r-0 p-0 sm:max-w-2xl"><div className="flex h-full flex-col"><DialogHeader className="border-b px-6 py-5"><DialogTitle>{editing?.name ?? t('skillHub.edit')}</DialogTitle><div className="font-mono text-xs text-muted-foreground">{editing?.slug}</div></DialogHeader><div className="flex gap-5 overflow-x-auto border-b px-6">{(['basic', 'package', 'preview', 'versions'] as const).map((item) => <button key={item} className={`h-11 shrink-0 border-b-2 text-xs font-semibold ${tab === item ? 'border-foreground text-foreground' : 'border-transparent text-muted-foreground'}`} onClick={() => setTab(item)}>{t(`skillHub.tab.${item}`)}</button>)}</div><div className="flex-1 overflow-y-auto p-6">{editing && tab === 'basic' && <SkillForm name={name} onName={setName} desc={desc} onDesc={setDesc} category={category} onCategory={setCategory} tags={tags} onTags={setTags} visibility={vis} onVisibility={setVis} />}{editing && tab === 'package' && <PackagePane version={version} setVersion={setVersion} changelog={changelog} setChangelog={setChangelog} file={file} setFile={setFile} onUpload={submitUpload} pending={upload.isPending} />}{editing && tab === 'preview' && <MarkdownPane content={editing.source_markdown} />}{editing && tab === 'versions' && <VersionsPane skillId={editing.id} />}</div><div className="flex justify-between border-t bg-muted/20 px-6 py-4"><Button variant="ghost" className="text-destructive" onClick={() => deleteSkill(editing!)}><Trash2 className="mr-1.5 size-4" />{t('skillHub.delete')}</Button><div className="flex gap-2"><Button variant="outline" onClick={() => setEditing(null)}>{t('common.cancel')}</Button><Button onClick={submitUpdate} disabled={update.isPending}>{t('skillHub.saveDraft')}</Button></div></div></div></DialogContent></Dialog>
+  </div>;
 }
 
-function SkillForm(props: {
-  slug?: string; onSlug?: (v: string) => void; showSlug?: boolean;
-  name: string; onName: (v: string) => void;
-  desc: string; onDesc: (v: string) => void;
-  category: string; onCategory: (v: string) => void;
-  tags: string; onTags: (v: string) => void;
-  visibility: string; onVisibility: (v: string) => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div className="space-y-3">
-      {props.showSlug && (
-        <>
-          <label className="block text-sm font-medium">{t('skillHub.slug')}</label>
-          <Input value={props.slug} onChange={(e) => props.onSlug?.(e.target.value)} placeholder="my-skill" />
-        </>
-      )}
-      <label className="block text-sm font-medium">{t('skillHub.name')}</label>
-      <Input value={props.name} onChange={(e) => props.onName(e.target.value)} />
-      <label className="block text-sm font-medium">{t('skillHub.description')}</label>
-      <Textarea value={props.desc} onChange={(e) => props.onDesc(e.target.value)} rows={3} />
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-sm font-medium">{t('skillHub.category')}</label>
-          <Input value={props.category} onChange={(e) => props.onCategory(e.target.value)} placeholder="general" />
-        </div>
-        <div>
-          <label className="block text-sm font-medium">{t('skillHub.tags')}</label>
-          <Input value={props.tags} onChange={(e) => props.onTags(e.target.value)} placeholder="web,search" />
-        </div>
-      </div>
-      <label className="block text-sm font-medium">{t('skillHub.visibility')}</label>
-      <Select value={props.visibility} onValueChange={props.onVisibility}>
-        <SelectTrigger className="h-9">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="public">{t('skillHub.visibility.public')}</SelectItem>
-          <SelectItem value="internal">{t('skillHub.visibility.internal')}</SelectItem>
-          <SelectItem value="private">{t('skillHub.visibility.private')}</SelectItem>
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
-
-function VersionsDialog({ skill, onClose }: { skill: SkillRow | null; onClose: () => void }) {
-  const { t } = useTranslation();
-  const { data: versions, isLoading } = useSkillVersions(skill?.id ?? null);
-  const [preview, setPreview] = useState<string | null>(null);
-  return (
-    <Dialog open={!!skill} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>{t('skillHub.versions')} · {skill?.name}</DialogTitle></DialogHeader>
-        {isLoading ? (
-          <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>
-        ) : !versions || versions.length === 0 ? (
-          <EmptyState message={t('skillHub.empty')} />
-        ) : (
-          <div className="space-y-2">
-            {versions.map((v) => (
-              <div key={v.id} className="flex items-center justify-between gap-2 p-3 rounded-lg border">
-                <div className="min-w-0">
-                  <div className="font-mono text-sm font-medium">{v.version}</div>
-                  {v.changelog && <div className="text-xs text-muted-foreground truncate">{v.changelog}</div>}
-                  <div className="text-[11px] text-muted-foreground mt-0.5">{formatTimestamp(v.created_at)} · {(v.artifact_size / 1024).toFixed(1)} KB</div>
-                </div>
-                {v.source_markdown && (
-                  <Button variant="outline" size="sm" onClick={() => setPreview(preview === v.id ? null : v.id)}>
-                    {t('skillHub.skillmd')}
-                  </Button>
-                )}
-              </div>
-            ))}
-            {preview && (
-              <pre className="rounded-lg bg-muted/50 p-3 text-xs whitespace-pre-wrap max-h-64 overflow-y-auto">
-                {versions?.find((v) => v.id === preview)?.source_markdown}
-              </pre>
-            )}
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
+function Kpi({ label, value, hint, tone = 'default' }: { label: string; value: number; hint: string; tone?: string }) { const color = tone === 'green' ? 'text-emerald-700' : tone === 'amber' ? 'text-amber-700' : tone === 'blue' ? 'text-blue-700' : ''; return <Card className="border-border/80 shadow-sm"><CardContent className="p-4"><div className="text-[11px] text-muted-foreground">{label}</div><div className={`mt-2 text-2xl font-bold tracking-tight ${color}`}>{value}</div><div className="mt-1 text-[10px] text-muted-foreground">{hint}</div></CardContent></Card>; }
+function Field({ label, children, full = false }: { label: string; children: ReactNode; full?: boolean }) { return <div className={full ? 'sm:col-span-2' : ''}><label className="mb-1.5 block text-xs font-semibold text-muted-foreground">{label}</label>{children}</div>; }
+function SkillForm({ slug, onSlug, showSlug, name, onName, desc, onDesc, category, onCategory, tags, onTags, visibility, onVisibility }: { slug?: string; onSlug?: (v: string) => void; showSlug?: boolean; name: string; onName: (v: string) => void; desc: string; onDesc: (v: string) => void; category: string; onCategory: (v: string) => void; tags: string; onTags: (v: string) => void; visibility: string; onVisibility: (v: string) => void }) { const { t } = useTranslation(); return <div className="grid gap-4 sm:grid-cols-2">{showSlug && <Field label={t('skillHub.slug')}><Input value={slug} onChange={(e) => onSlug?.(e.target.value)} placeholder="my-skill" /></Field>}<Field label={t('skillHub.name')}><Input value={name} onChange={(e) => onName(e.target.value)} /></Field><Field label={t('skillHub.category')}><Input value={category} onChange={(e) => onCategory(e.target.value)} placeholder="general" /></Field><Field label={t('skillHub.visibility')}><Select value={visibility} onValueChange={onVisibility}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="public">{t('skillHub.visibility.public')}</SelectItem><SelectItem value="internal">{t('skillHub.visibility.internal')}</SelectItem><SelectItem value="private">{t('skillHub.visibility.private')}</SelectItem></SelectContent></Select></Field><Field label={t('skillHub.description')} full><Textarea value={desc} onChange={(e) => onDesc(e.target.value)} rows={5} /></Field><Field label={t('skillHub.tags')} full><Input value={tags} onChange={(e) => onTags(e.target.value)} placeholder="web, search, operations" /></Field></div>; }
+function PackagePane({ version, setVersion, changelog, setChangelog, file, setFile, onUpload, pending }: { version: string; setVersion: (v: string) => void; changelog: string; setChangelog: (v: string) => void; file: File | null; setFile: (v: File | null) => void; onUpload: () => void; pending: boolean }) { const { t } = useTranslation(); return <div className="space-y-5"><div className="rounded-xl border border-dashed bg-muted/20 p-8 text-center"><FileArchive className="mx-auto mb-3 size-8 text-muted-foreground" /><div className="text-sm font-semibold">{t('skillHub.upload')}</div><div className="mt-1 text-xs text-muted-foreground">{t('skillHub.uploadHint')}</div><Input className="mx-auto mt-4 max-w-sm" type="file" accept=".zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></div>{file && <div className="flex items-center gap-3 rounded-lg border p-3"><FileArchive className="size-5 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{file.name}</div><div className="text-[11px] text-muted-foreground">{(file.size / 1024).toFixed(1)} KB</div></div><Button variant="ghost" size="icon" onClick={() => setFile(null)}><X className="size-4" /></Button></div>}<Field label={t('skillHub.uploadVersion')}><Input value={version} onChange={(e) => setVersion(e.target.value)} placeholder="1.0.0" /></Field><Field label={t('skillHub.uploadChangelog')}><Textarea value={changelog} onChange={(e) => setChangelog(e.target.value)} rows={4} /></Field><Button className="w-full" onClick={onUpload} disabled={pending || !version.trim() || !file}><Upload className="mr-1.5 size-4" />{t('skillHub.upload')}</Button></div>; }
+function MarkdownPane({ content }: { content: string | null }) { const { t } = useTranslation(); return content ? <pre className="whitespace-pre-wrap rounded-xl border bg-muted/20 p-5 font-mono text-xs leading-relaxed">{content}</pre> : <EmptyState message={t('skillHub.empty')} />; }
+function VersionsPane({ skillId }: { skillId: string }) { const { t } = useTranslation(); const { data, isLoading } = useSkillVersions(skillId); if (isLoading) return <div className="p-8 text-center text-sm text-muted-foreground">{t('common.loading')}</div>; if (!data?.length) return <EmptyState message={t('skillHub.empty')} />; return <div className="space-y-2">{data.map((item) => <div key={item.id} className="rounded-lg border p-3"><div className="flex items-center justify-between"><span className="font-mono text-sm font-semibold">v{item.version}</span><Badge variant="outline">{item.status}</Badge></div>{item.changelog && <p className="mt-1 text-xs text-muted-foreground">{item.changelog}</p>}<div className="mt-1 text-[11px] text-muted-foreground">{formatTimestamp(item.created_at)} · {(item.artifact_size / 1024).toFixed(1)} KB</div></div>)}</div>; }

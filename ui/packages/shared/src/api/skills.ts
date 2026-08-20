@@ -20,6 +20,7 @@ export interface SkillRow {
   published_at: string | null;
   created_at: string;
   updated_at: string;
+  download_count: number;
 }
 
 export interface SkillVersionRow {
