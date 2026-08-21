@@ -618,7 +618,9 @@ impl DbBackend for PgBackend {
         add_col!("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT");
         add_col!("UPDATE api_keys SET billing_group_id = 'billing-group-default-prepaid' WHERE billing_group_id IS NULL OR billing_group_id = ''");
         add_col!("UPDATE api_keys SET billing_payment_mode = 'prepaid' WHERE billing_payment_mode IS NULL OR billing_payment_mode = ''");
-        add_col!("CREATE INDEX IF NOT EXISTS idx_api_keys_billing_group ON api_keys(billing_group_id)");
+        add_col!(
+            "CREATE INDEX IF NOT EXISTS idx_api_keys_billing_group ON api_keys(billing_group_id)"
+        );
         add_col!("CREATE INDEX IF NOT EXISTS idx_billing_groups_status ON billing_groups(status, is_default)");
 
         // Indexes
@@ -1758,7 +1760,10 @@ impl DbBackend for PgBackend {
 
     // ── Billing groups ────────────────────────────────────────────────
 
-    async fn list_billing_groups(&self, active_only: bool) -> Result<Vec<BillingGroupRow>, DbError> {
+    async fn list_billing_groups(
+        &self,
+        active_only: bool,
+    ) -> Result<Vec<BillingGroupRow>, DbError> {
         let rows = if active_only {
             query("SELECT id, name, payment_mode, status, is_default, created_by, created_at, updated_at FROM billing_groups WHERE status = 'active' ORDER BY is_default DESC, name, id")
                 .fetch_all(&self.pool)
@@ -1843,8 +1848,13 @@ impl DbBackend for PgBackend {
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                     team_id: r.get(7),
                     scopes: None,
-                    billing_group_id: r.get::<Option<String>, _>(8).unwrap_or_else(|| DEFAULT_BILLING_GROUP_ID.to_string()),
-                    billing_payment_mode: r.get::<Option<String>, _>(9).and_then(|v| v.parse().ok()).unwrap_or(BillingPaymentMode::Prepaid),
+                    billing_group_id: r
+                        .get::<Option<String>, _>(8)
+                        .unwrap_or_else(|| DEFAULT_BILLING_GROUP_ID.to_string()),
+                    billing_payment_mode: r
+                        .get::<Option<String>, _>(9)
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(BillingPaymentMode::Prepaid),
                 }
             })
             .collect();
@@ -1938,8 +1948,13 @@ impl DbBackend for PgBackend {
                     .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                 team_id: r.get(18),
                 scopes: None,
-                billing_group_id: r.get::<Option<String>, _>(19).unwrap_or_else(|| DEFAULT_BILLING_GROUP_ID.to_string()),
-                billing_payment_mode: r.get::<Option<String>, _>(20).and_then(|v| v.parse().ok()).unwrap_or(BillingPaymentMode::Prepaid),
+                billing_group_id: r
+                    .get::<Option<String>, _>(19)
+                    .unwrap_or_else(|| DEFAULT_BILLING_GROUP_ID.to_string()),
+                billing_payment_mode: r
+                    .get::<Option<String>, _>(20)
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(BillingPaymentMode::Prepaid),
             };
             let user = {
                 let rpm: Option<i64> = r.get(2);
@@ -1998,8 +2013,13 @@ impl DbBackend for PgBackend {
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                     team_id: r.get(18),
                     scopes: None,
-                    billing_group_id: r.get::<Option<String>, _>(19).unwrap_or_else(|| DEFAULT_BILLING_GROUP_ID.to_string()),
-                    billing_payment_mode: r.get::<Option<String>, _>(20).and_then(|v| v.parse().ok()).unwrap_or(BillingPaymentMode::Prepaid),
+                    billing_group_id: r
+                        .get::<Option<String>, _>(19)
+                        .unwrap_or_else(|| DEFAULT_BILLING_GROUP_ID.to_string()),
+                    billing_payment_mode: r
+                        .get::<Option<String>, _>(20)
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(BillingPaymentMode::Prepaid),
                 };
                 let user = {
                     let rpm: Option<i64> = r.get(2);
@@ -6499,7 +6519,7 @@ impl DbBackend for PgBackend {
         settlement: &crate::domain::token_package::TokenSettlementRequest,
     ) -> Result<(), DbError> {
         let mut tx = self.pool.begin().await?;
-        let row = query("SELECT state, package_grant_id, reserved_package_units, reserved_total_units, reserved_prompt_tokens, reserved_completion_tokens, user_id, team_id, reserved_wallet_amount, accounting_mode, factor_snapshot, billing_payment_mode, billing_group_id, billing_group_name FROM token_request_reservations WHERE id = $1 FOR UPDATE")
+        let row = query("SELECT state, package_grant_id, reserved_package_units, reserved_total_units, reserved_prompt_tokens, reserved_completion_tokens, user_id, team_id, reserved_wallet_amount, accounting_mode, factor_snapshot, billing_payment_mode, billing_group_id, billing_group_name, request_id FROM token_request_reservations WHERE id = $1 FOR UPDATE")
             .bind(&settlement.reservation_id)
             .fetch_optional(&mut *tx)
             .await?
@@ -6513,6 +6533,7 @@ impl DbBackend for PgBackend {
         let user_id = row.try_get::<String, _>(6)?;
         let team_id = row.try_get::<Option<String>, _>(7)?;
         let reserved_wallet = row.try_get::<f64, _>(8)?;
+        let request_id = row.try_get::<String, _>(14)?;
         let billing_payment_mode = row
             .try_get::<String, _>(11)
             .ok()
@@ -6561,17 +6582,21 @@ impl DbBackend for PgBackend {
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;
-            query("INSERT INTO token_package_ledger (id, package_grant_id, reservation_id, entry_type, units, created_at) VALUES ($1, $2, $3, 'consume', $4, $5) ON CONFLICT DO NOTHING")
+            query("INSERT INTO token_package_ledger (id, package_grant_id, reservation_id, request_id, entry_type, units, created_at) VALUES ($1, $2, $3, $4, 'consume', $5, $6) ON CONFLICT DO NOTHING")
                 .bind(uuid::Uuid::new_v4().to_string())
                 .bind(id)
                 .bind(&settlement.reservation_id)
+                .bind(&request_id)
                 .bind(consumed as i64)
                 .bind(chrono::Utc::now().to_rfc3339())
                 .execute(&mut *tx)
                 .await?;
         }
         let wallet_units = actual_units.saturating_sub(reserved);
-        let wallet_amount = if billing_payment_mode == BillingPaymentMode::Postpaid || wallet_units == 0 || reserved_total == 0 {
+        let wallet_amount = if billing_payment_mode == BillingPaymentMode::Postpaid
+            || wallet_units == 0
+            || reserved_total == 0
+        {
             0.0
         } else {
             reserved_wallet * wallet_units.min(reserved_total) as f64 / reserved_total as f64
@@ -6743,9 +6768,9 @@ impl DbBackend for PgBackend {
     async fn token_request_billing_amount(
         &self,
         request_id: &str,
-    ) -> Result<Option<(bool, Decimal)>, DbError> {
-        let row = query_as::<_, (Option<String>, Option<f64>)>(
-            "SELECT package_grant_id, actual_wallet_amount
+    ) -> Result<Option<(bool, Decimal, String)>, DbError> {
+        let row = query_as::<_, (Option<String>, Option<f64>, Option<String>)>(
+            "SELECT package_grant_id, actual_wallet_amount, billing_payment_mode
              FROM token_request_reservations
              WHERE request_id = $1 AND state IN ('reserved', 'settled', 'released', 'expired')
              ORDER BY created_at DESC LIMIT 1",
@@ -6753,10 +6778,11 @@ impl DbBackend for PgBackend {
         .bind(request_id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|(package_id, amount)| {
+        Ok(row.map(|(package_id, amount, mode)| {
             (
                 package_id.is_some(),
                 Decimal::try_from(amount.unwrap_or(0.0)).unwrap_or(Decimal::ZERO),
+                mode.unwrap_or_else(|| "prepaid".to_string()),
             )
         }))
     }
@@ -6767,7 +6793,7 @@ impl DbBackend for PgBackend {
         reason: &str,
     ) -> Result<(), DbError> {
         let mut tx = self.pool.begin().await?;
-        let row = query("SELECT state, package_grant_id, reserved_package_units, reserved_prompt_tokens, reserved_completion_tokens, user_id, team_id, reserved_wallet_amount FROM token_request_reservations WHERE id = $1 FOR UPDATE")
+        let row = query("SELECT state, package_grant_id, reserved_package_units, reserved_prompt_tokens, reserved_completion_tokens, user_id, team_id, reserved_wallet_amount, request_id FROM token_request_reservations WHERE id = $1 FOR UPDATE")
             .bind(reservation_id)
             .fetch_optional(&mut *tx)
             .await?;
@@ -6782,6 +6808,7 @@ impl DbBackend for PgBackend {
         let user_id = row.try_get::<String, _>(5)?;
         let team_id = row.try_get::<Option<String>, _>(6)?;
         let reserved_wallet = row.try_get::<f64, _>(7)?;
+        let request_id = row.try_get::<String, _>(8)?;
         if reserved_wallet > 0.0 {
             if let Some(team_id) = team_id.as_deref() {
                 query("UPDATE team_wallets SET token_wallet_reserved = GREATEST(0, token_wallet_reserved - $1), updated_at = $2 WHERE team_id = $3")
@@ -6800,10 +6827,11 @@ impl DbBackend for PgBackend {
                 .bind(&grant_id)
                 .execute(&mut *tx)
                 .await?;
-            query("INSERT INTO token_package_ledger (id, package_grant_id, reservation_id, entry_type, units, created_at, note) VALUES ($1, $2, $3, 'release', $4, $5, $6) ON CONFLICT DO NOTHING")
+            query("INSERT INTO token_package_ledger (id, package_grant_id, reservation_id, request_id, entry_type, units, created_at, note) VALUES ($1, $2, $3, $4, 'release', $5, $6, $7) ON CONFLICT DO NOTHING")
                 .bind(uuid::Uuid::new_v4().to_string())
                 .bind(&grant_id)
                 .bind(reservation_id)
+                .bind(&request_id)
                 .bind(-reserved)
                 .bind(chrono::Utc::now().to_rfc3339())
                 .bind(reason)
@@ -7175,8 +7203,13 @@ impl DbBackend for PgBackend {
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                     team_id: r.get(7),
                     scopes: None,
-                    billing_group_id: r.get::<Option<String>, _>(8).unwrap_or_else(|| DEFAULT_BILLING_GROUP_ID.to_string()),
-                    billing_payment_mode: r.get::<Option<String>, _>(9).and_then(|v| v.parse().ok()).unwrap_or(BillingPaymentMode::Prepaid),
+                    billing_group_id: r
+                        .get::<Option<String>, _>(8)
+                        .unwrap_or_else(|| DEFAULT_BILLING_GROUP_ID.to_string()),
+                    billing_payment_mode: r
+                        .get::<Option<String>, _>(9)
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(BillingPaymentMode::Prepaid),
                 }
             })
             .collect())

@@ -153,8 +153,10 @@ impl AuthService {
                             concurrency_limit: user.concurrency_limit,
                             team_id: None,
                             team_role: None,
-                            billing_group_id: crate::domain::billing_group::DEFAULT_BILLING_GROUP_ID.to_string(),
-                            billing_payment_mode: crate::domain::billing_group::BillingPaymentMode::Prepaid,
+                            billing_group_id:
+                                crate::domain::billing_group::DEFAULT_BILLING_GROUP_ID.to_string(),
+                            billing_payment_mode:
+                                crate::domain::billing_group::BillingPaymentMode::Prepaid,
                         }),
                         Some(_) => Err(AuthError("User account is suspended".into())),
                         None => {

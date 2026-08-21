@@ -99,5 +99,7 @@ pub(crate) async fn set_billing_group_status(
                 db_err(e)
             }
         })?;
-    Ok(Json(serde_json::json!({ "ok": true, "status": req.status })))
+    Ok(Json(
+        serde_json::json!({ "ok": true, "status": req.status }),
+    ))
 }

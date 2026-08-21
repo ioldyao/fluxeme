@@ -331,7 +331,10 @@ impl Database {
     }
 
     // ── Billing groups
-    pub async fn list_billing_groups(&self, active_only: bool) -> Result<Vec<BillingGroupRow>, DbError> {
+    pub async fn list_billing_groups(
+        &self,
+        active_only: bool,
+    ) -> Result<Vec<BillingGroupRow>, DbError> {
         self.backend.list_billing_groups(active_only).await
     }
     pub async fn get_billing_group(&self, id: &str) -> Result<Option<BillingGroupRow>, DbError> {
@@ -344,7 +347,9 @@ impl Database {
         payment_mode: BillingPaymentMode,
         created_by: &str,
     ) -> Result<BillingGroupRow, DbError> {
-        self.backend.create_billing_group(id, name, payment_mode, created_by).await
+        self.backend
+            .create_billing_group(id, name, payment_mode, created_by)
+            .await
     }
     pub async fn set_billing_group_status(&self, id: &str, status: &str) -> Result<(), DbError> {
         self.backend.set_billing_group_status(id, status).await
@@ -1143,7 +1148,7 @@ impl Database {
     pub async fn token_request_billing_amount(
         &self,
         request_id: &str,
-    ) -> Result<Option<(bool, Decimal)>, DbError> {
+    ) -> Result<Option<(bool, Decimal, String)>, DbError> {
         self.backend.token_request_billing_amount(request_id).await
     }
     pub async fn settle_released_token_request(

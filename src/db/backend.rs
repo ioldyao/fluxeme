@@ -67,7 +67,8 @@ pub trait DbBackend: Send + Sync {
     async fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError>;
 
     // ── Billing groups ────────────────────────────────────────────────
-    async fn list_billing_groups(&self, active_only: bool) -> Result<Vec<BillingGroupRow>, DbError>;
+    async fn list_billing_groups(&self, active_only: bool)
+        -> Result<Vec<BillingGroupRow>, DbError>;
     async fn get_billing_group(&self, id: &str) -> Result<Option<BillingGroupRow>, DbError>;
     async fn create_billing_group(
         &self,
@@ -594,7 +595,7 @@ pub trait DbBackend: Send + Sync {
     async fn token_request_billing_amount(
         &self,
         request_id: &str,
-    ) -> Result<Option<(bool, Decimal)>, DbError>;
+    ) -> Result<Option<(bool, Decimal, String)>, DbError>;
     async fn settle_released_token_request(
         &self,
         request_id: &str,

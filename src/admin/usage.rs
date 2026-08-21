@@ -101,8 +101,15 @@ pub(crate) async fn get_usage(
         tracing::error!("CH usage query failed: {}", e);
         AdminError::internal("Internal server error")
     })?;
-    let request_ids = records.iter().map(|record| record.request_id.clone()).collect::<Vec<_>>();
-    let modes = state.db.billing_event_modes(&request_ids).await.map_err(db_err)?;
+    let request_ids = records
+        .iter()
+        .map(|record| record.request_id.clone())
+        .collect::<Vec<_>>();
+    let modes = state
+        .db
+        .billing_event_modes(&request_ids)
+        .await
+        .map_err(db_err)?;
     for record in &mut records {
         if let Some((mode, _group_name)) = modes.get(&record.request_id) {
             record.billing_payment_mode = Some(mode.clone());
@@ -136,8 +143,15 @@ pub(crate) async fn get_my_usage(
         tracing::error!("CH self usage query failed: {}", e);
         AdminError::internal("Internal server error")
     })?;
-    let request_ids = records.iter().map(|record| record.request_id.clone()).collect::<Vec<_>>();
-    let modes = state.db.billing_event_modes(&request_ids).await.map_err(db_err)?;
+    let request_ids = records
+        .iter()
+        .map(|record| record.request_id.clone())
+        .collect::<Vec<_>>();
+    let modes = state
+        .db
+        .billing_event_modes(&request_ids)
+        .await
+        .map_err(db_err)?;
     for record in &mut records {
         if let Some((mode, _group_name)) = modes.get(&record.request_id) {
             record.billing_payment_mode = Some(mode.clone());

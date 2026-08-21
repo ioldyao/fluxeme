@@ -512,9 +512,14 @@ pub async fn start_obs_consumer(
                 .flatten();
             let package_covered = package_billing
                 .as_ref()
-                .map(|(covered, _)| *covered)
+                .map(|(covered, _, _)| *covered)
                 .unwrap_or(false);
-            let package_wallet_amount = package_billing.as_ref().map(|(_, amount)| *amount);
+            let billing_payment_mode = package_billing
+                .as_ref()
+                .map(|(_, _, mode)| mode.as_str())
+                .or(r.billing_payment_mode.as_deref())
+                .unwrap_or("prepaid");
+            let package_wallet_amount = package_billing.as_ref().map(|(_, amount, _)| *amount);
             let cost_amount = package_wallet_amount
                 .unwrap_or_else(|| {
                     Decimal::from(r.prompt_tokens) / Decimal::from(1000000) * prompt_price
@@ -570,7 +575,7 @@ pub async fn start_obs_consumer(
                 original_model: r.original_model.clone(),
                 team_id: r.team_id.clone().unwrap_or_default(),
                 ttft_ms: r.ttft_ms,
-                billing_payment_mode: "prepaid".to_string(),
+                billing_payment_mode: billing_payment_mode.to_string(),
             });
             entry_ids.push(eid.clone());
         }
