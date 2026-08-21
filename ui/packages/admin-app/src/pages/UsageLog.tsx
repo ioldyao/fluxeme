@@ -219,7 +219,7 @@ export default function UsageLog() {
                       </td>
                       <td className="py-3 px-4">{r.user_name}</td>
                       <td className="py-3 px-4">{r.api_key_name}</td>
-                      <td className="py-3 px-4"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${r.billing_payment_mode === 'postpaid' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{r.billing_payment_mode === 'postpaid' ? '后付费' : '按量计费'}</span></td>
+                      <td className="py-3 px-4"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${r.billing_payment_mode === 'postpaid' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{r.billing_payment_mode === 'postpaid' ? '预付费' : '按量计费'}</span></td>
                       <td className="py-3 px-4">{r.model}</td>
                       <td className="py-3 px-4 font-mono text-xs">{r.api_format ?? '—'}</td>
                       <td className="py-3 px-4 text-right">{r.prompt_tokens}</td>

@@ -114,9 +114,9 @@ export function ApiKeyForm({ open, onOpenChange, onSubmit, createdKey, editKey, 
               <Label htmlFor="billingGroup">计费分组 <span className="text-destructive">*</span></Label>
               <select id="billingGroup" required={!isEdit} disabled={isEdit || billingGroupsLoading} className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={billingGroupId} onChange={(event) => setBillingGroupId(event.target.value)}>
                 <option value="">{billingGroupsLoading ? '正在加载分组…' : '请选择计费分组'}</option>
-                {billingGroups?.map((group) => <option key={group.id} value={group.id}>{group.name} · {group.payment_mode === 'postpaid' ? '后付费' : '按量计费'}</option>)}
+                {billingGroups?.map((group) => <option key={group.id} value={group.id}>{group.name} · {group.payment_mode === 'postpaid' ? '预付费' : '按量计费'}</option>)}
               </select>
-              {isEdit && <p className="text-xs text-muted-foreground">当前计费模式：{billingGroups?.find((group) => group.id === billingGroupId)?.payment_mode === 'postpaid' ? '后付费' : '按量计费'}；如需换绑请重新创建 Key。</p>}
+              {isEdit && <p className="text-xs text-muted-foreground">当前计费模式：{billingGroups?.find((group) => group.id === billingGroupId)?.payment_mode === 'postpaid' ? '预付费' : '按量计费'}；如需换绑请重新创建 Key。</p>}
             </div>
             <div className="space-y-2">
               <Label>过期时间</Label>

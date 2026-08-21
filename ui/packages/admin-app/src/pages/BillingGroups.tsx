@@ -24,7 +24,7 @@ type BillingGroup = {
   deleted_by?: string | null;
 };
 
-const modeLabel = (mode: PaymentMode): string => mode === 'postpaid' ? '后付费' : '按量计费';
+const modeLabel = (mode: PaymentMode): string => mode === 'postpaid' ? '预付费' : '按量计费';
 const statusLabel = (status: string): string => status === 'active' ? '生效中' : '已停用';
 
 export default function BillingGroups() {
@@ -76,15 +76,15 @@ export default function BillingGroups() {
     <div className="space-y-6 animate-fade-in">
       <PageHeader
         title="计费分组"
-        description="为 API Key 配置按量计费或后付费模式。后付费只记录 Token 与理论成本，不扣钱包。"
+        description="为 API Key 配置按量计费或预付费模式。预付费只记录 Token 与理论成本，不扣钱包。"
         actions={<Button variant="outline" size="sm" onClick={() => void groups.refetch()} disabled={groups.isFetching}><RefreshCw className={`mr-1 size-4 ${groups.isFetching ? 'animate-spin' : ''}`} />刷新</Button>}
       />
       <Card>
         <CardContent className="space-y-4 p-5">
           <div className="flex items-center gap-2 font-semibold"><Plus className="size-4" />创建计费分组</div>
           <div className="grid gap-4 md:grid-cols-[1fr_240px_auto] md:items-end">
-            <div className="space-y-2"><Label htmlFor="billing-group-name">分组名称</Label><Input id="billing-group-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：生产环境后付费" /></div>
-            <div className="space-y-2"><Label htmlFor="billing-group-mode">计费模式</Label><select id="billing-group-mode" className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={mode} onChange={(event) => setMode(event.target.value as PaymentMode)}><option value="prepaid">按量计费（实时扣费）</option><option value="postpaid">后付费（只记录账单）</option></select></div>
+            <div className="space-y-2"><Label htmlFor="billing-group-name">分组名称</Label><Input id="billing-group-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：生产环境预付费" /></div>
+            <div className="space-y-2"><Label htmlFor="billing-group-mode">计费模式</Label><select id="billing-group-mode" className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={mode} onChange={(event) => setMode(event.target.value as PaymentMode)}><option value="prepaid">按量计费（实时扣费）</option><option value="postpaid">预付费（只记录账单）</option></select></div>
             <Button onClick={() => create.mutate()} disabled={!name.trim() || create.isPending}><Plus className="mr-1 size-4" />创建</Button>
           </div>
         </CardContent>
