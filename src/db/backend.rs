@@ -87,11 +87,12 @@ pub trait DbBackend: Send + Sync {
         resource_id: &str,
         action: &str,
     ) -> Result<(), DbError>;
-    /// key 是否有该资源类型的访问范围（任意 resource_id，资源类型级）。
+    /// key 是否有该资源的访问范围；`*` 表示该资源类型的全局范围。
     async fn api_key_has_resource_scope(
         &self,
         api_key_id: &str,
         resource_type: &str,
+        resource_id: &str,
         action: &str,
     ) -> Result<bool, DbError>;
 
@@ -592,6 +593,9 @@ pub trait DbBackend: Send + Sync {
         reservation_id: &str,
         reason: &str,
     ) -> Result<(), DbError>;
+    /// Reclaim expired reservations. Only rows still in `reserved` state and
+    /// whose expiry has passed are eligible; the operation is idempotent.
+    async fn reclaim_expired_token_reservations(&self, limit: usize) -> Result<usize, DbError>;
     async fn token_request_billing_amount(
         &self,
         request_id: &str,

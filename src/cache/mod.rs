@@ -261,33 +261,18 @@ impl RedisCache {
     const BILLING_BACKLOG_KEY: &'static str = "billing:backlog";
 
     /// Push a billing record to the Redis Stream backlog.
-    /// Called when the in-memory billing channel is full.
+    /// Called when the in-memory billing channel is full or a PG operation
+    /// fails after the worker has taken records out of its channel.
     ///
-    /// # Design boundary
-    /// When this function returns `Err`, the billing record never enters the
-    /// PG billing worker and therefore never generates a wallet deduction.
-    /// This is **revenue loss** (not charged), never an incorrect charge:
-    ///
-    /// - The user already received their API response (200 OK) before this
-    ///   code runs — they are unaware of the lost billing record.
-    /// - Bills, wallet balances, and usage history remain correct because
-    ///   they all read from PG, which never received this record either.
-    /// - The only observable effect is that dashboard / routing panel
-    ///   aggregate counts may slightly under-report (1-N missing events).
-    ///
-    /// Trigger: billing channel full (PG workers saturated) AND Redis
-    /// unavailable simultaneously — a compound failure with near-zero
-    /// probability in practice (AOF persistence protects against restart).
-    ///
-    /// To eliminate this loss window entirely, add a local persistence
-    /// fallback (e.g. sled) before the Redis XADD call.
+    /// The stream is deliberately not trimmed: a trim can delete an
+    /// unacknowledged billing record and turn a transient outage into lost
+    /// revenue. Records are removed only by `ack_billing_backlog` after the
+    /// PG transaction has committed.
     pub async fn backlog_billing_record(&self, record: UsageRecord) -> Result<(), String> {
         let mut con = self.con.clone();
         let json = serde_json::to_string(&record).map_err(|e| format!("Backlog serialize: {e}"))?;
         redis::cmd("XADD")
             .arg(Self::BILLING_BACKLOG_KEY)
-            .arg("MAXLEN")
-            .arg("100000")
             .arg("*")
             .arg("record")
             .arg(&json)
@@ -295,6 +280,36 @@ impl RedisCache {
             .await
             .map_err(|e| format!("Redis XADD error: {e}"))?;
         Ok(())
+    }
+
+    /// Keep retrying a billing backlog write until Redis accepts it.
+    ///
+    /// This is the at-least-once handoff used after an in-memory record has
+    /// been removed from a worker channel. A failed XADD must not be treated
+    /// as a completed handoff; the record remains owned by this task until a
+    /// successful XADD. The PG writer is idempotent by `request_id`, so an
+    /// ambiguous XADD error can safely result in duplicate stream entries.
+    pub async fn backlog_billing_record_reliably(&self, record: UsageRecord) {
+        loop {
+            let result = tokio::time::timeout(
+                Duration::from_secs(5),
+                self.backlog_billing_record(record.clone()),
+            )
+            .await
+            .map_err(|_| "Redis XADD timed out".to_string())
+            .and_then(|result| result);
+            match result {
+                Ok(()) => return,
+                Err(error) => {
+                    tracing::error!(
+                        request_id = %record.request_id,
+                        error = %error,
+                        "Billing backlog XADD failed — retrying"
+                    );
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
     }
 
     /// Read pending billing records from the backlog (non-blocking, up to `count`).
@@ -564,6 +579,11 @@ pub async fn start_obs_consumer(
                     0.0
                 } else {
                     cache_read_price.to_f64().unwrap_or(0.0)
+                },
+                cache_write_price: if package_covered {
+                    0.0
+                } else {
+                    cache_write_price.to_f64().unwrap_or(0.0)
                 },
                 cost_amount,
                 client_ip: r.client_ip.clone(),

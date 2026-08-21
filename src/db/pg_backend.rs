@@ -279,6 +279,7 @@ impl PgBackend {
             prompt_price: Decimal::try_from(prompt_price).unwrap_or(Decimal::ZERO),
             completion_price: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
             cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
+            cache_write_price: Decimal::ZERO,
             client_ip,
             endpoint_id: None,
             endpoint_url: None,
@@ -370,6 +371,7 @@ impl PgBackend {
             prompt_price: Decimal::try_from(prompt_price).unwrap_or(Decimal::ZERO),
             completion_price: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
             cache_read_price: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
+            cache_write_price: Decimal::ZERO,
             client_ip,
             endpoint_id: None,
             endpoint_url: None,
@@ -972,6 +974,7 @@ impl DbBackend for PgBackend {
             "CREATE TABLE IF NOT EXISTS token_request_reservations (
                 id TEXT PRIMARY KEY,
                 request_id TEXT NOT NULL UNIQUE,
+                request_fingerprint TEXT NOT NULL DEFAULT '',
                 user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 user_name TEXT NOT NULL DEFAULT '',
                 api_key_name TEXT NOT NULL DEFAULT '',
@@ -990,6 +993,10 @@ impl DbBackend for PgBackend {
                 actual_package_units BIGINT,
                 actual_wallet_amount DOUBLE PRECISION,
                 factor_snapshot TEXT NOT NULL DEFAULT '{}',
+                prompt_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+                completion_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+                cache_read_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+                cache_write_price DOUBLE PRECISION NOT NULL DEFAULT 0,
                 state TEXT NOT NULL DEFAULT 'reserved',
                 reason TEXT NOT NULL DEFAULT '',
                 expires_at TEXT NOT NULL,
@@ -1037,6 +1044,7 @@ impl DbBackend for PgBackend {
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS priced_cost_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
             "UPDATE billing_events SET priced_cost_amount = cost_amount WHERE priced_cost_amount = 0 AND cost_amount <> 0",
             "UPDATE billing_events SET activity_status = CASE WHEN status_code = 499 THEN 'interrupted' WHEN success THEN 'success' ELSE 'failed' END WHERE activity_status = 'unknown' OR activity_status = ''",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS request_fingerprint TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS user_name TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS api_key_name TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT ''",
@@ -1047,6 +1055,10 @@ impl DbBackend for PgBackend {
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_group_name TEXT NOT NULL DEFAULT '默认按量计费'",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT NOT NULL DEFAULT 'prepaid'",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS estimated_priced_cost_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS prompt_price DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS completion_price DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS cache_read_price DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS cache_write_price DOUBLE PRECISION NOT NULL DEFAULT 0",
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS billing_group_id TEXT",
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS billing_group_name TEXT",
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT NOT NULL DEFAULT 'prepaid'",
@@ -2082,15 +2094,18 @@ impl DbBackend for PgBackend {
         &self,
         api_key_id: &str,
         resource_type: &str,
+        resource_id: &str,
         action: &str,
     ) -> Result<bool, DbError> {
         let row = query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM api_key_scopes \
-             WHERE api_key_id=$1 AND resource_type=$2 AND action=$3",
+             WHERE api_key_id=$1 AND resource_type=$2 AND action=$3 \
+             AND (resource_id='*' OR resource_id=$4)",
         )
         .bind(api_key_id)
         .bind(resource_type)
         .bind(action)
+        .bind(resource_id)
         .fetch_one(&self.pool)
         .await?;
         Ok(row > 0)
@@ -5719,10 +5734,10 @@ impl DbBackend for PgBackend {
         let mut deductions: Vec<(String, Decimal, Decimal)> = Vec::new();
 
         for record in batch {
-            let (prompt_price, completion_price, cache_read_price) = {
+            let (prompt_price, completion_price, cache_read_price, cache_write_price) = {
                 // Lookup pricing within transaction
-                let result = query_as::<_, (f64, f64, f64)>(
-                    "SELECT prompt_price, completion_price, cache_read_price FROM models WHERE name = $1",
+                let result = query_as::<_, (f64, f64, f64, f64)>(
+                    "SELECT prompt_price, completion_price, cache_read_price, cache_write_price FROM models WHERE name = $1",
                 )
                 .bind(&record.model)
                 .fetch_optional(&mut *tx)
@@ -5732,24 +5747,24 @@ impl DbBackend for PgBackend {
                     Ok(Some(p)) => p,
                     _ => {
                         // Fallback to pattern matching
-                        let rows = query_as::<_, (f64, f64, f64, String)>(
-                            "SELECT prompt_price, completion_price, cache_read_price, model_pattern FROM models",
+                        let rows = query_as::<_, (f64, f64, f64, f64, String)>(
+                            "SELECT prompt_price, completion_price, cache_read_price, cache_write_price, model_pattern FROM models",
                         )
                         .fetch_all(&mut *tx)
                         .await
                         .unwrap_or_default();
 
-                        let mut found = (0.0, 0.0, 0.0);
-                        for (p, c, cr, pattern) in rows {
+                        let mut found = (0.0, 0.0, 0.0, 0.0);
+                        for (p, c, cr, cw, pattern) in rows {
                             if pattern.ends_with('*') {
                                 let prefix = &pattern[..pattern.len() - 1];
                                 if record.model.starts_with(prefix) {
-                                    found = (p, c, cr);
+                                    found = (p, c, cr, cw);
                                     break;
                                 }
                             }
                             if pattern == record.model {
-                                found = (p, c, cr);
+                                found = (p, c, cr, cw);
                                 break;
                             }
                         }
@@ -5766,6 +5781,7 @@ impl DbBackend for PgBackend {
                 prompt_price,
                 completion_price,
                 cache_read_price,
+                cache_write_price,
             );
 
             // Insert only billing metadata into PostgreSQL.
@@ -5784,13 +5800,7 @@ impl DbBackend for PgBackend {
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, \
                  $12, $13, $14, $15, $16, $17, $18, $19, $20, \
                  $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31) \
-                 ON CONFLICT (request_id) DO UPDATE SET \
-                   user_name = COALESCE(NULLIF(EXCLUDED.user_name, ''), billing_events.user_name), \
-                   api_key_name = COALESCE(NULLIF(EXCLUDED.api_key_name, ''), billing_events.api_key_name), \
-                   priced_cost_amount = CASE WHEN billing_events.priced_cost_amount = 0 THEN EXCLUDED.priced_cost_amount ELSE billing_events.priced_cost_amount END \
-                 WHERE (billing_events.user_name IS NULL OR billing_events.user_name = '') \
-                    OR (billing_events.api_key_name IS NULL OR billing_events.api_key_name = '') \
-                    OR billing_events.priced_cost_amount = 0",
+                 ON CONFLICT (request_id) DO NOTHING",
             )
             .bind(&record.timestamp)
             .bind(&record.request_id)
@@ -5826,6 +5836,22 @@ impl DbBackend for PgBackend {
             .execute(&mut *tx)
             .await?;
             if billing_inserted.rows_affected() == 0 {
+                // A replay is never chargeable, but it may still carry metadata
+                // missing from an earlier partial write. Keep that repair
+                // separate from the insert result so it cannot re-enter billing.
+                query(
+                    "UPDATE billing_events
+                     SET user_name = COALESCE(NULLIF($1, ''), user_name),
+                         api_key_name = COALESCE(NULLIF($2, ''), api_key_name),
+                         priced_cost_amount = CASE WHEN priced_cost_amount = 0 THEN $3 ELSE priced_cost_amount END
+                     WHERE request_id = $4",
+                )
+                .bind(&record.user_name)
+                .bind(&record.api_key_name)
+                .bind(cost_amount)
+                .bind(&record.request_id)
+                .execute(&mut *tx)
+                .await?;
                 continue;
             }
 
@@ -6294,13 +6320,20 @@ impl DbBackend for PgBackend {
     ) -> Result<crate::domain::token_package::TokenReservationHandle, DbError> {
         let mut tx = self.pool.begin().await?;
         if let Some(row) = query(
-            "SELECT id, package_grant_id, accounting_mode, reserved_package_units, reserved_total_units, reserved_wallet_amount, factor_snapshot \
+            "SELECT id, package_grant_id, accounting_mode, reserved_package_units, reserved_total_units, reserved_wallet_amount, factor_snapshot, request_fingerprint, state, prompt_price, completion_price, cache_read_price, cache_write_price \
              FROM token_request_reservations WHERE request_id = $1 FOR UPDATE",
         )
         .bind(&request.request_id)
         .fetch_optional(&mut *tx)
         .await?
         {
+            let stored_fingerprint = row.try_get::<String, _>(7).unwrap_or_default();
+            if !stored_fingerprint.is_empty() && stored_fingerprint != request.request_fingerprint {
+                return Err(DbError("request_id already belongs to different request".to_string()));
+            }
+            if row.try_get::<String, _>(8).unwrap_or_default() != "reserved" {
+                return Err(DbError("request_id has already been finalized".to_string()));
+            }
             let mode = row
                 .try_get::<Option<String>, _>(2)?
                 .and_then(|v| v.parse().ok());
@@ -6319,6 +6352,10 @@ impl DbBackend for PgBackend {
                 reserved_total_units: row.try_get::<i64, _>(4)?.max(0) as u64,
                 reserved_wallet_amount: Decimal::try_from(row.try_get::<f64, _>(5)?)
                     .unwrap_or(Decimal::ZERO),
+                prompt_price: Decimal::try_from(row.try_get::<f64, _>(9).unwrap_or(0.0)).unwrap_or(Decimal::ZERO),
+                completion_price: Decimal::try_from(row.try_get::<f64, _>(10).unwrap_or(0.0)).unwrap_or(Decimal::ZERO),
+                cache_read_price: Decimal::try_from(row.try_get::<f64, _>(11).unwrap_or(0.0)).unwrap_or(Decimal::ZERO),
+                cache_write_price: Decimal::try_from(row.try_get::<f64, _>(12).unwrap_or(0.0)).unwrap_or(Decimal::ZERO),
                 billing_group_id: request.billing_group_id.clone(),
                 billing_group_name: request.billing_group_name.clone(),
                 billing_payment_mode: request.billing_payment_mode,
@@ -6463,13 +6500,15 @@ impl DbBackend for PgBackend {
         let reservation_id = uuid::Uuid::new_v4().to_string();
         query(
             "INSERT INTO token_request_reservations \
-             (id, request_id, user_id, user_name, api_key_name, team_id, account_type, package_grant_id, model, accounting_mode, \
+             (id, request_id, request_fingerprint, user_id, user_name, api_key_name, team_id, account_type, package_grant_id, model, accounting_mode, \
               reserved_prompt_tokens, reserved_completion_tokens, reserved_package_units, reserved_total_units, reserved_wallet_amount, \
-              factor_snapshot, estimated_priced_cost_amount, billing_group_id, billing_group_name, billing_payment_mode, expires_at, created_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)",
+              factor_snapshot, prompt_price, completion_price, cache_read_price, cache_write_price, estimated_priced_cost_amount, billing_group_id, billing_group_name, billing_payment_mode, expires_at, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)",
+
         )
         .bind(&reservation_id)
         .bind(&request.request_id)
+        .bind(&request.request_fingerprint)
         .bind(&request.user_id)
         .bind(&request.user_name)
         .bind(&request.api_key_name)
@@ -6508,6 +6547,10 @@ impl DbBackend for PgBackend {
             reserved_package_units: package_units,
             reserved_total_units: requested,
             reserved_wallet_amount: wallet_hold,
+            prompt_price: request.prompt_price,
+            completion_price: request.completion_price,
+            cache_read_price: request.cache_read_price,
+            cache_write_price: request.cache_write_price,
             billing_group_id: request.billing_group_id.clone(),
             billing_group_name: request.billing_group_name.clone(),
             billing_payment_mode: request.billing_payment_mode,
@@ -6785,6 +6828,35 @@ impl DbBackend for PgBackend {
                 mode.unwrap_or_else(|| "prepaid".to_string()),
             )
         }))
+    }
+
+    async fn reclaim_expired_token_reservations(&self, limit: usize) -> Result<usize, DbError> {
+        if limit == 0 {
+            return Ok(0);
+        }
+
+        // Selection is deliberately narrow. `release_token_request` performs
+        // the state transition under a row lock, so concurrent settlement or
+        // another instance can only make a candidate a harmless no-op.
+        let reservation_ids = query_scalar::<_, String>(
+            "SELECT id
+             FROM token_request_reservations
+             WHERE state = 'reserved'
+               AND expires_at::timestamptz <= NOW()
+             ORDER BY expires_at, id
+             LIMIT $1",
+        )
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut reclaimed = 0;
+        for reservation_id in reservation_ids {
+            self.release_token_request(&reservation_id, "reservation expired")
+                .await?;
+            reclaimed += 1;
+        }
+        Ok(reclaimed)
     }
 
     async fn release_token_request(
@@ -7570,6 +7642,7 @@ fn compute_cost_amount(
     prompt_price: f64,
     completion_price: f64,
     cache_read_price: f64,
+    cache_write_price: f64,
 ) -> f64 {
     prompt_tokens as f64 / 1000000.0 * prompt_price
         + completion_tokens as f64 / 1000000.0 * completion_price
@@ -7616,6 +7689,7 @@ mod billing_tests {
             prompt_price: rust_decimal::Decimal::ZERO,
             completion_price: rust_decimal::Decimal::ZERO,
             cache_read_price: rust_decimal::Decimal::ZERO,
+            cache_write_price: rust_decimal::Decimal::ZERO,
             client_ip: None,
             endpoint_id: None,
             endpoint_url: None,
@@ -7645,6 +7719,7 @@ mod billing_tests {
             1.0,
             2.0,
             1.0,
+            0.0,
         );
         assert!((cost - 5.5).abs() < 1e-9, "expected 5.5, got {}", cost);
     }
@@ -7652,7 +7727,7 @@ mod billing_tests {
     #[test]
     fn zero_cost_when_no_tokens() {
         let r = record("user-1", None);
-        let cost = compute_cost_amount(0, 0, 0, 1.0, 1.0, 1.0);
+        let cost = compute_cost_amount(0, 0, 0, 1.0, 1.0, 1.0, 0.0);
         assert_eq!(cost, 0.0);
     }
 

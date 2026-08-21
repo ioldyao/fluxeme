@@ -374,10 +374,11 @@ impl Database {
         &self,
         api_key_id: &str,
         resource_type: &str,
+        resource_id: &str,
         action: &str,
     ) -> Result<bool, DbError> {
         self.backend
-            .api_key_has_resource_scope(api_key_id, resource_type, action)
+            .api_key_has_resource_scope(api_key_id, resource_type, resource_id, action)
             .await
     }
 
@@ -1144,6 +1145,9 @@ impl Database {
         self.backend
             .release_token_request(reservation_id, reason)
             .await
+    }
+    pub async fn reclaim_expired_token_reservations(&self, limit: usize) -> Result<usize, DbError> {
+        self.backend.reclaim_expired_token_reservations(limit).await
     }
     pub async fn token_request_billing_amount(
         &self,

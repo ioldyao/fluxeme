@@ -90,6 +90,8 @@ impl TokenUsage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenReservationRequest {
     pub request_id: String,
+    #[serde(default)]
+    pub request_fingerprint: String,
     pub user_id: String,
     pub user_name: String,
     pub api_key_name: String,
@@ -100,6 +102,11 @@ pub struct TokenReservationRequest {
     pub cache_hit_input_tokens: u64,
     pub estimated_wallet_amount: Decimal,
     pub estimated_priced_cost_amount: Decimal,
+    /// Four per-million price components captured at reservation time.
+    pub prompt_price: Decimal,
+    pub completion_price: Decimal,
+    pub cache_read_price: Decimal,
+    pub cache_write_price: Decimal,
     pub billing_group_id: String,
     pub billing_group_name: String,
     pub billing_payment_mode: BillingPaymentMode,
@@ -112,6 +119,8 @@ pub struct TokenSettlementRequest {
     pub actual_prompt_tokens: u64,
     pub actual_completion_tokens: u64,
     pub actual_cache_hit_input_tokens: u64,
+    #[serde(default)]
+    pub actual_cache_write_tokens: u64,
     pub actual_package_units: u64,
     pub actual_wallet_amount: Decimal,
     pub status_code: u16,
@@ -131,6 +140,11 @@ pub struct TokenReservationHandle {
     pub reserved_package_units: u64,
     pub reserved_total_units: u64,
     pub reserved_wallet_amount: Decimal,
+    /// The exact four-component model price snapshot used by estimate and settlement.
+    pub prompt_price: Decimal,
+    pub completion_price: Decimal,
+    pub cache_read_price: Decimal,
+    pub cache_write_price: Decimal,
     pub billing_group_id: String,
     pub billing_group_name: String,
     pub billing_payment_mode: BillingPaymentMode,

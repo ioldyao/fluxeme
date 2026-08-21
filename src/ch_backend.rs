@@ -37,6 +37,7 @@ pub struct UsageEvent {
     pub prompt_price: f64,
     pub completion_price: f64,
     pub cache_read_price: f64,
+    pub cache_write_price: f64,
     pub cost_amount: f64,
     pub client_ip: Option<String>,
     pub endpoint_id: Option<i64>,
@@ -100,6 +101,7 @@ struct UsageEventRow {
     prompt_price: f64,
     completion_price: f64,
     cache_read_price: f64,
+    cache_write_price: f64,
     client_ip: Option<String>,
     endpoint_id: Option<i64>,
     endpoint_url: Option<String>,
@@ -133,6 +135,7 @@ struct UsageDetailRow {
     prompt_price: f64,
     completion_price: f64,
     cache_read_price: f64,
+    cache_write_price: f64,
     client_ip: Option<String>,
     endpoint_id: Option<i64>,
     endpoint_url: Option<String>,
@@ -171,6 +174,7 @@ impl From<UsageEventRow> for crate::domain::usage::UsageRecord {
             prompt_price: Decimal::try_from(row.prompt_price).unwrap_or(Decimal::ZERO),
             completion_price: Decimal::try_from(row.completion_price).unwrap_or(Decimal::ZERO),
             cache_read_price: Decimal::try_from(row.cache_read_price).unwrap_or(Decimal::ZERO),
+            cache_write_price: Decimal::try_from(row.cache_write_price).unwrap_or(Decimal::ZERO),
             client_ip: row.client_ip,
             endpoint_id: row.endpoint_id,
             endpoint_url: row.endpoint_url,
@@ -209,6 +213,7 @@ impl From<UsageDetailRow> for crate::domain::usage::UsageRecord {
             prompt_price: Decimal::try_from(row.prompt_price).unwrap_or(Decimal::ZERO),
             completion_price: Decimal::try_from(row.completion_price).unwrap_or(Decimal::ZERO),
             cache_read_price: Decimal::try_from(row.cache_read_price).unwrap_or(Decimal::ZERO),
+            cache_write_price: Decimal::try_from(row.cache_write_price).unwrap_or(Decimal::ZERO),
             client_ip: row.client_ip,
             endpoint_id: row.endpoint_id,
             endpoint_url: row.endpoint_url,
@@ -317,6 +322,7 @@ impl ClickHouseBackend {
             prompt_price Float64,\
             completion_price Float64,\
             cache_read_price Float64,\
+            cache_write_price Float64 DEFAULT 0,\
             cost_amount Float64,\
             client_ip Nullable(String),\
             endpoint_id Nullable(Int64),\
@@ -381,6 +387,7 @@ impl ClickHouseBackend {
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS prompt_price Float64",
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS completion_price Float64",
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cache_read_price Float64",
+            "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cache_write_price Float64 DEFAULT 0",
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS request_body Nullable(String)",
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS response_body Nullable(String)",
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS reasoning_body Nullable(String)",
@@ -1106,7 +1113,7 @@ impl ClickHouseBackend {
              toString(usage_events.timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
-             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, billing_payment_mode \
+             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, cache_write_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, billing_payment_mode \
              FROM usage_events AS usage_events \
              {} \
              ORDER BY usage_events.timestamp DESC \
@@ -1363,8 +1370,8 @@ impl ClickHouseBackend {
                  toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, \
-                 cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, \
-                 request_body, response_body, reasoning_body \
+                 cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, cache_write_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, \
+                 request_body, response_body, reasoning_body, billing_payment_mode \
                  FROM usage_events \
                  WHERE request_id = ? \
                  ORDER BY timestamp DESC LIMIT 1",
@@ -1525,14 +1532,14 @@ impl ClickHouseBackend {
              toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
-             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, billing_payment_mode \
+             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, cache_write_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, billing_payment_mode \
              FROM usage_events WHERE timestamp >= ? AND user_id = ? ORDER BY timestamp ASC"
         } else {
             "SELECT \
              toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
-             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, billing_payment_mode \
+             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, cache_write_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, billing_payment_mode \
              FROM usage_events WHERE timestamp >= ? ORDER BY timestamp ASC"
         };
         let mut query = self.client.query(sql).bind(since);

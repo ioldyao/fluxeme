@@ -5,6 +5,7 @@ use std::sync::{
 
 use rust_decimal::Decimal;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tokio::task;
 
 use crate::db::Database;
@@ -33,6 +34,7 @@ impl ReservationFinalizer {
         prompt_tokens: u64,
         completion_tokens: u64,
         cache_hit_input_tokens: u64,
+        cache_write_tokens: u64,
         success: bool,
         reason: &str,
     ) {
@@ -54,10 +56,12 @@ impl ReservationFinalizer {
         };
         let reserved_total = self.handle.reserved_total_units.max(1);
         let wallet_units = actual_units.saturating_sub(self.handle.reserved_package_units);
+        // Never cap actual overage at the hold: settlement charges the full
+        // amount represented by the reservation's pricing snapshot.
         let wallet_amount = if wallet_units == 0 {
             Decimal::ZERO
         } else {
-            self.handle.reserved_wallet_amount * Decimal::from(wallet_units.min(reserved_total))
+            self.handle.reserved_wallet_amount * Decimal::from(wallet_units)
                 / Decimal::from(reserved_total)
         };
         self.settle(
@@ -66,6 +70,7 @@ impl ReservationFinalizer {
             prompt_tokens,
             completion_tokens,
             cache_hit_input_tokens,
+            cache_write_tokens,
             if success { 200 } else { 502 },
             success,
             reason,
@@ -79,6 +84,7 @@ impl ReservationFinalizer {
         prompt_tokens: u64,
         completion_tokens: u64,
         cache_hit_input_tokens: u64,
+        cache_write_tokens: u64,
         status_code: u16,
         success: bool,
         reason: &str,
@@ -97,6 +103,7 @@ impl ReservationFinalizer {
                     actual_prompt_tokens: prompt_tokens,
                     actual_completion_tokens: completion_tokens,
                     actual_cache_hit_input_tokens: cache_hit_input_tokens,
+                    actual_cache_write_tokens: cache_write_tokens,
                     actual_package_units: actual_units,
                     actual_wallet_amount: wallet_amount,
                     status_code,
@@ -139,10 +146,12 @@ impl ReservationFinalizer {
         };
         let reserved_total = self.handle.reserved_total_units.max(1);
         let wallet_units = actual_units.saturating_sub(self.handle.reserved_package_units);
+        // Never cap actual overage at the hold: settlement charges the full
+        // amount represented by the reservation's pricing snapshot.
         let wallet_amount = if wallet_units == 0 {
             Decimal::ZERO
         } else {
-            self.handle.reserved_wallet_amount * Decimal::from(wallet_units.min(reserved_total))
+            self.handle.reserved_wallet_amount * Decimal::from(wallet_units)
                 / Decimal::from(reserved_total)
         };
         self.settle(
@@ -151,6 +160,7 @@ impl ReservationFinalizer {
             prompt_tokens,
             completion_tokens,
             cache_hit_input_tokens,
+            0,
             499,
             false,
             reason,
@@ -196,12 +206,32 @@ pub fn estimated_cost(
     prompt_tokens: u64,
     completion_tokens: u64,
     cache_hit_input_tokens: u64,
+    cache_write_tokens: u64,
     pricing: (Decimal, Decimal, Decimal, Decimal),
 ) -> Decimal {
-    let (prompt, completion, cache_read, _) = pricing;
+    let (prompt, completion, cache_read, cache_write) = pricing;
     (Decimal::from(prompt_tokens) / Decimal::from(1_000_000u64)) * prompt
         + (Decimal::from(completion_tokens) / Decimal::from(1_000_000u64)) * completion
         + (Decimal::from(cache_hit_input_tokens) / Decimal::from(1_000_000u64)) * cache_read
+        + (Decimal::from(cache_write_tokens) / Decimal::from(1_000_000u64)) * cache_write
+}
+
+/// Periodically releases reservations that were never finalized before their
+/// expiry. The database state transition is the idempotency boundary, so this
+/// loop is safe to run on every gateway instance.
+pub async fn run_expiry_reclaimer(db: Arc<Database>) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        interval.tick().await;
+        match db.reclaim_expired_token_reservations(100).await {
+            Ok(reclaimed) if reclaimed > 0 => {
+                tracing::info!(reclaimed, "expired token reservations reclaimed");
+            }
+            Ok(_) => {}
+            Err(error) => tracing::warn!(%error, "expired token reservation reclaim failed"),
+        }
+    }
 }
 
 pub async fn reserve(
@@ -221,6 +251,8 @@ pub async fn reserve(
 ) -> Result<TokenReservationHandle, crate::db::DbError> {
     let prompt = estimate_input_tokens(body, anthropic);
     let completion = max_output_tokens(body);
+    let fingerprint_input = format!("{}:{}:{}:{}", user_id, api_key_name, model, body);
+    let request_fingerprint = hex::encode(Sha256::digest(fingerprint_input.as_bytes()));
     let pricing = db.lookup_model_pricing(model).await?;
     let resolved_billing_group_name = if billing_group_name.is_empty() {
         db.get_billing_group(billing_group_id)
@@ -232,6 +264,7 @@ pub async fn reserve(
     };
     db.reserve_token_request(&TokenReservationRequest {
         request_id: request_id.to_string(),
+        request_fingerprint,
         user_id: user_id.to_string(),
         user_name: user_name.to_string(),
         api_key_name: api_key_name.to_string(),
@@ -240,8 +273,12 @@ pub async fn reserve(
         prompt_tokens: prompt,
         completion_tokens: completion,
         cache_hit_input_tokens: 0,
-        estimated_wallet_amount: estimated_cost(prompt, completion, 0, pricing),
-        estimated_priced_cost_amount: estimated_cost(prompt, completion, 0, pricing),
+        estimated_wallet_amount: estimated_cost(prompt, completion, 0, 0, pricing),
+        estimated_priced_cost_amount: estimated_cost(prompt, completion, 0, 0, pricing),
+        prompt_price: pricing.0,
+        completion_price: pricing.1,
+        cache_read_price: pricing.2,
+        cache_write_price: pricing.3,
         billing_group_id: billing_group_id.to_string(),
         billing_group_name: resolved_billing_group_name,
         billing_payment_mode,

@@ -762,7 +762,7 @@ impl<S> UsageTrackingStream<S> {
 
         if let Some(reservation) = &self.reservation {
             if completed {
-                reservation.settle_usage(p_tokens, c_tokens, cache_hit, true, "completed");
+                reservation.settle_usage(p_tokens, c_tokens, cache_hit, 0, true, "completed");
             } else {
                 reservation.release_partial(p_tokens, c_tokens, cache_hit, "client disconnected");
             }
@@ -812,6 +812,7 @@ impl<S> UsageTrackingStream<S> {
                 prompt_price: Decimal::ZERO,
                 completion_price: Decimal::ZERO,
                 cache_read_price: Decimal::ZERO,
+                cache_write_price: Decimal::ZERO,
                 client_ip: Some(self.client_ip.clone()),
                 endpoint_id: self.endpoint_id,
                 endpoint_url: self.endpoint_url.clone(),
@@ -987,6 +988,9 @@ async fn handle_streaming(
                 .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
         }
         Err(e) => {
+            if let Some(reservation) = &reservation {
+                reservation.release("stream upstream request failed");
+            }
             balancer.as_health_aware().record_failure(endpoint_idx);
             let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
             let latency_ms = start.elapsed().as_millis() as u64;
@@ -1015,6 +1019,7 @@ async fn handle_streaming(
                 prompt_price: Decimal::ZERO,
                 completion_price: Decimal::ZERO,
                 cache_read_price: Decimal::ZERO,
+                cache_write_price: Decimal::ZERO,
                 client_ip: Some(client_ip),
                 endpoint_id: endpoint.id,
                 endpoint_url: Some(endpoint.url.clone()),
@@ -1115,6 +1120,9 @@ async fn handle_messages_streaming(
                 .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
         }
         Err(e) => {
+            if let Some(reservation) = &reservation {
+                reservation.release("stream upstream request failed");
+            }
             balancer.as_health_aware().record_failure(endpoint_idx);
             let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
             let latency_ms = start.elapsed().as_millis() as u64;
@@ -1143,6 +1151,7 @@ async fn handle_messages_streaming(
                 prompt_price: Decimal::ZERO,
                 completion_price: Decimal::ZERO,
                 cache_read_price: Decimal::ZERO,
+                cache_write_price: Decimal::ZERO,
                 client_ip: Some(client_ip),
                 endpoint_id: endpoint.id,
                 endpoint_url: Some(endpoint.url.clone()),
@@ -1177,25 +1186,34 @@ async fn handle_non_streaming(
     orig_model: String,
     start: Instant,
     cache_key: Option<String>,
+    cached_response: Option<Value>,
     client_ip: String,
     team_id: Option<String>,
     reservation: Option<crate::service::token_reservation::ReservationFinalizer>,
 ) -> Result<Response, GatewayError> {
     let req_body = serde_json::to_string(&body).ok();
-    state
-        .flow_tracker
-        .mark_upstream_started(&request_id, Utc::now().to_rfc3339());
+    let mut cached_response = cached_response;
+    if cached_response.is_none() {
+        state
+            .flow_tracker
+            .mark_upstream_started(&request_id, Utc::now().to_rfc3339());
+    }
     let max_retries = {
         let gw = state.gateway_config.read().unwrap();
         gw.max_retries
     };
     let mut retry_count = 0u32;
+    let served_from_cache = cached_response.is_some();
 
     let err_msg: String = loop {
-        let result = route
-            .adapter
-            .chat_complete(&route.endpoint, body.clone())
-            .await;
+        let result = if let Some(response) = cached_response.take() {
+            Ok(response)
+        } else {
+            route
+                .adapter
+                .chat_complete(&route.endpoint, body.clone())
+                .await
+        };
 
         match result {
             Ok(mut resp) => {
@@ -1229,6 +1247,7 @@ async fn handle_non_streaming(
                         prompt_tokens,
                         completion_tokens,
                         cache_hit,
+                        0,
                         true,
                         "completed",
                     );
@@ -1259,6 +1278,7 @@ async fn handle_non_streaming(
                         prompt_price: Decimal::ZERO,
                         completion_price: Decimal::ZERO,
                         cache_read_price: Decimal::ZERO,
+                        cache_write_price: Decimal::ZERO,
                         client_ip: Some(client_ip.clone()),
                         endpoint_id: route.endpoint.id,
                         endpoint_url: Some(route.endpoint.url.clone()),
@@ -1275,19 +1295,26 @@ async fn handle_non_streaming(
                     route.endpoint.id,
                 );
 
-                // Cache the response for non-streaming requests
-                if let Some(ref ck) = cache_key {
-                    if let Ok(body_str) = serde_json::to_string(&resp) {
-                        let ttl = state.gateway_config.read().unwrap().cache_ttl_secs;
-                        let _ = state.cache.set(&user_id, ck, &body_str, ttl).await;
+                // Cache the response for non-streaming upstream requests.
+                if !served_from_cache {
+                    if let Some(ref ck) = cache_key {
+                        if let Ok(body_str) = serde_json::to_string(&resp) {
+                            let ttl = state.gateway_config.read().unwrap().cache_ttl_secs;
+                            let _ = state.cache.set(&user_id, ck, &body_str, ttl).await;
+                        }
                     }
+                    route.report_success();
                 }
-
-                route.report_success();
-                let mut resp = Json(resp).into_response();
-                resp.headers_mut()
-                    .insert("x-cache", HeaderValue::from_static("MISS"));
-                return Ok(resp);
+                let mut response = Json(resp).into_response();
+                response.headers_mut().insert(
+                    "x-cache",
+                    if served_from_cache {
+                        HeaderValue::from_static("HIT")
+                    } else {
+                        HeaderValue::from_static("MISS")
+                    },
+                );
+                return Ok(response);
             }
             Err(e) if e.kind() == ErrorKind::ConnectFailed => {
                 // Connect failure: try next endpoint without consuming
@@ -1341,6 +1368,7 @@ async fn handle_non_streaming(
                     prompt_price: Decimal::ZERO,
                     completion_price: Decimal::ZERO,
                     cache_read_price: Decimal::ZERO,
+                    cache_write_price: Decimal::ZERO,
                     client_ip: Some(client_ip.clone()),
                     endpoint_id: route.endpoint.id,
                     endpoint_url: Some(route.endpoint.url.clone()),
@@ -1390,6 +1418,7 @@ async fn handle_non_streaming(
         prompt_price: Decimal::ZERO,
         completion_price: Decimal::ZERO,
         cache_read_price: Decimal::ZERO,
+        cache_write_price: Decimal::ZERO,
         client_ip: Some(client_ip),
         endpoint_id: route.endpoint.id,
         endpoint_url: Some(route.endpoint.url.clone()),
@@ -1475,6 +1504,7 @@ async fn handle_messages_non_streaming(
                         prompt_tokens,
                         completion_tokens,
                         cache_hit,
+                        0,
                         true,
                         "completed",
                     );
@@ -1503,6 +1533,7 @@ async fn handle_messages_non_streaming(
                     prompt_price: Decimal::ZERO,
                     completion_price: Decimal::ZERO,
                     cache_read_price: Decimal::ZERO,
+                    cache_write_price: Decimal::ZERO,
                     client_ip: Some(client_ip.clone()),
                     endpoint_id: route.endpoint.id,
                     endpoint_url: Some(route.endpoint.url.clone()),
@@ -1566,6 +1597,7 @@ async fn handle_messages_non_streaming(
                     prompt_price: Decimal::ZERO,
                     completion_price: Decimal::ZERO,
                     cache_read_price: Decimal::ZERO,
+                    cache_write_price: Decimal::ZERO,
                     client_ip: Some(client_ip.clone()),
                     endpoint_id: route.endpoint.id,
                     endpoint_url: Some(route.endpoint.url.clone()),
@@ -1611,6 +1643,7 @@ async fn handle_messages_non_streaming(
         prompt_price: Decimal::ZERO,
         completion_price: Decimal::ZERO,
         cache_read_price: Decimal::ZERO,
+        cache_write_price: Decimal::ZERO,
         client_ip: Some(client_ip),
         endpoint_id: route.endpoint.id,
         endpoint_url: Some(route.endpoint.url.clone()),
@@ -1862,26 +1895,40 @@ pub async fn chat_completions(
     }
 
     // ── Cache check (non-streaming only) ──
-    let cache_key = if !is_streaming {
+    // Keep a cache hit aside until after the reservation is created. Serving it
+    // here would bypass both reservation settlement and the usage/billing fact.
+    let (cache_key, cached_response) = if !is_streaming {
         let raw_key = format!("{}:{}", model, body_str);
         let hash = hex::encode(Sha256::digest(raw_key.as_bytes()));
-        match state.cache.get(&user.user_id, &hash).await {
-            Ok(Some(cached)) => {
-                tracing::info!(request_id, "Cache HIT for model {}", model);
-                if let Ok(val) = serde_json::from_str::<Value>(&cached) {
-                    state.flow_tracker.mark_completed(&request_id);
-                    let mut resp = Json(val).into_response();
-                    resp.headers_mut()
-                        .insert("x-cache", HeaderValue::from_static("HIT"));
-                    return Ok(resp);
+        let cached_response = match state.cache.get(&user.user_id, &hash).await {
+            Ok(Some(cached)) => match serde_json::from_str::<Value>(&cached) {
+                Ok(value)
+                    if value["usage"]["prompt_tokens"].is_u64()
+                        && value["usage"]["completion_tokens"].is_u64() =>
+                {
+                    tracing::info!(request_id, "Cache HIT for model {}", model);
+                    Some(value)
                 }
+                Ok(_) => {
+                    // A cached response without usage cannot be billed safely;
+                    // fall through to upstream rather than serving it for free.
+                    tracing::warn!(request_id, "Ignoring cache entry without complete usage");
+                    None
+                }
+                Err(e) => {
+                    tracing::warn!(request_id, "Invalid cached response: {}", e);
+                    None
+                }
+            },
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!(request_id, "Cache GET error: {}", e);
+                None
             }
-            Ok(None) => {}
-            Err(e) => tracing::warn!(request_id, "Cache GET error: {}", e),
-        }
-        Some(hash)
+        };
+        (Some(hash), cached_response)
     } else {
-        None
+        (None, None)
     };
 
     // Ask the upstream for the final usage chunk in streaming responses.
@@ -1974,6 +2021,7 @@ pub async fn chat_completions(
                 orig_model,
                 start,
                 cache_key,
+                cached_response,
                 client_ip_clone,
                 user.team_id.clone(),
                 reservation.map(|handle| {
@@ -2648,6 +2696,7 @@ async fn relay_to_upstream(
                         prompt_tokens,
                         completion_tokens,
                         cache_hit,
+                        0,
                         true,
                         "completed",
                     );
@@ -2676,6 +2725,7 @@ async fn relay_to_upstream(
                     prompt_price: Decimal::ZERO,
                     completion_price: Decimal::ZERO,
                     cache_read_price: Decimal::ZERO,
+                    cache_write_price: Decimal::ZERO,
                     client_ip: Some(client_ip.clone()),
                     endpoint_id: route.endpoint.id,
                     endpoint_url: Some(route.endpoint.url.clone()),
@@ -2742,6 +2792,7 @@ async fn relay_to_upstream(
                     prompt_price: Decimal::ZERO,
                     completion_price: Decimal::ZERO,
                     cache_read_price: Decimal::ZERO,
+                    cache_write_price: Decimal::ZERO,
                     client_ip: Some(client_ip.clone()),
                     endpoint_id: route.endpoint.id,
                     endpoint_url: Some(route.endpoint.url.clone()),
@@ -2787,6 +2838,7 @@ async fn relay_to_upstream(
         prompt_price: Decimal::ZERO,
         completion_price: Decimal::ZERO,
         cache_read_price: Decimal::ZERO,
+        cache_write_price: Decimal::ZERO,
         client_ip: Some(client_ip),
         endpoint_id: route.endpoint.id,
         endpoint_url: Some(route.endpoint.url.clone()),
@@ -3020,7 +3072,14 @@ async fn handle_responses_non_streaming(
                 .as_u64()
                 .unwrap_or(0);
             if let Some(reservation) = &reservation {
-                reservation.settle_usage(input_tokens, output_tokens, cache_hit, true, "completed");
+                reservation.settle_usage(
+                    input_tokens,
+                    output_tokens,
+                    cache_hit,
+                    0,
+                    true,
+                    "completed",
+                );
             }
 
             state.usage.record(UsageRecord {
@@ -3047,6 +3106,7 @@ async fn handle_responses_non_streaming(
                 prompt_price: Decimal::ZERO,
                 completion_price: Decimal::ZERO,
                 cache_read_price: Decimal::ZERO,
+                cache_write_price: Decimal::ZERO,
                 client_ip: Some(client_ip),
                 endpoint_id: route.endpoint.id,
                 endpoint_url: Some(route.endpoint.url.clone()),
@@ -3086,6 +3146,7 @@ async fn handle_responses_non_streaming(
                 prompt_price: Decimal::ZERO,
                 completion_price: Decimal::ZERO,
                 cache_read_price: Decimal::ZERO,
+                cache_write_price: Decimal::ZERO,
                 client_ip: Some(client_ip),
                 endpoint_id: route.endpoint.id,
                 endpoint_url: Some(route.endpoint.url.clone()),
@@ -3124,6 +3185,7 @@ async fn handle_responses_non_streaming(
                 prompt_price: Decimal::ZERO,
                 completion_price: Decimal::ZERO,
                 cache_read_price: Decimal::ZERO,
+                cache_write_price: Decimal::ZERO,
                 client_ip: Some(client_ip),
                 endpoint_id: route.endpoint.id,
                 endpoint_url: Some(route.endpoint.url.clone()),
@@ -3161,6 +3223,7 @@ async fn handle_responses_non_streaming(
                 prompt_price: Decimal::ZERO,
                 completion_price: Decimal::ZERO,
                 cache_read_price: Decimal::ZERO,
+                cache_write_price: Decimal::ZERO,
                 client_ip: Some(client_ip),
                 endpoint_id: route.endpoint.id,
                 endpoint_url: Some(route.endpoint.url.clone()),
@@ -3258,6 +3321,7 @@ async fn handle_responses_streaming(
                             input_tokens,
                             output_tokens,
                             cache_hit,
+                            0,
                             true,
                             "completed",
                         );
@@ -3294,6 +3358,7 @@ async fn handle_responses_streaming(
                     prompt_price: Decimal::ZERO,
                     completion_price: Decimal::ZERO,
                     cache_read_price: Decimal::ZERO,
+                    cache_write_price: Decimal::ZERO,
                     client_ip: Some(cip),
                     endpoint_id: eid,
                     endpoint_url: Some(eurl),
@@ -3381,6 +3446,7 @@ async fn handle_responses_streaming(
                 prompt_price: Decimal::ZERO,
                 completion_price: Decimal::ZERO,
                 cache_read_price: Decimal::ZERO,
+                cache_write_price: Decimal::ZERO,
                 client_ip: Some(client_ip),
                 endpoint_id: route.endpoint.id,
                 endpoint_url: Some(route.endpoint.url.clone()),

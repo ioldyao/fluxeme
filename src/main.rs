@@ -208,6 +208,11 @@ async fn main() {
     });
 
     // Initialize services
+    // Reclaim only expired `reserved` requests. The DB transaction in the
+    // reclaimer releases wallet holds and package reserved_units atomically.
+    tokio::spawn(crate::service::token_reservation::run_expiry_reclaimer(
+        db.clone(),
+    ));
     let auth = Arc::new(AuthService::new(db.clone()).await);
     let routing = Arc::new(
         RoutingService::new(db.clone(), &encryption_key)

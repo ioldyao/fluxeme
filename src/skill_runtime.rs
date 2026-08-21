@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::Utc;
 use fluxeme_contract::{
     ApiKeyAuthorizer, ContractError, RuntimeMeter, RuntimePrincipal, RuntimeUsageRecord,
 };
@@ -31,7 +32,7 @@ impl ApiKeyAuthorizer for SkillKeyAuthorizer {
         &self,
         bearer: &str,
         resource_type: &str,
-        _resource_id: &str,
+        resource_id: &str,
         action: &str,
     ) -> Result<RuntimePrincipal, ContractError> {
         let (user, key) = self
@@ -40,10 +41,29 @@ impl ApiKeyAuthorizer for SkillKeyAuthorizer {
             .await
             .map_err(|e| ContractError::Internal(e.to_string()))?
             .ok_or_else(|| ContractError::NotFound("invalid api key".into()))?;
-        // 访问范围 = 资源类型级：key 勾选了该资源类型即放行（不按单技能授权）。
+        if !key.enabled || user.status != crate::domain::user::USER_STATUS_ACTIVE {
+            return Err(ContractError::NotFound("invalid api key".into()));
+        }
+        if let Some(expires_at) = key.expires_at.as_deref() {
+            match chrono::DateTime::parse_from_rfc3339(expires_at) {
+                Ok(exp) if Utc::now() >= exp => {
+                    return Err(ContractError::NotFound("invalid api key".into()));
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to parse skill runtime key expiry '{}': {}",
+                        expires_at,
+                        e
+                    );
+                    return Err(ContractError::NotFound("invalid api key".into()));
+                }
+            }
+        }
+        // Scope may be global (`*`) or limited to this exact resource id.
         let has = self
             .db
-            .api_key_has_resource_scope(&key.key, resource_type, action)
+            .api_key_has_resource_scope(&key.key, resource_type, resource_id, action)
             .await
             .map_err(|e| ContractError::Internal(e.to_string()))?;
         if !has {

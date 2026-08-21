@@ -40,6 +40,8 @@ pub struct UsageRecord {
     pub completion_price: Decimal,
     #[serde(with = "rust_decimal::serde::float")]
     pub cache_read_price: Decimal,
+    #[serde(default, with = "rust_decimal::serde::float")]
+    pub cache_write_price: Decimal,
     pub client_ip: Option<String>,
     #[serde(default)]
     pub endpoint_id: Option<i64>,

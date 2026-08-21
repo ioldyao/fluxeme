@@ -94,7 +94,9 @@ impl AuthService {
                             }
                         }
                         Err(e) => {
+                            // An invalid expiry must never turn into an unlimited key.
                             tracing::warn!("Failed to parse expires_at '{}': {}", expires, e);
+                            return Err(AuthError("API key has an invalid expiration".into()));
                         }
                     }
                 }
@@ -114,6 +116,11 @@ impl AuthService {
                         .and_then(|role| crate::domain::team::TeamRole::from_str(role)),
                     None => None,
                 };
+                if team_id.is_some() && team_role.is_none() {
+                    // A team key is only valid while its owner remains an active
+                    // member with a recognized role in that team.
+                    return Err(AuthError("Unknown or disabled API key".into()));
+                }
                 return Ok(AuthResult {
                     user_id: user.id.clone(),
                     user_name: user.name.clone(),

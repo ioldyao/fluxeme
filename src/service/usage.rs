@@ -113,9 +113,7 @@ impl UsageService {
             );
             let cache = self.cache.clone();
             tokio::spawn(async move {
-                if let Err(e) = cache.backlog_billing_record(dropped).await {
-                    tracing::error!("Redis backlog XADD failed: {e}");
-                }
+                cache.backlog_billing_record_reliably(dropped).await;
             });
         }
 
@@ -156,19 +154,22 @@ async fn billing_worker(
             }
         }
 
-        // Read billing_enabled from gateway config.
-        let billing_enabled = db
-            .get_gateway_config()
-            .await
-            .map(|c| c.billing_enabled)
-            .unwrap_or_else(|e| {
+        // A config read failure must not silently turn off wallet billing.
+        let billing_enabled = match db.get_gateway_config().await {
+            Ok(config) => config.billing_enabled,
+            Err(error) => {
                 tracing::error!(
                     worker = id,
-                    error = %e.0,
-                    "Failed to read gateway config — billing disabled"
+                    batch_size = batch.len(),
+                    error = %error.0,
+                    "Failed to read gateway config — moving billing batch to Redis backlog"
                 );
-                false
-            });
+                for record in batch {
+                    cache.backlog_billing_record_reliably(record).await;
+                }
+                continue;
+            }
+        };
 
         // Write batch to PG and collect deduction results (atomic transaction)
         match db
@@ -187,11 +188,16 @@ async fn billing_worker(
                     }
                 }
             }
-            Err(e) => {
+            Err(error) => {
                 tracing::error!(
-                    worker = id, batch_size = batch.len(), error = %e.0,
-                    "Usage billing transaction failed"
+                    worker = id,
+                    batch_size = batch.len(),
+                    error = %error.0,
+                    "Usage billing transaction failed — moving billing batch to Redis backlog"
                 );
+                for record in batch {
+                    cache.backlog_billing_record_reliably(record).await;
+                }
             }
         }
     }
