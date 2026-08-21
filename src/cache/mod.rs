@@ -510,6 +510,10 @@ pub async fn start_obs_consumer(
                 .await
                 .ok()
                 .flatten();
+            let package_covered = package_billing
+                .as_ref()
+                .map(|(covered, _)| *covered)
+                .unwrap_or(false);
             let package_wallet_amount = package_billing.as_ref().map(|(_, amount)| *amount);
             let cost_amount = package_wallet_amount
                 .unwrap_or_else(|| {
@@ -541,17 +545,17 @@ pub async fn start_obs_consumer(
                 stream: if r.stream { 1 } else { 0 },
                 cache_hit_input_tokens: r.cache_hit_input_tokens,
                 cache_write_tokens: r.cache_write_tokens,
-                prompt_price: if package_billing.is_some() {
+                prompt_price: if package_covered {
                     0.0
                 } else {
                     prompt_price.to_f64().unwrap_or(0.0)
                 },
-                completion_price: if package_billing.is_some() {
+                completion_price: if package_covered {
                     0.0
                 } else {
                     completion_price.to_f64().unwrap_or(0.0)
                 },
-                cache_read_price: if package_billing.is_some() {
+                cache_read_price: if package_covered {
                     0.0
                 } else {
                     cache_read_price.to_f64().unwrap_or(0.0)

@@ -123,6 +123,29 @@ pub(crate) async fn list_plans(
     ))
 }
 
+pub(crate) async fn revoke_grant(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:bills").await?;
+    state
+        .db
+        .revoke_token_package_grant(&id)
+        .await
+        .map_err(|error| {
+            if error.0.contains("not found") {
+                AdminError::not_found("Token package grant not found")
+            } else if error.0.contains("cannot be revoked") {
+                AdminError::bad_request(error.0)
+            } else {
+                db_err(error)
+            }
+        })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 pub(crate) async fn list_grants(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

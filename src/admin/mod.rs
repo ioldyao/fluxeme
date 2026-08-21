@@ -796,6 +796,10 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             axum::routing::get(token_packages::get_grant),
         )
         .route(
+            "/api/admin/token-packages/grants/{id}/revoke",
+            axum::routing::post(token_packages::revoke_grant),
+        )
+        .route(
             "/api/me/token-packages",
             axum::routing::get(token_packages::list_my_grants),
         )

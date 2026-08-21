@@ -5911,6 +5911,38 @@ impl DbBackend for PgBackend {
         Ok(())
     }
 
+    async fn revoke_token_package_grant(&self, grant_id: &str) -> Result<(), DbError> {
+        let mut tx = self.pool.begin().await?;
+        let status = query_scalar::<_, String>(
+            "SELECT status FROM token_package_grants WHERE id = $1 FOR UPDATE",
+        )
+        .bind(grant_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| DbError("token package grant not found".to_string()))?;
+        if status != "active" {
+            return Err(DbError(format!(
+                "token package grant cannot be revoked from status '{status}'"
+            )));
+        }
+        let updated = query(
+            "UPDATE token_package_grants
+             SET status = 'revoked', updated_at = $1
+             WHERE id = $2 AND status = 'active'",
+        )
+        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(grant_id)
+        .execute(&mut *tx)
+        .await?;
+        if updated.rows_affected() != 1 {
+            return Err(DbError(
+                "token package grant was changed concurrently".to_string(),
+            ));
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     async fn list_token_package_plans(
         &self,
     ) -> Result<Vec<crate::domain::token_package::TokenPackagePlanRow>, DbError> {

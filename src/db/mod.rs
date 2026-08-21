@@ -1026,6 +1026,9 @@ impl Database {
     pub async fn delete_token_package_plan(&self, plan_id: &str) -> Result<(), DbError> {
         self.backend.delete_token_package_plan(plan_id).await
     }
+    pub async fn revoke_token_package_grant(&self, grant_id: &str) -> Result<(), DbError> {
+        self.backend.revoke_token_package_grant(grant_id).await
+    }
     #[allow(clippy::too_many_arguments)]
     pub async fn create_token_package_plan(
         &self,
