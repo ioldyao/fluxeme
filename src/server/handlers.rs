@@ -825,6 +825,8 @@ impl<S> UsageTrackingStream<S> {
                     .map(|_| "team")
                     .or(Some("user"))
                     .map(String::from),
+                billing_group_id: None,
+                billing_group_name: None,
                 billing_payment_mode: None,
             },
             self.endpoint_id,
@@ -1031,6 +1033,8 @@ async fn handle_streaming(
                     .map(|_| "team")
                     .or(Some("user"))
                     .map(String::from),
+                billing_group_id: None,
+                billing_group_name: None,
                 billing_payment_mode: None,
             });
             Err(GatewayError::Upstream(e.0))
@@ -1163,6 +1167,8 @@ async fn handle_messages_streaming(
                     .map(|_| "team")
                     .or(Some("user"))
                     .map(String::from),
+                billing_group_id: None,
+                billing_group_name: None,
                 billing_payment_mode: None,
             });
             Err(GatewayError::Upstream(e.0))
@@ -1290,6 +1296,8 @@ async fn handle_non_streaming(
                             .map(|_| "team")
                             .or(Some("user"))
                             .map(String::from),
+                        billing_group_id: None,
+                        billing_group_name: None,
                         billing_payment_mode: None,
                     },
                     route.endpoint.id,
@@ -1380,6 +1388,8 @@ async fn handle_non_streaming(
                         .map(|_| "team")
                         .or(Some("user"))
                         .map(String::from),
+                    billing_group_id: None,
+                    billing_group_name: None,
                     billing_payment_mode: None,
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Upstream request failed");
@@ -1430,6 +1440,8 @@ async fn handle_non_streaming(
             .map(|_| "team")
             .or(Some("user"))
             .map(String::from),
+        billing_group_id: None,
+        billing_group_name: None,
         billing_payment_mode: None,
     });
     Err(GatewayError::Upstream(err_msg))
@@ -1545,6 +1557,8 @@ async fn handle_messages_non_streaming(
                         .map(|_| "team")
                         .or(Some("user"))
                         .map(String::from),
+                    billing_group_id: None,
+                    billing_group_name: None,
                     billing_payment_mode: None,
                 });
 
@@ -1609,6 +1623,8 @@ async fn handle_messages_non_streaming(
                         .map(|_| "team")
                         .or(Some("user"))
                         .map(String::from),
+                    billing_group_id: None,
+                    billing_group_name: None,
                     billing_payment_mode: None,
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Messages upstream request failed");
@@ -1655,6 +1671,8 @@ async fn handle_messages_non_streaming(
             .map(|_| "team")
             .or(Some("user"))
             .map(String::from),
+        billing_group_id: None,
+        billing_group_name: None,
         billing_payment_mode: None,
     });
     Err(GatewayError::Upstream(err_msg))
@@ -2738,6 +2756,8 @@ async fn relay_to_upstream(
                         .map(|_| "team")
                         .or(Some("user"))
                         .map(String::from),
+                    billing_group_id: None,
+                    billing_group_name: None,
                     billing_payment_mode: None,
                 });
 
@@ -2805,6 +2825,8 @@ async fn relay_to_upstream(
                         .map(|_| "team")
                         .or(Some("user"))
                         .map(String::from),
+                    billing_group_id: None,
+                    billing_group_name: None,
                     billing_payment_mode: None,
                 });
                 return Err(GatewayError::from(e));
@@ -2851,6 +2873,8 @@ async fn relay_to_upstream(
             .map(|_| "team")
             .or(Some("user"))
             .map(String::from),
+        billing_group_id: None,
+        billing_group_name: None,
         billing_payment_mode: None,
     });
     Err(GatewayError::Upstream(err_msg))
@@ -3114,6 +3138,8 @@ async fn handle_responses_non_streaming(
                 team_id: team_id.clone(),
                 ttft_ms: None,
                 account_type: Some("user".to_string()),
+                billing_group_id: None,
+                billing_group_name: None,
                 billing_payment_mode: None,
             });
 
@@ -3154,6 +3180,8 @@ async fn handle_responses_non_streaming(
                 team_id: team_id.clone(),
                 ttft_ms: None,
                 account_type: Some("user".to_string()),
+                billing_group_id: None,
+                billing_group_name: None,
                 billing_payment_mode: None,
             });
             Err(GatewayError::Upstream(e.0))
@@ -3193,6 +3221,8 @@ async fn handle_responses_non_streaming(
                 team_id: team_id.clone(),
                 ttft_ms: None,
                 account_type: Some("user".to_string()),
+                billing_group_id: None,
+                billing_group_name: None,
                 billing_payment_mode: None,
             });
             Err(GatewayError::Upstream(e.0))
@@ -3231,6 +3261,8 @@ async fn handle_responses_non_streaming(
                 team_id: team_id.clone(),
                 ttft_ms: None,
                 account_type: Some("user".to_string()),
+                billing_group_id: None,
+                billing_group_name: None,
                 billing_payment_mode: None,
             });
             Err(GatewayError::Upstream(e.0))
@@ -3366,6 +3398,8 @@ async fn handle_responses_streaming(
                     team_id: tid,
                     ttft_ms: None,
                     account_type: Some("user".to_string()),
+                    billing_group_id: None,
+                    billing_group_name: None,
                     billing_payment_mode: None,
                 });
             };
@@ -3454,6 +3488,8 @@ async fn handle_responses_streaming(
                 team_id: team_id.clone(),
                 ttft_ms: None,
                 account_type: Some("user".to_string()),
+                billing_group_id: None,
+                billing_group_name: None,
                 billing_payment_mode: None,
             });
             Err(GatewayError::Upstream(e.0))

@@ -68,5 +68,9 @@ pub struct UsageRecord {
     #[serde(default)]
     pub account_type: Option<String>,
     #[serde(default)]
+    pub billing_group_id: Option<String>,
+    #[serde(default)]
+    pub billing_group_name: Option<String>,
+    #[serde(default)]
     pub billing_payment_mode: Option<String>,
 }

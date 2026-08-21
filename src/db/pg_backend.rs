@@ -289,6 +289,8 @@ impl PgBackend {
             team_id: None,
             ttft_ms: None,
             account_type: None,
+            billing_group_id: None,
+            billing_group_name: None,
             billing_payment_mode: None,
         }
     }
@@ -381,6 +383,8 @@ impl PgBackend {
             team_id: None,
             ttft_ms: None,
             account_type: None,
+            billing_group_id: None,
+            billing_group_name: None,
             billing_payment_mode: None,
         }
     }
@@ -6864,9 +6868,9 @@ impl DbBackend for PgBackend {
     async fn token_request_billing_amount(
         &self,
         request_id: &str,
-    ) -> Result<Option<(bool, Decimal, String)>, DbError> {
-        let row = query_as::<_, (Option<String>, Option<f64>, Option<String>)>(
-            "SELECT package_grant_id, actual_wallet_amount, billing_payment_mode
+    ) -> Result<Option<(bool, Decimal, String, Option<String>, Option<String>)>, DbError> {
+        let row = query_as::<_, (Option<String>, Option<f64>, Option<String>, Option<String>, Option<String>)>(
+            "SELECT package_grant_id, actual_wallet_amount, billing_payment_mode, billing_group_id, billing_group_name
              FROM token_request_reservations
              WHERE request_id = $1 AND state IN ('reserved', 'settled', 'released', 'expired')
              ORDER BY created_at DESC LIMIT 1",
@@ -6874,11 +6878,13 @@ impl DbBackend for PgBackend {
         .bind(request_id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|(package_id, amount, mode)| {
+        Ok(row.map(|(package_id, amount, mode, group_id, group_name)| {
             (
                 package_id.is_some(),
                 Decimal::try_from(amount.unwrap_or(0.0)).unwrap_or(Decimal::ZERO),
                 mode.unwrap_or_else(|| "prepaid".to_string()),
+                group_id,
+                group_name,
             )
         }))
     }
@@ -7748,6 +7754,8 @@ mod billing_tests {
             team_id: team_id.map(|s| s.to_string()),
             ttft_ms: None,
             account_type: None,
+            billing_group_id: None,
+            billing_group_name: None,
             billing_payment_mode: None,
         };
         r.prompt_tokens = 1_000_000; // $1 at $1/1M

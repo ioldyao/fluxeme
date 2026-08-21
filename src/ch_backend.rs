@@ -52,6 +52,8 @@ pub struct UsageEvent {
     /// Time to first upstream response data for streaming requests.
     #[serde(default)]
     pub ttft_ms: Option<u64>,
+    pub billing_group_id: Option<String>,
+    pub billing_group_name: Option<String>,
     pub billing_payment_mode: String,
 }
 
@@ -108,6 +110,8 @@ struct UsageEventRow {
     original_model: String,
     team_id: String,
     ttft_ms: Option<u64>,
+    billing_group_id: Option<String>,
+    billing_group_name: Option<String>,
     billing_payment_mode: String,
 }
 
@@ -145,6 +149,8 @@ struct UsageDetailRow {
     request_body: Option<String>,
     response_body: Option<String>,
     reasoning_body: Option<String>,
+    billing_group_id: Option<String>,
+    billing_group_name: Option<String>,
     billing_payment_mode: String,
 }
 
@@ -182,6 +188,8 @@ impl From<UsageEventRow> for crate::domain::usage::UsageRecord {
             team_id: (!row.team_id.is_empty()).then_some(row.team_id),
             ttft_ms: row.ttft_ms,
             account_type: None,
+            billing_group_id: row.billing_group_id,
+            billing_group_name: row.billing_group_name,
             billing_payment_mode: Some(row.billing_payment_mode.clone()),
         }
     }
@@ -221,6 +229,8 @@ impl From<UsageDetailRow> for crate::domain::usage::UsageRecord {
             team_id: (!row.team_id.is_empty()).then_some(row.team_id),
             ttft_ms: row.ttft_ms,
             account_type: None,
+            billing_group_id: row.billing_group_id,
+            billing_group_name: row.billing_group_name,
             billing_payment_mode: Some(row.billing_payment_mode.clone()),
         }
     }
@@ -331,6 +341,8 @@ impl ClickHouseBackend {
             reasoning_body Nullable(String),\
             original_model String,\
             team_id String DEFAULT '',\
+            billing_group_id Nullable(String),\
+            billing_group_name Nullable(String),\
             billing_payment_mode String DEFAULT 'prepaid'\
         ) ENGINE = MergeTree()\
         PARTITION BY toYYYYMM(timestamp)\
@@ -396,6 +408,8 @@ impl ClickHouseBackend {
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cache_write_tokens UInt64 DEFAULT 0",
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS team_id String DEFAULT ''",
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS ttft_ms Nullable(UInt64)",
+            "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS billing_group_id Nullable(String)",
+            "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS billing_group_name Nullable(String)",
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS billing_payment_mode String DEFAULT 'prepaid'",
         ] {
             self.client
@@ -1113,7 +1127,7 @@ impl ClickHouseBackend {
              toString(usage_events.timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
-             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, cache_write_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, billing_payment_mode \
+             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, cache_write_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, billing_group_id, billing_group_name, billing_payment_mode \
              FROM usage_events AS usage_events \
              {} \
              ORDER BY usage_events.timestamp DESC \
@@ -1532,14 +1546,14 @@ impl ClickHouseBackend {
              toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
-             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, cache_write_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, billing_payment_mode \
+             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, cache_write_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, billing_group_id, billing_group_name, billing_payment_mode \
              FROM usage_events WHERE timestamp >= ? AND user_id = ? ORDER BY timestamp ASC"
         } else {
             "SELECT \
              toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
-             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, cache_write_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, billing_payment_mode \
+             cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, cache_write_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, billing_group_id, billing_group_name, billing_payment_mode \
              FROM usage_events WHERE timestamp >= ? ORDER BY timestamp ASC"
         };
         let mut query = self.client.query(sql).bind(since);

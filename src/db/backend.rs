@@ -605,7 +605,7 @@ pub trait DbBackend: Send + Sync {
     async fn token_request_billing_amount(
         &self,
         request_id: &str,
-    ) -> Result<Option<(bool, Decimal, String)>, DbError>;
+    ) -> Result<Option<(bool, Decimal, String, Option<String>, Option<String>)>, DbError>;
     async fn settle_released_token_request(
         &self,
         request_id: &str,
