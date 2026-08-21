@@ -15,7 +15,7 @@ const USER_NAV_GROUPS: NavGroup[] = [
   { label: 'nav.group.developer', items: ['nav.apiKeys', 'nav.myRules', 'nav.myTeams', 'nav.usage'] },
 ];
 
-const USER_SECONDARY_ITEMS = ['nav.wallet', 'nav.bills', 'nav.profile', 'nav.settings'];
+const USER_SECONDARY_ITEMS = ['nav.wallet', 'nav.tokenPackages', 'nav.bills', 'nav.profile', 'nav.settings'];
 
 function createNavIndex(routes: NavRoute[]) {
   return Object.fromEntries(

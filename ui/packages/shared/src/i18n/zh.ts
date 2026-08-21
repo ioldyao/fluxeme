@@ -480,7 +480,7 @@ const zh: Record<string, string> = {
   'nav.profile': '个人中心',
   'nav.skillHub': '技能中心',
   'nav.skillHubAdmin': '技能中心',
-  'nav.tokenPackages': 'Token 资源包',
+  'nav.tokenPackages': '资源包管理',
   'skillHub.subtitle': '浏览 Agent Skill 技能包，一键安装到本地 agent',
   'skillHub.search': '搜索技能…',
   'skillHub.empty': '暂无可用技能',

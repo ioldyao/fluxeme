@@ -11,6 +11,8 @@ export interface WalletOverview {
 export interface TokenPackageGrant {
   id: string;
   plan_id: string;
+  plan_code: string;
+  plan_name: string;
   user_id: string | null;
   team_id: string | null;
   accounting_mode: 'raw_tokens' | 'standardized_credits';

@@ -1,0 +1,25 @@
+import { useMemo } from 'react';
+import { Package, RefreshCw } from 'lucide-react';
+import { useTokenPackageGrants, type TokenPackageGrant } from '@fluxeme/shared/src/api/wallet';
+import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
+import { Button } from '@fluxeme/shared/src/components/ui/button';
+import { Card, CardContent } from '@fluxeme/shared/src/components/ui/card';
+
+const remainingUnits = (grant: TokenPackageGrant): number => grant.status === 'active'
+  ? Math.max(0, grant.total_units - grant.consumed_units - grant.reserved_units)
+  : 0;
+const statusLabel = (status: string): string => ({ active: '生效中', revoked: '已撤回', exhausted: '已耗尽', expired: '已失效' }[status] ?? status);
+const formatDate = (value: string | null): string => value ? new Date(value).toLocaleString('zh-CN') : '—';
+const formatUnits = (value: number): string => `${Math.max(0, value).toLocaleString()} units`;
+
+function ProgressBar({ grant }: { grant: TokenPackageGrant }) {
+  const remaining = remainingUnits(grant);
+  const percent = grant.total_units > 0 ? Math.min(100, remaining / grant.total_units * 100) : 0;
+  return <div className="space-y-1.5"><div className="flex justify-between text-xs"><span className="font-medium">{formatUnits(remaining)} / {formatUnits(grant.total_units)}</span><span className="text-muted-foreground">{percent.toFixed(1)}%</span></div><div className="h-2.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={`${grant.plan_name} 资源包余量`} aria-valuemin={0} aria-valuemax={grant.total_units} aria-valuenow={remaining}><div className={`h-full rounded-full ${grant.status === 'active' ? 'bg-brand' : 'bg-muted-foreground/40'}`} style={{ width: `${percent}%` }} /></div></div>;
+}
+
+export default function TokenPackages() {
+  const { data: grants, isLoading, isError, refetch } = useTokenPackageGrants();
+  const summary = useMemo(() => { const items = grants ?? []; return { total: items.length, active: items.filter((grant) => grant.status === 'active').length, units: items.reduce((sum, grant) => sum + grant.total_units, 0), remaining: items.reduce((sum, grant) => sum + remainingUnits(grant), 0) }; }, [grants]);
+  return <div className="space-y-6 animate-fade-in"><PageHeader title="资源包管理" description="查看当前账号已获得的 Token 资源包、使用情况和有效期。" actions={<Button variant="outline" size="sm" onClick={() => void refetch()} disabled={isLoading}><RefreshCw className={`mr-1 size-4 ${isLoading ? 'animate-spin' : ''}`} />刷新</Button>} /><div className="grid grid-cols-2 gap-3 md:grid-cols-4">{[['资源包数量', summary.total], ['生效中', summary.active], ['总量', formatUnits(summary.units)], ['可用余量', formatUnits(summary.remaining)]].map(([label, value]) => <Card key={String(label)}><CardContent className="p-4"><div className="text-[11px] text-muted-foreground">{label}</div><div className="mt-2 text-lg font-bold">{value}</div></CardContent></Card>)}</div>{isLoading ? <Card><CardContent className="p-10 text-center text-sm text-muted-foreground">正在加载资源包…</CardContent></Card> : isError ? <Card><CardContent className="space-y-3 p-10 text-center text-sm text-muted-foreground"><div>资源包加载失败</div><Button variant="outline" size="sm" onClick={() => void refetch()}>重试</Button></CardContent></Card> : grants && grants.length > 0 ? <Card><CardContent className="space-y-4 p-5"><div className="flex items-center gap-2 font-semibold"><Package className="size-4" />我的资源包</div><div className="grid gap-4 md:grid-cols-2">{grants.map((grant) => <article key={grant.id} className="rounded-xl border p-5"><div className="flex items-start justify-between gap-3"><div><h2 className="font-semibold">{grant.plan_name || grant.plan_code || grant.plan_id}</h2><div className="mt-1 text-xs text-muted-foreground">{grant.plan_code || grant.plan_id}</div></div><span className={`rounded-full border px-2 py-1 text-xs ${grant.status === 'active' ? 'text-emerald-600' : 'text-muted-foreground'}`}>{statusLabel(grant.status)}</span></div><div className="mt-5"><ProgressBar grant={grant} /></div><dl className="mt-5 grid grid-cols-2 gap-3 text-xs"><div><dt className="text-muted-foreground">资源类型</dt><dd className="mt-1 font-medium">Token 资源包</dd></div><div><dt className="text-muted-foreground">计量模式</dt><dd className="mt-1 font-medium">{grant.accounting_mode === 'raw_tokens' ? 'Raw tokens' : 'Standardized credits'}</dd></div><div><dt className="text-muted-foreground">已消耗</dt><dd className="mt-1 font-medium">{formatUnits(grant.consumed_units)}</dd></div><div><dt className="text-muted-foreground">已预留</dt><dd className="mt-1 font-medium">{formatUnits(grant.reserved_units)}</dd></div><div><dt className="text-muted-foreground">发放时间</dt><dd className="mt-1 font-medium">{formatDate(grant.created_at)}</dd></div><div><dt className="text-muted-foreground">失效时间</dt><dd className="mt-1 font-medium">{formatDate(grant.expires_at)}</dd></div></dl></article>)}</div></CardContent></Card> : <Card><CardContent className="p-10 text-center text-sm text-muted-foreground">当前账号暂无资源包</CardContent></Card>}</div>;
+}

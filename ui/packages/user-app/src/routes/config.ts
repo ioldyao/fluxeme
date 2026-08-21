@@ -2,6 +2,7 @@ import { lazy, type ComponentType } from 'react';
 import {
   Braces,
   Cog,
+  Package,
   Key,
   LayoutDashboard,
   Receipt,
@@ -46,6 +47,7 @@ export const authRoutes: RouteConfig[] = [
   { path: '/teams', Component: lazy(() => import('../pages/MyTeams')), guard: 'auth', label: 'nav.myTeams', icon: Users, nav: true },
   { path: '/usage', Component: lazy(() => import('../pages/Usage')), guard: 'auth', label: 'nav.usage', icon: ScrollText, nav: true },
   { path: '/wallet', Component: lazy(() => import('../pages/Wallet')), guard: 'auth', label: 'nav.wallet', icon: Wallet, nav: true },
+  { path: '/token-packages', Component: lazy(() => import('../pages/TokenPackages')), guard: 'auth', label: 'nav.tokenPackages', icon: Package, nav: true },
   { path: '/bills', Component: lazy(() => import('../pages/Bills')), guard: 'auth', label: 'nav.bills', icon: Receipt, nav: true },
   { path: '/profile', Component: lazy(() => import('../pages/Profile')), guard: 'auth', label: 'nav.profile', icon: User, nav: true },
   { path: '/settings', Component: lazy(() => import('../pages/Settings')), guard: 'auth', label: 'nav.settings', icon: Cog, nav: true },
