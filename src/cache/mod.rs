@@ -570,6 +570,7 @@ pub async fn start_obs_consumer(
                 original_model: r.original_model.clone(),
                 team_id: r.team_id.clone().unwrap_or_default(),
                 ttft_ms: r.ttft_ms,
+                billing_payment_mode: "prepaid".to_string(),
             });
             entry_ids.push(eid.clone());
         }

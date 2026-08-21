@@ -25,6 +25,7 @@ pub(crate) const HOST_SESSION_COOKIE_NAME: &str = "__Host-session_token";
 pub mod announcements;
 pub mod auth;
 pub mod billing;
+pub mod billing_groups;
 pub mod channels;
 pub mod dashboard;
 pub mod health;
@@ -839,6 +840,20 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         .route(
             "/api/usage/{request_id}",
             axum::routing::get(usage::get_usage_detail),
+        )
+        // Billing groups
+        .route(
+            "/api/admin/billing-groups",
+            axum::routing::get(billing_groups::list_billing_groups)
+                .post(billing_groups::create_billing_group),
+        )
+        .route(
+            "/api/admin/billing-groups/{id}",
+            axum::routing::patch(billing_groups::set_billing_group_status),
+        )
+        .route(
+            "/api/billing-groups/active",
+            axum::routing::get(billing_groups::list_active_billing_groups),
         )
         // Billing
         .route(

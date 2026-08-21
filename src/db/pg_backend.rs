@@ -10,6 +10,7 @@ use sqlx_postgres::{PgPool, PgRow, Postgres};
 use crate::config::types::GatewayRuntimeConfig;
 use crate::db::backend::DbBackend;
 use crate::db::{AnnouncementRow, DbError, RechargeKeyRow, WalletTransactionRow};
+use crate::domain::billing_group::{BillingGroupRow, BillingPaymentMode, DEFAULT_BILLING_GROUP_ID};
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, ModelChannel, Pricing};
 use crate::domain::moderation::ContentFilterRule;
@@ -33,6 +34,19 @@ fn map_announcement_row(row: &PgRow) -> AnnouncementRow {
         updated_at: row.try_get::<String, _>(5).unwrap_or_default(),
         published: row.try_get::<bool, _>(6).unwrap_or(false),
     }
+}
+
+fn map_billing_group_row(row: &PgRow) -> Result<BillingGroupRow, DbError> {
+    Ok(BillingGroupRow {
+        id: row.try_get(0)?,
+        name: row.try_get(1)?,
+        payment_mode: row.try_get::<String, _>(2)?.parse().map_err(DbError)?,
+        status: row.try_get(3)?,
+        is_default: row.try_get(4)?,
+        created_by: row.try_get(5)?,
+        created_at: row.try_get(6)?,
+        updated_at: row.try_get(7)?,
+    })
 }
 
 impl PgBackend {
@@ -272,6 +286,7 @@ impl PgBackend {
             team_id: None,
             ttft_ms: None,
             account_type: None,
+            billing_payment_mode: None,
         }
     }
 
@@ -362,6 +377,7 @@ impl PgBackend {
             team_id: None,
             ttft_ms: None,
             account_type: None,
+            billing_payment_mode: None,
         }
     }
 }
@@ -573,6 +589,37 @@ impl DbBackend for PgBackend {
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS revoked BOOLEAN NOT NULL DEFAULT false");
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS team_id TEXT REFERENCES teams(id) ON DELETE CASCADE");
         add_col!("ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS upstream_model TEXT");
+
+        // ── Billing groups ───────────────────────────────────────────────
+        raw_sql(
+            "CREATE TABLE IF NOT EXISTS billing_groups (\
+                id TEXT PRIMARY KEY,\
+                name TEXT NOT NULL,\
+                payment_mode TEXT NOT NULL CHECK (payment_mode IN ('prepaid','postpaid')),\
+                status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),\
+                is_default BOOLEAN NOT NULL DEFAULT false,\
+                created_by TEXT NOT NULL DEFAULT '',\
+                created_at TEXT NOT NULL,\
+                updated_at TEXT NOT NULL\
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create billing_groups: {e}")))?;
+        raw_sql(
+            "INSERT INTO billing_groups (id, name, payment_mode, status, is_default, created_by, created_at, updated_at)\
+             VALUES ('billing-group-default-prepaid', '默认按量计费', 'prepaid', 'active', true, '', now()::text, now()::text)\
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration seed default billing group: {e}")))?;
+        add_col!("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS billing_group_id TEXT");
+        add_col!("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT");
+        add_col!("UPDATE api_keys SET billing_group_id = 'billing-group-default-prepaid' WHERE billing_group_id IS NULL OR billing_group_id = ''");
+        add_col!("UPDATE api_keys SET billing_payment_mode = 'prepaid' WHERE billing_payment_mode IS NULL OR billing_payment_mode = ''");
+        add_col!("CREATE INDEX IF NOT EXISTS idx_api_keys_billing_group ON api_keys(billing_group_id)");
+        add_col!("CREATE INDEX IF NOT EXISTS idx_billing_groups_status ON billing_groups(status, is_default)");
 
         // Indexes
         macro_rules! add_idx {
@@ -988,13 +1035,19 @@ impl DbBackend for PgBackend {
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS priced_cost_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
             "UPDATE billing_events SET priced_cost_amount = cost_amount WHERE priced_cost_amount = 0 AND cost_amount <> 0",
             "UPDATE billing_events SET activity_status = CASE WHEN status_code = 499 THEN 'interrupted' WHEN success THEN 'success' ELSE 'failed' END WHERE activity_status = 'unknown' OR activity_status = ''",
-            "UPDATE billing_events SET charge_source = CASE WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN priced_cost_amount = 0 AND cost_amount = 0 THEN 'free_model' ELSE 'none' END WHERE charge_source = 'unknown' OR charge_source = ''",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS user_name TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS api_key_name TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_prompt_tokens BIGINT NOT NULL DEFAULT 0",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_completion_tokens BIGINT NOT NULL DEFAULT 0",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_total_units BIGINT NOT NULL DEFAULT 0",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_group_id TEXT NOT NULL DEFAULT 'billing-group-default-prepaid'",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_group_name TEXT NOT NULL DEFAULT '默认按量计费'",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT NOT NULL DEFAULT 'prepaid'",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS estimated_priced_cost_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS billing_group_id TEXT",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS billing_group_name TEXT",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT NOT NULL DEFAULT 'prepaid'",
             "ALTER TABLE token_package_plans ALTER COLUMN input_credit_factor TYPE DOUBLE PRECISION USING input_credit_factor::double precision",
             "ALTER TABLE token_package_plans ALTER COLUMN output_credit_factor TYPE DOUBLE PRECISION USING output_credit_factor::double precision",
             "ALTER TABLE token_package_plans ALTER COLUMN cache_credit_factor TYPE DOUBLE PRECISION USING cache_credit_factor::double precision",
@@ -1703,13 +1756,71 @@ impl DbBackend for PgBackend {
         Ok(())
     }
 
+    // ── Billing groups ────────────────────────────────────────────────
+
+    async fn list_billing_groups(&self, active_only: bool) -> Result<Vec<BillingGroupRow>, DbError> {
+        let rows = if active_only {
+            query("SELECT id, name, payment_mode, status, is_default, created_by, created_at, updated_at FROM billing_groups WHERE status = 'active' ORDER BY is_default DESC, name, id")
+                .fetch_all(&self.pool)
+                .await?
+        } else {
+            query("SELECT id, name, payment_mode, status, is_default, created_by, created_at, updated_at FROM billing_groups ORDER BY is_default DESC, name, id")
+                .fetch_all(&self.pool)
+                .await?
+        };
+        rows.iter().map(map_billing_group_row).collect()
+    }
+
+    async fn get_billing_group(&self, id: &str) -> Result<Option<BillingGroupRow>, DbError> {
+        let row = query("SELECT id, name, payment_mode, status, is_default, created_by, created_at, updated_at FROM billing_groups WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        row.as_ref().map(map_billing_group_row).transpose()
+    }
+
+    async fn create_billing_group(
+        &self,
+        id: &str,
+        name: &str,
+        payment_mode: BillingPaymentMode,
+        created_by: &str,
+    ) -> Result<BillingGroupRow, DbError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let row = query("INSERT INTO billing_groups (id, name, payment_mode, status, is_default, created_by, created_at, updated_at) VALUES ($1, $2, $3, 'active', false, $4, $5, $5) RETURNING id, name, payment_mode, status, is_default, created_by, created_at, updated_at")
+            .bind(id)
+            .bind(name)
+            .bind(payment_mode.as_str())
+            .bind(created_by)
+            .bind(now)
+            .fetch_one(&self.pool)
+            .await?;
+        map_billing_group_row(&row)
+    }
+
+    async fn set_billing_group_status(&self, id: &str, status: &str) -> Result<(), DbError> {
+        if !matches!(status, "active" | "inactive") {
+            return Err(DbError("invalid billing group status".to_string()));
+        }
+        let result = query("UPDATE billing_groups SET status = $1, updated_at = $2 WHERE id = $3 AND is_default = false")
+            .bind(status)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(DbError("billing group not found or protected".to_string()));
+        }
+        Ok(())
+    }
+
     // ── API Keys ─────────────────────────────────────────────────────────
 
     async fn list_api_keys(&self, user_id: &str) -> Result<Vec<ApiKey>, DbError> {
         // Personal key list only: team-scoped keys (team_id NOT NULL) are
         // managed via the team endpoints (list_team_api_keys).
         let rows = query(
-            "SELECT key, user_id, name, enabled, expires_at, spend_limit, allowed_models, team_id FROM api_keys WHERE user_id = $1 AND team_id IS NULL ORDER BY key",
+            "SELECT key, user_id, name, enabled, expires_at, spend_limit, allowed_models, team_id, billing_group_id, billing_payment_mode FROM api_keys WHERE user_id = $1 AND team_id IS NULL ORDER BY key",
         )
         .bind(user_id)
         .fetch_all(&self.pool)
@@ -1732,6 +1843,8 @@ impl DbBackend for PgBackend {
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                     team_id: r.get(7),
                     scopes: None,
+                    billing_group_id: r.get::<Option<String>, _>(8).unwrap_or_else(|| DEFAULT_BILLING_GROUP_ID.to_string()),
+                    billing_payment_mode: r.get::<Option<String>, _>(9).and_then(|v| v.parse().ok()).unwrap_or(BillingPaymentMode::Prepaid),
                 }
             })
             .collect();
@@ -1756,7 +1869,7 @@ impl DbBackend for PgBackend {
     async fn create_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
         let allowed = key.allowed_models.as_ref().map(|m| m.join(","));
         query(
-            "INSERT INTO api_keys (key, user_id, name, enabled, expires_at, spend_limit, allowed_models, team_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            "INSERT INTO api_keys (key, user_id, name, enabled, expires_at, spend_limit, allowed_models, team_id, billing_group_id, billing_payment_mode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         )
         .bind(&key.key)
         .bind(&key.user_id)
@@ -1766,6 +1879,8 @@ impl DbBackend for PgBackend {
         .bind(key.spend_limit.map(|v| v.to_f64().unwrap_or(0.0)))
         .bind(allowed)
         .bind(&key.team_id)
+        .bind(&key.billing_group_id)
+        .bind(key.billing_payment_mode.as_str())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1782,7 +1897,7 @@ impl DbBackend for PgBackend {
     async fn update_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
         let allowed = key.allowed_models.as_ref().map(|m| m.join(","));
         query(
-            "UPDATE api_keys SET name = $1, enabled = $2, expires_at = $3, spend_limit = $4, allowed_models = $5, team_id = $6 WHERE key = $7",
+            "UPDATE api_keys SET name = $1, enabled = $2, expires_at = $3, spend_limit = $4, allowed_models = $5, team_id = $6, billing_group_id = $7, billing_payment_mode = $8 WHERE key = $9",
         )
         .bind(&key.name)
         .bind(key.enabled)
@@ -1790,6 +1905,8 @@ impl DbBackend for PgBackend {
         .bind(key.spend_limit.map(|v| v.to_f64().unwrap_or(0.0)))
         .bind(allowed)
         .bind(&key.team_id)
+        .bind(&key.billing_group_id)
+        .bind(key.billing_payment_mode.as_str())
         .bind(&key.key)
         .execute(&self.pool)
         .await?;
@@ -1799,7 +1916,7 @@ impl DbBackend for PgBackend {
     async fn lookup_key(&self, key: &str) -> Result<Option<(User, ApiKey)>, DbError> {
         let rows = query(
             "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, u.concurrency_limit, u.currency, u.status, u.suspended_at, \
-             a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models, a.team_id \
+             a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models, a.team_id, a.billing_group_id, a.billing_payment_mode \
              FROM api_keys a JOIN users u ON u.id = a.user_id WHERE a.key = $1",
         )
         .bind(key)
@@ -1821,6 +1938,8 @@ impl DbBackend for PgBackend {
                     .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                 team_id: r.get(18),
                 scopes: None,
+                billing_group_id: r.get::<Option<String>, _>(19).unwrap_or_else(|| DEFAULT_BILLING_GROUP_ID.to_string()),
+                billing_payment_mode: r.get::<Option<String>, _>(20).and_then(|v| v.parse().ok()).unwrap_or(BillingPaymentMode::Prepaid),
             };
             let user = {
                 let rpm: Option<i64> = r.get(2);
@@ -1856,7 +1975,7 @@ impl DbBackend for PgBackend {
     async fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError> {
         let rows = query(
             "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, u.concurrency_limit, u.currency, u.status, u.suspended_at, \
-             a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models, a.team_id \
+             a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models, a.team_id, a.billing_group_id, a.billing_payment_mode \
              FROM api_keys a JOIN users u ON u.id = a.user_id ORDER BY a.key",
         )
         .fetch_all(&self.pool)
@@ -1879,6 +1998,8 @@ impl DbBackend for PgBackend {
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                     team_id: r.get(18),
                     scopes: None,
+                    billing_group_id: r.get::<Option<String>, _>(19).unwrap_or_else(|| DEFAULT_BILLING_GROUP_ID.to_string()),
+                    billing_payment_mode: r.get::<Option<String>, _>(20).and_then(|v| v.parse().ok()).unwrap_or(BillingPaymentMode::Prepaid),
                 };
                 let user = {
                     let rpm: Option<i64> = r.get(2);
@@ -2683,6 +2804,24 @@ impl DbBackend for PgBackend {
         Ok(Decimal::try_from(cost).unwrap_or(Decimal::ZERO))
     }
 
+    async fn billing_event_modes(
+        &self,
+        request_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, (String, Option<String>)>, DbError> {
+        if request_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let rows = query("SELECT request_id, COALESCE(billing_payment_mode, 'prepaid'), billing_group_name FROM billing_events WHERE request_id = ANY($1)")
+            .bind(request_ids)
+            .fetch_all(&self.pool)
+            .await?;
+        let mut result = std::collections::HashMap::new();
+        for row in rows {
+            result.insert(row.try_get(0)?, (row.try_get(1)?, row.try_get(2)?));
+        }
+        Ok(result)
+    }
+
     async fn list_billing_activities(
         &self,
         start: &str,
@@ -2700,12 +2839,14 @@ impl DbBackend for PgBackend {
              COALESCE(status_reason, ''), status_code, success, prompt_tokens, completion_tokens,
              cache_hit_input_tokens, cache_write_tokens, total_tokens, package_units, package_grant_id,
              COALESCE(wallet_amount, 0), COALESCE(NULLIF(priced_cost_amount, 0), cost_amount, 0),
-             CASE WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet'
+             CASE WHEN billing_payment_mode = 'postpaid' AND package_units > 0 THEN 'postpaid_package'
+             WHEN billing_payment_mode = 'postpaid' THEN 'postpaid'
+             WHEN charge_source IN ('package_and_wallet', 'package', 'wallet', 'free_model', 'none') THEN charge_source
+             WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet'
              WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet'
-             WHEN status_code >= 400 OR success = false THEN 'none'
-             WHEN charge_source = 'free_model' THEN 'free_model'
-             WHEN priced_cost_amount = 0 THEN 'free_model' ELSE 'none' END,
-             account_type, team_id, api_key_name, latency_ms, reservation_id
+             WHEN status_code >= 400 OR success = false THEN 'none' ELSE 'none' END,
+             account_type, team_id, api_key_name, latency_ms, reservation_id,
+             billing_group_id, billing_group_name, COALESCE(billing_payment_mode, 'prepaid')
              FROM billing_events WHERE timestamp >= "#,
         );
         builder
@@ -2735,7 +2876,7 @@ impl DbBackend for PgBackend {
             builder.push(" AND model = ").push_bind(model);
         }
         if let Some(source) = &filter.charge_source {
-            builder.push(" AND (CASE WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN status_code >= 400 OR success = false THEN 'none' WHEN charge_source = 'free_model' THEN 'free_model' WHEN priced_cost_amount = 0 THEN 'free_model' ELSE 'none' END) = ").push_bind(source);
+            builder.push(" AND (CASE WHEN billing_payment_mode = 'postpaid' AND package_units > 0 THEN 'postpaid_package' WHEN billing_payment_mode = 'postpaid' THEN 'postpaid' WHEN charge_source IN ('package_and_wallet', 'package', 'wallet', 'free_model', 'none') THEN charge_source WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN status_code >= 400 OR success = false THEN 'none' ELSE 'none' END) = ").push_bind(source);
         }
         builder
             .push(" ORDER BY timestamp DESC LIMIT ")
@@ -2773,6 +2914,9 @@ impl DbBackend for PgBackend {
                     api_key_name: row.try_get(22)?,
                     latency_ms: row.try_get::<i64, _>(23)?.max(0) as u64,
                     reservation_id: row.try_get(24)?,
+                    billing_group_id: row.try_get(25)?,
+                    billing_group_name: row.try_get(26)?,
+                    billing_payment_mode: row.try_get(27)?,
                 })
             })
             .collect()
@@ -2815,7 +2959,7 @@ impl DbBackend for PgBackend {
             builder.push(" AND model = ").push_bind(model);
         }
         if let Some(source) = &filter.charge_source {
-            builder.push(" AND (CASE WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN status_code >= 400 OR success = false THEN 'none' WHEN charge_source = 'free_model' THEN 'free_model' WHEN priced_cost_amount = 0 THEN 'free_model' ELSE 'none' END) = ").push_bind(source);
+            builder.push(" AND (CASE WHEN billing_payment_mode = 'postpaid' AND package_units > 0 THEN 'postpaid_package' WHEN billing_payment_mode = 'postpaid' THEN 'postpaid' WHEN charge_source IN ('package_and_wallet', 'package', 'wallet', 'free_model', 'none') THEN charge_source WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN status_code >= 400 OR success = false THEN 'none' ELSE 'none' END) = ").push_bind(source);
         }
         let (count,) = builder
             .build_query_as::<(i64,)>()
@@ -2890,9 +3034,9 @@ impl DbBackend for PgBackend {
         } else {
             ""
         };
-        let source_expr = "CASE WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN status_code >= 400 OR success = false THEN 'none' WHEN charge_source = 'free_model' THEN 'free_model' WHEN priced_cost_amount = 0 THEN 'free_model' ELSE 'none' END";
+        let source_expr = "CASE WHEN billing_payment_mode = 'postpaid' AND package_units > 0 THEN 'postpaid_package' WHEN billing_payment_mode = 'postpaid' THEN 'postpaid' WHEN charge_source IN ('package_and_wallet', 'package', 'wallet', 'free_model', 'none') THEN charge_source WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN status_code >= 400 OR success = false THEN 'none' ELSE 'none' END";
         let filtered = format!(
-            "WITH filtered AS (SELECT COALESCE(api_key_name, '未命名 Key') AS api_key_name, model, package_units, COALESCE(wallet_amount, 0) AS wallet_amount, COALESCE(NULLIF(priced_cost_amount, 0), cost_amount, 0) AS priced_cost_amount, cost_amount, {source_expr} AS charge_source, total_tokens FROM billing_events WHERE timestamp >= $1 AND timestamp < $2{predicate}) "
+            "WITH filtered AS (SELECT COALESCE(api_key_name, '未命名 Key') AS api_key_name, model, package_units, COALESCE(wallet_amount, 0) AS wallet_amount, COALESCE(NULLIF(priced_cost_amount, 0), cost_amount, 0) AS priced_cost_amount, cost_amount, billing_payment_mode, {source_expr} AS charge_source, total_tokens FROM billing_events WHERE timestamp >= $1 AND timestamp < $2{predicate})"
         );
 
         let api_key_sql = format!(
@@ -5687,8 +5831,12 @@ impl DbBackend for PgBackend {
                          cost_amount = COALESCE(r.actual_wallet_amount, 0),
                          activity_status = CASE WHEN be.status_code = 499 THEN 'interrupted' WHEN be.success = false THEN 'failed' WHEN r.actual_package_units > 0 OR r.actual_wallet_amount > 0 THEN 'success' ELSE be.activity_status END,
                          status_reason = COALESCE(r.reason, be.status_reason),
-                         charge_source = CASE WHEN r.actual_package_units > 0 AND r.actual_wallet_amount > 0 THEN 'package_and_wallet' WHEN r.actual_package_units > 0 THEN 'package' WHEN r.actual_wallet_amount > 0 THEN 'wallet' ELSE be.charge_source END,
-                         priced_cost_amount = COALESCE(be.priced_cost_amount, be.cost_amount)
+                         charge_source = CASE WHEN r.billing_payment_mode = 'postpaid' AND r.actual_package_units > 0 THEN 'postpaid_package' WHEN r.billing_payment_mode = 'postpaid' THEN 'postpaid' WHEN r.actual_package_units > 0 AND r.actual_wallet_amount > 0 THEN 'package_and_wallet' WHEN r.actual_package_units > 0 THEN 'package' WHEN r.actual_wallet_amount > 0 THEN 'wallet' ELSE be.charge_source END,
+                         api_key_name = COALESCE(NULLIF(r.api_key_name, ''), be.api_key_name),
+                         billing_group_id = COALESCE(NULLIF(r.billing_group_id, ''), be.billing_group_id),
+                         billing_group_name = COALESCE(NULLIF(r.billing_group_name, ''), be.billing_group_name),
+                         billing_payment_mode = COALESCE(NULLIF(r.billing_payment_mode, ''), be.billing_payment_mode),
+                         priced_cost_amount = COALESCE(NULLIF(be.priced_cost_amount, 0), r.estimated_priced_cost_amount, be.cost_amount)
                      FROM token_request_reservations r
                      WHERE be.request_id = r.request_id AND be.request_id = $1",
                 )
@@ -6151,6 +6299,9 @@ impl DbBackend for PgBackend {
                 reserved_total_units: row.try_get::<i64, _>(4)?.max(0) as u64,
                 reserved_wallet_amount: Decimal::try_from(row.try_get::<f64, _>(5)?)
                     .unwrap_or(Decimal::ZERO),
+                billing_group_id: request.billing_group_id.clone(),
+                billing_group_name: request.billing_group_name.clone(),
+                billing_payment_mode: request.billing_payment_mode,
             });
         }
 
@@ -6239,10 +6390,15 @@ impl DbBackend for PgBackend {
             .as_ref()
             .and_then(|r| r.try_get::<String, _>(2).ok())
             .unwrap_or_else(|| "package_then_wallet".to_string());
-        if wallet_units > 0 && policy == "package_only" {
+        if wallet_units > 0
+            && policy == "package_only"
+            && request.billing_payment_mode == BillingPaymentMode::Prepaid
+        {
             return Err(DbError("token package quota exceeded".to_string()));
         }
-        let wallet_hold = if wallet_units > 0 {
+        let wallet_hold = if request.billing_payment_mode == BillingPaymentMode::Postpaid {
+            Decimal::ZERO
+        } else if wallet_units > 0 {
             request.estimated_wallet_amount.max(Decimal::ZERO)
         } else {
             Decimal::ZERO
@@ -6289,8 +6445,8 @@ impl DbBackend for PgBackend {
             "INSERT INTO token_request_reservations \
              (id, request_id, user_id, user_name, api_key_name, team_id, account_type, package_grant_id, model, accounting_mode, \
               reserved_prompt_tokens, reserved_completion_tokens, reserved_package_units, reserved_total_units, reserved_wallet_amount, \
-              factor_snapshot, expires_at, created_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)",
+              factor_snapshot, estimated_priced_cost_amount, billing_group_id, billing_group_name, billing_payment_mode, expires_at, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)",
         )
         .bind(&reservation_id)
         .bind(&request.request_id)
@@ -6312,6 +6468,10 @@ impl DbBackend for PgBackend {
             "output_factor": output_factor,
             "cache_factor": cache_factor,
         }).to_string())
+        .bind(request.estimated_priced_cost_amount.to_f64().unwrap_or(0.0))
+        .bind(&request.billing_group_id)
+        .bind(&request.billing_group_name)
+        .bind(request.billing_payment_mode.as_str())
         .bind(&request.expires_at)
         .bind(chrono::Utc::now().to_rfc3339())
         .execute(&mut *tx)
@@ -6328,6 +6488,9 @@ impl DbBackend for PgBackend {
             reserved_package_units: package_units,
             reserved_total_units: requested,
             reserved_wallet_amount: wallet_hold,
+            billing_group_id: request.billing_group_id.clone(),
+            billing_group_name: request.billing_group_name.clone(),
+            billing_payment_mode: request.billing_payment_mode,
         })
     }
 
@@ -6336,7 +6499,7 @@ impl DbBackend for PgBackend {
         settlement: &crate::domain::token_package::TokenSettlementRequest,
     ) -> Result<(), DbError> {
         let mut tx = self.pool.begin().await?;
-        let row = query("SELECT state, package_grant_id, reserved_package_units, reserved_total_units, reserved_prompt_tokens, reserved_completion_tokens, user_id, team_id, reserved_wallet_amount, accounting_mode, factor_snapshot FROM token_request_reservations WHERE id = $1 FOR UPDATE")
+        let row = query("SELECT state, package_grant_id, reserved_package_units, reserved_total_units, reserved_prompt_tokens, reserved_completion_tokens, user_id, team_id, reserved_wallet_amount, accounting_mode, factor_snapshot, billing_payment_mode, billing_group_id, billing_group_name FROM token_request_reservations WHERE id = $1 FOR UPDATE")
             .bind(&settlement.reservation_id)
             .fetch_optional(&mut *tx)
             .await?
@@ -6350,6 +6513,11 @@ impl DbBackend for PgBackend {
         let user_id = row.try_get::<String, _>(6)?;
         let team_id = row.try_get::<Option<String>, _>(7)?;
         let reserved_wallet = row.try_get::<f64, _>(8)?;
+        let billing_payment_mode = row
+            .try_get::<String, _>(11)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(BillingPaymentMode::Prepaid);
         let accounting_mode = row.try_get::<Option<String>, _>(9)?;
         let factor_snapshot = row
             .try_get::<String, _>(10)
@@ -6403,7 +6571,7 @@ impl DbBackend for PgBackend {
                 .await?;
         }
         let wallet_units = actual_units.saturating_sub(reserved);
-        let wallet_amount = if wallet_units == 0 || reserved_total == 0 {
+        let wallet_amount = if billing_payment_mode == BillingPaymentMode::Postpaid || wallet_units == 0 || reserved_total == 0 {
             0.0
         } else {
             reserved_wallet * wallet_units.min(reserved_total) as f64 / reserved_total as f64
@@ -6426,7 +6594,7 @@ impl DbBackend for PgBackend {
                     .await?;
             }
         }
-        if wallet_amount > 0.0 {
+        if billing_payment_mode == BillingPaymentMode::Prepaid && wallet_amount > 0.0 {
             let deduction = -wallet_amount;
             if let Some(team_id) = team_id.as_deref() {
                 let row = query("SELECT balance FROM team_wallets WHERE team_id = $1 FOR UPDATE")
@@ -6470,19 +6638,23 @@ impl DbBackend for PgBackend {
              prompt_tokens, completion_tokens, total_tokens, cache_hit_input_tokens,
              cost_amount, success, status_code, timestamp, reservation_id, package_grant_id,
              accounting_mode, package_units, wallet_amount, team_id, account_type,
-             api_key_name, activity_status, charge_source, priced_cost_amount)
+             api_key_name, billing_group_id, billing_group_name, billing_payment_mode,
+             activity_status, charge_source, priced_cost_amount)
              SELECT r.request_id, r.user_id, COALESCE(NULLIF(r.user_name, ''), u.name), '', r.model,
                     COALESCE(r.actual_prompt_tokens, 0), COALESCE(r.actual_completion_tokens, 0),
                     COALESCE(r.actual_prompt_tokens, 0) + COALESCE(r.actual_completion_tokens, 0),
                     COALESCE($1, 0), COALESCE(r.actual_wallet_amount, 0), $2, $3, COALESCE(r.created_at, $4),
                     r.id, r.package_grant_id, r.accounting_mode, COALESCE(r.actual_package_units, 0),
                     COALESCE(r.actual_wallet_amount, 0), r.team_id, r.account_type, NULLIF(r.api_key_name, ''),
+                    r.billing_group_id, r.billing_group_name, r.billing_payment_mode,
                     CASE WHEN $3 = 499 THEN 'interrupted' WHEN $3 >= 400 OR $2 = false THEN 'failed' ELSE 'success' END,
-                    CASE WHEN COALESCE(r.actual_package_units, 0) > 0 AND COALESCE(r.actual_wallet_amount, 0) > 0 THEN 'package_and_wallet'
+                    CASE WHEN r.billing_payment_mode = 'postpaid' AND COALESCE(r.actual_package_units, 0) > 0 THEN 'postpaid_package'
+                         WHEN r.billing_payment_mode = 'postpaid' THEN 'postpaid'
+                         WHEN COALESCE(r.actual_package_units, 0) > 0 AND COALESCE(r.actual_wallet_amount, 0) > 0 THEN 'package_and_wallet'
                          WHEN COALESCE(r.actual_package_units, 0) > 0 THEN 'package'
                          WHEN COALESCE(r.actual_wallet_amount, 0) > 0 THEN 'wallet'
                          ELSE 'none' END,
-                    0
+                    COALESCE(r.estimated_priced_cost_amount, 0)
              FROM token_request_reservations r JOIN users u ON u.id = r.user_id
              WHERE r.id = $5
              ON CONFLICT (request_id) DO UPDATE SET
@@ -6500,6 +6672,9 @@ impl DbBackend for PgBackend {
                wallet_amount = EXCLUDED.wallet_amount,
                activity_status = EXCLUDED.activity_status,
                charge_source = EXCLUDED.charge_source,
+               billing_group_id = COALESCE(EXCLUDED.billing_group_id, billing_events.billing_group_id),
+               billing_group_name = COALESCE(EXCLUDED.billing_group_name, billing_events.billing_group_name),
+               billing_payment_mode = COALESCE(EXCLUDED.billing_payment_mode, billing_events.billing_payment_mode),
                priced_cost_amount = EXCLUDED.priced_cost_amount,
                user_name = COALESCE(NULLIF(EXCLUDED.user_name, ''), billing_events.user_name),
                api_key_name = COALESCE(NULLIF(EXCLUDED.api_key_name, ''), billing_events.api_key_name)",
@@ -6976,7 +7151,7 @@ impl DbBackend for PgBackend {
 
     async fn list_team_api_keys(&self, team_id: &str) -> Result<Vec<ApiKey>, DbError> {
         let rows = query(
-            "SELECT key, user_id, name, enabled, expires_at, spend_limit, allowed_models, team_id \
+            "SELECT key, user_id, name, enabled, expires_at, spend_limit, allowed_models, team_id, billing_group_id, billing_payment_mode \
              FROM api_keys WHERE team_id = $1 ORDER BY key",
         )
         .bind(team_id)
@@ -7000,6 +7175,8 @@ impl DbBackend for PgBackend {
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                     team_id: r.get(7),
                     scopes: None,
+                    billing_group_id: r.get::<Option<String>, _>(8).unwrap_or_else(|| DEFAULT_BILLING_GROUP_ID.to_string()),
+                    billing_payment_mode: r.get::<Option<String>, _>(9).and_then(|v| v.parse().ok()).unwrap_or(BillingPaymentMode::Prepaid),
                 }
             })
             .collect())
@@ -7413,6 +7590,7 @@ mod billing_tests {
             team_id: team_id.map(|s| s.to_string()),
             ttft_ms: None,
             account_type: None,
+            billing_payment_mode: None,
         };
         r.prompt_tokens = 1_000_000; // $1 at $1/1M
         r.prompt_price = rust_decimal::Decimal::ONE;

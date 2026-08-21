@@ -65,4 +65,6 @@ pub struct UsageRecord {
     /// discriminator column on wallet_transactions / billing_events.
     #[serde(default)]
     pub account_type: Option<String>,
+    #[serde(default)]
+    pub billing_payment_mode: Option<String>,
 }

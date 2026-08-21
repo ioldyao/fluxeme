@@ -6,6 +6,7 @@ use rust_decimal::Decimal;
 
 use crate::config::types::GatewayRuntimeConfig;
 use crate::db::backend::DbBackend;
+use crate::domain::billing_group::{BillingGroupRow, BillingPaymentMode};
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, Pricing};
 use crate::domain::moderation::ContentFilterRule;
@@ -94,6 +95,9 @@ pub struct BillingActivityRow {
     pub api_key_name: Option<String>,
     pub latency_ms: u64,
     pub reservation_id: Option<String>,
+    pub billing_group_id: Option<String>,
+    pub billing_group_name: Option<String>,
+    pub billing_payment_mode: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -326,6 +330,26 @@ impl Database {
         self.backend.all_api_keys().await
     }
 
+    // ── Billing groups
+    pub async fn list_billing_groups(&self, active_only: bool) -> Result<Vec<BillingGroupRow>, DbError> {
+        self.backend.list_billing_groups(active_only).await
+    }
+    pub async fn get_billing_group(&self, id: &str) -> Result<Option<BillingGroupRow>, DbError> {
+        self.backend.get_billing_group(id).await
+    }
+    pub async fn create_billing_group(
+        &self,
+        id: &str,
+        name: &str,
+        payment_mode: BillingPaymentMode,
+        created_by: &str,
+    ) -> Result<BillingGroupRow, DbError> {
+        self.backend.create_billing_group(id, name, payment_mode, created_by).await
+    }
+    pub async fn set_billing_group_status(&self, id: &str, status: &str) -> Result<(), DbError> {
+        self.backend.set_billing_group_status(id, status).await
+    }
+
     // ── API Key Scopes（Platform API Key：访问范围 = 资源类型） ──────────
     // 语义：key 创建时勾选可访问的资源类型（model / skill / mcp），
     // 存为 api_key_scopes(resource_id='*')。Skill Runtime 鉴权按资源类型
@@ -445,6 +469,12 @@ impl Database {
         user_id: Option<&str>,
     ) -> Result<Decimal, DbError> {
         self.backend.period_summary_since(start, user_id).await
+    }
+    pub async fn billing_event_modes(
+        &self,
+        request_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, (String, Option<String>)>, DbError> {
+        self.backend.billing_event_modes(request_ids).await
     }
     pub async fn list_billing_activities(
         &self,

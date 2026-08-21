@@ -41,6 +41,9 @@ export interface BillingActivity {
   api_key_name?: string | null;
   latency_ms: number;
   reservation_id?: string | null;
+  billing_group_id?: string | null;
+  billing_group_name?: string | null;
+  billing_payment_mode?: 'prepaid' | 'postpaid';
 }
 
 export interface BillingActivityDimensionRow {

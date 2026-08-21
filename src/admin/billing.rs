@@ -814,6 +814,8 @@ pub(crate) async fn billing_activities(
         "prompt_tokens": a.prompt_tokens, "completion_tokens": a.completion_tokens, "cache_hit_input_tokens": a.cache_hit_input_tokens,
         "cache_write_tokens": a.cache_write_tokens, "total_tokens": a.total_tokens, "package_units": a.package_units,
         "package_grant_id": a.package_grant_id, "wallet_amount": a.wallet_amount, "priced_cost_amount": a.priced_cost_amount,
+        "billing_group_id": a.billing_group_id, "billing_group_name": a.billing_group_name,
+        "billing_payment_mode": a.billing_payment_mode,
         "charge_source": a.charge_source, "account_type": a.account_type, "team_id": a.team_id, "api_key_name": a.api_key_name,
         "latency_ms": a.latency_ms, "reservation_id": a.reservation_id,
     })).collect(), total, summary, dimensions }))
@@ -939,7 +941,9 @@ pub(crate) async fn admin_billing_activities(
         "status_code": a.status_code, "success": a.success, "prompt_tokens": a.prompt_tokens, "completion_tokens": a.completion_tokens,
         "cache_hit_input_tokens": a.cache_hit_input_tokens, "cache_write_tokens": a.cache_write_tokens, "total_tokens": a.total_tokens,
         "package_units": a.package_units, "package_grant_id": a.package_grant_id, "wallet_amount": a.wallet_amount,
-        "priced_cost_amount": a.priced_cost_amount, "charge_source": a.charge_source, "account_type": a.account_type,
+        "priced_cost_amount": a.priced_cost_amount, "billing_group_id": a.billing_group_id,
+        "billing_group_name": a.billing_group_name, "billing_payment_mode": a.billing_payment_mode,
+        "charge_source": a.charge_source, "account_type": a.account_type,
         "team_id": a.team_id, "api_key_name": a.api_key_name, "latency_ms": a.latency_ms, "reservation_id": a.reservation_id,
     })).collect(), total, summary, dimensions }))
 }

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@fluxeme/shared/src/store/auth';
+import { useActiveBillingGroups } from '@fluxeme/shared/src/api/apiKeys';
 import {
   useMyTeams,
   useTeamMembers,
@@ -368,18 +369,21 @@ function TeamKeysView({ teamId }: { teamId: string }) {
   const deleteKey = useDeleteTeamApiKey();
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState('');
+  const [billingGroupId, setBillingGroupId] = useState('');
   const [createdKey, setCreatedKey] = useState<string | null>(null);
+  const billingGroups = useActiveBillingGroups();
 
   const myRole = membersQuery.data?.find((m) => m.user_id === userId)?.role;
   const canManage = myRole === 'owner' || myRole === 'admin';
 
   const handleCreate = () => {
     createKey.mutate(
-      { teamId, data: { name: name.trim() || undefined } as CreateKeyReq },
+      { teamId, data: { name: name.trim() || undefined, billing_group_id: billingGroupId || null } as CreateKeyReq },
       {
         onSuccess: (res) => {
           setCreatedKey(res.key);
           setName('');
+          setBillingGroupId('');
         },
         onError: (e) => toast.error(e.message),
       },
@@ -433,6 +437,7 @@ function TeamKeysView({ teamId }: { teamId: string }) {
         if (!open) {
           setShowCreate(false);
           setCreatedKey(null);
+          setBillingGroupId('');
         }
       }}>
         <DialogContent>
@@ -451,6 +456,10 @@ function TeamKeysView({ teamId }: { teamId: string }) {
                 onChange={(e) => setName(e.target.value)}
                 placeholder={t('team.keyName')}
               />
+              <select className="h-10 w-full rounded-md border bg-background px-3 text-sm" required value={billingGroupId} onChange={(event) => setBillingGroupId(event.target.value)} disabled={billingGroups.isLoading}>
+                <option value="">{billingGroups.isLoading ? '正在加载计费分组…' : '请选择计费分组'}</option>
+                {billingGroups.data?.map((group) => <option key={group.id} value={group.id}>{group.name} · {group.payment_mode === 'postpaid' ? '后付费' : '按量计费'}</option>)}
+              </select>
               <div className="flex justify-end gap-3">
                 <Button variant="outline" onClick={() => setShowCreate(false)}>
                   {t('common.cancel')}

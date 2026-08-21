@@ -1,6 +1,14 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
-import type { ApiKey, CreateKeyReq } from '../types';
+import type { ApiKey, BillingGroup, CreateKeyReq } from '../types';
+
+export function useActiveBillingGroups() {
+  return useQuery({
+    queryKey: ['billing-groups', 'active'],
+    queryFn: () => api<BillingGroup[]>('/billing-groups/active'),
+    staleTime: 30_000,
+  });
+}
 
 export function useApiKeys(userId?: string) {
   const path = userId ? `/users/${encodeURIComponent(userId)}/keys` : '/me/keys';

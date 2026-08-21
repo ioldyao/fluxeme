@@ -1,6 +1,8 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+use crate::domain::billing_group::BillingPaymentMode;
+
 pub const USER_STATUS_ACTIVE: &str = "active";
 pub const USER_STATUS_SUSPENDED: &str = "suspended";
 
@@ -67,6 +69,9 @@ pub struct ApiKey {
     /// `None` = 未加载（创建/内部路径不设置；列表路径填充）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scopes: Option<Vec<String>>,
+    /// Billing group selected when the key was created or rebound.
+    pub billing_group_id: String,
+    pub billing_payment_mode: BillingPaymentMode,
 }
 
 fn default_enabled() -> bool {
@@ -87,6 +92,9 @@ pub struct AuthResult {
     pub team_id: Option<String>,
     /// Role within the active team. `None` for personal accounts.
     pub team_role: Option<crate::domain::team::TeamRole>,
+    /// Billing group and payment mode snapshot selected by the API key.
+    pub billing_group_id: String,
+    pub billing_payment_mode: BillingPaymentMode,
 }
 
 /// Session info for admin panel login

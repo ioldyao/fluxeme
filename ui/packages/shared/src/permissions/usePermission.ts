@@ -9,6 +9,7 @@ export type Permission =
   | 'admin:rules'
   | 'admin:usage'
   | 'admin:bills'
+  | 'admin:billing-groups'
   | 'admin:recharge-keys'
   | 'admin:health'
   | 'admin:settings'
@@ -39,6 +40,7 @@ export const PERMISSIONS = {
   MODERATION: 'admin:moderation' as Permission,
   USAGE: 'admin:usage' as Permission,
   BILLS: 'admin:bills' as Permission,
+  BILLING_GROUPS: 'admin:billing-groups' as Permission,
   RECHARGE_KEYS: 'admin:recharge-keys' as Permission,
   HEALTH: 'admin:health' as Permission,
   SETTINGS: 'admin:settings' as Permission,

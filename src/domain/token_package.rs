@@ -1,5 +1,7 @@
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
+
+use crate::domain::billing_group::BillingPaymentMode;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,6 +99,10 @@ pub struct TokenReservationRequest {
     pub completion_tokens: u64,
     pub cache_hit_input_tokens: u64,
     pub estimated_wallet_amount: Decimal,
+    pub estimated_priced_cost_amount: Decimal,
+    pub billing_group_id: String,
+    pub billing_group_name: String,
+    pub billing_payment_mode: BillingPaymentMode,
     pub expires_at: String,
 }
 
@@ -125,6 +131,9 @@ pub struct TokenReservationHandle {
     pub reserved_package_units: u64,
     pub reserved_total_units: u64,
     pub reserved_wallet_amount: Decimal,
+    pub billing_group_id: String,
+    pub billing_group_name: String,
+    pub billing_payment_mode: BillingPaymentMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use rust_decimal::Decimal;
 
+use crate::domain::billing_group::{BillingGroupRow, BillingPaymentMode};
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, Pricing};
 use crate::domain::moderation::ContentFilterRule;
@@ -65,6 +66,18 @@ pub trait DbBackend: Send + Sync {
     async fn lookup_key(&self, key: &str) -> Result<Option<(User, ApiKey)>, DbError>;
     async fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError>;
 
+    // ── Billing groups ────────────────────────────────────────────────
+    async fn list_billing_groups(&self, active_only: bool) -> Result<Vec<BillingGroupRow>, DbError>;
+    async fn get_billing_group(&self, id: &str) -> Result<Option<BillingGroupRow>, DbError>;
+    async fn create_billing_group(
+        &self,
+        id: &str,
+        name: &str,
+        payment_mode: BillingPaymentMode,
+        created_by: &str,
+    ) -> Result<BillingGroupRow, DbError>;
+    async fn set_billing_group_status(&self, id: &str, status: &str) -> Result<(), DbError>;
+
     // ── API Key Scopes（Platform API Key） ─────────────────────────────
     async fn add_api_key_scope(
         &self,
@@ -123,6 +136,10 @@ pub trait DbBackend: Send + Sync {
         start: &str,
         user_id: Option<&str>,
     ) -> Result<Decimal, DbError>;
+    async fn billing_event_modes(
+        &self,
+        request_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, (String, Option<String>)>, DbError>;
     async fn list_billing_activities(
         &self,
         start: &str,

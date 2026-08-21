@@ -390,6 +390,7 @@ pub(crate) struct CreateKeyReq {
     /// 访问范围 = 资源类型（model / skill / mcp）。缺省 model+skill。
     #[serde(default)]
     pub(crate) scopes: Option<Vec<String>>,
+    pub(crate) billing_group_id: Option<String>,
 }
 
 pub(crate) async fn create_user_key(
@@ -400,6 +401,17 @@ pub(crate) async fn create_user_key(
 ) -> Result<Json<Value>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:users").await?;
+    let billing_group_id = req
+        .billing_group_id
+        .as_deref()
+        .ok_or_else(|| AdminError::bad_request("billing_group_id is required"))?;
+    let billing_group = state
+        .db
+        .get_billing_group(billing_group_id)
+        .await
+        .map_err(db_err)?
+        .filter(|group| group.is_active())
+        .ok_or_else(|| AdminError::bad_request("Billing group is not active"))?;
 
     let key_value = format!("sk-{}", uuid::Uuid::new_v4());
     let ak = ApiKey {
@@ -412,6 +424,8 @@ pub(crate) async fn create_user_key(
         allowed_models: req.allowed_models,
         team_id: req.team_id,
         scopes: None,
+        billing_group_id: billing_group.id.clone(),
+        billing_payment_mode: billing_group.payment_mode,
     };
 
     state.db.create_api_key(&ak).await.map_err(db_err)?;
@@ -461,6 +475,22 @@ pub(crate) async fn update_user_key(
         .iter()
         .find(|k| k.key == key_val)
         .ok_or_else(|| AdminError::not_found("Key not found"))?;
+    let billing_group = if let Some(group_id) = req.billing_group_id.as_deref() {
+        state
+            .db
+            .get_billing_group(group_id)
+            .await
+            .map_err(db_err)?
+            .filter(|group| group.is_active())
+            .ok_or_else(|| AdminError::bad_request("Billing group is not active"))?
+    } else {
+        state
+            .db
+            .get_billing_group(&existing.billing_group_id)
+            .await
+            .map_err(db_err)?
+            .ok_or_else(|| AdminError::bad_request("Billing group not found"))?
+    };
 
     let ak = ApiKey {
         key: key_val.clone(),
@@ -472,6 +502,8 @@ pub(crate) async fn update_user_key(
         allowed_models: req.allowed_models.or(existing.allowed_models.clone()),
         team_id: req.team_id.or(existing.team_id.clone()),
         scopes: None,
+        billing_group_id: billing_group.id,
+        billing_payment_mode: billing_group.payment_mode,
     };
 
     state.db.update_api_key(&ak).await.map_err(db_err)?;

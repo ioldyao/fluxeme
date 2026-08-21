@@ -17,6 +17,7 @@ const DEFAULT_POLICIES: &[(&str, &str)] = &[
     ("admin", "admin:moderation"),
     ("admin", "admin:usage"),
     ("admin", "admin:bills"),
+    ("admin", "admin:billing-groups"),
     ("admin", "admin:recharge-keys"),
     ("admin", "admin:health"),
     ("admin", "admin:settings"),

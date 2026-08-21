@@ -211,6 +211,9 @@ pub async fn reserve(
     user_name: &str,
     api_key_name: &str,
     team_id: Option<&str>,
+    billing_group_id: &str,
+    billing_group_name: &str,
+    billing_payment_mode: crate::domain::billing_group::BillingPaymentMode,
     model: &str,
     body: &Value,
     anthropic: bool,
@@ -219,6 +222,14 @@ pub async fn reserve(
     let prompt = estimate_input_tokens(body, anthropic);
     let completion = max_output_tokens(body);
     let pricing = db.lookup_model_pricing(model).await?;
+    let resolved_billing_group_name = if billing_group_name.is_empty() {
+        db.get_billing_group(billing_group_id)
+            .await?
+            .map(|group| group.name)
+            .unwrap_or_default()
+    } else {
+        billing_group_name.to_string()
+    };
     db.reserve_token_request(&TokenReservationRequest {
         request_id: request_id.to_string(),
         user_id: user_id.to_string(),
@@ -230,6 +241,10 @@ pub async fn reserve(
         completion_tokens: completion,
         cache_hit_input_tokens: 0,
         estimated_wallet_amount: estimated_cost(prompt, completion, 0, pricing),
+        estimated_priced_cost_amount: estimated_cost(prompt, completion, 0, pricing),
+        billing_group_id: billing_group_id.to_string(),
+        billing_group_name: resolved_billing_group_name,
+        billing_payment_mode,
         expires_at: expires_at.to_string(),
     })
     .await

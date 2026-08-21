@@ -824,6 +824,7 @@ impl<S> UsageTrackingStream<S> {
                     .map(|_| "team")
                     .or(Some("user"))
                     .map(String::from),
+                    billing_payment_mode: None,
             },
             self.endpoint_id,
         );
@@ -1025,6 +1026,7 @@ async fn handle_streaming(
                     .map(|_| "team")
                     .or(Some("user"))
                     .map(String::from),
+                    billing_payment_mode: None,
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -1152,6 +1154,7 @@ async fn handle_messages_streaming(
                     .map(|_| "team")
                     .or(Some("user"))
                     .map(String::from),
+                    billing_payment_mode: None,
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -1267,6 +1270,7 @@ async fn handle_non_streaming(
                             .map(|_| "team")
                             .or(Some("user"))
                             .map(String::from),
+                            billing_payment_mode: None,
                     },
                     route.endpoint.id,
                 );
@@ -1331,7 +1335,7 @@ async fn handle_non_streaming(
                     request_body: req_body.clone(),
                     response_body: Some(err_body),
                     reasoning_body: None,
-                    api_key_name: None,
+                    api_key_name: Some(api_key_name.clone()),
                     api_format: "openai".to_string(),
                     stream: false,
                     prompt_price: Decimal::ZERO,
@@ -1348,6 +1352,7 @@ async fn handle_non_streaming(
                         .map(|_| "team")
                         .or(Some("user"))
                         .map(String::from),
+                        billing_payment_mode: None,
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Upstream request failed");
                 return Err(GatewayError::Upstream(e.0));
@@ -1379,7 +1384,7 @@ async fn handle_non_streaming(
         request_body: req_body,
         response_body: Some(err_body),
         reasoning_body: None,
-        api_key_name: None,
+        api_key_name: Some(api_key_name.clone()),
         api_format: "openai".to_string(),
         stream: false,
         prompt_price: Decimal::ZERO,
@@ -1396,6 +1401,7 @@ async fn handle_non_streaming(
             .map(|_| "team")
             .or(Some("user"))
             .map(String::from),
+            billing_payment_mode: None,
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -1508,6 +1514,7 @@ async fn handle_messages_non_streaming(
                         .map(|_| "team")
                         .or(Some("user"))
                         .map(String::from),
+                        billing_payment_mode: None,
                 });
 
                 return Ok(Json(resp).into_response());
@@ -1553,7 +1560,7 @@ async fn handle_messages_non_streaming(
                     request_body: req_body.clone(),
                     response_body: Some(err_body),
                     reasoning_body: None,
-                    api_key_name: None,
+                    api_key_name: Some(api_key_name.clone()),
                     api_format: "anthropic".to_string(),
                     stream: false,
                     prompt_price: Decimal::ZERO,
@@ -1570,6 +1577,7 @@ async fn handle_messages_non_streaming(
                         .map(|_| "team")
                         .or(Some("user"))
                         .map(String::from),
+                        billing_payment_mode: None,
                 });
                 tracing::error!(request_id = %request_id, endpoint = %route.endpoint.url, error = %e.0, "Messages upstream request failed");
                 return Err(GatewayError::Upstream(e.0));
@@ -1597,7 +1605,7 @@ async fn handle_messages_non_streaming(
         request_body: req_body,
         response_body: Some(err_body),
         reasoning_body: None,
-        api_key_name: None,
+        api_key_name: Some(api_key_name.clone()),
         api_format: "anthropic".to_string(),
         stream: false,
         prompt_price: Decimal::ZERO,
@@ -1614,6 +1622,7 @@ async fn handle_messages_non_streaming(
             .map(|_| "team")
             .or(Some("user"))
             .map(String::from),
+            billing_payment_mode: None,
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -1904,6 +1913,9 @@ pub async fn chat_completions(
                 &user.user_name,
                 &user.api_key_name,
                 user.team_id.as_deref(),
+                &user.billing_group_id,
+                "",
+                user.billing_payment_mode,
                 &resolved_model,
                 &body,
                 false,
@@ -2376,6 +2388,9 @@ pub async fn messages(
                 &user.user_name,
                 &user.api_key_name,
                 user.team_id.as_deref(),
+                &user.billing_group_id,
+                "",
+                user.billing_payment_mode,
                 &resolved_model,
                 &body,
                 true,
@@ -2572,6 +2587,9 @@ async fn relay_to_upstream(
                 &user.user_name,
                 &user.api_key_name,
                 user.team_id.as_deref(),
+                &user.billing_group_id,
+                "",
+                user.billing_payment_mode,
                 &resolved_model,
                 &body,
                 false,
@@ -2670,6 +2688,7 @@ async fn relay_to_upstream(
                         .map(|_| "team")
                         .or(Some("user"))
                         .map(String::from),
+                        billing_payment_mode: None,
                 });
 
                 return Ok(Json(resp).into_response());
@@ -2735,6 +2754,7 @@ async fn relay_to_upstream(
                         .map(|_| "team")
                         .or(Some("user"))
                         .map(String::from),
+                        billing_payment_mode: None,
                 });
                 return Err(GatewayError::from(e));
             }
@@ -2779,6 +2799,7 @@ async fn relay_to_upstream(
             .map(|_| "team")
             .or(Some("user"))
             .map(String::from),
+            billing_payment_mode: None,
     });
     Err(GatewayError::Upstream(err_msg))
 }
@@ -2905,6 +2926,9 @@ pub async fn responses(
                 &user.user_name,
                 &user.api_key_name,
                 user.team_id.as_deref(),
+                &user.billing_group_id,
+                "",
+                user.billing_payment_mode,
                 &resolved_model,
                 &body,
                 false,
@@ -3030,6 +3054,7 @@ async fn handle_responses_non_streaming(
                 team_id: team_id.clone(),
                 ttft_ms: None,
                 account_type: Some("user".to_string()),
+                billing_payment_mode: None,
             });
 
             Ok(Json(resp).into_response())
@@ -3068,6 +3093,7 @@ async fn handle_responses_non_streaming(
                 team_id: team_id.clone(),
                 ttft_ms: None,
                 account_type: Some("user".to_string()),
+                billing_payment_mode: None,
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -3105,6 +3131,7 @@ async fn handle_responses_non_streaming(
                 team_id: team_id.clone(),
                 ttft_ms: None,
                 account_type: Some("user".to_string()),
+                billing_payment_mode: None,
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -3141,6 +3168,7 @@ async fn handle_responses_non_streaming(
                 team_id: team_id.clone(),
                 ttft_ms: None,
                 account_type: Some("user".to_string()),
+                billing_payment_mode: None,
             });
             Err(GatewayError::Upstream(e.0))
         }
@@ -3273,6 +3301,7 @@ async fn handle_responses_streaming(
                     team_id: tid,
                     ttft_ms: None,
                     account_type: Some("user".to_string()),
+                    billing_payment_mode: None,
                 });
             };
 
@@ -3359,6 +3388,7 @@ async fn handle_responses_streaming(
                 team_id: team_id.clone(),
                 ttft_ms: None,
                 account_type: Some("user".to_string()),
+                billing_payment_mode: None,
             });
             Err(GatewayError::Upstream(e.0))
         }

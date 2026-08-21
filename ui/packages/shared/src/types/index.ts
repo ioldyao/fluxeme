@@ -29,6 +29,19 @@ export interface UserDetail extends User {
   keys: ApiKey[];
 }
 
+export type BillingPaymentMode = 'prepaid' | 'postpaid';
+
+export interface BillingGroup {
+  id: string;
+  name: string;
+  payment_mode: BillingPaymentMode;
+  status: string;
+  is_default: boolean;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ApiKey {
   key: string;
   user_id: string;
@@ -41,6 +54,8 @@ export interface ApiKey {
   team_id?: string | null;
   /** 访问范围 = 资源类型（model / skill / mcp）。 */
   scopes?: string[] | null;
+  billing_group_id: string;
+  billing_payment_mode: BillingPaymentMode;
 }
 
 export type TeamRole = 'owner' | 'admin' | 'member';
@@ -154,6 +169,7 @@ export interface UsageRecord {
   client_ip?: string | null;
   /** Team scope. Null means the request used a personal API key. */
   team_id?: string | null;
+  billing_payment_mode?: 'prepaid' | 'postpaid' | null;
 }
 
 export interface DashboardStats {
@@ -315,6 +331,7 @@ export interface CreateKeyReq {
   allowed_models?: string[] | null;
   /** 访问范围 = 资源类型（model / skill / mcp）。 */
   scopes?: string[] | null;
+  billing_group_id?: string | null;
 }
 
 export type CreateMyKeyReq = CreateKeyReq;
