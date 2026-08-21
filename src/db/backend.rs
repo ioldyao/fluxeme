@@ -128,6 +128,7 @@ pub trait DbBackend: Send + Sync {
         start: &str,
         end: &str,
         user_id: Option<&str>,
+        filter: &crate::db::BillingActivityFilter,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<crate::db::BillingActivityRow>, DbError>;
@@ -136,7 +137,20 @@ pub trait DbBackend: Send + Sync {
         start: &str,
         end: &str,
         user_id: Option<&str>,
+        filter: &crate::db::BillingActivityFilter,
     ) -> Result<usize, DbError>;
+    async fn billing_activity_summary(
+        &self,
+        start: &str,
+        end: &str,
+        user_id: Option<&str>,
+    ) -> Result<crate::db::BillingActivitySummary, DbError>;
+    async fn billing_activity_dimensions(
+        &self,
+        start: &str,
+        end: &str,
+        user_id: Option<&str>,
+    ) -> Result<crate::db::BillingActivityDimensions, DbError>;
     async fn period_token_breakdown(
         &self,
         year: i32,

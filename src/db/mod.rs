@@ -96,6 +96,54 @@ pub struct BillingActivityRow {
     pub reservation_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct BillingActivityFilter {
+    pub search: Option<String>,
+    pub api_key_name: Option<String>,
+    pub model: Option<String>,
+    pub charge_source: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct BillingActivitySummary {
+    pub activity_count: u64,
+    pub success_count: u64,
+    pub failed_count: u64,
+    pub interrupted_count: u64,
+    pub zero_cost_count: u64,
+    pub total_tokens: u64,
+    pub package_units: u64,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub wallet_amount: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub priced_cost_amount: Decimal,
+    pub api_key_count: u64,
+    pub model_count: u64,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct BillingActivityDimensionRow {
+    pub name: String,
+    pub activity_count: u64,
+    pub key_count: u64,
+    pub model_count: u64,
+    pub related_names: Vec<String>,
+    pub source_names: Vec<String>,
+    pub total_tokens: u64,
+    pub package_units: u64,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub wallet_amount: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub priced_cost_amount: Decimal,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct BillingActivityDimensions {
+    pub api_keys: Vec<BillingActivityDimensionRow>,
+    pub models: Vec<BillingActivityDimensionRow>,
+    pub sources: Vec<BillingActivityDimensionRow>,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RechargeKeyRow {
     pub key: String,
@@ -403,11 +451,12 @@ impl Database {
         start: &str,
         end: &str,
         user_id: Option<&str>,
+        filter: &BillingActivityFilter,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<BillingActivityRow>, DbError> {
         self.backend
-            .list_billing_activities(start, end, user_id, limit, offset)
+            .list_billing_activities(start, end, user_id, filter, limit, offset)
             .await
     }
     pub async fn count_billing_activities(
@@ -415,9 +464,30 @@ impl Database {
         start: &str,
         end: &str,
         user_id: Option<&str>,
+        filter: &BillingActivityFilter,
     ) -> Result<usize, DbError> {
         self.backend
-            .count_billing_activities(start, end, user_id)
+            .count_billing_activities(start, end, user_id, filter)
+            .await
+    }
+    pub async fn billing_activity_summary(
+        &self,
+        start: &str,
+        end: &str,
+        user_id: Option<&str>,
+    ) -> Result<BillingActivitySummary, DbError> {
+        self.backend
+            .billing_activity_summary(start, end, user_id)
+            .await
+    }
+    pub async fn billing_activity_dimensions(
+        &self,
+        start: &str,
+        end: &str,
+        user_id: Option<&str>,
+    ) -> Result<BillingActivityDimensions, DbError> {
+        self.backend
+            .billing_activity_dimensions(start, end, user_id)
             .await
     }
     pub async fn period_token_breakdown(

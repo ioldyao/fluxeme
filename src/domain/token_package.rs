@@ -89,6 +89,8 @@ impl TokenUsage {
 pub struct TokenReservationRequest {
     pub request_id: String,
     pub user_id: String,
+    pub user_name: String,
+    pub api_key_name: String,
     pub team_id: Option<String>,
     pub model: String,
     pub prompt_tokens: u64,

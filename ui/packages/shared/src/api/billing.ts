@@ -43,22 +43,74 @@ export interface BillingActivity {
   reservation_id?: string | null;
 }
 
+export interface BillingActivityDimensionRow {
+  name: string;
+  activity_count: number;
+  key_count: number;
+  model_count: number;
+  related_names: string[];
+  source_names: string[];
+  total_tokens: number;
+  package_units: number;
+  wallet_amount: number;
+  priced_cost_amount: number;
+}
+
+export interface BillingActivityDimensions {
+  api_keys: BillingActivityDimensionRow[];
+  models: BillingActivityDimensionRow[];
+  sources: BillingActivityDimensionRow[];
+}
+
+export interface BillingActivitySummary {
+  activity_count: number;
+  success_count: number;
+  failed_count: number;
+  interrupted_count: number;
+  zero_cost_count: number;
+  total_tokens: number;
+  package_units: number;
+  wallet_amount: number;
+  priced_cost_amount: number;
+  api_key_count: number;
+  model_count: number;
+}
+
 export interface BillingActivityResponse {
   activities: BillingActivity[];
   total: number;
+  summary: BillingActivitySummary;
+  dimensions: BillingActivityDimensions;
 }
 
-export function useBillingActivities(year: number, month: number, limit = 50, offset = 0) {
+export interface BillingActivityFilters {
+  search?: string;
+  api_key_name?: string;
+  model?: string;
+  charge_source?: string;
+}
+
+function activityQuery(filters: BillingActivityFilters): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value && value !== 'all') params.set(key, value);
+  }
+  return params.toString();
+}
+
+export function useBillingActivities(year: number, month: number, limit = 50, offset = 0, filters: BillingActivityFilters = {}) {
+  const query = activityQuery(filters);
   return useQuery({
-    queryKey: ['billing', 'activities', year, month, limit, offset],
-    queryFn: () => api<BillingActivityResponse>(`/billing/activities?year=${year}&month=${month}&limit=${limit}&offset=${offset}`),
+    queryKey: ['billing', 'activities', year, month, limit, offset, query],
+    queryFn: () => api<BillingActivityResponse>(`/billing/activities?year=${year}&month=${month}&limit=${limit}&offset=${offset}${query ? `&${query}` : ''}`),
   });
 }
 
-export function useAdminBillingActivities(year: number, month: number, limit = 100, offset = 0, userId?: string | null) {
+export function useAdminBillingActivities(year: number, month: number, limit = 100, offset = 0, userId?: string | null, filters: BillingActivityFilters = {}) {
+  const query = activityQuery(filters);
   return useQuery({
-    queryKey: ['admin-billing', 'activities', year, month, limit, offset, userId],
-    queryFn: () => api<BillingActivityResponse>(`/admin/billing/activities?year=${year}&month=${month}&limit=${limit}&offset=${offset}${userId ? `&user_id=${encodeURIComponent(userId)}` : ''}`),
+    queryKey: ['admin-billing', 'activities', year, month, limit, offset, userId, query],
+    queryFn: () => api<BillingActivityResponse>(`/admin/billing/activities?year=${year}&month=${month}&limit=${limit}&offset=${offset}${userId ? `&user_id=${encodeURIComponent(userId)}` : ''}${query ? `&${query}` : ''}`),
   });
 }
 

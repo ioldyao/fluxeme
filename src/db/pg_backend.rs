@@ -706,7 +706,10 @@ impl DbBackend for PgBackend {
 
         match result {
             Ok(_) => tracing::info!("models.name UNIQUE constraint created"),
-            Err(e) if e.to_string().contains("already exists") || e.to_string().contains("duplicate key value") => {
+            Err(e)
+                if e.to_string().contains("already exists")
+                    || e.to_string().contains("duplicate key value") =>
+            {
                 tracing::info!("models.name UNIQUE constraint already exists, skipping");
             }
             Err(e) => {
@@ -921,6 +924,8 @@ impl DbBackend for PgBackend {
                 id TEXT PRIMARY KEY,
                 request_id TEXT NOT NULL UNIQUE,
                 user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                user_name TEXT NOT NULL DEFAULT '',
+                api_key_name TEXT NOT NULL DEFAULT '',
                 team_id TEXT,
                 account_type TEXT NOT NULL DEFAULT 'user',
                 package_grant_id TEXT REFERENCES token_package_grants(id),
@@ -983,7 +988,9 @@ impl DbBackend for PgBackend {
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS priced_cost_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
             "UPDATE billing_events SET priced_cost_amount = cost_amount WHERE priced_cost_amount = 0 AND cost_amount <> 0",
             "UPDATE billing_events SET activity_status = CASE WHEN status_code = 499 THEN 'interrupted' WHEN success THEN 'success' ELSE 'failed' END WHERE activity_status = 'unknown' OR activity_status = ''",
-            "UPDATE billing_events SET charge_source = CASE WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN cost_amount = 0 THEN 'unknown' ELSE 'wallet' END WHERE charge_source = 'unknown' OR charge_source = ''",
+            "UPDATE billing_events SET charge_source = CASE WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN priced_cost_amount = 0 AND cost_amount = 0 THEN 'free_model' ELSE 'none' END WHERE charge_source = 'unknown' OR charge_source = ''",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS user_name TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS api_key_name TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_prompt_tokens BIGINT NOT NULL DEFAULT 0",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_completion_tokens BIGINT NOT NULL DEFAULT 0",
@@ -2681,38 +2688,61 @@ impl DbBackend for PgBackend {
         start: &str,
         end: &str,
         user_id: Option<&str>,
+        filter: &crate::db::BillingActivityFilter,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<crate::db::BillingActivityRow>, DbError> {
-        let rows = if let Some(uid) = user_id {
-            query(
-                "SELECT timestamp, request_id, user_id, user_name, model, channel_id,
-                 CASE WHEN status_code = 499 THEN 'interrupted' WHEN success = false THEN 'failed' WHEN activity_status IN ('unknown', '') THEN CASE WHEN cost_amount = 0 AND package_units = 0 THEN 'zero_cost' ELSE 'success' END ELSE activity_status END,
-                 COALESCE(status_reason, ''), status_code, success, prompt_tokens, completion_tokens,
-                 cache_hit_input_tokens, cache_write_tokens, total_tokens, package_units,
-                 package_grant_id, COALESCE(wallet_amount, 0), COALESCE(priced_cost_amount, cost_amount),
-                 CASE WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 OR cost_amount > 0 THEN 'wallet' WHEN priced_cost_amount = 0 AND cost_amount = 0 THEN 'zero_cost' ELSE COALESCE(charge_source, 'unknown') END,
-                 account_type, team_id, api_key_name, latency_ms, reservation_id
-                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3
-                 ORDER BY timestamp DESC LIMIT $4 OFFSET $5",
-            )
-            .bind(start).bind(end).bind(uid).bind(limit as i64).bind(offset as i64)
-            .fetch_all(&self.pool).await?
-        } else {
-            query(
-                "SELECT timestamp, request_id, user_id, user_name, model, channel_id,
-                 CASE WHEN status_code = 499 THEN 'interrupted' WHEN success = false THEN 'failed' WHEN activity_status IN ('unknown', '') THEN CASE WHEN cost_amount = 0 AND package_units = 0 THEN 'zero_cost' ELSE 'success' END ELSE activity_status END,
-                 COALESCE(status_reason, ''), status_code, success, prompt_tokens, completion_tokens,
-                 cache_hit_input_tokens, cache_write_tokens, total_tokens, package_units,
-                 package_grant_id, COALESCE(wallet_amount, 0), COALESCE(priced_cost_amount, cost_amount),
-                 CASE WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 OR cost_amount > 0 THEN 'wallet' WHEN priced_cost_amount = 0 AND cost_amount = 0 THEN 'zero_cost' ELSE COALESCE(charge_source, 'unknown') END,
-                 account_type, team_id, api_key_name, latency_ms, reservation_id
-                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2
-                 ORDER BY timestamp DESC LIMIT $3 OFFSET $4",
-            )
-            .bind(start).bind(end).bind(limit as i64).bind(offset as i64)
-            .fetch_all(&self.pool).await?
-        };
+        let mut builder = QueryBuilder::<Postgres>::new(
+            r#"SELECT timestamp, request_id, user_id, user_name, model, channel_id,
+             CASE WHEN status_code = 499 THEN 'interrupted' WHEN status_code >= 400 OR success = false THEN 'failed'
+             WHEN activity_status IN ('unknown', '') THEN CASE WHEN cost_amount = 0
+             AND package_units = 0 THEN 'zero_cost' ELSE 'success' END ELSE activity_status END,
+             COALESCE(status_reason, ''), status_code, success, prompt_tokens, completion_tokens,
+             cache_hit_input_tokens, cache_write_tokens, total_tokens, package_units, package_grant_id,
+             COALESCE(wallet_amount, 0), COALESCE(NULLIF(priced_cost_amount, 0), cost_amount, 0),
+             CASE WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet'
+             WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet'
+             WHEN status_code >= 400 OR success = false THEN 'none'
+             WHEN charge_source = 'free_model' THEN 'free_model'
+             WHEN priced_cost_amount = 0 THEN 'free_model' ELSE 'none' END,
+             account_type, team_id, api_key_name, latency_ms, reservation_id
+             FROM billing_events WHERE timestamp >= "#,
+        );
+        builder
+            .push_bind(start)
+            .push(" AND timestamp < ")
+            .push_bind(end);
+        if let Some(uid) = user_id {
+            builder.push(" AND user_id = ").push_bind(uid);
+        }
+        if let Some(search) = &filter.search {
+            let pattern = format!("%{}%", search);
+            builder
+                .push(" AND (request_id ILIKE ")
+                .push_bind(pattern.clone())
+                .push(" OR COALESCE(api_key_name, '未命名 Key') ILIKE ")
+                .push_bind(pattern.clone())
+                .push(" OR model ILIKE ")
+                .push_bind(pattern.clone())
+                .push(")");
+        }
+        if let Some(api_key_name) = &filter.api_key_name {
+            builder
+                .push(" AND COALESCE(api_key_name, '未命名 Key') = ")
+                .push_bind(api_key_name);
+        }
+        if let Some(model) = &filter.model {
+            builder.push(" AND model = ").push_bind(model);
+        }
+        if let Some(source) = &filter.charge_source {
+            builder.push(" AND (CASE WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN status_code >= 400 OR success = false THEN 'none' WHEN charge_source = 'free_model' THEN 'free_model' WHEN priced_cost_amount = 0 THEN 'free_model' ELSE 'none' END) = ").push_bind(source);
+        }
+        builder
+            .push(" ORDER BY timestamp DESC LIMIT ")
+            .push_bind(limit as i64)
+            .push(" OFFSET ")
+            .push_bind(offset as i64);
+        let rows = builder.build().fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|row| {
                 Ok(crate::db::BillingActivityRow {
@@ -2753,15 +2783,175 @@ impl DbBackend for PgBackend {
         start: &str,
         end: &str,
         user_id: Option<&str>,
+        filter: &crate::db::BillingActivityFilter,
     ) -> Result<usize, DbError> {
-        let count: i64 = if let Some(uid) = user_id {
-            query_scalar("SELECT COUNT(*)::bigint FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3")
-                .bind(start).bind(end).bind(uid).fetch_one(&self.pool).await?
-        } else {
-            query_scalar("SELECT COUNT(*)::bigint FROM billing_events WHERE timestamp >= $1 AND timestamp < $2")
-                .bind(start).bind(end).fetch_one(&self.pool).await?
-        };
+        let mut builder = QueryBuilder::<Postgres>::new(
+            "SELECT COUNT(*)::bigint FROM billing_events WHERE timestamp >= ",
+        );
+        builder
+            .push_bind(start)
+            .push(" AND timestamp < ")
+            .push_bind(end);
+        if let Some(uid) = user_id {
+            builder.push(" AND user_id = ").push_bind(uid);
+        }
+        if let Some(search) = &filter.search {
+            let pattern = format!("%{}%", search);
+            builder
+                .push(" AND (request_id ILIKE ")
+                .push_bind(pattern.clone())
+                .push(" OR COALESCE(api_key_name, '未命名 Key') ILIKE ")
+                .push_bind(pattern.clone())
+                .push(" OR model ILIKE ")
+                .push_bind(pattern.clone())
+                .push(")");
+        }
+        if let Some(api_key_name) = &filter.api_key_name {
+            builder
+                .push(" AND COALESCE(api_key_name, '未命名 Key') = ")
+                .push_bind(api_key_name);
+        }
+        if let Some(model) = &filter.model {
+            builder.push(" AND model = ").push_bind(model);
+        }
+        if let Some(source) = &filter.charge_source {
+            builder.push(" AND (CASE WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN status_code >= 400 OR success = false THEN 'none' WHEN charge_source = 'free_model' THEN 'free_model' WHEN priced_cost_amount = 0 THEN 'free_model' ELSE 'none' END) = ").push_bind(source);
+        }
+        let (count,) = builder
+            .build_query_as::<(i64,)>()
+            .fetch_one(&self.pool)
+            .await?;
         Ok(count.max(0) as usize)
+    }
+
+    async fn billing_activity_summary(
+        &self,
+        start: &str,
+        end: &str,
+        user_id: Option<&str>,
+    ) -> Result<crate::db::BillingActivitySummary, DbError> {
+        let predicate = if user_id.is_some() {
+            " AND user_id = $3"
+        } else {
+            ""
+        };
+        let sql = format!(
+            "WITH classified AS (\
+                SELECT *, CASE \
+                    WHEN status_code = 499 OR activity_status = 'interrupted' THEN 'interrupted' \
+                    WHEN status_code >= 400 OR success = false THEN 'failed' \
+                    WHEN COALESCE(package_units, 0) = 0 AND COALESCE(wallet_amount, 0) = 0 \
+                         AND COALESCE(NULLIF(priced_cost_amount, 0), cost_amount, 0) = 0 THEN 'zero_cost' \
+                    ELSE 'success' END AS derived_status \
+                FROM billing_events WHERE timestamp >= $1 AND timestamp < $2{predicate}) \
+             SELECT COUNT(*)::bigint, \
+                    COUNT(*) FILTER (WHERE derived_status = 'success')::bigint, \
+                    COUNT(*) FILTER (WHERE derived_status = 'failed')::bigint, \
+                    COUNT(*) FILTER (WHERE derived_status = 'interrupted')::bigint, \
+                    COUNT(*) FILTER (WHERE derived_status = 'zero_cost')::bigint, \
+                    COALESCE(SUM(total_tokens), 0)::bigint, \
+                    COALESCE(SUM(package_units), 0)::bigint, \
+                    COALESCE(SUM(wallet_amount), 0), \
+                    COALESCE(SUM(COALESCE(NULLIF(priced_cost_amount, 0), cost_amount, 0)), 0), \
+                    COUNT(DISTINCT COALESCE(api_key_name, '未命名 Key'))::bigint, \
+                    COUNT(DISTINCT model)::bigint FROM classified"
+        );
+        let mut query =
+            query_as::<_, (i64, i64, i64, i64, i64, i64, i64, f64, f64, i64, i64)>(&sql)
+                .bind(start)
+                .bind(end);
+        if let Some(uid) = user_id {
+            query = query.bind(uid);
+        }
+        let row = query.fetch_one(&self.pool).await?;
+        Ok(crate::db::BillingActivitySummary {
+            activity_count: row.0.max(0) as u64,
+            success_count: row.1.max(0) as u64,
+            failed_count: row.2.max(0) as u64,
+            interrupted_count: row.3.max(0) as u64,
+            zero_cost_count: row.4.max(0) as u64,
+            total_tokens: row.5.max(0) as u64,
+            package_units: row.6.max(0) as u64,
+            wallet_amount: Decimal::try_from(row.7).unwrap_or(Decimal::ZERO),
+            priced_cost_amount: Decimal::try_from(row.8).unwrap_or(Decimal::ZERO),
+            api_key_count: row.9.max(0) as u64,
+            model_count: row.10.max(0) as u64,
+        })
+    }
+
+    async fn billing_activity_dimensions(
+        &self,
+        start: &str,
+        end: &str,
+        user_id: Option<&str>,
+    ) -> Result<crate::db::BillingActivityDimensions, DbError> {
+        let predicate = if user_id.is_some() {
+            " AND user_id = $3"
+        } else {
+            ""
+        };
+        let source_expr = "CASE WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN status_code >= 400 OR success = false THEN 'none' WHEN charge_source = 'free_model' THEN 'free_model' WHEN priced_cost_amount = 0 THEN 'free_model' ELSE 'none' END";
+        let filtered = format!(
+            "WITH filtered AS (SELECT COALESCE(api_key_name, '未命名 Key') AS api_key_name, model, package_units, COALESCE(wallet_amount, 0) AS wallet_amount, COALESCE(NULLIF(priced_cost_amount, 0), cost_amount, 0) AS priced_cost_amount, cost_amount, {source_expr} AS charge_source, total_tokens FROM billing_events WHERE timestamp >= $1 AND timestamp < $2{predicate}) "
+        );
+
+        let api_key_sql = format!(
+            "{filtered} SELECT api_key_name, COUNT(*)::bigint, 1::bigint, COUNT(DISTINCT model)::bigint, ARRAY_AGG(DISTINCT model ORDER BY model), ARRAY_AGG(DISTINCT charge_source ORDER BY charge_source), COALESCE(SUM(total_tokens), 0)::bigint, COALESCE(SUM(package_units), 0)::bigint, COALESCE(SUM(wallet_amount), 0), COALESCE(SUM(priced_cost_amount), 0) FROM filtered GROUP BY api_key_name ORDER BY 2 DESC, 1"
+        );
+        let model_sql = format!(
+            "{filtered} SELECT model, COUNT(*)::bigint, COUNT(DISTINCT api_key_name)::bigint, 1::bigint, ARRAY_AGG(DISTINCT api_key_name ORDER BY api_key_name), ARRAY_AGG(DISTINCT charge_source ORDER BY charge_source), COALESCE(SUM(total_tokens), 0)::bigint, COALESCE(SUM(package_units), 0)::bigint, COALESCE(SUM(wallet_amount), 0), COALESCE(SUM(priced_cost_amount), 0) FROM filtered GROUP BY model ORDER BY 2 DESC, 1"
+        );
+        let source_sql = format!(
+            "{filtered} SELECT charge_source, COUNT(*)::bigint, COUNT(DISTINCT api_key_name)::bigint, COUNT(DISTINCT model)::bigint, ARRAY_AGG(DISTINCT api_key_name ORDER BY api_key_name), ARRAY_AGG(DISTINCT model ORDER BY model), COALESCE(SUM(total_tokens), 0)::bigint, COALESCE(SUM(package_units), 0)::bigint, COALESCE(SUM(wallet_amount), 0), COALESCE(SUM(priced_cost_amount), 0) FROM filtered GROUP BY charge_source ORDER BY 2 DESC, 1"
+        );
+
+        type DimensionTuple = (
+            String,
+            i64,
+            i64,
+            i64,
+            Vec<String>,
+            Vec<String>,
+            i64,
+            i64,
+            f64,
+            f64,
+        );
+        async fn fetch_dimension_rows(
+            pool: &PgPool,
+            sql: &str,
+            start: &str,
+            end: &str,
+            user_id: Option<&str>,
+        ) -> Result<Vec<DimensionTuple>, DbError> {
+            let mut statement = query_as::<_, DimensionTuple>(sql).bind(start).bind(end);
+            if let Some(uid) = user_id {
+                statement = statement.bind(uid);
+            }
+            statement.fetch_all(pool).await.map_err(DbError::from)
+        }
+
+        let api_keys = fetch_dimension_rows(&self.pool, &api_key_sql, start, end, user_id).await?;
+        let models = fetch_dimension_rows(&self.pool, &model_sql, start, end, user_id).await?;
+        let sources = fetch_dimension_rows(&self.pool, &source_sql, start, end, user_id).await?;
+        let map_row = |row: DimensionTuple| crate::db::BillingActivityDimensionRow {
+            name: row.0,
+            activity_count: row.1.max(0) as u64,
+            key_count: row.2.max(0) as u64,
+            model_count: row.3.max(0) as u64,
+            related_names: row.4,
+            source_names: row.5,
+            total_tokens: row.6.max(0) as u64,
+            package_units: row.7.max(0) as u64,
+            wallet_amount: Decimal::try_from(row.8).unwrap_or(Decimal::ZERO),
+            priced_cost_amount: Decimal::try_from(row.9).unwrap_or(Decimal::ZERO),
+        };
+
+        Ok(crate::db::BillingActivityDimensions {
+            api_keys: api_keys.into_iter().map(&map_row).collect(),
+            models: models.into_iter().map(&map_row).collect(),
+            sources: sources.into_iter().map(map_row).collect(),
+        })
     }
 
     async fn period_token_breakdown(
@@ -5430,7 +5620,13 @@ impl DbBackend for PgBackend {
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, \
                  $12, $13, $14, $15, $16, $17, $18, $19, $20, \
                  $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31) \
-                 ON CONFLICT (request_id) DO NOTHING",
+                 ON CONFLICT (request_id) DO UPDATE SET \
+                   user_name = COALESCE(NULLIF(EXCLUDED.user_name, ''), billing_events.user_name), \
+                   api_key_name = COALESCE(NULLIF(EXCLUDED.api_key_name, ''), billing_events.api_key_name), \
+                   priced_cost_amount = CASE WHEN billing_events.priced_cost_amount = 0 THEN EXCLUDED.priced_cost_amount ELSE billing_events.priced_cost_amount END \
+                 WHERE (billing_events.user_name IS NULL OR billing_events.user_name = '') \
+                    OR (billing_events.api_key_name IS NULL OR billing_events.api_key_name = '') \
+                    OR billing_events.priced_cost_amount = 0",
             )
             .bind(&record.timestamp)
             .bind(&record.request_id)
@@ -6059,14 +6255,16 @@ impl DbBackend for PgBackend {
         let reservation_id = uuid::Uuid::new_v4().to_string();
         query(
             "INSERT INTO token_request_reservations \
-             (id, request_id, user_id, team_id, account_type, package_grant_id, model, accounting_mode, \
+             (id, request_id, user_id, user_name, api_key_name, team_id, account_type, package_grant_id, model, accounting_mode, \
               reserved_prompt_tokens, reserved_completion_tokens, reserved_package_units, reserved_total_units, reserved_wallet_amount, \
               factor_snapshot, expires_at, created_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)",
         )
         .bind(&reservation_id)
         .bind(&request.request_id)
         .bind(&request.user_id)
+        .bind(&request.user_name)
+        .bind(&request.api_key_name)
         .bind(&request.team_id)
         .bind(if request.team_id.is_some() { "team" } else { "user" })
         .bind(&grant_id)
@@ -6239,13 +6437,20 @@ impl DbBackend for PgBackend {
             "INSERT INTO billing_events (request_id, user_id, user_name, channel_id, model,
              prompt_tokens, completion_tokens, total_tokens, cache_hit_input_tokens,
              cost_amount, success, status_code, timestamp, reservation_id, package_grant_id,
-             accounting_mode, package_units, wallet_amount, team_id, account_type)
-             SELECT r.request_id, r.user_id, u.name, '', r.model,
+             accounting_mode, package_units, wallet_amount, team_id, account_type,
+             api_key_name, activity_status, charge_source, priced_cost_amount)
+             SELECT r.request_id, r.user_id, COALESCE(NULLIF(r.user_name, ''), u.name), '', r.model,
                     COALESCE(r.actual_prompt_tokens, 0), COALESCE(r.actual_completion_tokens, 0),
                     COALESCE(r.actual_prompt_tokens, 0) + COALESCE(r.actual_completion_tokens, 0),
                     COALESCE($1, 0), COALESCE(r.actual_wallet_amount, 0), $2, $3, COALESCE(r.created_at, $4),
                     r.id, r.package_grant_id, r.accounting_mode, COALESCE(r.actual_package_units, 0),
-                    COALESCE(r.actual_wallet_amount, 0), r.team_id, r.account_type
+                    COALESCE(r.actual_wallet_amount, 0), r.team_id, r.account_type, NULLIF(r.api_key_name, ''),
+                    CASE WHEN $3 = 499 THEN 'interrupted' WHEN $3 >= 400 OR $2 = false THEN 'failed' ELSE 'success' END,
+                    CASE WHEN COALESCE(r.actual_package_units, 0) > 0 AND COALESCE(r.actual_wallet_amount, 0) > 0 THEN 'package_and_wallet'
+                         WHEN COALESCE(r.actual_package_units, 0) > 0 THEN 'package'
+                         WHEN COALESCE(r.actual_wallet_amount, 0) > 0 THEN 'wallet'
+                         ELSE 'none' END,
+                    0
              FROM token_request_reservations r JOIN users u ON u.id = r.user_id
              WHERE r.id = $5
              ON CONFLICT (request_id) DO UPDATE SET
@@ -6260,7 +6465,12 @@ impl DbBackend for PgBackend {
                package_grant_id = EXCLUDED.package_grant_id,
                accounting_mode = EXCLUDED.accounting_mode,
                package_units = EXCLUDED.package_units,
-               wallet_amount = EXCLUDED.wallet_amount",
+               wallet_amount = EXCLUDED.wallet_amount,
+               activity_status = EXCLUDED.activity_status,
+               charge_source = EXCLUDED.charge_source,
+               priced_cost_amount = EXCLUDED.priced_cost_amount,
+               user_name = COALESCE(NULLIF(EXCLUDED.user_name, ''), billing_events.user_name),
+               api_key_name = COALESCE(NULLIF(EXCLUDED.api_key_name, ''), billing_events.api_key_name)",
         )
         .bind(settlement.actual_cache_hit_input_tokens as i64)
         .bind(settlement.success)

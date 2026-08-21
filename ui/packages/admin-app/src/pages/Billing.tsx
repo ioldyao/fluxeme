@@ -11,6 +11,7 @@ import { useQuery } from '@tanstack/react-query';
 import { UsageLogDetail } from '@/components/UsageLogDetail';
 import { formatCost, getRecordPricing } from '@fluxeme/shared/src/lib/cost';
 import { parseTimestamp, formatTime } from '@fluxeme/shared/src/lib/date';
+import BillingUserActivityDetail from './BillingUserActivityDetail';
 
 // ── helpers ───────────────────────────────────────
 
@@ -267,7 +268,7 @@ function UserBillingOverview({ onSelectUser }: { onSelectUser: (uid: string) => 
 
 // ── User Billing Detail ───────────────────────────
 
-function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => void }) {
+export function UserBillingDetail({ userId, onBack }: { userId: string; onBack: () => void }) {
   const [searchParams] = useSearchParams();
   const year = parseInt(searchParams.get('year') ?? '', 10) || curYear;
   const month = parseInt(searchParams.get('month') ?? '', 10) || curMonth;
@@ -807,6 +808,6 @@ export default function Billing() {
     setSearchParams({ year: searchParams.get('year') ?? String(curYear), month: searchParams.get('month') ?? String(curMonth) });
   };
 
-  if (userId) return <UserBillingDetail userId={userId} onBack={handleBack} />;
+  if (userId) return <BillingUserActivityDetail userId={userId} onBack={handleBack} />;
   return <UserBillingOverview onSelectUser={handleSelectUser} />;
 }

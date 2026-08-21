@@ -208,6 +208,8 @@ pub async fn reserve(
     db: Arc<Database>,
     request_id: &str,
     user_id: &str,
+    user_name: &str,
+    api_key_name: &str,
     team_id: Option<&str>,
     model: &str,
     body: &Value,
@@ -220,6 +222,8 @@ pub async fn reserve(
     db.reserve_token_request(&TokenReservationRequest {
         request_id: request_id.to_string(),
         user_id: user_id.to_string(),
+        user_name: user_name.to_string(),
+        api_key_name: api_key_name.to_string(),
         team_id: team_id.map(str::to_string),
         model: model.to_string(),
         prompt_tokens: prompt,

@@ -472,6 +472,10 @@ pub(crate) struct PeriodQuery {
     limit: Option<usize>,
     offset: Option<usize>,
     user_id: Option<String>,
+    search: Option<String>,
+    api_key_name: Option<String>,
+    model: Option<String>,
+    charge_source: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -525,6 +529,8 @@ pub(crate) struct BillingApiKeyDetailQuery {
 pub(crate) struct BillingActivityResponse {
     activities: Vec<serde_json::Value>,
     total: usize,
+    summary: crate::db::BillingActivitySummary,
+    dimensions: crate::db::BillingActivityDimensions,
 }
 
 #[derive(Serialize)]
@@ -770,14 +776,36 @@ pub(crate) async fn billing_activities(
             &start,
             &end,
             Some(&session.user_id),
-            q.limit.unwrap_or(50),
+            &crate::db::BillingActivityFilter {
+                search: q.search.clone(),
+                api_key_name: q.api_key_name.clone(),
+                model: q.model.clone(),
+                charge_source: q.charge_source.clone(),
+            },
+            q.limit.unwrap_or(50).min(200),
             q.offset.unwrap_or(0),
         )
         .await
         .map_err(db_err)?;
+    let filter = crate::db::BillingActivityFilter {
+        search: q.search.clone(),
+        api_key_name: q.api_key_name.clone(),
+        model: q.model.clone(),
+        charge_source: q.charge_source.clone(),
+    };
     let total = state
         .db
-        .count_billing_activities(&start, &end, Some(&session.user_id))
+        .count_billing_activities(&start, &end, Some(&session.user_id), &filter)
+        .await
+        .map_err(db_err)?;
+    let summary = state
+        .db
+        .billing_activity_summary(&start, &end, Some(&session.user_id))
+        .await
+        .map_err(db_err)?;
+    let dimensions = state
+        .db
+        .billing_activity_dimensions(&start, &end, Some(&session.user_id))
         .await
         .map_err(db_err)?;
     Ok(Json(BillingActivityResponse { activities: activities.into_iter().map(|a| serde_json::json!({
@@ -788,7 +816,7 @@ pub(crate) async fn billing_activities(
         "package_grant_id": a.package_grant_id, "wallet_amount": a.wallet_amount, "priced_cost_amount": a.priced_cost_amount,
         "charge_source": a.charge_source, "account_type": a.account_type, "team_id": a.team_id, "api_key_name": a.api_key_name,
         "latency_ms": a.latency_ms, "reservation_id": a.reservation_id,
-    })).collect(), total }))
+    })).collect(), total, summary, dimensions }))
 }
 
 pub(crate) async fn billing_period_summary(
@@ -870,16 +898,41 @@ pub(crate) async fn admin_billing_activities(
             &start,
             &end,
             q.user_id.as_deref(),
-            q.limit.unwrap_or(100),
+            &crate::db::BillingActivityFilter {
+                search: q.search.clone(),
+                api_key_name: q.api_key_name.clone(),
+                model: q.model.clone(),
+                charge_source: q.charge_source.clone(),
+            },
+            q.limit.unwrap_or(100).min(200),
             q.offset.unwrap_or(0),
         )
         .await
         .map_err(db_err)?;
+    let filter = crate::db::BillingActivityFilter {
+        search: q.search.clone(),
+        api_key_name: q.api_key_name.clone(),
+        model: q.model.clone(),
+        charge_source: q.charge_source.clone(),
+    };
     let total = state
         .db
-        .count_billing_activities(&start, &end, q.user_id.as_deref())
+        .count_billing_activities(&start, &end, q.user_id.as_deref(), &filter)
         .await
         .map_err(db_err)?;
+    let summary = state
+        .db
+        .billing_activity_summary(&start, &end, q.user_id.as_deref())
+        .await
+        .map_err(db_err)?;
+    let dimensions = match q.user_id.as_deref() {
+        Some(uid) => state
+            .db
+            .billing_activity_dimensions(&start, &end, Some(uid))
+            .await
+            .map_err(db_err)?,
+        None => crate::db::BillingActivityDimensions::default(),
+    };
     Ok(Json(BillingActivityResponse { activities: activities.into_iter().map(|a| serde_json::json!({
         "timestamp": a.timestamp, "request_id": a.request_id, "user_id": a.user_id, "user_name": a.user_name,
         "model": a.model, "channel_id": a.channel_id, "activity_status": a.activity_status, "status_reason": a.status_reason,
@@ -888,7 +941,7 @@ pub(crate) async fn admin_billing_activities(
         "package_units": a.package_units, "package_grant_id": a.package_grant_id, "wallet_amount": a.wallet_amount,
         "priced_cost_amount": a.priced_cost_amount, "charge_source": a.charge_source, "account_type": a.account_type,
         "team_id": a.team_id, "api_key_name": a.api_key_name, "latency_ms": a.latency_ms, "reservation_id": a.reservation_id,
-    })).collect(), total }))
+    })).collect(), total, summary, dimensions }))
 }
 
 pub(crate) async fn admin_billing_period_summary(
