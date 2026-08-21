@@ -77,6 +77,37 @@ pub(crate) async fn create_billing_group(
         .map_err(db_err)
 }
 
+pub(crate) async fn delete_billing_group(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:billing-groups").await?;
+    state
+        .db
+        .delete_billing_group(&id, &session.user_id, "admin requested deletion")
+        .await
+        .map_err(|e| {
+            if e.0.contains("not found") {
+                AdminError::not_found(e.0)
+            } else if e.0.contains("protected")
+                || e.0.contains("already deleted")
+                || e.0.contains("still has")
+                || e.0.contains("active reservation")
+            {
+                AdminError::conflict(e.0)
+            } else {
+                db_err(e)
+            }
+        })?;
+    notify_config_changed(&state).await;
+    state.auth.reload().await;
+    Ok(Json(
+        serde_json::json!({ "id": id, "deleted": true, "status": "inactive" }),
+    ))
+}
+
 pub(crate) async fn set_billing_group_status(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

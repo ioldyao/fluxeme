@@ -78,6 +78,12 @@ pub trait DbBackend: Send + Sync {
         created_by: &str,
     ) -> Result<BillingGroupRow, DbError>;
     async fn set_billing_group_status(&self, id: &str, status: &str) -> Result<(), DbError>;
+    async fn delete_billing_group(
+        &self,
+        id: &str,
+        actor_id: &str,
+        reason: &str,
+    ) -> Result<(), DbError>;
 
     // ── API Key Scopes（Platform API Key） ─────────────────────────────
     async fn add_api_key_scope(

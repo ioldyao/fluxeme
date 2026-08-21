@@ -40,6 +40,10 @@ pub struct BillingGroupRow {
     pub created_by: String,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub deleted_at: Option<String>,
+    #[serde(default)]
+    pub deleted_by: Option<String>,
 }
 
 impl BillingGroupRow {

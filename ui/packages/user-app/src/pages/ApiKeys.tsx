@@ -85,6 +85,7 @@ export default function ApiKeys() {
                     <th className="text-left py-3 px-4">{t('apikey.expires')}</th>
                     <th className="text-right py-3 px-4">费用限制</th>
                     <th className="text-left py-3 px-4">模型限制</th>
+                    <th className="text-left py-3 px-4">计费分组</th>
                     <th className="text-left py-3 px-4">{t('keyScope.scopeLabel')}</th>
                     <th className="text-right py-3 px-4">{t('table.actions')}</th>
                   </tr>
@@ -118,6 +119,13 @@ export default function ApiKeys() {
                       </td>
                       <td className="py-3 px-4 text-xs text-muted-foreground max-w-[150px] truncate">
                         {k.allowed_models && k.allowed_models.length > 0 ? k.allowed_models.join(', ') : '-'}
+                      </td>
+                      <td className="py-3 px-4 text-xs">
+                        {k.billing_group_id ? (
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${k.billing_payment_mode === 'postpaid' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'}`}>
+                            {k.billing_payment_mode === 'postpaid' ? '后付费' : '按量计费'}
+                          </span>
+                        ) : <span className="inline-flex rounded-full bg-red-100 px-2.5 py-1 text-xs font-medium text-red-700 dark:bg-red-950/40 dark:text-red-300">未绑定</span>}
                       </td>
                       <td className="py-3 px-4 text-xs">
                         {k.scopes && k.scopes.length > 0

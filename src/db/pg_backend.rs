@@ -10,7 +10,7 @@ use sqlx_postgres::{PgPool, PgRow, Postgres};
 use crate::config::types::GatewayRuntimeConfig;
 use crate::db::backend::DbBackend;
 use crate::db::{AnnouncementRow, DbError, RechargeKeyRow, WalletTransactionRow};
-use crate::domain::billing_group::{BillingGroupRow, BillingPaymentMode, DEFAULT_BILLING_GROUP_ID};
+use crate::domain::billing_group::{BillingGroupRow, BillingPaymentMode};
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, ModelChannel, Pricing};
 use crate::domain::moderation::ContentFilterRule;
@@ -46,6 +46,8 @@ fn map_billing_group_row(row: &PgRow) -> Result<BillingGroupRow, DbError> {
         created_by: row.try_get(5)?,
         created_at: row.try_get(6)?,
         updated_at: row.try_get(7)?,
+        deleted_at: row.try_get(8).ok(),
+        deleted_by: row.try_get(9).ok(),
     })
 }
 
@@ -623,7 +625,11 @@ impl DbBackend for PgBackend {
         add_col!(
             "CREATE INDEX IF NOT EXISTS idx_api_keys_billing_group ON api_keys(billing_group_id)"
         );
+        add_col!("ALTER TABLE billing_groups ADD COLUMN IF NOT EXISTS deleted_at TEXT");
+        add_col!("ALTER TABLE billing_groups ADD COLUMN IF NOT EXISTS deleted_by TEXT");
+        add_col!("ALTER TABLE billing_groups ADD COLUMN IF NOT EXISTS deletion_reason TEXT");
         add_col!("CREATE INDEX IF NOT EXISTS idx_billing_groups_status ON billing_groups(status, is_default)");
+        add_col!("CREATE INDEX IF NOT EXISTS idx_token_reservations_group_state ON token_request_reservations(billing_group_id, state)");
 
         // Indexes
         macro_rules! add_idx {
@@ -1777,11 +1783,11 @@ impl DbBackend for PgBackend {
         active_only: bool,
     ) -> Result<Vec<BillingGroupRow>, DbError> {
         let rows = if active_only {
-            query("SELECT id, name, payment_mode, status, is_default, created_by, created_at, updated_at FROM billing_groups WHERE status = 'active' ORDER BY is_default DESC, name, id")
+            query("SELECT id, name, payment_mode, status, is_default, created_by, created_at, updated_at, deleted_at, deleted_by FROM billing_groups WHERE status = 'active' ORDER BY is_default DESC, name, id")
                 .fetch_all(&self.pool)
                 .await?
         } else {
-            query("SELECT id, name, payment_mode, status, is_default, created_by, created_at, updated_at FROM billing_groups ORDER BY is_default DESC, name, id")
+            query("SELECT id, name, payment_mode, status, is_default, created_by, created_at, updated_at, deleted_at, deleted_by FROM billing_groups ORDER BY is_default DESC, name, id")
                 .fetch_all(&self.pool)
                 .await?
         };
@@ -1789,7 +1795,7 @@ impl DbBackend for PgBackend {
     }
 
     async fn get_billing_group(&self, id: &str) -> Result<Option<BillingGroupRow>, DbError> {
-        let row = query("SELECT id, name, payment_mode, status, is_default, created_by, created_at, updated_at FROM billing_groups WHERE id = $1")
+        let row = query("SELECT id, name, payment_mode, status, is_default, created_by, created_at, updated_at, deleted_at, deleted_by FROM billing_groups WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pool)
             .await?;
@@ -1804,7 +1810,7 @@ impl DbBackend for PgBackend {
         created_by: &str,
     ) -> Result<BillingGroupRow, DbError> {
         let now = chrono::Utc::now().to_rfc3339();
-        let row = query("INSERT INTO billing_groups (id, name, payment_mode, status, is_default, created_by, created_at, updated_at) VALUES ($1, $2, $3, 'active', false, $4, $5, $5) RETURNING id, name, payment_mode, status, is_default, created_by, created_at, updated_at")
+        let row = query("INSERT INTO billing_groups (id, name, payment_mode, status, is_default, created_by, created_at, updated_at) VALUES ($1, $2, $3, 'active', false, $4, $5, $5) RETURNING id, name, payment_mode, status, is_default, created_by, created_at, updated_at, deleted_at, deleted_by")
             .bind(id)
             .bind(name)
             .bind(payment_mode.as_str())
@@ -1819,7 +1825,7 @@ impl DbBackend for PgBackend {
         if !matches!(status, "active" | "inactive") {
             return Err(DbError("invalid billing group status".to_string()));
         }
-        let result = query("UPDATE billing_groups SET status = $1, updated_at = $2 WHERE id = $3 AND is_default = false")
+        let result = query("UPDATE billing_groups SET status = $1, updated_at = $2 WHERE id = $3 AND is_default = false AND deleted_at IS NULL")
             .bind(status)
             .bind(chrono::Utc::now().to_rfc3339())
             .bind(id)
@@ -1828,6 +1834,59 @@ impl DbBackend for PgBackend {
         if result.rows_affected() == 0 {
             return Err(DbError("billing group not found or protected".to_string()));
         }
+        Ok(())
+    }
+
+    async fn delete_billing_group(
+        &self,
+        id: &str,
+        actor_id: &str,
+        reason: &str,
+    ) -> Result<(), DbError> {
+        let mut tx = self.pool.begin().await?;
+        let row =
+            query("SELECT is_default, deleted_at FROM billing_groups WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or_else(|| DbError("billing group not found".to_string()))?;
+        if row.try_get::<bool, _>(0)? {
+            return Err(DbError("billing group protected".to_string()));
+        }
+        if row.try_get::<Option<String>, _>(1)?.is_some() {
+            return Err(DbError("billing group already deleted".to_string()));
+        }
+        // Deleting a group immediately unbinds every API key from it. The key
+        // remains present for audit/UI purposes, but its null billing group
+        // makes subsequent reservations fail closed until an administrator
+        // explicitly assigns a new active group.
+        let key_count: i64 =
+            query_scalar("SELECT COUNT(*) FROM api_keys WHERE billing_group_id = $1")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+        query("UPDATE api_keys SET billing_group_id = NULL, billing_payment_mode = NULL WHERE billing_group_id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        let reservation_count: i64 = query_scalar("SELECT COUNT(*) FROM token_request_reservations WHERE billing_group_id = $1 AND state = 'reserved'")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+        let now = chrono::Utc::now().to_rfc3339();
+        query("UPDATE billing_groups SET status = 'inactive', deleted_at = $1, deleted_by = $2, deletion_reason = $3, updated_at = $1 WHERE id = $4 AND is_default = false AND deleted_at IS NULL")
+            .bind(&now)
+            .bind(actor_id)
+            .bind(reason)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        query("CREATE TABLE IF NOT EXISTS billing_group_audit_log (id TEXT PRIMARY KEY, billing_group_id TEXT NOT NULL, action TEXT NOT NULL, actor_id TEXT NOT NULL, occurred_at TEXT NOT NULL, reason TEXT NOT NULL, affected_api_key_count BIGINT NOT NULL, affected_reservation_count BIGINT NOT NULL)")
+            .execute(&mut *tx).await?;
+        query("INSERT INTO billing_group_audit_log (id, billing_group_id, action, actor_id, occurred_at, reason, affected_api_key_count, affected_reservation_count) VALUES ($1,$2,'delete',$3,$4,$5,$6,$7)")
+            .bind(uuid::Uuid::new_v4().to_string()).bind(id).bind(actor_id).bind(&now).bind(reason).bind(key_count).bind(reservation_count)
+            .execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -1860,9 +1919,7 @@ impl DbBackend for PgBackend {
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                     team_id: r.get(7),
                     scopes: None,
-                    billing_group_id: r
-                        .get::<Option<String>, _>(8)
-                        .unwrap_or_else(|| DEFAULT_BILLING_GROUP_ID.to_string()),
+                    billing_group_id: r.get::<Option<String>, _>(8).unwrap_or_default(),
                     billing_payment_mode: r
                         .get::<Option<String>, _>(9)
                         .and_then(|v| v.parse().ok())
@@ -1960,9 +2017,7 @@ impl DbBackend for PgBackend {
                     .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                 team_id: r.get(18),
                 scopes: None,
-                billing_group_id: r
-                    .get::<Option<String>, _>(19)
-                    .unwrap_or_else(|| DEFAULT_BILLING_GROUP_ID.to_string()),
+                billing_group_id: r.get::<Option<String>, _>(19).unwrap_or_default(),
                 billing_payment_mode: r
                     .get::<Option<String>, _>(20)
                     .and_then(|v| v.parse().ok())
@@ -2025,9 +2080,7 @@ impl DbBackend for PgBackend {
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                     team_id: r.get(18),
                     scopes: None,
-                    billing_group_id: r
-                        .get::<Option<String>, _>(19)
-                        .unwrap_or_else(|| DEFAULT_BILLING_GROUP_ID.to_string()),
+                    billing_group_id: r.get::<Option<String>, _>(19).unwrap_or_default(),
                     billing_payment_mode: r
                         .get::<Option<String>, _>(20)
                         .and_then(|v| v.parse().ok())
@@ -7275,9 +7328,7 @@ impl DbBackend for PgBackend {
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                     team_id: r.get(7),
                     scopes: None,
-                    billing_group_id: r
-                        .get::<Option<String>, _>(8)
-                        .unwrap_or_else(|| DEFAULT_BILLING_GROUP_ID.to_string()),
+                    billing_group_id: r.get::<Option<String>, _>(8).unwrap_or_default(),
                     billing_payment_mode: r
                         .get::<Option<String>, _>(9)
                         .and_then(|v| v.parse().ok())

@@ -354,6 +354,16 @@ impl Database {
     pub async fn set_billing_group_status(&self, id: &str, status: &str) -> Result<(), DbError> {
         self.backend.set_billing_group_status(id, status).await
     }
+    pub async fn delete_billing_group(
+        &self,
+        id: &str,
+        actor_id: &str,
+        reason: &str,
+    ) -> Result<(), DbError> {
+        self.backend
+            .delete_billing_group(id, actor_id, reason)
+            .await
+    }
 
     // ── API Key Scopes（Platform API Key：访问范围 = 资源类型） ──────────
     // 语义：key 创建时勾选可访问的资源类型（model / skill / mcp），

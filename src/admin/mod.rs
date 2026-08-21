@@ -442,6 +442,7 @@ pub enum AdminError {
     NotFound(String),
     Internal(String),
     BadRequest(String),
+    Conflict(String),
     TooManyRequests(String),
 }
 
@@ -461,6 +462,9 @@ impl AdminError {
     pub(crate) fn internal(msg: impl Into<String>) -> Self {
         AdminError::Internal(msg.into())
     }
+    pub(crate) fn conflict(msg: impl Into<String>) -> Self {
+        AdminError::Conflict(msg.into())
+    }
     fn too_many_requests(msg: impl Into<String>) -> Self {
         AdminError::TooManyRequests(msg.into())
     }
@@ -477,6 +481,7 @@ impl IntoResponse for AdminError {
                 "Internal server error".to_string(),
             ),
             AdminError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+            AdminError::Conflict(msg) => (StatusCode::CONFLICT, msg),
             AdminError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, msg),
         };
         let body = serde_json::json!({
@@ -849,7 +854,8 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         )
         .route(
             "/api/admin/billing-groups/{id}",
-            axum::routing::patch(billing_groups::set_billing_group_status),
+            axum::routing::patch(billing_groups::set_billing_group_status)
+                .delete(billing_groups::delete_billing_group),
         )
         .route(
             "/api/billing-groups/active",

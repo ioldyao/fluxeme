@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Plus, RefreshCw, Power } from 'lucide-react';
+import { Plus, RefreshCw, Power, Trash2 } from 'lucide-react';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { api } from '@fluxeme/shared/src/api/client';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
 import { Button } from '@fluxeme/shared/src/components/ui/button';
@@ -19,6 +20,8 @@ type BillingGroup = {
   created_by: string;
   created_at: string;
   updated_at: string;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
 };
 
 const modeLabel = (mode: PaymentMode): string => mode === 'postpaid' ? '后付费' : '按量计费';
@@ -28,6 +31,7 @@ export default function BillingGroups() {
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [mode, setMode] = useState<PaymentMode>('prepaid');
+  const [deleteTarget, setDeleteTarget] = useState<BillingGroup | null>(null);
   const groups = useQuery({
     queryKey: ['admin', 'billing-groups'],
     queryFn: () => api<BillingGroup[]>('/admin/billing-groups'),
@@ -45,6 +49,16 @@ export default function BillingGroups() {
       toast.success('计费分组已创建');
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : '创建计费分组失败'),
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api(`/admin/billing-groups/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      setDeleteTarget(null);
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'billing-groups'] });
+      void queryClient.invalidateQueries({ queryKey: ['billing-groups', 'active'] });
+      toast.success('计费分组已删除');
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : '删除计费分组失败'),
   });
   const toggle = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) => api(`/admin/billing-groups/${id}`, {
@@ -77,9 +91,17 @@ export default function BillingGroups() {
       </Card>
       <Card>
         <CardContent className="p-0">
-          {groups.isLoading ? <div className="p-10 text-center text-sm text-muted-foreground">正在加载计费分组…</div> : groups.isError ? <div className="p-10 text-center text-sm text-destructive">计费分组加载失败</div> : groups.data?.length ? <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-sm"><thead><tr className="border-b text-left text-xs text-muted-foreground"><th className="px-5 py-3">分组名称</th><th className="px-5 py-3">计费模式</th><th className="px-5 py-3">状态</th><th className="px-5 py-3">默认分组</th><th className="px-5 py-3">创建时间</th><th className="px-5 py-3 text-right">操作</th></tr></thead><tbody>{groups.data.map((group) => <tr key={group.id} className="border-b last:border-0"><td className="px-5 py-4"><div className="font-medium">{group.name}</div><div className="mt-1 font-mono text-[11px] text-muted-foreground">{group.id}</div></td><td className="px-5 py-4"><span className={`rounded-full px-2 py-1 text-xs ${group.payment_mode === 'postpaid' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{modeLabel(group.payment_mode)}</span><div className="mt-1 text-xs text-muted-foreground">{group.payment_mode === 'postpaid' ? '记录 Token 与理论成本，不扣钱包' : '资源包优先，钱包实时结算'}</div></td><td className="px-5 py-4">{statusLabel(group.status)}</td><td className="px-5 py-4">{group.is_default ? '是' : '否'}</td><td className="px-5 py-4 text-xs text-muted-foreground">{new Date(group.created_at).toLocaleString('zh-CN')}</td><td className="px-5 py-4 text-right">{!group.is_default && <Button variant="outline" size="sm" onClick={() => toggle.mutate({ id: group.id, status: group.status === 'active' ? 'inactive' : 'active' })} disabled={toggle.isPending}><Power className="mr-1 size-3.5" />{group.status === 'active' ? '停用' : '启用'}</Button>}</td></tr>)}</tbody></table></div> : <div className="p-10 text-center text-sm text-muted-foreground">暂无计费分组</div>}
+          {groups.isLoading ? <div className="p-10 text-center text-sm text-muted-foreground">正在加载计费分组…</div> : groups.isError ? <div className="p-10 text-center text-sm text-destructive">计费分组加载失败</div> : groups.data?.length ? <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-sm"><thead><tr className="border-b text-left text-xs text-muted-foreground"><th className="px-5 py-3">分组名称</th><th className="px-5 py-3">计费模式</th><th className="px-5 py-3">状态</th><th className="px-5 py-3">默认分组</th><th className="px-5 py-3">创建时间</th><th className="px-5 py-3 text-right">操作</th></tr></thead><tbody>{groups.data.map((group) => <tr key={group.id} className="border-b last:border-0"><td className="px-5 py-4"><div className="font-medium">{group.name}</div><div className="mt-1 font-mono text-[11px] text-muted-foreground">{group.id}</div></td><td className="px-5 py-4"><span className={`rounded-full px-2 py-1 text-xs ${group.payment_mode === 'postpaid' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{modeLabel(group.payment_mode)}</span><div className="mt-1 text-xs text-muted-foreground">{group.payment_mode === 'postpaid' ? '记录 Token 与理论成本，不扣钱包' : '资源包优先，钱包实时结算'}</div></td><td className="px-5 py-4">{group.deleted_at ? '已删除' : statusLabel(group.status)}</td><td className="px-5 py-4">{group.is_default ? '是' : '否'}</td><td className="px-5 py-4 text-xs text-muted-foreground">{new Date(group.created_at).toLocaleString('zh-CN')}</td><td className="px-5 py-4 text-right"><div className="flex justify-end gap-2">{!group.is_default && !group.deleted_at && <Button variant="outline" size="sm" onClick={() => toggle.mutate({ id: group.id, status: group.status === 'active' ? 'inactive' : 'active' })} disabled={toggle.isPending || remove.isPending}><Power className="mr-1 size-3.5" />{group.status === 'active' ? '停用' : '启用'}</Button>}{!group.is_default && !group.deleted_at && <Button variant="destructive" size="sm" onClick={() => setDeleteTarget(group)} disabled={remove.isPending}><Trash2 className="mr-1 size-3.5" />删除</Button>}</div></td></tr>)}</tbody></table></div> : <div className="p-10 text-center text-sm text-muted-foreground">暂无计费分组</div>}
         </CardContent>
       </Card>
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => { if (!open && !remove.isPending) setDeleteTarget(null); }}
+        title="删除计费分组？"
+        description={deleteTarget ? `“${deleteTarget.name}”删除后不可恢复。历史账单会保留；仍被 API Key 使用或存在进行中请求时，删除会被拒绝。` : ''}
+        onConfirm={async () => { if (deleteTarget) await remove.mutateAsync(deleteTarget.id); }}
+        isPending={remove.isPending}
+      />
     </div>
   );
 }
