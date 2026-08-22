@@ -229,13 +229,6 @@ pub(crate) async fn create_my_key(
         .map_err(db_err)?
         .filter(|group| group.is_active())
         .ok_or_else(|| AdminError::bad_request("Billing group is not active"))?;
-    if billing_group.payment_mode == crate::domain::billing_group::BillingPaymentMode::Postpaid
-        && !billing_group.is_default
-    {
-        return Err(AdminError::forbidden(
-            "Only the default billing group may be selected for postpaid keys",
-        ));
-    }
 
     let key_value = format!("sk-{}", uuid::Uuid::new_v4());
     let ak = ApiKey {
@@ -323,13 +316,6 @@ pub(crate) async fn update_my_key(
             .map_err(db_err)?
             .ok_or_else(|| AdminError::bad_request("Billing group not found"))?
     };
-    if billing_group.payment_mode == crate::domain::billing_group::BillingPaymentMode::Postpaid
-        && !billing_group.is_default
-    {
-        return Err(AdminError::forbidden(
-            "Only the default billing group may be selected for postpaid keys",
-        ));
-    }
 
     let ak = ApiKey {
         key: key_val.clone(),
@@ -592,13 +578,6 @@ pub(crate) async fn create_my_team_api_key(
         .map_err(db_err)?
         .filter(|group| group.is_active())
         .ok_or_else(|| AdminError::bad_request("Billing group is not active"))?;
-    if billing_group.payment_mode == crate::domain::billing_group::BillingPaymentMode::Postpaid
-        && !billing_group.is_default
-    {
-        return Err(AdminError::forbidden(
-            "Only the default billing group may be selected for postpaid keys",
-        ));
-    }
     let key_value = format!("sk-{}", uuid::Uuid::new_v4());
     let ak = ApiKey {
         key: key_value.clone(),

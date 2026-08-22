@@ -43,8 +43,13 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
   }
 
   if (response.status === 403) {
-    toast.error(i18n.t('err.accessDenied'));
-    throw new Error('forbidden');
+    const data = await response.json().catch(() => ({}));
+    const message =
+      typeof data.error === 'string'
+        ? data.error
+        : data.error?.message || data.message || i18n.t('err.accessDenied');
+    toast.error(message);
+    throw new Error(message);
   }
 
   if (!response.ok) {

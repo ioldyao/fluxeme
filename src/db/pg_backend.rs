@@ -6560,7 +6560,7 @@ impl DbBackend for PgBackend {
              (id, request_id, request_fingerprint, user_id, user_name, api_key_name, team_id, account_type, package_grant_id, model, accounting_mode, \
               reserved_prompt_tokens, reserved_completion_tokens, reserved_package_units, reserved_total_units, reserved_wallet_amount, \
               factor_snapshot, prompt_price, completion_price, cache_read_price, cache_write_price, estimated_priced_cost_amount, billing_group_id, billing_group_name, billing_payment_mode, expires_at, created_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)",
 
         )
         .bind(&reservation_id)
@@ -6584,6 +6584,10 @@ impl DbBackend for PgBackend {
             "output_factor": output_factor,
             "cache_factor": cache_factor,
         }).to_string())
+        .bind(request.prompt_price.to_f64().unwrap_or(0.0))
+        .bind(request.completion_price.to_f64().unwrap_or(0.0))
+        .bind(request.cache_read_price.to_f64().unwrap_or(0.0))
+        .bind(request.cache_write_price.to_f64().unwrap_or(0.0))
         .bind(request.estimated_priced_cost_amount.to_f64().unwrap_or(0.0))
         .bind(&request.billing_group_id)
         .bind(&request.billing_group_name)
