@@ -1000,6 +1000,7 @@ impl DbBackend for PgBackend {
                 reserved_wallet_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
                 actual_prompt_tokens BIGINT,
                 actual_completion_tokens BIGINT,
+                actual_cache_write_tokens BIGINT,
                 actual_package_units BIGINT,
                 actual_wallet_amount DOUBLE PRECISION,
                 factor_snapshot TEXT NOT NULL DEFAULT '{}',
@@ -1061,6 +1062,7 @@ impl DbBackend for PgBackend {
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_prompt_tokens BIGINT NOT NULL DEFAULT 0",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_completion_tokens BIGINT NOT NULL DEFAULT 0",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_total_units BIGINT NOT NULL DEFAULT 0",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS actual_cache_write_tokens BIGINT",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_group_id TEXT NOT NULL DEFAULT 'billing-group-default-prepaid'",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_group_name TEXT NOT NULL DEFAULT '默认按量计费'",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT NOT NULL DEFAULT 'prepaid'",
@@ -5849,14 +5851,14 @@ impl DbBackend for PgBackend {
             let billing_inserted = query(
                 "INSERT INTO billing_events (\
                  timestamp, request_id, user_id, user_name, channel_id, model, \
-                 prompt_tokens, completion_tokens, total_tokens, latency_ms, cache_hit_input_tokens, \
+                 prompt_tokens, completion_tokens, total_tokens, latency_ms, cache_hit_input_tokens, cache_write_tokens, \
                  prompt_price, completion_price, cache_read_price, cost_amount, \
                  api_key_name, api_format, stream, client_ip, endpoint_id, \
                  request_body, response_body, reasoning_body, original_model, \
                  success, status_code, team_id, account_type, activity_status, charge_source, priced_cost_amount) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, \
-                 $12, $13, $14, $15, $16, $17, $18, $19, $20, \
-                 $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
+                 $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, \
+                 $23, $24, $25, $26, $27, $28, $29, $30, $31, $32) \
                  ON CONFLICT (request_id) DO NOTHING",
             )
             .bind(&record.timestamp)
@@ -5870,6 +5872,7 @@ impl DbBackend for PgBackend {
             .bind(record.total_tokens as i64)
             .bind(record.latency_ms as i64)
             .bind(record.cache_hit_input_tokens as i64)
+            .bind(record.cache_write_tokens as i64)
             .bind(prompt_price)
             .bind(completion_price)
             .bind(cache_read_price)
@@ -5908,8 +5911,18 @@ impl DbBackend for PgBackend {
                 .bind(cost_amount)
                 .bind(&record.request_id)
                 .execute(&mut *tx)
+                // A reservation-backed record must continue into the metadata
+                // reconciliation below; non-reservation replays must not charge again.
                 .await?;
-                continue;
+                let has_reservation: bool = query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM token_request_reservations WHERE request_id = $1)",
+                )
+                .bind(&record.request_id)
+                .fetch_one(&mut *tx)
+                .await?;
+                if !has_reservation {
+                    continue;
+                }
             }
 
             // Requests using reserve+settle already performed their authoritative
@@ -5939,11 +5952,16 @@ impl DbBackend for PgBackend {
                          billing_group_id = COALESCE(NULLIF(r.billing_group_id, ''), be.billing_group_id),
                          billing_group_name = COALESCE(NULLIF(r.billing_group_name, ''), be.billing_group_name),
                          billing_payment_mode = COALESCE(NULLIF(r.billing_payment_mode, ''), be.billing_payment_mode),
+                         prompt_price = r.prompt_price,
+                         completion_price = r.completion_price,
+                         cache_read_price = r.cache_read_price,
+                         stream = $2,
                          priced_cost_amount = COALESCE(NULLIF(be.priced_cost_amount, 0), r.estimated_priced_cost_amount, be.cost_amount)
                      FROM token_request_reservations r
                      WHERE be.request_id = r.request_id AND be.request_id = $1",
                 )
                 .bind(&record.request_id)
+                .bind(record.stream)
                 .execute(&mut *tx)
                 .await?;
                 continue;
@@ -6623,7 +6641,7 @@ impl DbBackend for PgBackend {
         settlement: &crate::domain::token_package::TokenSettlementRequest,
     ) -> Result<(), DbError> {
         let mut tx = self.pool.begin().await?;
-        let row = query("SELECT state, package_grant_id, reserved_package_units, reserved_total_units, reserved_prompt_tokens, reserved_completion_tokens, user_id, team_id, reserved_wallet_amount, accounting_mode, factor_snapshot, billing_payment_mode, billing_group_id, billing_group_name, request_id FROM token_request_reservations WHERE id = $1 FOR UPDATE")
+        let row = query("SELECT state, package_grant_id, reserved_package_units, reserved_total_units, reserved_prompt_tokens, reserved_completion_tokens, user_id, team_id, reserved_wallet_amount, accounting_mode, factor_snapshot, billing_payment_mode, billing_group_id, billing_group_name, request_id, prompt_price, completion_price, cache_read_price, cache_write_price FROM token_request_reservations WHERE id = $1 FOR UPDATE")
             .bind(&settlement.reservation_id)
             .fetch_optional(&mut *tx)
             .await?
@@ -6638,6 +6656,10 @@ impl DbBackend for PgBackend {
         let team_id = row.try_get::<Option<String>, _>(7)?;
         let reserved_wallet = row.try_get::<f64, _>(8)?;
         let request_id = row.try_get::<String, _>(14)?;
+        let prompt_price = row.try_get::<f64, _>(15)?;
+        let completion_price = row.try_get::<f64, _>(16)?;
+        let cache_read_price = row.try_get::<f64, _>(17)?;
+        let cache_write_price = row.try_get::<f64, _>(18)?;
         let billing_payment_mode = row
             .try_get::<String, _>(11)
             .ok()
@@ -6751,9 +6773,10 @@ impl DbBackend for PgBackend {
                     .bind("Token package wallet fallback").bind(&now).execute(&mut *tx).await?;
             }
         }
-        query("UPDATE token_request_reservations SET actual_prompt_tokens = $1, actual_completion_tokens = $2, actual_package_units = $3, actual_wallet_amount = $4, state = $5, reason = $6, settled_at = $7 WHERE id = $8")
+        query("UPDATE token_request_reservations SET actual_prompt_tokens = $1, actual_completion_tokens = $2, actual_cache_write_tokens = $3, actual_package_units = $4, actual_wallet_amount = $5, state = $6, reason = $7, settled_at = $8 WHERE id = $9")
             .bind(settlement.actual_prompt_tokens as i64)
             .bind(settlement.actual_completion_tokens as i64)
+            .bind(settlement.actual_cache_write_tokens as i64)
             .bind(consumed as i64)
             .bind(wallet_amount)
             .bind(if actual_units > 0 { "settled" } else { "released" })
@@ -6764,7 +6787,8 @@ impl DbBackend for PgBackend {
             .await?;
         query(
             "INSERT INTO billing_events (request_id, user_id, user_name, channel_id, model,
-             prompt_tokens, completion_tokens, total_tokens, cache_hit_input_tokens,
+             prompt_tokens, completion_tokens, total_tokens, cache_hit_input_tokens, cache_write_tokens,
+             prompt_price, completion_price, cache_read_price,
              cost_amount, success, status_code, timestamp, reservation_id, package_grant_id,
              accounting_mode, package_units, wallet_amount, team_id, account_type,
              api_key_name, billing_group_id, billing_group_name, billing_payment_mode,
@@ -6772,7 +6796,9 @@ impl DbBackend for PgBackend {
              SELECT r.request_id, r.user_id, COALESCE(NULLIF(r.user_name, ''), u.name), '', r.model,
                     COALESCE(r.actual_prompt_tokens, 0), COALESCE(r.actual_completion_tokens, 0),
                     COALESCE(r.actual_prompt_tokens, 0) + COALESCE(r.actual_completion_tokens, 0),
-                    COALESCE($1, 0), COALESCE(r.actual_wallet_amount, 0), $2, $3, COALESCE(r.created_at, $4),
+                    COALESCE($1, 0), COALESCE(r.actual_cache_write_tokens, 0), r.prompt_price,
+                    r.completion_price, r.cache_read_price,
+                    COALESCE(r.actual_wallet_amount, 0), $2, $3, COALESCE(r.created_at, $4),
                     r.id, r.package_grant_id, r.accounting_mode, COALESCE(r.actual_package_units, 0),
                     COALESCE(r.actual_wallet_amount, 0), r.team_id, r.account_type, NULLIF(r.api_key_name, ''),
                     r.billing_group_id, r.billing_group_name, r.billing_payment_mode,
@@ -6783,7 +6809,10 @@ impl DbBackend for PgBackend {
                          WHEN COALESCE(r.actual_package_units, 0) > 0 THEN 'package'
                          WHEN COALESCE(r.actual_wallet_amount, 0) > 0 THEN 'wallet'
                          ELSE 'none' END,
-                    COALESCE(r.estimated_priced_cost_amount, 0)
+                    (COALESCE(r.actual_prompt_tokens, 0) * r.prompt_price
+                       + COALESCE(r.actual_completion_tokens, 0) * r.completion_price
+                       + COALESCE($1, 0) * r.cache_read_price
+                       + COALESCE(r.actual_cache_write_tokens, 0) * r.cache_write_price) / 1000000.0
              FROM token_request_reservations r JOIN users u ON u.id = r.user_id
              WHERE r.id = $5
              ON CONFLICT (request_id) DO UPDATE SET
@@ -6791,6 +6820,10 @@ impl DbBackend for PgBackend {
                completion_tokens = EXCLUDED.completion_tokens,
                total_tokens = EXCLUDED.total_tokens,
                cache_hit_input_tokens = EXCLUDED.cache_hit_input_tokens,
+               cache_write_tokens = EXCLUDED.cache_write_tokens,
+               prompt_price = EXCLUDED.prompt_price,
+               completion_price = EXCLUDED.completion_price,
+               cache_read_price = EXCLUDED.cache_read_price,
                cost_amount = EXCLUDED.cost_amount,
                success = EXCLUDED.success,
                status_code = EXCLUDED.status_code,
