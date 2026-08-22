@@ -525,10 +525,6 @@ pub async fn start_obs_consumer(
                 .await
                 .ok()
                 .flatten();
-            let package_covered = package_billing
-                .as_ref()
-                .map(|(covered, _, _, _, _)| *covered)
-                .unwrap_or(false);
             let billing_payment_mode = package_billing
                 .as_ref()
                 .map(|(_, _, mode, _, _)| mode.as_str())
@@ -574,26 +570,13 @@ pub async fn start_obs_consumer(
                 stream: if r.stream { 1 } else { 0 },
                 cache_hit_input_tokens: r.cache_hit_input_tokens,
                 cache_write_tokens: r.cache_write_tokens,
-                prompt_price: if package_covered {
-                    0.0
-                } else {
-                    prompt_price.to_f64().unwrap_or(0.0)
-                },
-                completion_price: if package_covered {
-                    0.0
-                } else {
-                    completion_price.to_f64().unwrap_or(0.0)
-                },
-                cache_read_price: if package_covered {
-                    0.0
-                } else {
-                    cache_read_price.to_f64().unwrap_or(0.0)
-                },
-                cache_write_price: if package_covered {
-                    0.0
-                } else {
-                    cache_write_price.to_f64().unwrap_or(0.0)
-                },
+                // ClickHouse stores the request-time historical price snapshot
+                // for theoretical-cost display. Package coverage affects the
+                // wallet amount only; it must not erase the usage price snapshot.
+                prompt_price: prompt_price.to_f64().unwrap_or(0.0),
+                completion_price: completion_price.to_f64().unwrap_or(0.0),
+                cache_read_price: cache_read_price.to_f64().unwrap_or(0.0),
+                cache_write_price: cache_write_price.to_f64().unwrap_or(0.0),
                 cost_amount,
                 client_ip: r.client_ip.clone(),
                 endpoint_id: r.endpoint_id,

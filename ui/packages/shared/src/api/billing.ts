@@ -127,6 +127,9 @@ export interface PeriodSummary {
   total_requests: number;
   request_count: number;
   total_tokens: number;
+  success_count: number;
+  failure_count: number;
+  interrupted_count: number;
   by_model: { model: string; cost: number; priced_cost_amount?: number; percentage: number }[];
   by_channel: { channel: string; name: string; cost: number; percentage: number }[];
   token_cost_breakdown: { token_type: string; total_tokens: number; total_cost: number; percentage: number }[];

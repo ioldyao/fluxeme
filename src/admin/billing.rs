@@ -635,6 +635,9 @@ pub(crate) struct PeriodSummary {
     total_requests: u64,
     request_count: u64,
     total_tokens: u64,
+    success_count: u64,
+    failure_count: u64,
+    interrupted_count: u64,
     by_model: Vec<ModelCostShare>,
     by_channel: Vec<ChannelCostShare>,
     token_cost_breakdown: Vec<TokenCostBreakdownRow>,
@@ -848,6 +851,12 @@ pub(crate) async fn billing_period_summary(
         .period_wallet_amount(year, month, Some(uid))
         .await
         .map_err(db_err)?;
+    let (start, end) = month_bounds(year, month);
+    let activity_summary = state
+        .db
+        .billing_activity_summary(&start, &end, Some(uid))
+        .await
+        .map_err(db_err)?;
     let token_cost_breakdown = map_token_cost_breakdown(
         state
             .db
@@ -884,6 +893,9 @@ pub(crate) async fn billing_period_summary(
         total_requests,
         request_count: total_requests,
         total_tokens,
+        success_count: activity_summary.success_count,
+        failure_count: activity_summary.failed_count,
+        interrupted_count: activity_summary.interrupted_count,
         by_model,
         by_channel,
         token_cost_breakdown,
@@ -1011,6 +1023,12 @@ pub(crate) async fn admin_billing_period_summary(
         .period_wallet_amount(year, month, None)
         .await
         .map_err(db_err)?;
+    let (start, end) = month_bounds(year, month);
+    let activity_summary = state
+        .db
+        .billing_activity_summary(&start, &end, None)
+        .await
+        .map_err(db_err)?;
 
     Ok(Json(PeriodSummary {
         year,
@@ -1021,6 +1039,9 @@ pub(crate) async fn admin_billing_period_summary(
         total_requests,
         request_count: total_requests,
         total_tokens,
+        success_count: activity_summary.success_count,
+        failure_count: activity_summary.failed_count,
+        interrupted_count: activity_summary.interrupted_count,
         by_model,
         by_channel,
         token_cost_breakdown,
@@ -1055,6 +1076,12 @@ pub(crate) async fn admin_billing_scoped_period_summary(
     let wallet_amount = state
         .db
         .period_wallet_amount(year, month, q.user_id.as_deref())
+        .await
+        .map_err(db_err)?;
+    let (start, end) = month_bounds(year, month);
+    let activity_summary = state
+        .db
+        .billing_activity_summary(&start, &end, q.user_id.as_deref())
         .await
         .map_err(db_err)?;
 
@@ -1095,6 +1122,9 @@ pub(crate) async fn admin_billing_scoped_period_summary(
         total_requests,
         request_count: total_requests,
         total_tokens,
+        success_count: activity_summary.success_count,
+        failure_count: activity_summary.failed_count,
+        interrupted_count: activity_summary.interrupted_count,
         by_model,
         by_channel,
         token_cost_breakdown,
