@@ -87,6 +87,194 @@ impl TokenUsage {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct PriceSnapshot {
+    pub prompt: Decimal,
+    pub completion: Decimal,
+    pub cache_read: Decimal,
+    pub cache_write: Decimal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SettlementBreakdown {
+    pub actual_units: u64,
+    pub package_units: u64,
+    pub actual_priced_cost: Decimal,
+    pub package_priced_cost: Decimal,
+    pub wallet_amount: Decimal,
+}
+
+/// Computes final usage cost independently from the reservation hold.
+///
+/// Package units cover input first, then output, then cache-read credits.
+/// Cache-write has no package factor in the current contract and therefore
+/// remains part of monetary settlement.
+pub fn settle_usage(
+    usage: TokenUsage,
+    cache_write_tokens: u64,
+    prices: PriceSnapshot,
+    accounting_mode: Option<TokenAccountingMode>,
+    input_factor: Decimal,
+    output_factor: Decimal,
+    cache_factor: Decimal,
+    reserved_package_units: u64,
+    payment_mode: BillingPaymentMode,
+) -> SettlementBreakdown {
+    let actual_units = match accounting_mode {
+        Some(TokenAccountingMode::StandardizedCredits) => {
+            usage.standardized_credits(input_factor, output_factor, cache_factor)
+        }
+        _ => usage.raw_units(),
+    };
+    let package_units = actual_units.min(reserved_package_units);
+    let actual_priced_cost = (Decimal::from(usage.prompt_tokens) * prices.prompt
+        + Decimal::from(usage.completion_tokens) * prices.completion
+        + Decimal::from(usage.cache_hit_input_tokens) * prices.cache_read
+        + Decimal::from(cache_write_tokens) * prices.cache_write)
+        / Decimal::from(1_000_000u64);
+
+    let mut remaining = Decimal::from(package_units);
+    let mut package_priced_cost = Decimal::ZERO;
+    let covered_components = if accounting_mode == Some(TokenAccountingMode::StandardizedCredits) {
+        vec![
+            (usage.prompt_tokens, input_factor, prices.prompt),
+            (usage.completion_tokens, output_factor, prices.completion),
+            (
+                usage.cache_hit_input_tokens,
+                cache_factor,
+                prices.cache_read,
+            ),
+        ]
+    } else {
+        vec![
+            (usage.prompt_tokens, Decimal::ONE, prices.prompt),
+            (usage.completion_tokens, Decimal::ONE, prices.completion),
+        ]
+    };
+    for (tokens, factor, price) in covered_components {
+        if remaining <= Decimal::ZERO || factor <= Decimal::ZERO {
+            continue;
+        }
+        let covered_tokens = (remaining / factor).min(Decimal::from(tokens));
+        package_priced_cost += covered_tokens * price / Decimal::from(1_000_000u64);
+        remaining -= covered_tokens * factor;
+    }
+    let wallet_amount = if payment_mode == BillingPaymentMode::Postpaid {
+        Decimal::ZERO
+    } else {
+        (actual_priced_cost - package_priced_cost).max(Decimal::ZERO)
+    };
+
+    SettlementBreakdown {
+        actual_units,
+        package_units,
+        actual_priced_cost,
+        package_priced_cost,
+        wallet_amount,
+    }
+}
+
+#[cfg(test)]
+mod settlement_tests {
+    use super::*;
+
+    fn prices() -> PriceSnapshot {
+        PriceSnapshot {
+            prompt: Decimal::new(20, 2),
+            completion: Decimal::new(120, 2),
+            cache_read: Decimal::new(2, 2),
+            cache_write: Decimal::ZERO,
+        }
+    }
+
+    #[test]
+    fn prices_actual_usage_without_using_reservation_hold() {
+        let result = settle_usage(
+            TokenUsage {
+                prompt_tokens: 23,
+                completion_tokens: 8,
+                cache_hit_input_tokens: 0,
+            },
+            0,
+            prices(),
+            Some(TokenAccountingMode::RawTokens),
+            Decimal::ONE,
+            Decimal::ONE,
+            Decimal::ZERO,
+            0,
+            BillingPaymentMode::Prepaid,
+        );
+        assert_eq!(result.actual_priced_cost, Decimal::new(142, 7));
+        assert_eq!(result.wallet_amount, result.actual_priced_cost);
+    }
+
+    #[test]
+    fn package_units_cover_input_before_output() {
+        let result = settle_usage(
+            TokenUsage {
+                prompt_tokens: 10,
+                completion_tokens: 10,
+                cache_hit_input_tokens: 0,
+            },
+            0,
+            prices(),
+            Some(TokenAccountingMode::RawTokens),
+            Decimal::ONE,
+            Decimal::ONE,
+            Decimal::ZERO,
+            10,
+            BillingPaymentMode::Prepaid,
+        );
+        assert_eq!(result.package_units, 10);
+        assert_eq!(result.package_priced_cost, Decimal::new(2, 6));
+        assert_eq!(result.wallet_amount, Decimal::new(12, 6));
+    }
+
+    #[test]
+    fn postpaid_keeps_theoretical_cost_but_does_not_debit_wallet() {
+        let result = settle_usage(
+            TokenUsage {
+                prompt_tokens: 1,
+                completion_tokens: 1,
+                cache_hit_input_tokens: 0,
+            },
+            5,
+            prices(),
+            Some(TokenAccountingMode::RawTokens),
+            Decimal::ONE,
+            Decimal::ONE,
+            Decimal::ZERO,
+            0,
+            BillingPaymentMode::Postpaid,
+        );
+        assert_eq!(result.actual_priced_cost, Decimal::new(14, 7));
+        assert_eq!(result.wallet_amount, Decimal::ZERO);
+    }
+
+    #[test]
+    fn cache_write_is_included_in_money_even_without_package_factor() {
+        let mut snapshot = prices();
+        snapshot.cache_write = Decimal::ONE;
+        let result = settle_usage(
+            TokenUsage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                cache_hit_input_tokens: 0,
+            },
+            10,
+            snapshot,
+            Some(TokenAccountingMode::RawTokens),
+            Decimal::ONE,
+            Decimal::ONE,
+            Decimal::ZERO,
+            0,
+            BillingPaymentMode::Prepaid,
+        );
+        assert_eq!(result.actual_priced_cost, Decimal::new(1, 5));
+        assert_eq!(result.wallet_amount, result.actual_priced_cost);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenReservationRequest {
     pub request_id: String,

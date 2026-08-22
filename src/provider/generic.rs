@@ -189,6 +189,12 @@ impl ProviderAdapter for GenericAdapter {
         body: Value,
     ) -> Result<Value, ProviderError> {
         super::validate_endpoint_url(&endpoint.url).await?;
+        if std::env::var("BILLING_E2E_FAULT_INJECTION").as_deref() == Ok("1") {
+            return Err(ProviderError::new(
+                "test-only upstream failure injection",
+                ErrorKind::Upstream5xx,
+            ));
+        }
         let client = shared_client();
         let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
         let url = format!("{}/v1/chat/completions", base);
@@ -284,6 +290,12 @@ impl ProviderAdapter for GenericAdapter {
         body: Value,
     ) -> Result<StreamResult, ProviderError> {
         super::validate_endpoint_url(&endpoint.url).await?;
+        if std::env::var("BILLING_E2E_FAULT_INJECTION").as_deref() == Ok("1") {
+            return Err(ProviderError::new(
+                "test-only upstream failure injection",
+                ErrorKind::Upstream5xx,
+            ));
+        }
         let client = shared_client();
 
         let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");

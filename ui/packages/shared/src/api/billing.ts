@@ -120,10 +120,14 @@ export function useAdminBillingActivities(year: number, month: number, limit = 1
 export interface PeriodSummary {
   year: number;
   month: number;
+  /** Legacy alias; now represents the theoretical priced cost. */
   total_cost: number;
+  priced_cost_amount: number;
+  wallet_amount: number;
   total_requests: number;
+  request_count: number;
   total_tokens: number;
-  by_model: { model: string; cost: number; percentage: number }[];
+  by_model: { model: string; cost: number; priced_cost_amount?: number; percentage: number }[];
   by_channel: { channel: string; name: string; cost: number; percentage: number }[];
   token_cost_breakdown: { token_type: string; total_tokens: number; total_cost: number; percentage: number }[];
 }
@@ -483,6 +487,9 @@ export function useAdminBillingRequestDetail(requestId: string | null, enabled =
 export interface MonthSummary {
   month: string;
   total_cost: number;
+  priced_cost_amount?: number;
+  wallet_amount?: number;
   total_requests: number;
+  request_count?: number;
   total_tokens: number;
 }

@@ -27,7 +27,9 @@ pub(crate) struct WalletOverview {
     #[serde(with = "rust_decimal::serde::float")]
     frozen: Decimal,
     #[serde(with = "rust_decimal::serde::float")]
-    total_consumed: Decimal,
+    request_reserved: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    total_wallet_consumed: Decimal,
     #[serde(with = "rust_decimal::serde::float")]
     total_recharged: Decimal,
 }
@@ -39,7 +41,16 @@ pub(crate) async fn wallet_overview(
     let session = require_session(&state.admin, &headers).await?;
     let user_id = &session.user_id;
     let (balance, frozen) = state.db.get_wallet_balance(user_id).await.map_err(db_err)?;
-    let total_consumed = state.db.get_total_consumed(user_id).await.map_err(db_err)?;
+    let request_reserved = state
+        .db
+        .get_wallet_request_reserved(user_id)
+        .await
+        .map_err(db_err)?;
+    let total_wallet_consumed = state
+        .db
+        .get_total_wallet_consumed(user_id)
+        .await
+        .map_err(db_err)?;
     let total_recharged = state
         .db
         .get_total_recharged(user_id)
@@ -48,7 +59,8 @@ pub(crate) async fn wallet_overview(
     Ok(Json(WalletOverview {
         balance,
         frozen,
-        total_consumed,
+        request_reserved,
+        total_wallet_consumed,
         total_recharged,
     }))
 }

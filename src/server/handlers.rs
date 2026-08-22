@@ -762,9 +762,22 @@ impl<S> UsageTrackingStream<S> {
 
         if let Some(reservation) = &self.reservation {
             if completed {
-                reservation.settle_usage(p_tokens, c_tokens, cache_hit, 0, true, "completed");
+                reservation.settle_usage(
+                    p_tokens,
+                    c_tokens,
+                    cache_hit,
+                    cache_write,
+                    true,
+                    "completed",
+                );
             } else {
-                reservation.release_partial(p_tokens, c_tokens, cache_hit, "client disconnected");
+                reservation.release_partial(
+                    p_tokens,
+                    c_tokens,
+                    cache_hit,
+                    cache_write,
+                    "client disconnected",
+                );
             }
         }
 
@@ -1253,7 +1266,7 @@ async fn handle_non_streaming(
                         prompt_tokens,
                         completion_tokens,
                         cache_hit,
-                        0,
+                        cache_write,
                         true,
                         "completed",
                     );
@@ -1516,7 +1529,7 @@ async fn handle_messages_non_streaming(
                         prompt_tokens,
                         completion_tokens,
                         cache_hit,
-                        0,
+                        cache_write,
                         true,
                         "completed",
                     );
@@ -2714,7 +2727,7 @@ async fn relay_to_upstream(
                         prompt_tokens,
                         completion_tokens,
                         cache_hit,
-                        0,
+                        cache_write,
                         true,
                         "completed",
                     );
@@ -3095,12 +3108,15 @@ async fn handle_responses_non_streaming(
             let cache_hit = resp["usage"]["input_tokens_details"]["cached_tokens"]
                 .as_u64()
                 .unwrap_or(0);
+            let cache_write = resp["usage"]["input_tokens_details"]["cache_write_tokens"]
+                .as_u64()
+                .unwrap_or(0);
             if let Some(reservation) = &reservation {
                 reservation.settle_usage(
                     input_tokens,
                     output_tokens,
                     cache_hit,
-                    0,
+                    cache_write,
                     true,
                     "completed",
                 );
@@ -3117,7 +3133,7 @@ async fn handle_responses_non_streaming(
                 completion_tokens: output_tokens,
                 total_tokens: input_tokens + output_tokens,
                 cache_hit_input_tokens: cache_hit,
-                cache_write_tokens: 0,
+                cache_write_tokens: cache_write,
                 latency_ms,
                 status_code: 200,
                 success: true,
@@ -3147,6 +3163,9 @@ async fn handle_responses_non_streaming(
         }
         Err(e) if e.kind() == ErrorKind::ConnectFailed => {
             route.report_failure();
+            if let Some(reservation) = &reservation {
+                reservation.release("responses upstream connect failed");
+            }
             let latency_ms = start.elapsed().as_millis() as u64;
             state.usage.record(UsageRecord {
                 timestamp: Utc::now().to_rfc3339(),
@@ -3188,6 +3207,9 @@ async fn handle_responses_non_streaming(
         }
         Err(e) if is_retryable_error(&e) => {
             route.report_failure();
+            if let Some(reservation) = &reservation {
+                reservation.release("responses upstream retryable failure");
+            }
             let latency_ms = start.elapsed().as_millis() as u64;
             state.usage.record(UsageRecord {
                 timestamp: Utc::now().to_rfc3339(),
@@ -3228,6 +3250,9 @@ async fn handle_responses_non_streaming(
             Err(GatewayError::Upstream(e.0))
         }
         Err(e) => {
+            if let Some(reservation) = &reservation {
+                reservation.release("responses upstream request failed");
+            }
             let latency_ms = start.elapsed().as_millis() as u64;
             state.usage.record(UsageRecord {
                 timestamp: Utc::now().to_rfc3339(),
@@ -3345,7 +3370,8 @@ async fn handle_responses_streaming(
                 }
                 let latency_ms = st.elapsed().as_millis() as u64;
                 let buf = resp_buf.lock().unwrap().clone();
-                let (input_tokens, output_tokens, cache_hit) = parse_responses_sse_usage(&buf);
+                let (input_tokens, output_tokens, cache_hit, cache_write) =
+                    parse_responses_sse_usage(&buf);
                 let completed = clean_eof2.load(std::sync::atomic::Ordering::Acquire);
                 if let Some(reservation) = &reservation_finalizer {
                     if completed {
@@ -3353,7 +3379,7 @@ async fn handle_responses_streaming(
                             input_tokens,
                             output_tokens,
                             cache_hit,
-                            0,
+                            cache_write,
                             true,
                             "completed",
                         );
@@ -3362,6 +3388,7 @@ async fn handle_responses_streaming(
                             input_tokens,
                             output_tokens,
                             cache_hit,
+                            cache_write,
                             "responses stream dropped",
                         );
                     }
@@ -3377,7 +3404,7 @@ async fn handle_responses_streaming(
                     completion_tokens: output_tokens,
                     total_tokens: input_tokens + output_tokens,
                     cache_hit_input_tokens: cache_hit,
-                    cache_write_tokens: 0,
+                    cache_write_tokens: cache_write,
                     latency_ms,
                     status_code: if completed { 200 } else { 499 },
                     success: completed,
@@ -3500,10 +3527,11 @@ async fn handle_responses_streaming(
 /// Extract token usage from Responses API SSE events.
 /// Looks for response.completed event with usage data.
 /// Format: {response: {usage: {input_tokens, input_tokens_details: {cached_tokens}, output_tokens}}}
-fn parse_responses_sse_usage(data: &str) -> (u64, u64, u64) {
+fn parse_responses_sse_usage(data: &str) -> (u64, u64, u64, u64) {
     let mut input_tokens = 0u64;
     let mut output_tokens = 0u64;
     let mut cache_hit = 0u64;
+    let mut cache_write = 0u64;
     for line in data.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || !trimmed.starts_with("data: ") {
@@ -3527,13 +3555,18 @@ fn parse_responses_sse_usage(data: &str) -> (u64, u64, u64) {
                             {
                                 cache_hit = cached;
                             }
+                            if let Some(written) =
+                                details.get("cache_write_tokens").and_then(|v| v.as_u64())
+                            {
+                                cache_write = written;
+                            }
                         }
                     }
                 }
             }
         }
     }
-    (input_tokens, output_tokens, cache_hit)
+    (input_tokens, output_tokens, cache_hit, cache_write)
 }
 
 pub async fn embeddings(
@@ -3711,7 +3744,7 @@ fn estimate_tokens_responses(body: &Value) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        count_tokens_supported_for_channel, estimate_tokens_responses,
+        count_tokens_supported_for_channel, estimate_tokens_responses, parse_responses_sse_usage,
         responses_input_tokens_supported_for_channel,
     };
     use crate::domain::channel::Channel;
@@ -3768,6 +3801,12 @@ mod tests {
         assert!(!responses_input_tokens_supported_for_channel(Some(
             &channel("anthropic", false)
         )));
+    }
+
+    #[test]
+    fn parses_responses_sse_cache_write_usage() {
+        let data = r#"data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":12,"input_tokens_details":{"cached_tokens":80,"cache_write_tokens":5}}}}"#;
+        assert_eq!(parse_responses_sse_usage(data), (100, 12, 80, 5));
     }
 
     #[test]

@@ -126,7 +126,7 @@ export default function WalletPage() {
           <Wallet className="h-4 w-4" />
           {t('wallet.balanceOverview')}
         </h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <div className={cardStyle}>
             <div className="text-xs text-muted-foreground uppercase tracking-wider">{t('wallet.currentBalance')}</div>
             <div className="text-2xl font-bold">{overview ? fmt(overview.balance) : '—'}</div>
@@ -148,8 +148,12 @@ export default function WalletPage() {
             <div className="text-xl font-bold">{overview ? fmt(overview.frozen) : '—'}</div>
           </div>
           <div className={cardStyle}>
-            <div className="text-xs text-muted-foreground uppercase tracking-wider">{t('wallet.totalConsumed')}</div>
-            <div className="text-xl font-bold">{overview ? fmt(overview.total_consumed) : '—'}</div>
+            <div className="text-xs text-muted-foreground uppercase tracking-wider">请求预留</div>
+            <div className="text-xl font-bold">{overview ? fmt(overview.request_reserved) : '—'}</div>
+          </div>
+          <div className={cardStyle}>
+            <div className="text-xs text-muted-foreground uppercase tracking-wider">累计钱包扣款</div>
+            <div className="text-xl font-bold">{overview ? fmt(overview.total_wallet_consumed) : '—'}</div>
           </div>
           <div className={cardStyle}>
             <div className="text-xs text-muted-foreground uppercase tracking-wider">{t('wallet.totalRecharged')}</div>

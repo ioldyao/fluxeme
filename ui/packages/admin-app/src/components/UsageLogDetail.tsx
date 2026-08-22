@@ -66,7 +66,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
   const { data: record, isLoading, error } = useUsageDetail(requestId);
   useCurrency();
 
-  const costStr = record ? formatCost(record.prompt_tokens, record.completion_tokens, record.cache_hit_input_tokens, getRecordPricing(record)) : null;
+  const costStr = record ? formatCost(record.prompt_tokens, record.completion_tokens, record.cache_hit_input_tokens, record.cache_write_tokens, getRecordPricing(record)) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -104,10 +104,10 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
             {/* Token & Cost row */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {[
-                { label: t('usage.promptTokens'), value: record.prompt_tokens.toLocaleString() },
-                { label: t('usage.cacheHit'), value: record.cache_hit_input_tokens > 0 ? record.cache_hit_input_tokens.toLocaleString() : '—' },
-                { label: t('usage.completionTokens'), value: record.completion_tokens.toLocaleString() },
-                { label: t('usage.cost'), value: costStr || '—' },
+                { label: '未缓存输入', value: record.prompt_tokens.toLocaleString() },
+                { label: '缓存输入', value: record.cache_hit_input_tokens > 0 ? record.cache_hit_input_tokens.toLocaleString() : '—' },
+                { label: '输出', value: record.completion_tokens.toLocaleString() },
+                { label: '理论费用', value: costStr || '—' },
               ].map(m => (
                 <div key={m.label} className="rounded-lg border bg-card p-3">
                   <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">{m.label}</div>
@@ -152,8 +152,8 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                       [t('table.status'), `${record.success ? t('usage.success') : t('usage.failure')}`],
                       ['Request ID', record.request_id],
                       [t('table.latency'), `${record.latency_ms}ms`],
-                      [t('usage.totalTokens'), record.total_tokens.toLocaleString()],
-                      [t('usage.cost'), costStr || '—'],
+                      ['计费 Token', record.total_tokens.toLocaleString()],
+                      ['理论费用', costStr || '—'],
                     ].map((r, i) => (
                       <div key={i} className="flex justify-between gap-3 py-2 border-t border-border/60 first:border-0">
                         <span className="text-xs text-muted-foreground">{r[0]}</span>

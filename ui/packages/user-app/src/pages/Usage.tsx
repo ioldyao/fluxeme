@@ -269,11 +269,11 @@ export default function Usage() {
                         <th className="text-left py-3 px-4">计费模式</th>
                         <th className="text-left py-3 px-4">{t('table.model')}</th>
                         <th className="text-left py-3 px-4">{t('usage.apiFormat')}</th>
-                        <th className="text-right py-3 px-4">{t('table.prompt')}</th>
-                        <th className="text-right py-3 px-4">{t('table.cacheHit')}</th>
-                        <th className="text-right py-3 px-4">{t('table.completion')}</th>
-                        <th className="text-right py-3 px-4">{t('table.total')}</th>
-                        <th className="text-right py-3 px-4">{t('table.cost')}</th>
+                        <th className="text-right py-3 px-4">未缓存输入</th>
+                        <th className="text-right py-3 px-4">缓存输入</th>
+                        <th className="text-right py-3 px-4">输出</th>
+                        <th className="text-right py-3 px-4">计费 Token</th>
+                        <th className="text-right py-3 px-4">理论费用</th>
                         <th className="text-right py-3 px-4">{t('table.latency')}</th>
                         <th className="text-left py-3 px-4">{t('usage.clientIp')}</th>
                         <th className="text-center py-3 px-4">{t('table.status')}</th>
@@ -310,9 +310,10 @@ export default function Usage() {
                           <td className="py-3 px-4 font-mono text-xs">{r.api_format ?? '—'}</td>
                           <td className="py-3 px-4 text-right">{r.prompt_tokens}</td>
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.cache_hit_input_tokens > 0 ? r.cache_hit_input_tokens : '—'}</td>
+                          <td className="py-3 px-4 text-right text-muted-foreground">{r.cache_write_tokens > 0 ? r.cache_write_tokens : '—'}</td>
                           <td className="py-3 px-4 text-right">{r.completion_tokens}</td>
                           <td className="py-3 px-4 text-right font-medium">{r.total_tokens}</td>
-                          <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, r.cache_hit_input_tokens, getRecordPricing(r))}</td>
+                          <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, r.cache_hit_input_tokens, r.cache_write_tokens, getRecordPricing(r))}</td>
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>
                           <td className="py-3 px-4 text-muted-foreground whitespace-nowrap text-xs font-mono">{r.client_ip ?? '—'}</td>
                           <td className="py-3 px-4 text-center">
@@ -395,7 +396,7 @@ export default function Usage() {
               </Card>
 
               <Card>
-                <CardHeader><CardTitle className="text-base">{t('usage.totalTokens')}</CardTitle></CardHeader>
+                <CardHeader><CardTitle className="text-base">计费 Token（未缓存输入 + 输出）</CardTitle></CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={250}>
                     <BarChart data={aggregate} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>

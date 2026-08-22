@@ -717,7 +717,7 @@ export function UserBillingDetail({ userId, onBack }: { userId: string; onBack: 
                 ) : (keyDetail?.recent_requests?.length ?? 0) > 0 ? (
                   <div className="mt-2">
                     {keyDetail!.recent_requests.map((r) => {
-                      const costStr = formatCost(r.prompt_tokens, r.completion_tokens, r.cache_hit_input_tokens, getRecordPricing(r));
+                      const costStr = formatCost(r.prompt_tokens, r.completion_tokens, r.cache_hit_input_tokens, r.cache_write_tokens, getRecordPricing(r));
                       return (
                         <button key={r.request_id} className="w-full rounded-md px-1 py-2.5 text-left hover:bg-accent/50" onClick={() => setReqDetailId(r.request_id)}>
                           <div className="flex items-center justify-between gap-3 text-xs">

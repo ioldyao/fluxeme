@@ -17,6 +17,9 @@ use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
 use crate::domain::sso::SsoConfigRow;
 use crate::domain::team::{Team, TeamMember};
+use crate::domain::token_package::{
+    settle_usage as calculate_settlement, PriceSnapshot, TokenUsage,
+};
 use crate::domain::usage::UsageRecord;
 use crate::domain::user::{ApiKey, User, USER_STATUS_ACTIVE, USER_STATUS_SUSPENDED};
 
@@ -806,6 +809,7 @@ impl DbBackend for PgBackend {
                 prompt_price DOUBLE PRECISION NOT NULL DEFAULT 0.0,\
                 completion_price DOUBLE PRECISION NOT NULL DEFAULT 0.0,\
                 cache_read_price DOUBLE PRECISION NOT NULL DEFAULT 0.0,\
+                cache_write_price DOUBLE PRECISION NOT NULL DEFAULT 0.0,\
                 cost_amount DOUBLE PRECISION NOT NULL DEFAULT 0.0,\
                 api_key_name TEXT,\
                 api_format TEXT NOT NULL DEFAULT '',\
@@ -853,6 +857,7 @@ impl DbBackend for PgBackend {
                 prompt_price DOUBLE PRECISION NOT NULL DEFAULT 0.0,\
                 completion_price DOUBLE PRECISION NOT NULL DEFAULT 0.0,\
                 cache_read_price DOUBLE PRECISION NOT NULL DEFAULT 0.0,\
+                cache_write_price DOUBLE PRECISION NOT NULL DEFAULT 0.0,\
                 cost_amount DOUBLE PRECISION NOT NULL DEFAULT 0.0,\
                 api_key_name TEXT,\
                 api_format TEXT NOT NULL DEFAULT '',\
@@ -884,6 +889,7 @@ impl DbBackend for PgBackend {
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS reasoning_body TEXT",
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS original_model TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS cache_write_tokens BIGINT NOT NULL DEFAULT 0",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS cache_write_price DOUBLE PRECISION NOT NULL DEFAULT 0.0",
         ] {
             let _ = raw_sql(alter).execute(&self.pool).await;
         }
@@ -891,14 +897,14 @@ impl DbBackend for PgBackend {
             "INSERT INTO billing_events (\
                 request_id, user_id, user_name, channel_id, model, \
                 prompt_tokens, completion_tokens, total_tokens, latency_ms, cache_hit_input_tokens, \
-                prompt_price, completion_price, cache_read_price, cost_amount, \
+                prompt_price, completion_price, cache_read_price, cache_write_price, cost_amount, \
                 api_key_name, api_format, stream, client_ip, endpoint_id, \
                 request_body, response_body, reasoning_body, original_model, \
                 success, status_code, timestamp\
              ) \
              SELECT request_id, user_id, user_name, channel_id, model, \
                 prompt_tokens, completion_tokens, total_tokens, latency_ms, cache_hit_input_tokens, \
-                prompt_price, completion_price, cache_read_price, cost_amount, \
+                prompt_price, completion_price, cache_read_price, cache_write_price, cost_amount, \
                 api_key_name, api_format, stream, client_ip, endpoint_id, \
                 request_body, response_body, reasoning_body, original_model, \
                 success, status_code, timestamp \
@@ -1003,6 +1009,8 @@ impl DbBackend for PgBackend {
                 actual_cache_write_tokens BIGINT,
                 actual_package_units BIGINT,
                 actual_wallet_amount DOUBLE PRECISION,
+                wallet_shortfall_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+                actual_priced_cost_amount DOUBLE PRECISION,
                 factor_snapshot TEXT NOT NULL DEFAULT '{}',
                 prompt_price DOUBLE PRECISION NOT NULL DEFAULT 0,
                 completion_price DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -1041,6 +1049,61 @@ impl DbBackend for PgBackend {
         .execute(&self.pool)
         .await
         .map_err(|e| DbError(format!("Migration create token_package_ledger: {e}")))?;
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS token_settlement_receivables (
+                id TEXT PRIMARY KEY,
+                reservation_id TEXT NOT NULL UNIQUE REFERENCES token_request_reservations(id) ON DELETE CASCADE,
+                request_id TEXT NOT NULL UNIQUE,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                team_id TEXT,
+                account_type TEXT NOT NULL DEFAULT 'user',
+                actual_prompt_tokens BIGINT,
+                actual_completion_tokens BIGINT,
+                actual_cache_hit_input_tokens BIGINT,
+                actual_cache_write_tokens BIGINT,
+                status_code INTEGER,
+                success BOOLEAN,
+                reason TEXT NOT NULL DEFAULT '',
+                actual_priced_cost_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+                package_priced_cost_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+                wallet_due_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+                settled_wallet_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+                outstanding_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+                writeoff_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+                other_adjustment_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+                state TEXT NOT NULL DEFAULT 'awaiting_actuals',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at TEXT,
+                lease_until TEXT,
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                settled_at TEXT
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create token_settlement_receivables: {e}")))?;
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS token_settlement_payments (
+                id TEXT PRIMARY KEY,
+                receivable_id TEXT NOT NULL REFERENCES token_settlement_receivables(id) ON DELETE CASCADE,
+                reservation_id TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                payment_sequence BIGINT NOT NULL,
+                payment_type TEXT NOT NULL DEFAULT 'recovery',
+                idempotency_key TEXT NOT NULL,
+                amount DOUBLE PRECISION NOT NULL,
+                account_type TEXT NOT NULL,
+                wallet_transaction_id TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE (receivable_id, payment_sequence),
+                UNIQUE (idempotency_key)
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create token_settlement_payments: {e}")))?;
         for alter in [
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_wallet_reserved DOUBLE PRECISION NOT NULL DEFAULT 0",
             "ALTER TABLE team_wallets ADD COLUMN IF NOT EXISTS token_wallet_reserved DOUBLE PRECISION NOT NULL DEFAULT 0",
@@ -1067,6 +1130,20 @@ impl DbBackend for PgBackend {
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_group_name TEXT NOT NULL DEFAULT '默认按量计费'",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT NOT NULL DEFAULT 'prepaid'",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS estimated_priced_cost_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS actual_priced_cost_amount DOUBLE PRECISION",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS wallet_shortfall_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "ALTER TABLE token_settlement_receivables ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE token_settlement_receivables ADD COLUMN IF NOT EXISTS next_attempt_at TEXT",
+            "ALTER TABLE token_settlement_receivables ADD COLUMN IF NOT EXISTS lease_until TEXT",
+            "ALTER TABLE token_settlement_receivables ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS settlement_state TEXT NOT NULL DEFAULT 'reserved'",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS settlement_state TEXT NOT NULL DEFAULT 'settled'",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS settled_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS outstanding_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS writeoff_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS token_settlement_id TEXT",
+            "ALTER TABLE token_settlement_payments ADD COLUMN IF NOT EXISTS payment_type TEXT NOT NULL DEFAULT 'recovery'",
+            "UPDATE wallet_transactions SET method = 'token_settlement' WHERE method = 'token_package' AND note = 'Token package wallet fallback'",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS prompt_price DOUBLE PRECISION NOT NULL DEFAULT 0",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS completion_price DOUBLE PRECISION NOT NULL DEFAULT 0",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS cache_read_price DOUBLE PRECISION NOT NULL DEFAULT 0",
@@ -1087,6 +1164,9 @@ impl DbBackend for PgBackend {
             "CREATE INDEX IF NOT EXISTS idx_token_grants_user ON token_package_grants(user_id, status, expires_at)",
             "CREATE INDEX IF NOT EXISTS idx_token_grants_team ON token_package_grants(team_id, status, expires_at)",
             "CREATE INDEX IF NOT EXISTS idx_token_reservations_state ON token_request_reservations(state, expires_at)",
+            "CREATE INDEX IF NOT EXISTS idx_token_settlement_receivables_state ON token_settlement_receivables(state, next_attempt_at)",
+            "CREATE INDEX IF NOT EXISTS idx_token_settlement_receivables_user ON token_settlement_receivables(user_id, state)",
+            "CREATE INDEX IF NOT EXISTS idx_token_settlement_payments_receivable ON token_settlement_payments(receivable_id, payment_sequence)",
             "CREATE INDEX IF NOT EXISTS idx_token_ledger_grant ON token_package_ledger(package_grant_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_billing_events_reservation ON billing_events(reservation_id)",
             "CREATE INDEX IF NOT EXISTS idx_billing_events_activity ON billing_events(user_id, timestamp DESC, activity_status, charge_source)",
@@ -2849,7 +2929,7 @@ impl DbBackend for PgBackend {
         };
         let (cost, count, tokens): (f64, i64, i64) = if let Some(uid) = user_id {
             query_as(
-                "SELECT COALESCE(SUM(cost_amount), 0), \
+                "SELECT COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3",
             )
@@ -2860,7 +2940,7 @@ impl DbBackend for PgBackend {
             .await?
         } else {
             query_as(
-                "SELECT COALESCE(SUM(cost_amount), 0), \
+                "SELECT COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2",
             )
@@ -2876,20 +2956,42 @@ impl DbBackend for PgBackend {
         ))
     }
 
+    async fn period_wallet_amount(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+    ) -> Result<Decimal, DbError> {
+        let start = format!("{}-{:02}-01T00:00:00", year, month);
+        let end = if month == 12 {
+            format!("{}-01-01T00:00:00", year + 1)
+        } else {
+            format!("{}-{:02}-01T00:00:00", year, month + 1)
+        };
+        let amount: f64 = if let Some(uid) = user_id {
+            query_scalar("SELECT COALESCE(SUM(wallet_amount), 0) FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3")
+                .bind(&start).bind(&end).bind(uid).fetch_one(&self.pool).await?
+        } else {
+            query_scalar("SELECT COALESCE(SUM(wallet_amount), 0) FROM billing_events WHERE timestamp >= $1 AND timestamp < $2")
+                .bind(&start).bind(&end).fetch_one(&self.pool).await?
+        };
+        Ok(Decimal::try_from(amount).unwrap_or(Decimal::ZERO))
+    }
+
     async fn period_summary_since(
         &self,
         start: &str,
         user_id: Option<&str>,
     ) -> Result<Decimal, DbError> {
         let cost: f64 = if let Some(uid) = user_id {
-            query_scalar("SELECT COALESCE(SUM(cost_amount), 0) FROM billing_events WHERE timestamp >= $1 AND user_id = $2")
+            query_scalar("SELECT COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0) FROM billing_events WHERE timestamp >= $1 AND user_id = $2")
                 .bind(start)
                 .bind(uid)
                 .fetch_one(&self.pool)
                 .await?
         } else {
             query_scalar(
-                "SELECT COALESCE(SUM(cost_amount), 0) FROM billing_events WHERE timestamp >= $1",
+                "SELECT COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0) FROM billing_events WHERE timestamp >= $1",
             )
             .bind(start)
             .fetch_one(&self.pool)
@@ -2932,7 +3034,7 @@ impl DbBackend for PgBackend {
              AND package_units = 0 THEN 'zero_cost' ELSE 'success' END ELSE activity_status END,
              COALESCE(status_reason, ''), status_code, success, prompt_tokens, completion_tokens,
              cache_hit_input_tokens, cache_write_tokens, total_tokens, package_units, package_grant_id,
-             COALESCE(wallet_amount, 0), COALESCE(NULLIF(priced_cost_amount, 0), cost_amount, 0),
+             COALESCE(wallet_amount, 0), COALESCE(priced_cost_amount, cost_amount, 0),
              CASE WHEN billing_payment_mode = 'postpaid' AND package_units > 0 THEN 'postpaid_package'
              WHEN billing_payment_mode = 'postpaid' THEN 'postpaid'
              WHEN charge_source IN ('package_and_wallet', 'package', 'wallet', 'free_model', 'none') THEN charge_source
@@ -3079,7 +3181,7 @@ impl DbBackend for PgBackend {
                     WHEN status_code = 499 OR activity_status = 'interrupted' THEN 'interrupted' \
                     WHEN status_code >= 400 OR success = false THEN 'failed' \
                     WHEN COALESCE(package_units, 0) = 0 AND COALESCE(wallet_amount, 0) = 0 \
-                         AND COALESCE(NULLIF(priced_cost_amount, 0), cost_amount, 0) = 0 THEN 'zero_cost' \
+                         AND COALESCE(priced_cost_amount, cost_amount, 0) = 0 THEN 'zero_cost' \
                     ELSE 'success' END AS derived_status \
                 FROM billing_events WHERE timestamp >= $1 AND timestamp < $2{predicate}) \
              SELECT COUNT(*)::bigint, \
@@ -3090,7 +3192,7 @@ impl DbBackend for PgBackend {
                     COALESCE(SUM(total_tokens), 0)::bigint, \
                     COALESCE(SUM(package_units), 0)::bigint, \
                     COALESCE(SUM(wallet_amount), 0), \
-                    COALESCE(SUM(COALESCE(NULLIF(priced_cost_amount, 0), cost_amount, 0)), 0), \
+                    COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                     COUNT(DISTINCT COALESCE(api_key_name, '未命名 Key'))::bigint, \
                     COUNT(DISTINCT model)::bigint FROM classified"
         );
@@ -3130,7 +3232,7 @@ impl DbBackend for PgBackend {
         };
         let source_expr = "CASE WHEN billing_payment_mode = 'postpaid' AND package_units > 0 THEN 'postpaid_package' WHEN billing_payment_mode = 'postpaid' THEN 'postpaid' WHEN charge_source IN ('package_and_wallet', 'package', 'wallet', 'free_model', 'none') THEN charge_source WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN status_code >= 400 OR success = false THEN 'none' ELSE 'none' END";
         let filtered = format!(
-            "WITH filtered AS (SELECT COALESCE(api_key_name, '未命名 Key') AS api_key_name, model, package_units, COALESCE(wallet_amount, 0) AS wallet_amount, COALESCE(NULLIF(priced_cost_amount, 0), cost_amount, 0) AS priced_cost_amount, cost_amount, billing_payment_mode, {source_expr} AS charge_source, total_tokens FROM billing_events WHERE timestamp >= $1 AND timestamp < $2{predicate})"
+            "WITH filtered AS (SELECT COALESCE(api_key_name, '未命名 Key') AS api_key_name, model, package_units, COALESCE(wallet_amount, 0) AS wallet_amount, COALESCE(priced_cost_amount, cost_amount, 0) AS priced_cost_amount, cost_amount, billing_payment_mode, {source_expr} AS charge_source, total_tokens FROM billing_events WHERE timestamp >= $1 AND timestamp < $2{predicate})"
         );
 
         let api_key_sql = format!(
@@ -3232,7 +3334,7 @@ impl DbBackend for PgBackend {
         };
         let rows: Vec<(String, f64)> = if let Some(uid) = user_id {
             query_as::<_, (String, f64)>(
-                "SELECT model, COALESCE(SUM(cost_amount), 0) \
+                "SELECT model, COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0) \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY model ORDER BY 2 DESC",
             )
@@ -3243,7 +3345,7 @@ impl DbBackend for PgBackend {
             .await?
         } else {
             query_as::<_, (String, f64)>(
-                "SELECT model, COALESCE(SUM(cost_amount), 0) \
+                "SELECT model, COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0) \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY model ORDER BY 2 DESC",
             )
@@ -3272,7 +3374,7 @@ impl DbBackend for PgBackend {
         };
         let rows: Vec<(String, String, f64)> = if let Some(uid) = user_id {
             query_as::<_, (String, String, f64)>(
-                "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(ul.cost_amount), 0) \
+                "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(COALESCE(ul.priced_cost_amount, ul.cost_amount, 0)), 0) \
                  FROM billing_events ul LEFT JOIN channels c ON c.id = ul.channel_id \
                  WHERE ul.timestamp >= $1 AND ul.timestamp < $2 AND ul.user_id = $3 \
                  GROUP BY ul.channel_id, c.name ORDER BY 3 DESC",
@@ -3284,7 +3386,7 @@ impl DbBackend for PgBackend {
             .await?
         } else {
             query_as::<_, (String, String, f64)>(
-                "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(ul.cost_amount), 0) \
+                "SELECT ul.channel_id, COALESCE(c.name, ul.channel_id), COALESCE(SUM(COALESCE(ul.priced_cost_amount, ul.cost_amount, 0)), 0) \
                  FROM billing_events ul LEFT JOIN channels c ON c.id = ul.channel_id \
                  WHERE ul.timestamp >= $1 AND ul.timestamp < $2 \
                  GROUP BY ul.channel_id, c.name ORDER BY 3 DESC",
@@ -3315,7 +3417,7 @@ impl DbBackend for PgBackend {
         let rows = if let Some(uid) = user_id {
             query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(cost_amount), 0), \
+                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                  COUNT(*)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY day ORDER BY day DESC",
@@ -3328,7 +3430,7 @@ impl DbBackend for PgBackend {
         } else {
             query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(cost_amount), 0), \
+                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                  COUNT(*)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY day ORDER BY day DESC",
@@ -3396,7 +3498,7 @@ impl DbBackend for PgBackend {
         let rows = if let Some(uid) = user_id {
             query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(cost_amount), 0), \
+                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                  COUNT(*)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY day ORDER BY day DESC LIMIT $4 OFFSET $5",
@@ -3411,7 +3513,7 @@ impl DbBackend for PgBackend {
         } else {
             query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(cost_amount), 0), \
+                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                  COUNT(*)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY day ORDER BY day DESC LIMIT $3 OFFSET $4",
@@ -3451,7 +3553,7 @@ impl DbBackend for PgBackend {
     async fn period_summary_all(&self) -> Result<Vec<(String, Decimal, u64, u64)>, DbError> {
         let rows = query_as::<_, (String, f64, i64, i64)>(
             "SELECT LEFT(timestamp::text, 7) AS month, \
-             COALESCE(SUM(cost_amount), 0), \
+             COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
              COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
              FROM billing_events GROUP BY month ORDER BY month DESC",
         )
@@ -3476,7 +3578,7 @@ impl DbBackend for PgBackend {
     ) -> Result<Vec<(String, Decimal, u64, u64)>, DbError> {
         let rows = query_as::<_, (String, f64, i64, i64)>(
             "SELECT LEFT(timestamp::text, 7) AS month, \
-             COALESCE(SUM(cost_amount), 0), \
+             COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
              COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
              FROM billing_events WHERE user_id = $1 GROUP BY month ORDER BY month DESC",
         )
@@ -3868,7 +3970,7 @@ impl DbBackend for PgBackend {
         ): (f64, i64, i64, i64, f64, i64, f64, i64, f64) = if let Some(uid) = user_id {
             if let Some(tid) = team_id {
                 query_as(
-                    "SELECT COALESCE(SUM(cost_amount), 0), \
+                    "SELECT COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                      COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint, \
                      COALESCE(SUM(prompt_tokens),0)::bigint, \
                      COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price), 0), \
@@ -3888,7 +3990,7 @@ impl DbBackend for PgBackend {
                 .await?
             } else {
                 query_as(
-                    "SELECT COALESCE(SUM(cost_amount), 0), \
+                    "SELECT COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                      COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint, \
                      COALESCE(SUM(prompt_tokens),0)::bigint, \
                      COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price), 0), \
@@ -3907,7 +4009,7 @@ impl DbBackend for PgBackend {
             }
         } else if let Some(tid) = team_id {
             query_as(
-                "SELECT COALESCE(SUM(cost_amount), 0), \
+                "SELECT COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint, \
                  COALESCE(SUM(prompt_tokens),0)::bigint, \
                  COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price), 0), \
@@ -3926,7 +4028,7 @@ impl DbBackend for PgBackend {
             .await?
         } else {
             query_as(
-                "SELECT COALESCE(SUM(cost_amount), 0), \
+                "SELECT COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint, \
                  COALESCE(SUM(prompt_tokens),0)::bigint, \
                  COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price), 0), \
@@ -3981,7 +4083,7 @@ impl DbBackend for PgBackend {
         let rows: Vec<(String, f64)> = if let Some(uid) = user_id {
             if let Some(tid) = team_id {
                 query_as::<_, (String, f64)>(
-                    "SELECT model, COALESCE(SUM(cost_amount), 0) \
+                    "SELECT model, COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0) \
                      FROM billing_events \
                      WHERE timestamp >= $1 AND timestamp < $2 \
                        AND team_id = $3 AND user_id = $4 AND account_type = 'team' \
@@ -3995,7 +4097,7 @@ impl DbBackend for PgBackend {
                 .await?
             } else {
                 query_as::<_, (String, f64)>(
-                    "SELECT model, COALESCE(SUM(cost_amount), 0) \
+                    "SELECT model, COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0) \
                      FROM billing_events \
                      WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                      GROUP BY model ORDER BY 2 DESC",
@@ -4008,7 +4110,7 @@ impl DbBackend for PgBackend {
             }
         } else if let Some(tid) = team_id {
             query_as::<_, (String, f64)>(
-                "SELECT model, COALESCE(SUM(cost_amount), 0) \
+                "SELECT model, COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0) \
                  FROM billing_events \
                  WHERE timestamp >= $1 AND timestamp < $2 \
                    AND team_id = $3 AND account_type = 'team' \
@@ -4021,7 +4123,7 @@ impl DbBackend for PgBackend {
             .await?
         } else {
             query_as::<_, (String, f64)>(
-                "SELECT model, COALESCE(SUM(cost_amount), 0) \
+                "SELECT model, COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0) \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY model ORDER BY 2 DESC",
             )
@@ -4131,7 +4233,7 @@ impl DbBackend for PgBackend {
             if let Some(tid) = team_id {
                 query_as::<_, (String, f64, i64, i64)>(
                     "SELECT LEFT(timestamp::text, 10) as day, \
-                     COALESCE(SUM(cost_amount), 0), \
+                     COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                      COUNT(*)::bigint, \
                      COALESCE(SUM(total_tokens), 0)::bigint \
                      FROM billing_events \
@@ -4148,7 +4250,7 @@ impl DbBackend for PgBackend {
             } else {
                 query_as::<_, (String, f64, i64, i64)>(
                     "SELECT LEFT(timestamp::text, 10) as day, \
-                     COALESCE(SUM(cost_amount), 0), \
+                     COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                      COUNT(*)::bigint, \
                      COALESCE(SUM(total_tokens), 0)::bigint \
                      FROM billing_events \
@@ -4164,7 +4266,7 @@ impl DbBackend for PgBackend {
         } else if let Some(tid) = team_id {
             query_as::<_, (String, f64, i64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(cost_amount), 0), \
+                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                  COUNT(*)::bigint, \
                  COALESCE(SUM(total_tokens), 0)::bigint \
                  FROM billing_events \
@@ -4180,7 +4282,7 @@ impl DbBackend for PgBackend {
         } else {
             query_as::<_, (String, f64, i64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(cost_amount), 0), \
+                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                  COUNT(*)::bigint, \
                  COALESCE(SUM(total_tokens), 0)::bigint \
                  FROM billing_events \
@@ -4288,7 +4390,7 @@ impl DbBackend for PgBackend {
             if let Some(tid) = team_id {
                 query_as::<_, (String, f64, i64)>(
                     "SELECT LEFT(timestamp::text, 10) as day, \
-                     COALESCE(SUM(cost_amount), 0), \
+                     COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                      COUNT(*)::bigint \
                      FROM billing_events \
                      WHERE timestamp >= $1 AND timestamp < $2 \
@@ -4306,7 +4408,7 @@ impl DbBackend for PgBackend {
             } else {
                 query_as::<_, (String, f64, i64)>(
                     "SELECT LEFT(timestamp::text, 10) as day, \
-                     COALESCE(SUM(cost_amount), 0), \
+                     COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                      COUNT(*)::bigint \
                      FROM billing_events \
                      WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
@@ -4323,7 +4425,7 @@ impl DbBackend for PgBackend {
         } else if let Some(tid) = team_id {
             query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(cost_amount), 0), \
+                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                  COUNT(*)::bigint \
                  FROM billing_events \
                  WHERE timestamp >= $1 AND timestamp < $2 \
@@ -4340,7 +4442,7 @@ impl DbBackend for PgBackend {
         } else {
             query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(cost_amount), 0), \
+                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                  COUNT(*)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY day ORDER BY day DESC LIMIT $3 OFFSET $4",
@@ -4367,7 +4469,7 @@ impl DbBackend for PgBackend {
             if let Some(tid) = team_id {
                 query_as::<_, (String, f64, i64, i64)>(
                     "SELECT LEFT(timestamp::text, 7) AS month, \
-                     COALESCE(SUM(cost_amount), 0), \
+                     COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                      COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                      FROM billing_events \
                      WHERE team_id = $1 AND user_id = $2 AND account_type = 'team' \
@@ -4380,7 +4482,7 @@ impl DbBackend for PgBackend {
             } else {
                 query_as::<_, (String, f64, i64, i64)>(
                     "SELECT LEFT(timestamp::text, 7) AS month, \
-                     COALESCE(SUM(cost_amount), 0), \
+                     COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                      COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                      FROM billing_events WHERE user_id = $1 \
                      GROUP BY month ORDER BY month DESC",
@@ -4392,7 +4494,7 @@ impl DbBackend for PgBackend {
         } else if let Some(tid) = team_id {
             query_as::<_, (String, f64, i64, i64)>(
                 "SELECT LEFT(timestamp::text, 7) AS month, \
-                 COALESCE(SUM(cost_amount), 0), \
+                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                  FROM billing_events \
                  WHERE team_id = $1 AND account_type = 'team' \
@@ -4404,7 +4506,7 @@ impl DbBackend for PgBackend {
         } else {
             query_as::<_, (String, f64, i64, i64)>(
                 "SELECT LEFT(timestamp::text, 7) AS month, \
-                 COALESCE(SUM(cost_amount), 0), \
+                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                  FROM billing_events GROUP BY month ORDER BY month DESC",
             )
@@ -4788,15 +4890,6 @@ impl DbBackend for PgBackend {
         ))
     }
 
-    async fn update_wallet_balance(&self, user_id: &str, balance: Decimal) -> Result<(), DbError> {
-        query("UPDATE users SET balance = $1 WHERE id = $2")
-            .bind(balance.to_f64().unwrap_or(0.0))
-            .bind(user_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
     async fn add_wallet_transaction(
         &self,
         id: &str,
@@ -4975,12 +5068,19 @@ impl DbBackend for PgBackend {
         Ok((transactions, total_dates))
     }
 
-    async fn get_total_consumed(&self, user_id: &str) -> Result<Decimal, DbError> {
-        let (amount,): (f64,) = query_as(
-            "SELECT COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price + \
-             completion_tokens / 1000000.0 * completion_price + \
-             cache_hit_input_tokens / 1000000.0 * cache_read_price), 0) \
-             FROM billing_events WHERE user_id = $1",
+    async fn get_wallet_request_reserved(&self, user_id: &str) -> Result<Decimal, DbError> {
+        let amount: f64 =
+            query_scalar("SELECT COALESCE(token_wallet_reserved, 0) FROM users WHERE id = $1")
+                .bind(user_id)
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(Decimal::try_from(amount).unwrap_or(Decimal::ZERO))
+    }
+
+    async fn get_total_wallet_consumed(&self, user_id: &str) -> Result<Decimal, DbError> {
+        let amount: f64 = query_scalar(
+            "SELECT COALESCE(SUM(ABS(amount)), 0) FROM wallet_transactions \
+             WHERE user_id = $1 AND type = 'deduction' AND status = 'completed'",
         )
         .bind(user_id)
         .fetch_one(&self.pool)
@@ -5793,6 +5893,22 @@ impl DbBackend for PgBackend {
         let mut deductions: Vec<(String, Decimal, Decimal)> = Vec::new();
 
         for record in batch {
+            // Reservation settlement is authoritative for monetary fields. If the
+            // async finalizer has not committed actual usage yet, defer the whole
+            // batch to the durable usage backlog instead of creating a zero-value
+            // billing event that can outlive the later settlement.
+            if let Some((state, settlement_state)) = query_as::<_, (String, String)>(
+                "SELECT state, settlement_state FROM token_request_reservations WHERE request_id = $1",
+            )
+            .bind(&record.request_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            {
+                if state == "reserved" && settlement_state == "reserved" {
+                    return Err(DbError("token settlement pending; retry usage billing".to_string()));
+                }
+            }
+
             let (prompt_price, completion_price, cache_read_price, cache_write_price) = {
                 // Lookup pricing within transaction
                 let result = query_as::<_, (f64, f64, f64, f64)>(
@@ -5837,6 +5953,7 @@ impl DbBackend for PgBackend {
                 record.prompt_tokens,
                 record.completion_tokens,
                 record.cache_hit_input_tokens,
+                record.cache_write_tokens,
                 prompt_price,
                 completion_price,
                 cache_read_price,
@@ -5852,13 +5969,13 @@ impl DbBackend for PgBackend {
                 "INSERT INTO billing_events (\
                  timestamp, request_id, user_id, user_name, channel_id, model, \
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, cache_hit_input_tokens, cache_write_tokens, \
-                 prompt_price, completion_price, cache_read_price, cost_amount, \
+                 prompt_price, completion_price, cache_read_price, cache_write_price, cost_amount, \
                  api_key_name, api_format, stream, client_ip, endpoint_id, \
                  request_body, response_body, reasoning_body, original_model, \
                  success, status_code, team_id, account_type, activity_status, charge_source, priced_cost_amount) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
-                 $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, \
-                 $23, $24, $25, $26, $27, $28, $29, $30, $31, $32) \
+                 $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, \
+                 $24, $25, $26, $27, $28, $29, $30, $31, $32, $33) \
                  ON CONFLICT (request_id) DO NOTHING",
             )
             .bind(&record.timestamp)
@@ -5876,6 +5993,7 @@ impl DbBackend for PgBackend {
             .bind(prompt_price)
             .bind(completion_price)
             .bind(cache_read_price)
+            .bind(cache_write_price)
             .bind(cost_amount)
             .bind(&record.api_key_name)
             .bind(&record.api_format)
@@ -5955,8 +6073,9 @@ impl DbBackend for PgBackend {
                          prompt_price = r.prompt_price,
                          completion_price = r.completion_price,
                          cache_read_price = r.cache_read_price,
+                         cache_write_price = r.cache_write_price,
                          stream = $2,
-                         priced_cost_amount = COALESCE(NULLIF(be.priced_cost_amount, 0), r.estimated_priced_cost_amount, be.cost_amount)
+                         priced_cost_amount = COALESCE(r.actual_priced_cost_amount, 0)
                      FROM token_request_reservations r
                      WHERE be.request_id = r.request_id AND be.request_id = $1",
                 )
@@ -6143,11 +6262,11 @@ impl DbBackend for PgBackend {
             accounting_mode: row.try_get::<String, _>(3)?.parse().map_err(DbError)?,
             display_token_amount: row.try_get::<i64, _>(4)?.max(0) as u64,
             total_units: row.try_get::<i64, _>(5)?.max(0) as u64,
-            input_credit_factor: Decimal::try_from(row.try_get::<f64, _>(6)?)
-                .unwrap_or(Decimal::ONE),
-            output_credit_factor: Decimal::try_from(row.try_get::<f64, _>(7)?)
-                .unwrap_or(Decimal::ONE),
-            cache_credit_factor: Decimal::try_from(row.try_get::<f64, _>(8)?)
+            input_credit_factor: row.try_get::<String, _>(6)?.parse().unwrap_or(Decimal::ONE),
+            output_credit_factor: row.try_get::<String, _>(7)?.parse().unwrap_or(Decimal::ONE),
+            cache_credit_factor: row
+                .try_get::<String, _>(8)?
+                .parse()
                 .unwrap_or(Decimal::ZERO),
             exhaustion_policy: row.try_get::<String, _>(9)?.parse().map_err(DbError)?,
             priority: row.try_get(10)?,
@@ -6651,10 +6770,9 @@ impl DbBackend for PgBackend {
         }
         let grant_id = row.try_get::<Option<String>, _>(1)?;
         let reserved = row.try_get::<i64, _>(2)?.max(0) as u64;
-        let reserved_total = row.try_get::<i64, _>(3)?.max(0) as u64;
         let user_id = row.try_get::<String, _>(6)?;
         let team_id = row.try_get::<Option<String>, _>(7)?;
-        let reserved_wallet = row.try_get::<f64, _>(8)?;
+        let reserved_wallet = row.try_get::<f64, _>(8)?.max(0.0);
         let request_id = row.try_get::<String, _>(14)?;
         let prompt_price = row.try_get::<f64, _>(15)?;
         let completion_price = row.try_get::<f64, _>(16)?;
@@ -6689,17 +6807,31 @@ impl DbBackend for PgBackend {
                     )
                 })
                 .unwrap_or((Decimal::ONE, Decimal::ONE, Decimal::ZERO));
-        let actual_usage = crate::domain::token_package::TokenUsage {
+        let actual_usage = TokenUsage {
             prompt_tokens: settlement.actual_prompt_tokens,
             completion_tokens: settlement.actual_completion_tokens,
             cache_hit_input_tokens: settlement.actual_cache_hit_input_tokens,
         };
-        let actual_units = if accounting_mode.as_deref() == Some("standardized_credits") {
-            actual_usage.standardized_credits(input_factor, output_factor, cache_factor)
-        } else {
-            actual_usage.raw_units()
-        };
-        let consumed = actual_units.min(reserved);
+        let breakdown = calculate_settlement(
+            actual_usage,
+            settlement.actual_cache_write_tokens,
+            PriceSnapshot {
+                prompt: Decimal::try_from(prompt_price).unwrap_or(Decimal::ZERO),
+                completion: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
+                cache_read: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
+                cache_write: Decimal::try_from(cache_write_price).unwrap_or(Decimal::ZERO),
+            },
+            accounting_mode
+                .as_deref()
+                .and_then(|value| value.parse().ok()),
+            input_factor,
+            output_factor,
+            cache_factor,
+            reserved,
+            billing_payment_mode,
+        );
+        let actual_units = breakdown.actual_units;
+        let consumed = breakdown.package_units;
         if let Some(id) = grant_id.as_deref() {
             query("UPDATE token_package_grants SET consumed_units = consumed_units + $1, reserved_units = reserved_units - $2, updated_at = $3 WHERE id = $4")
                 .bind(consumed as i64)
@@ -6718,69 +6850,158 @@ impl DbBackend for PgBackend {
                 .execute(&mut *tx)
                 .await?;
         }
-        let wallet_units = actual_units.saturating_sub(reserved);
-        let wallet_amount = if billing_payment_mode == BillingPaymentMode::Postpaid
-            || wallet_units == 0
-            || reserved_total == 0
-        {
-            0.0
-        } else {
-            reserved_wallet * wallet_units.min(reserved_total) as f64 / reserved_total as f64
-        };
+        let mut wallet_amount = breakdown.wallet_amount.to_f64().unwrap_or(f64::MAX);
+        let receivable_id = format!("receivable-{}", settlement.reservation_id);
+        let mut initial_wallet_transaction_id: Option<String> = None;
         let now = chrono::Utc::now().to_rfc3339();
-        let release_wallet = (reserved_wallet - wallet_amount).max(0.0);
-        if release_wallet > 0.0 {
+        // Release the entire authorization hold before checking the final debit.
+        // This keeps the hold a reservation-only concern and makes overage
+        // settlement use the same atomic available-balance check as any debit.
+        if reserved_wallet > 0.0 {
             if let Some(team_id) = team_id.as_deref() {
                 query("UPDATE team_wallets SET token_wallet_reserved = GREATEST(0, token_wallet_reserved - $1), updated_at = $2 WHERE team_id = $3")
-                    .bind(release_wallet)
-                    .bind(chrono::Utc::now().to_rfc3339())
+                    .bind(reserved_wallet)
+                    .bind(&now)
                     .bind(team_id)
                     .execute(&mut *tx)
                     .await?;
             } else {
                 query("UPDATE users SET token_wallet_reserved = GREATEST(0, token_wallet_reserved - $1) WHERE id = $2")
-                    .bind(release_wallet)
+                    .bind(reserved_wallet)
                     .bind(&user_id)
                     .execute(&mut *tx)
                     .await?;
             }
         }
         if billing_payment_mode == BillingPaymentMode::Prepaid && wallet_amount > 0.0 {
-            let deduction = -wallet_amount;
             if let Some(team_id) = team_id.as_deref() {
-                let row = query("SELECT balance FROM team_wallets WHERE team_id = $1 FOR UPDATE")
+                let row = query("SELECT balance, frozen, token_wallet_reserved FROM team_wallets WHERE team_id = $1 FOR UPDATE")
                     .bind(team_id)
                     .fetch_one(&mut *tx)
                     .await?;
                 let balance = row.try_get::<f64, _>(0)?;
-                query("UPDATE team_wallets SET balance = balance + $1, token_wallet_reserved = GREATEST(0, token_wallet_reserved - $2), updated_at = $3 WHERE team_id = $4")
-                    .bind(deduction).bind(wallet_amount).bind(chrono::Utc::now().to_rfc3339()).bind(team_id)
-                    .execute(&mut *tx).await?;
-                query("INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at, team_id, account_type) VALUES ($1,$2,'deduction',$3,$4,$5,'token_package','completed',$6,$7,$8,'team')")
-                    .bind(uuid::Uuid::new_v4().to_string()).bind(&user_id).bind(deduction).bind(balance).bind(balance + deduction)
-                    .bind("Token package wallet fallback").bind(&now).bind(team_id).execute(&mut *tx).await?;
+                let frozen = row.try_get::<f64, _>(1)?;
+                let reserved_other = row.try_get::<f64, _>(2)?;
+                let settled_wallet_amount =
+                    wallet_amount.min((balance - frozen - reserved_other).max(0.0));
+                let deduction = -settled_wallet_amount;
+                let new_balance = balance + deduction;
+                query("UPDATE team_wallets SET balance = $1, updated_at = $2 WHERE team_id = $3")
+                    .bind(new_balance)
+                    .bind(&now)
+                    .bind(team_id)
+                    .execute(&mut *tx)
+                    .await?;
+                if settled_wallet_amount > 0.0 {
+                    let transaction_id = format!("wallet-initial-{}", settlement.reservation_id);
+                    query("INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at, team_id, account_type) VALUES ($1,$2,'deduction',$3,$4,$5,'token_settlement','completed',$6,$7,$8,'team')")
+                        .bind(&transaction_id).bind(&user_id).bind(deduction).bind(balance).bind(new_balance)
+                        .bind("Token package wallet fallback").bind(&now).bind(team_id).execute(&mut *tx).await?;
+                    initial_wallet_transaction_id = Some(transaction_id);
+                }
+                wallet_amount = settled_wallet_amount;
             } else {
-                let row = query("SELECT balance FROM users WHERE id = $1 FOR UPDATE")
+                let row = query("SELECT balance, frozen, token_wallet_reserved FROM users WHERE id = $1 FOR UPDATE")
                     .bind(&user_id)
                     .fetch_one(&mut *tx)
                     .await?;
                 let balance = row.try_get::<f64, _>(0)?;
-                query("UPDATE users SET balance = balance + $1, token_wallet_reserved = GREATEST(0, token_wallet_reserved - $2) WHERE id = $3")
-                    .bind(deduction).bind(wallet_amount).bind(&user_id)
-                    .execute(&mut *tx).await?;
-                query("INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at, team_id, account_type) VALUES ($1,$2,'deduction',$3,$4,$5,'token_package','completed',$6,$7,NULL,'user')")
-                    .bind(uuid::Uuid::new_v4().to_string()).bind(&user_id).bind(deduction).bind(balance).bind(balance + deduction)
-                    .bind("Token package wallet fallback").bind(&now).execute(&mut *tx).await?;
+                let frozen = row.try_get::<f64, _>(1)?;
+                let reserved_other = row.try_get::<f64, _>(2)?;
+                let settled_wallet_amount =
+                    wallet_amount.min((balance - frozen - reserved_other).max(0.0));
+                let deduction = -settled_wallet_amount;
+                let new_balance = balance + deduction;
+                query("UPDATE users SET balance = $1 WHERE id = $2")
+                    .bind(new_balance)
+                    .bind(&user_id)
+                    .execute(&mut *tx)
+                    .await?;
+                if settled_wallet_amount > 0.0 {
+                    let transaction_id = format!("wallet-initial-{}", settlement.reservation_id);
+                    query("INSERT INTO wallet_transactions (id, user_id, type, amount, balance_before, balance_after, method, status, note, created_at, team_id, account_type) VALUES ($1,$2,'deduction',$3,$4,$5,'token_settlement','completed',$6,$7,NULL,'user')")
+                        .bind(&transaction_id).bind(&user_id).bind(deduction).bind(balance).bind(new_balance)
+                        .bind("Token package wallet fallback").bind(&now).execute(&mut *tx).await?;
+                    initial_wallet_transaction_id = Some(transaction_id);
+                }
+                wallet_amount = settled_wallet_amount;
             }
         }
-        query("UPDATE token_request_reservations SET actual_prompt_tokens = $1, actual_completion_tokens = $2, actual_cache_write_tokens = $3, actual_package_units = $4, actual_wallet_amount = $5, state = $6, reason = $7, settled_at = $8 WHERE id = $9")
+        let wallet_shortfall = if billing_payment_mode == BillingPaymentMode::Prepaid {
+            (breakdown.wallet_amount - Decimal::try_from(wallet_amount).unwrap_or(Decimal::ZERO))
+                .max(Decimal::ZERO)
+                .to_f64()
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        let final_reason = if wallet_shortfall > 0.0 {
+            format!("{}; wallet shortfall={wallet_shortfall}", settlement.reason)
+        } else {
+            settlement.reason.clone()
+        };
+        let settlement_state = if wallet_shortfall > 0.0 {
+            "settlement_pending"
+        } else if actual_units > 0 {
+            "settled"
+        } else {
+            "released"
+        };
+        let receivable_state = if wallet_shortfall > 0.0 {
+            "partially_settled"
+        } else {
+            "settled"
+        };
+        query("INSERT INTO token_settlement_receivables (id, reservation_id, request_id, user_id, team_id, account_type, actual_prompt_tokens, actual_completion_tokens, actual_cache_hit_input_tokens, actual_cache_write_tokens, status_code, success, reason, actual_priced_cost_amount, package_priced_cost_amount, wallet_due_amount, settled_wallet_amount, outstanding_amount, state, created_at, updated_at, settled_at) SELECT $1, r.id, r.request_id, r.user_id, r.team_id, r.account_type, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15, CASE WHEN $13 = 0 THEN $15 ELSE NULL END FROM token_request_reservations r WHERE r.id = $16 ON CONFLICT (reservation_id) DO UPDATE SET actual_prompt_tokens = EXCLUDED.actual_prompt_tokens, actual_completion_tokens = EXCLUDED.actual_completion_tokens, actual_cache_hit_input_tokens = EXCLUDED.actual_cache_hit_input_tokens, actual_cache_write_tokens = EXCLUDED.actual_cache_write_tokens, status_code = EXCLUDED.status_code, success = EXCLUDED.success, reason = EXCLUDED.reason, actual_priced_cost_amount = EXCLUDED.actual_priced_cost_amount, package_priced_cost_amount = EXCLUDED.package_priced_cost_amount, wallet_due_amount = EXCLUDED.wallet_due_amount, settled_wallet_amount = EXCLUDED.settled_wallet_amount, outstanding_amount = EXCLUDED.outstanding_amount, state = EXCLUDED.state, updated_at = EXCLUDED.updated_at, settled_at = EXCLUDED.settled_at")
+            .bind(&receivable_id)
+            .bind(settlement.actual_prompt_tokens as i64)
+            .bind(settlement.actual_completion_tokens as i64)
+            .bind(settlement.actual_cache_hit_input_tokens as i64)
+            .bind(settlement.actual_cache_write_tokens as i64)
+            .bind(settlement.status_code as i32)
+            .bind(settlement.success)
+            .bind(&final_reason)
+            .bind(breakdown.actual_priced_cost.to_f64().unwrap_or(f64::MAX))
+            .bind(breakdown.package_priced_cost.to_f64().unwrap_or(f64::MAX))
+            .bind(breakdown.wallet_amount.to_f64().unwrap_or(f64::MAX))
+            .bind(wallet_amount)
+            .bind(wallet_shortfall)
+            .bind(receivable_state)
+            .bind(&now)
+            .bind(&settlement.reservation_id)
+            .execute(&mut *tx)
+            .await?;
+        {
+            query("INSERT INTO token_settlement_payments (id, receivable_id, reservation_id, request_id, payment_sequence, payment_type, idempotency_key, amount, account_type, wallet_transaction_id, created_at) VALUES ($1,$2,$3,$4,0,'initial_settlement',$5,$6,$7,$8,$9) ON CONFLICT (idempotency_key) DO NOTHING")
+                .bind(format!("payment-initial-{}", settlement.reservation_id))
+                .bind(&receivable_id)
+                .bind(&settlement.reservation_id)
+                .bind(&request_id)
+                .bind(format!("settlement:{}:payment:0", settlement.reservation_id))
+                .bind(wallet_amount)
+                .bind(if team_id.is_some() { "team" } else { "user" })
+                .bind(&initial_wallet_transaction_id)
+                .bind(&now)
+                .execute(&mut *tx)
+                .await?;
+        }
+        query("UPDATE token_request_reservations SET actual_prompt_tokens = $1, actual_completion_tokens = $2, actual_cache_write_tokens = $3, actual_package_units = $4, actual_wallet_amount = $5, wallet_shortfall_amount = $6, actual_priced_cost_amount = $7, state = $8, settlement_state = $9, reason = $10, settled_at = $11 WHERE id = $12")
             .bind(settlement.actual_prompt_tokens as i64)
             .bind(settlement.actual_completion_tokens as i64)
             .bind(settlement.actual_cache_write_tokens as i64)
             .bind(consumed as i64)
             .bind(wallet_amount)
-            .bind(if actual_units > 0 { "settled" } else { "released" })
-            .bind(&settlement.reason)
+            .bind(wallet_shortfall)
+            .bind(breakdown.actual_priced_cost.to_f64().unwrap_or(f64::MAX))
+            .bind(if actual_units > 0 && wallet_shortfall == 0.0 {
+                "settled"
+            } else if actual_units > 0 {
+                "settlement_pending"
+            } else {
+                "released"
+            })
+            .bind(settlement_state)
+            .bind(&final_reason)
             .bind(chrono::Utc::now().to_rfc3339())
             .bind(&settlement.reservation_id)
             .execute(&mut *tx)
@@ -6788,16 +7009,16 @@ impl DbBackend for PgBackend {
         query(
             "INSERT INTO billing_events (request_id, user_id, user_name, channel_id, model,
              prompt_tokens, completion_tokens, total_tokens, cache_hit_input_tokens, cache_write_tokens,
-             prompt_price, completion_price, cache_read_price,
+             prompt_price, completion_price, cache_read_price, cache_write_price,
              cost_amount, success, status_code, timestamp, reservation_id, package_grant_id,
              accounting_mode, package_units, wallet_amount, team_id, account_type,
              api_key_name, billing_group_id, billing_group_name, billing_payment_mode,
-             activity_status, charge_source, priced_cost_amount)
+             activity_status, charge_source, priced_cost_amount, settlement_state, settled_amount, outstanding_amount, token_settlement_id)
              SELECT r.request_id, r.user_id, COALESCE(NULLIF(r.user_name, ''), u.name), '', r.model,
                     COALESCE(r.actual_prompt_tokens, 0), COALESCE(r.actual_completion_tokens, 0),
                     COALESCE(r.actual_prompt_tokens, 0) + COALESCE(r.actual_completion_tokens, 0),
                     COALESCE($1, 0), COALESCE(r.actual_cache_write_tokens, 0), r.prompt_price,
-                    r.completion_price, r.cache_read_price,
+                    r.completion_price, r.cache_read_price, r.cache_write_price,
                     COALESCE(r.actual_wallet_amount, 0), $2, $3, COALESCE(r.created_at, $4),
                     r.id, r.package_grant_id, r.accounting_mode, COALESCE(r.actual_package_units, 0),
                     COALESCE(r.actual_wallet_amount, 0), r.team_id, r.account_type, NULLIF(r.api_key_name, ''),
@@ -6809,10 +7030,8 @@ impl DbBackend for PgBackend {
                          WHEN COALESCE(r.actual_package_units, 0) > 0 THEN 'package'
                          WHEN COALESCE(r.actual_wallet_amount, 0) > 0 THEN 'wallet'
                          ELSE 'none' END,
-                    (COALESCE(r.actual_prompt_tokens, 0) * r.prompt_price
-                       + COALESCE(r.actual_completion_tokens, 0) * r.completion_price
-                       + COALESCE($1, 0) * r.cache_read_price
-                       + COALESCE(r.actual_cache_write_tokens, 0) * r.cache_write_price) / 1000000.0
+                    COALESCE(r.actual_priced_cost_amount, 0), r.settlement_state,
+                    COALESCE(r.actual_wallet_amount, 0), COALESCE(r.wallet_shortfall_amount, 0), r.id
              FROM token_request_reservations r JOIN users u ON u.id = r.user_id
              WHERE r.id = $5
              ON CONFLICT (request_id) DO UPDATE SET
@@ -6824,6 +7043,7 @@ impl DbBackend for PgBackend {
                prompt_price = EXCLUDED.prompt_price,
                completion_price = EXCLUDED.completion_price,
                cache_read_price = EXCLUDED.cache_read_price,
+               cache_write_price = EXCLUDED.cache_write_price,
                cost_amount = EXCLUDED.cost_amount,
                success = EXCLUDED.success,
                status_code = EXCLUDED.status_code,
@@ -6838,6 +7058,10 @@ impl DbBackend for PgBackend {
                billing_group_name = COALESCE(EXCLUDED.billing_group_name, billing_events.billing_group_name),
                billing_payment_mode = COALESCE(EXCLUDED.billing_payment_mode, billing_events.billing_payment_mode),
                priced_cost_amount = EXCLUDED.priced_cost_amount,
+               settlement_state = EXCLUDED.settlement_state,
+               settled_amount = EXCLUDED.settled_amount,
+               outstanding_amount = EXCLUDED.outstanding_amount,
+               token_settlement_id = EXCLUDED.token_settlement_id,
                user_name = COALESCE(NULLIF(EXCLUDED.user_name, ''), billing_events.user_name),
                api_key_name = COALESCE(NULLIF(EXCLUDED.api_key_name, ''), billing_events.api_key_name)",
         )
@@ -6857,7 +7081,7 @@ impl DbBackend for PgBackend {
         request_id: &str,
         prompt_tokens: u64,
         completion_tokens: u64,
-        cache_hit_input_tokens: u64,
+        _cache_hit_input_tokens: u64,
     ) -> Result<(), DbError> {
         let mut tx = self.pool.begin().await?;
         let row = query_as::<_, (String, String, i64, Option<String>)>(
@@ -6900,6 +7124,252 @@ impl DbBackend for PgBackend {
             .execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
+    }
+
+    async fn recover_token_settlement_receivables(
+        &self,
+        limit: usize,
+        worker_id: &str,
+    ) -> Result<usize, DbError> {
+        if limit == 0 {
+            return Ok(0);
+        }
+        let mut processed = 0usize;
+        for _ in 0..limit {
+            let mut tx = self.pool.begin().await?;
+            let row = query(
+                "SELECT id, reservation_id, user_id, team_id, account_type, outstanding_amount,
+                        settled_wallet_amount, request_id
+                 FROM token_settlement_receivables
+                 WHERE state = 'partially_settled'
+                   AND outstanding_amount > 0
+                   AND (next_attempt_at IS NULL OR next_attempt_at::timestamptz <= NOW())
+                   AND (lease_until IS NULL OR lease_until::timestamptz <= NOW())
+                 ORDER BY created_at, id
+                 FOR UPDATE SKIP LOCKED
+                 LIMIT 1",
+            )
+            .fetch_optional(&mut *tx)
+            .await?;
+            let Some(row) = row else {
+                tx.commit().await?;
+                break;
+            };
+            let receivable_id: String = row.try_get(0)?;
+            let reservation_id: String = row.try_get(1)?;
+            let user_id: String = row.try_get(2)?;
+            let team_id: Option<String> = row.try_get(3)?;
+            let account_type: String = row.try_get(4)?;
+            let outstanding: f64 = row.try_get(5)?;
+            let settled_before: f64 = row.try_get(6)?;
+            let request_id: String = row.try_get(7)?;
+            let now = chrono::Utc::now().to_rfc3339();
+            query(
+                "UPDATE token_settlement_receivables
+                 SET attempts = attempts + 1, lease_until = ($1::timestamptz + INTERVAL '60 seconds'),
+                     updated_at = $1, last_error = ''
+                 WHERE id = $2",
+            )
+            .bind(&now)
+            .bind(&receivable_id)
+            .execute(&mut *tx)
+            .await?;
+
+            let (balance, frozen, reserved): (f64, f64, f64) = if let Some(team) =
+                team_id.as_deref()
+            {
+                query_as("SELECT balance, frozen, token_wallet_reserved FROM team_wallets WHERE team_id = $1 FOR UPDATE")
+                    .bind(team).fetch_one(&mut *tx).await?
+            } else {
+                query_as("SELECT balance, frozen, token_wallet_reserved FROM users WHERE id = $1 FOR UPDATE")
+                    .bind(&user_id).fetch_one(&mut *tx).await?
+            };
+            let payment = outstanding.min((balance - frozen - reserved).max(0.0));
+            if payment <= 0.0 {
+                query("UPDATE token_settlement_receivables SET lease_until = NULL, next_attempt_at = ($1::timestamptz + INTERVAL '1 hour'), last_error = 'insufficient_funds', updated_at = $1 WHERE id = $2")
+                    .bind(&now).bind(&receivable_id).execute(&mut *tx).await?;
+                tx.commit().await?;
+                processed += 1;
+                continue;
+            }
+            let payment_sequence: i64 = query_scalar("SELECT COALESCE(MAX(payment_sequence), 0) + 1 FROM token_settlement_payments WHERE receivable_id = $1")
+                .bind(&receivable_id).fetch_one(&mut *tx).await?;
+            let idempotency_key = format!("settlement:{receivable_id}:payment:{payment_sequence}");
+            let payment_id = format!("payment-{}-{}", receivable_id, payment_sequence);
+            let payment_inserted = query("INSERT INTO token_settlement_payments (id, receivable_id, reservation_id, request_id, payment_sequence, payment_type, idempotency_key, amount, account_type, created_at) VALUES ($1,$2,$3,$4,$5,'recovery',$6,$7,$8,$9) ON CONFLICT (idempotency_key) DO NOTHING")
+                .bind(&payment_id).bind(&receivable_id).bind(&reservation_id).bind(&request_id)
+                .bind(payment_sequence).bind(&idempotency_key).bind(payment).bind(&account_type).bind(&now)
+                .execute(&mut *tx).await?;
+            if payment_inserted.rows_affected() != 1 {
+                tx.commit().await?;
+                processed += 1;
+                continue;
+            }
+            let new_balance = balance - payment;
+            let tx_id = format!("wallet-{}", payment_id);
+            if let Some(team) = team_id.as_deref() {
+                query("UPDATE team_wallets SET balance = $1, updated_at = $2 WHERE team_id = $3")
+                    .bind(new_balance)
+                    .bind(&now)
+                    .bind(team)
+                    .execute(&mut *tx)
+                    .await?;
+                query("INSERT INTO wallet_transactions (id,user_id,type,amount,balance_before,balance_after,method,status,note,created_at,team_id,account_type) VALUES ($1,$2,'deduction',$3,$4,$5,'token_settlement','completed',$6,$7,$8,'team')")
+                    .bind(&tx_id).bind(&user_id).bind(-payment).bind(balance).bind(new_balance)
+                    .bind(format!("Receivable repayment by {worker_id}")).bind(&now).bind(team).execute(&mut *tx).await?;
+            } else {
+                query("UPDATE users SET balance = $1 WHERE id = $2")
+                    .bind(new_balance)
+                    .bind(&user_id)
+                    .execute(&mut *tx)
+                    .await?;
+                query("INSERT INTO wallet_transactions (id,user_id,type,amount,balance_before,balance_after,method,status,note,created_at,team_id,account_type) VALUES ($1,$2,'deduction',$3,$4,$5,'token_settlement','completed',$6,$7,NULL,'user')")
+                    .bind(&tx_id).bind(&user_id).bind(-payment).bind(balance).bind(new_balance)
+                    .bind(format!("Receivable repayment by {worker_id}")).bind(&now).execute(&mut *tx).await?;
+            }
+            query("UPDATE token_settlement_payments SET wallet_transaction_id = $1 WHERE id = $2")
+                .bind(&tx_id)
+                .bind(&payment_id)
+                .execute(&mut *tx)
+                .await?;
+            let new_outstanding = (outstanding - payment).max(0.0);
+            let new_settled = settled_before + payment;
+            let state = if new_outstanding <= 0.0 {
+                "settled"
+            } else {
+                "partially_settled"
+            };
+            query("UPDATE token_settlement_receivables SET settled_wallet_amount=$1, outstanding_amount=$2, state=$3, lease_until=NULL, next_attempt_at=CASE WHEN $2 > 0 THEN ($4::timestamptz + INTERVAL '1 hour') ELSE NULL END, settled_at=CASE WHEN $2 <= 0 THEN $4 ELSE settled_at END, updated_at=$4 WHERE id=$5")
+                .bind(new_settled).bind(new_outstanding).bind(state).bind(&now).bind(&receivable_id)
+                .execute(&mut *tx).await?;
+            query("UPDATE token_request_reservations SET actual_wallet_amount=$1, wallet_shortfall_amount=$2, state=$3, settlement_state=$3, settled_at=CASE WHEN $2 <= 0 THEN $4 ELSE settled_at END WHERE id=$5")
+                .bind(new_settled).bind(new_outstanding).bind(state).bind(&now).bind(&reservation_id)
+                .execute(&mut *tx).await?;
+            query("UPDATE billing_events SET wallet_amount=$1, cost_amount=$1, settled_amount=$1, outstanding_amount=$2, settlement_state=$3, charge_source=CASE WHEN $2 > 0 THEN 'wallet_shortfall' ELSE 'wallet' END WHERE request_id=$4")
+                .bind(new_settled).bind(new_outstanding).bind(state).bind(&request_id)
+                .execute(&mut *tx).await?;
+            tx.commit().await?;
+            processed += 1;
+        }
+        Ok(processed)
+    }
+
+    async fn apply_token_settlement_payment(
+        &self,
+        receivable_id: &str,
+        payment_sequence: i64,
+        payment_type: &str,
+        idempotency_key: &str,
+        amount: Decimal,
+    ) -> Result<bool, DbError> {
+        if amount < Decimal::ZERO {
+            return Err(DbError(
+                "settlement payment amount cannot be negative".to_string(),
+            ));
+        }
+        let mut tx = self.pool.begin().await?;
+        let row = query("SELECT reservation_id, request_id, user_id, team_id, account_type, wallet_due_amount, settled_wallet_amount, outstanding_amount, state FROM token_settlement_receivables WHERE id = $1 FOR UPDATE")
+            .bind(receivable_id).fetch_optional(&mut *tx).await?
+            .ok_or_else(|| DbError("settlement receivable not found".to_string()))?;
+        let reservation_id: String = row.try_get(0)?;
+        let request_id: String = row.try_get(1)?;
+        let user_id: String = row.try_get(2)?;
+        let team_id: Option<String> = row.try_get(3)?;
+        let account_type: String = row.try_get(4)?;
+        let due: f64 = row.try_get(5)?;
+        let settled: f64 = row.try_get(6)?;
+        let outstanding: f64 = row.try_get(7)?;
+        let existing: Option<String> =
+            query_scalar("SELECT id FROM token_settlement_payments WHERE idempotency_key = $1")
+                .bind(idempotency_key)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if existing.is_some() {
+            tx.commit().await?;
+            return Ok(false);
+        }
+        if payment_sequence == 0 && payment_type != "initial_settlement" {
+            return Err(DbError("payment sequence/type mismatch".to_string()));
+        }
+        if payment_sequence >= 1 && payment_type != "recovery" {
+            return Err(DbError("payment sequence/type mismatch".to_string()));
+        }
+        let value = amount.to_f64().unwrap_or(0.0);
+        if value
+            > (outstanding
+                + if payment_sequence == 0 {
+                    due - settled - outstanding
+                } else {
+                    0.0
+                })
+                + 1e-15
+        {
+            return Err(DbError(
+                "settlement payment exceeds receivable due".to_string(),
+            ));
+        }
+        let payment_id = format!("payment-command-{}-{}", receivable_id, payment_sequence);
+        query("INSERT INTO token_settlement_payments (id, receivable_id, reservation_id, request_id, payment_sequence, payment_type, idempotency_key, amount, account_type, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
+            .bind(&payment_id).bind(receivable_id).bind(&reservation_id).bind(&request_id)
+            .bind(payment_sequence).bind(payment_type).bind(idempotency_key).bind(value).bind(&account_type).bind(chrono::Utc::now().to_rfc3339())
+            .execute(&mut *tx).await?;
+        if value > 0.0 {
+            let transaction_id = format!(
+                "wallet-payment-command-{}-{}",
+                receivable_id, payment_sequence
+            );
+            if let Some(team) = team_id.as_deref() {
+                let (balance, frozen, reserved): (f64, f64, f64) = query_as("SELECT balance,frozen,token_wallet_reserved FROM team_wallets WHERE team_id=$1 FOR UPDATE").bind(team).fetch_one(&mut *tx).await?;
+                let available = (balance - frozen - reserved).max(0.0);
+                if available + 1e-15 < value {
+                    return Err(DbError(
+                        "insufficient wallet balance for payment command".to_string(),
+                    ));
+                }
+                query("UPDATE team_wallets SET balance=$1 WHERE team_id=$2")
+                    .bind(balance - value)
+                    .bind(team)
+                    .execute(&mut *tx)
+                    .await?;
+                query("INSERT INTO wallet_transactions (id,user_id,type,amount,balance_before,balance_after,method,status,note,created_at,team_id,account_type) VALUES ($1,$2,'deduction',$3,$4,$5,'token_settlement','completed',$6,$7,$8,'team')").bind(&transaction_id).bind(&user_id).bind(-value).bind(balance).bind(balance-value).bind("Payment command").bind(chrono::Utc::now().to_rfc3339()).bind(team).execute(&mut *tx).await?;
+            } else {
+                let (balance, frozen, reserved): (f64, f64, f64) = query_as(
+                    "SELECT balance,frozen,token_wallet_reserved FROM users WHERE id=$1 FOR UPDATE",
+                )
+                .bind(&user_id)
+                .fetch_one(&mut *tx)
+                .await?;
+                let available = (balance - frozen - reserved).max(0.0);
+                if available + 1e-15 < value {
+                    return Err(DbError(
+                        "insufficient wallet balance for payment command".to_string(),
+                    ));
+                }
+                query("UPDATE users SET balance=$1 WHERE id=$2")
+                    .bind(balance - value)
+                    .bind(&user_id)
+                    .execute(&mut *tx)
+                    .await?;
+                query("INSERT INTO wallet_transactions (id,user_id,type,amount,balance_before,balance_after,method,status,note,created_at,account_type) VALUES ($1,$2,'deduction',$3,$4,$5,'token_settlement','completed',$6,$7,'user')").bind(&transaction_id).bind(&user_id).bind(-value).bind(balance).bind(balance-value).bind("Payment command").bind(chrono::Utc::now().to_rfc3339()).execute(&mut *tx).await?;
+            }
+            query("UPDATE token_settlement_payments SET wallet_transaction_id=$1 WHERE id=$2")
+                .bind(&transaction_id)
+                .bind(&payment_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        let new_settled = settled + value;
+        let new_outstanding = (outstanding - value).max(0.0);
+        let next_state = if new_outstanding <= 1e-15 {
+            "settled"
+        } else {
+            "partially_settled"
+        };
+        query("UPDATE token_settlement_receivables SET settled_wallet_amount=$1,outstanding_amount=$2,state=$3,updated_at=$4,settled_at=CASE WHEN $2<=1e-15 THEN $4 ELSE settled_at END WHERE id=$5").bind(new_settled).bind(new_outstanding).bind(next_state).bind(chrono::Utc::now().to_rfc3339()).bind(receivable_id).execute(&mut *tx).await?;
+        query("UPDATE token_request_reservations SET actual_wallet_amount=$1,wallet_shortfall_amount=$2,state=$3,settlement_state=$3 WHERE id=$4").bind(new_settled).bind(new_outstanding).bind(next_state).bind(&reservation_id).execute(&mut *tx).await?;
+        query("UPDATE billing_events SET wallet_amount=$1,cost_amount=$1,settled_amount=$1,outstanding_amount=$2,settlement_state=$3 WHERE request_id=$4").bind(new_settled).bind(new_outstanding).bind(next_state).bind(&request_id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(true)
     }
 
     async fn token_request_billing_amount(
@@ -6971,8 +7441,6 @@ impl DbBackend for PgBackend {
         if row.try_get::<String, _>(0)? != "reserved" {
             return Ok(());
         }
-        let reserved_prompt = row.try_get::<i64, _>(3)?.max(0) as u64;
-        let reserved_completion = row.try_get::<i64, _>(4)?.max(0) as u64;
         let user_id = row.try_get::<String, _>(5)?;
         let team_id = row.try_get::<Option<String>, _>(6)?;
         let reserved_wallet = row.try_get::<f64, _>(7)?;
@@ -7733,6 +8201,7 @@ fn compute_cost_amount(
     prompt_tokens: u64,
     completion_tokens: u64,
     cache_hit_input_tokens: u64,
+    cache_write_tokens: u64,
     prompt_price: f64,
     completion_price: f64,
     cache_read_price: f64,
@@ -7741,6 +8210,7 @@ fn compute_cost_amount(
     prompt_tokens as f64 / 1000000.0 * prompt_price
         + completion_tokens as f64 / 1000000.0 * completion_price
         + cache_hit_input_tokens as f64 / 1000000.0 * cache_read_price
+        + cache_write_tokens as f64 / 1000000.0 * cache_write_price
 }
 
 /// Resolve which account a usage record charges.
@@ -7755,8 +8225,414 @@ fn usage_account(record: &UsageRecord) -> (String, &'static str) {
 
 #[cfg(test)]
 mod billing_tests {
-    use super::{compute_cost_amount, usage_account};
+    use super::{compute_cost_amount, usage_account, PgBackend};
+    use crate::db::backend::DbBackend;
     use crate::domain::usage::UsageRecord;
+    use rust_decimal::prelude::ToPrimitive;
+    use rust_decimal::Decimal;
+    use std::sync::Arc;
+    use tokio::sync::Barrier;
+
+    #[tokio::test]
+    #[ignore = "requires a configured PostgreSQL integration database"]
+    async fn payment_identity_replay_is_idempotent_when_enabled() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+        let db = PgBackend::new(&url).await.expect("connect");
+        db.migrate().await.expect("migrate");
+        let suffix = uuid::Uuid::new_v4().to_string();
+        let user_id = format!("replay-{suffix}");
+        let base = format!("replay-{suffix}");
+        sqlx_core::query::query("INSERT INTO users (id,name,password_hash,balance,frozen,token_wallet_reserved,role,status) VALUES ($1,$2,'',1.0,0,0,'user','active')")
+            .bind(&user_id).bind(&user_id).execute(db.pg_pool()).await.expect("user");
+        for (idx, (amount, sequence, payment_type)) in [
+            (Decimal::new(1, 2), 0_i64, "initial_settlement"),
+            (Decimal::ZERO, 0_i64, "initial_settlement"),
+            (Decimal::new(1, 2), 1_i64, "recovery"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let reservation_id = format!("{base}-res-{idx}");
+            let request_id = format!("{base}-req-{idx}");
+            let receivable_id = format!("{base}-recv-{idx}");
+            let now = chrono::Utc::now().to_rfc3339();
+            sqlx_core::query::query("INSERT INTO token_request_reservations (id,request_id,user_id,account_type,model,state,settlement_state,actual_wallet_amount,wallet_shortfall_amount,created_at,expires_at) VALUES ($1,$2,$3,'user','replay','settlement_pending','settlement_pending',0,$4,$5,$5)")
+                .bind(&reservation_id).bind(&request_id).bind(&user_id).bind(if amount.is_zero() { 0.1 } else { 0.0 }).bind(&now)
+                .execute(db.pg_pool()).await.expect("reservation");
+            sqlx_core::query::query("INSERT INTO token_settlement_receivables (id,reservation_id,request_id,user_id,account_type,wallet_due_amount,settled_wallet_amount,outstanding_amount,state,created_at,updated_at) VALUES ($1,$2,$3,$4,'user',$5,0,$5,'partially_settled',$6,$6)")
+                .bind(&receivable_id).bind(&reservation_id).bind(&request_id).bind(&user_id).bind(if amount.is_zero() { 0.1 } else { 0.1 }).bind(&now)
+                .execute(db.pg_pool()).await.expect("receivable");
+            let key = format!("replay:{base}:{idx}");
+            let before = db.get_wallet_balance(&user_id).await.expect("balance").0;
+            let mut applied = Vec::new();
+            for _ in 0..10 {
+                applied.push(
+                    db.apply_token_settlement_payment(
+                        &receivable_id,
+                        sequence,
+                        payment_type,
+                        &key,
+                        amount,
+                    )
+                    .await
+                    .expect("apply"),
+                );
+            }
+            let after = db.get_wallet_balance(&user_id).await.expect("balance").0;
+            let payments: i64 = sqlx_core::query_scalar::query_scalar("SELECT COUNT(*) FROM token_settlement_payments WHERE receivable_id=$1 AND idempotency_key=$2").bind(&receivable_id).bind(&key).fetch_one(db.pg_pool()).await.expect("payments");
+            let txns: i64 = sqlx_core::query_scalar::query_scalar("SELECT COUNT(*) FROM token_settlement_payments p JOIN wallet_transactions w ON w.id=p.wallet_transaction_id WHERE p.receivable_id=$1 AND p.amount > 0").bind(&receivable_id).fetch_one(db.pg_pool()).await.expect("txns");
+            assert_eq!(applied.iter().filter(|v| **v).count(), 1);
+            assert_eq!(payments, 1);
+            assert_eq!(after - before, -amount);
+            if amount > Decimal::ZERO {
+                assert_eq!(txns, 1);
+            } else {
+                assert_eq!(txns, 0);
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires TEST3_PAYMENT_REPLAY=1 and configured PostgreSQL"]
+    async fn payment_identity_replay_test3_when_enabled() {
+        assert_eq!(std::env::var("TEST3_PAYMENT_REPLAY").as_deref(), Ok("1"));
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+        let db = PgBackend::new(&url).await.expect("connect");
+        db.migrate().await.expect("migrate");
+        let user_id = "test3".to_string();
+        let baseline: (f64, f64, f64) = sqlx_core::query_as::query_as(
+            "SELECT balance, frozen, token_wallet_reserved FROM users WHERE id=$1",
+        )
+        .bind(&user_id)
+        .fetch_one(db.pg_pool())
+        .await
+        .expect("test3 baseline");
+        assert!(baseline.0 >= 0.02, "test3 must have clean replay funds");
+        let base = format!("test3-payment-replay-{}", uuid::Uuid::new_v4());
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut cases = Vec::new();
+        for (idx, (amount, sequence, payment_type, due)) in [
+            (
+                Decimal::new(1, 2),
+                0_i64,
+                "initial_settlement",
+                Decimal::new(1, 2),
+            ),
+            (
+                Decimal::ZERO,
+                0_i64,
+                "initial_settlement",
+                Decimal::new(1, 2),
+            ),
+            (
+                Decimal::ZERO,
+                0_i64,
+                "initial_settlement",
+                Decimal::new(1, 2),
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let reservation_id = format!("{base}-res-{idx}");
+            let request_id = format!("{base}-req-{idx}");
+            let receivable_id = format!("{base}-recv-{idx}");
+            sqlx_core::query::query("INSERT INTO token_request_reservations (id,request_id,user_id,account_type,model,state,settlement_state,actual_wallet_amount,wallet_shortfall_amount,created_at,expires_at) VALUES ($1,$2,$3,'user','gpt-5.6-luna','settlement_pending','settlement_pending',0,$4,$5,$5)")
+                .bind(&reservation_id).bind(&request_id).bind(&user_id).bind(due.to_f64().unwrap()).bind(&now)
+                .execute(db.pg_pool()).await.expect("reservation fixture");
+            sqlx_core::query::query("INSERT INTO token_settlement_receivables (id,reservation_id,request_id,user_id,account_type,wallet_due_amount,settled_wallet_amount,outstanding_amount,state,created_at,updated_at) VALUES ($1,$2,$3,$4,'user',$5,0,$5,'partially_settled',$6,$6)")
+                .bind(&receivable_id).bind(&reservation_id).bind(&request_id).bind(&user_id).bind(due.to_f64().unwrap()).bind(&now)
+                .execute(db.pg_pool()).await.expect("receivable fixture");
+            let key = format!("test3:{base}:{idx}:payment:{sequence}");
+            let wallet_before = db
+                .get_wallet_balance(&user_id)
+                .await
+                .expect("wallet before")
+                .0;
+            let settled_before: f64 = sqlx_core::query_scalar::query_scalar(
+                "SELECT settled_wallet_amount FROM token_settlement_receivables WHERE id=$1",
+            )
+            .bind(&receivable_id)
+            .fetch_one(db.pg_pool())
+            .await
+            .expect("settled before");
+            let outstanding_before: f64 = sqlx_core::query_scalar::query_scalar(
+                "SELECT outstanding_amount FROM token_settlement_receivables WHERE id=$1",
+            )
+            .bind(&receivable_id)
+            .fetch_one(db.pg_pool())
+            .await
+            .expect("outstanding before");
+            let mut results = Vec::new();
+            for _ in 0..10 {
+                results.push(
+                    db.apply_token_settlement_payment(
+                        &receivable_id,
+                        sequence,
+                        payment_type,
+                        &key,
+                        amount,
+                    )
+                    .await
+                    .expect("payment application"),
+                );
+            }
+            let wallet_after = db
+                .get_wallet_balance(&user_id)
+                .await
+                .expect("wallet after")
+                .0;
+            let settled_after: f64 = sqlx_core::query_scalar::query_scalar(
+                "SELECT settled_wallet_amount FROM token_settlement_receivables WHERE id=$1",
+            )
+            .bind(&receivable_id)
+            .fetch_one(db.pg_pool())
+            .await
+            .expect("settled after");
+            let outstanding_after: f64 = sqlx_core::query_scalar::query_scalar(
+                "SELECT outstanding_amount FROM token_settlement_receivables WHERE id=$1",
+            )
+            .bind(&receivable_id)
+            .fetch_one(db.pg_pool())
+            .await
+            .expect("outstanding after");
+            let payment_rows: i64 = sqlx_core::query_scalar::query_scalar(
+                "SELECT COUNT(*) FROM token_settlement_payments WHERE receivable_id=$1",
+            )
+            .bind(&receivable_id)
+            .fetch_one(db.pg_pool())
+            .await
+            .expect("payment rows");
+            let identity_rows: i64 = sqlx_core::query_scalar::query_scalar("SELECT COUNT(*) FROM token_settlement_payments WHERE receivable_id=$1 AND idempotency_key=$2").bind(&receivable_id).bind(&key).fetch_one(db.pg_pool()).await.expect("identity rows");
+            let sequence_rows: i64 = sqlx_core::query_scalar::query_scalar("SELECT COUNT(*) FROM token_settlement_payments WHERE receivable_id=$1 AND payment_sequence=$2").bind(&receivable_id).bind(sequence).fetch_one(db.pg_pool()).await.expect("sequence rows");
+            let wallet_tx_rows: i64 = sqlx_core::query_scalar::query_scalar("SELECT COUNT(*) FROM token_settlement_payments p JOIN wallet_transactions w ON w.id=p.wallet_transaction_id WHERE p.receivable_id=$1 AND p.amount > 0").bind(&receivable_id).fetch_one(db.pg_pool()).await.expect("wallet tx rows");
+            assert_eq!(results.iter().filter(|applied| **applied).count(), 1);
+            assert_eq!(payment_rows, 1);
+            assert_eq!(identity_rows, 1);
+            assert_eq!(sequence_rows, 1);
+            assert_eq!(wallet_tx_rows, i64::from(amount > Decimal::ZERO));
+            assert!(
+                (wallet_after.to_f64().unwrap()
+                    - (wallet_before.to_f64().unwrap() - amount.to_f64().unwrap()))
+                .abs()
+                    < 1e-12
+            );
+            cases.push(serde_json::json!({
+                "case": if idx == 0 { "A_initial_positive" } else if idx == 1 { "B_initial_zero" } else { "C_initial_zero_before_recovery" },
+                "request_id": request_id, "reservation_id": reservation_id, "receivable_id": receivable_id,
+                "payment_sequence": sequence, "payment_type": payment_type, "idempotency_key": key,
+                "amount": amount.to_string(), "attempt_results": results,
+                "payment_row_count": payment_rows, "idempotency_key_row_count": identity_rows,
+                "sequence_row_count": sequence_rows, "wallet_transaction_row_count": wallet_tx_rows,
+                "wallet_before": wallet_before.to_string(), "wallet_after_attempt_1": (wallet_before - amount).to_string(), "wallet_after_attempt_10": wallet_after.to_string(),
+                "settled_before": settled_before.to_string(), "settled_after_attempt_1": (settled_before + amount.to_f64().unwrap()).to_string(), "settled_after_attempt_10": settled_after.to_string(),
+                "outstanding_before": outstanding_before.to_string(), "outstanding_after_attempt_1": (outstanding_before - amount.to_f64().unwrap()).max(0.0).to_string(), "outstanding_after_attempt_10": outstanding_after.to_string()
+            }));
+            if idx == 2 {
+                let recovery_key = format!("test3:{base}:{idx}:payment:1");
+                let recovery_amount = Decimal::new(1, 2);
+                let recovery_wallet_before = db
+                    .get_wallet_balance(&user_id)
+                    .await
+                    .expect("recovery wallet before")
+                    .0;
+                let recovery_settled_before: f64 = sqlx_core::query_scalar::query_scalar(
+                    "SELECT settled_wallet_amount FROM token_settlement_receivables WHERE id=$1",
+                )
+                .bind(&receivable_id)
+                .fetch_one(db.pg_pool())
+                .await
+                .expect("recovery settled before");
+                let recovery_outstanding_before: f64 = sqlx_core::query_scalar::query_scalar(
+                    "SELECT outstanding_amount FROM token_settlement_receivables WHERE id=$1",
+                )
+                .bind(&receivable_id)
+                .fetch_one(db.pg_pool())
+                .await
+                .expect("recovery outstanding before");
+                let mut recovery_results = Vec::new();
+                for _ in 0..10 {
+                    recovery_results.push(
+                        db.apply_token_settlement_payment(
+                            &receivable_id,
+                            1,
+                            "recovery",
+                            &recovery_key,
+                            recovery_amount,
+                        )
+                        .await
+                        .expect("recovery application"),
+                    );
+                }
+                let recovery_wallet_after = db
+                    .get_wallet_balance(&user_id)
+                    .await
+                    .expect("recovery wallet after")
+                    .0;
+                let recovery_settled_after: f64 = sqlx_core::query_scalar::query_scalar(
+                    "SELECT settled_wallet_amount FROM token_settlement_receivables WHERE id=$1",
+                )
+                .bind(&receivable_id)
+                .fetch_one(db.pg_pool())
+                .await
+                .expect("recovery settled after");
+                let recovery_outstanding_after: f64 = sqlx_core::query_scalar::query_scalar(
+                    "SELECT outstanding_amount FROM token_settlement_receivables WHERE id=$1",
+                )
+                .bind(&receivable_id)
+                .fetch_one(db.pg_pool())
+                .await
+                .expect("recovery outstanding after");
+                let recovery_payments: i64 = sqlx_core::query_scalar::query_scalar("SELECT COUNT(*) FROM token_settlement_payments WHERE receivable_id=$1 AND payment_sequence=1").bind(&receivable_id).fetch_one(db.pg_pool()).await.expect("recovery payments");
+                let recovery_txs: i64 = sqlx_core::query_scalar::query_scalar("SELECT COUNT(*) FROM token_settlement_payments p JOIN wallet_transactions w ON w.id=p.wallet_transaction_id WHERE p.receivable_id=$1 AND p.payment_sequence=1").bind(&receivable_id).fetch_one(db.pg_pool()).await.expect("recovery txs");
+                assert_eq!(
+                    recovery_results.iter().filter(|applied| **applied).count(),
+                    1
+                );
+                assert_eq!(recovery_payments, 1);
+                assert_eq!(recovery_txs, 1);
+                cases.push(serde_json::json!({
+                    "case": "C_recovery_positive", "payment_sequence": 1, "payment_type": "recovery", "idempotency_key": recovery_key, "amount": recovery_amount.to_string(), "attempt_results": recovery_results,
+                    "payment_row_count": recovery_payments, "wallet_transaction_row_count": recovery_txs,
+                    "wallet_before": recovery_wallet_before.to_string(), "wallet_after_attempt_1": (recovery_wallet_before - recovery_amount).to_string(), "wallet_after_attempt_10": recovery_wallet_after.to_string(),
+                    "settled_before": recovery_settled_before.to_string(), "settled_after_attempt_1": (recovery_settled_before + recovery_amount.to_f64().unwrap()).to_string(), "settled_after_attempt_10": recovery_settled_after.to_string(),
+                    "outstanding_before": recovery_outstanding_before.to_string(), "outstanding_after_attempt_1": (recovery_outstanding_before - recovery_amount.to_f64().unwrap()).max(0.0).to_string(), "outstanding_after_attempt_10": recovery_outstanding_after.to_string()
+                }));
+            }
+        }
+        println!(
+            "TEST3_PAYMENT_REPLAY={}",
+            serde_json::to_string_pretty(&cases).expect("json")
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires TEST1_PAYMENT_REPLAY_CONCURRENT=1 and configured PostgreSQL"]
+    async fn payment_identity_replay_test1_concurrent_when_enabled() {
+        assert_eq!(
+            std::env::var("TEST1_PAYMENT_REPLAY_CONCURRENT").as_deref(),
+            Ok("1")
+        );
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+        let db = Arc::new(PgBackend::new(&url).await.expect("connect"));
+        db.migrate().await.expect("migrate");
+        let user_id = "test1".to_string();
+        let baseline: (f64, f64, f64) = sqlx_core::query_as::query_as(
+            "SELECT balance, frozen, token_wallet_reserved FROM users WHERE id=$1",
+        )
+        .bind(&user_id)
+        .fetch_one(db.pg_pool())
+        .await
+        .expect("test1 baseline");
+        assert!(baseline.0 > 0.1, "test1 must have integration funds");
+        let base = format!("test1-concurrent-{}", uuid::Uuid::new_v4());
+        let now = chrono::Utc::now().to_rfc3339();
+        let cases = [
+            (
+                "A_initial_positive",
+                Decimal::new(1, 2),
+                0_i64,
+                "initial_settlement",
+                Decimal::new(1, 2),
+            ),
+            (
+                "B_initial_zero",
+                Decimal::ZERO,
+                0_i64,
+                "initial_settlement",
+                Decimal::new(1, 2),
+            ),
+            (
+                "C_recovery_positive",
+                Decimal::new(1, 2),
+                1_i64,
+                "recovery",
+                Decimal::new(1, 2),
+            ),
+        ];
+        for (case_name, amount, sequence, payment_type, due) in cases {
+            let reservation_id = format!("{base}-{case_name}-res");
+            let request_id = format!("{base}-{case_name}-req");
+            let receivable_id = format!("{base}-{case_name}-recv");
+            sqlx_core::query::query("INSERT INTO token_request_reservations (id,request_id,user_id,account_type,model,state,settlement_state,actual_wallet_amount,wallet_shortfall_amount,created_at,expires_at) VALUES ($1,$2,$3,'user','gpt-5.6-luna','settlement_pending','settlement_pending',0,$4,$5,$5)")
+                .bind(&reservation_id).bind(&request_id).bind(&user_id).bind(due.to_f64().unwrap()).bind(&now).execute(db.pg_pool()).await.expect("reservation");
+            sqlx_core::query::query("INSERT INTO token_settlement_receivables (id,reservation_id,request_id,user_id,account_type,wallet_due_amount,settled_wallet_amount,outstanding_amount,state,created_at,updated_at) VALUES ($1,$2,$3,$4,'user',$5,0,$5,'partially_settled',$6,$6)")
+                .bind(&receivable_id).bind(&reservation_id).bind(&request_id).bind(&user_id).bind(due.to_f64().unwrap()).bind(&now).execute(db.pg_pool()).await.expect("receivable");
+            let wallet_before = db
+                .get_wallet_balance(&user_id)
+                .await
+                .expect("wallet before")
+                .0;
+            let key = format!("test1-concurrent:{base}:{case_name}:payment:{sequence}");
+            let barrier = Arc::new(Barrier::new(10));
+            let mut tasks = Vec::new();
+            for _ in 0..10 {
+                let db = db.clone();
+                let barrier = barrier.clone();
+                let receivable_id = receivable_id.clone();
+                let key = key.clone();
+                let payment_type = payment_type.to_string();
+                tasks.push(tokio::spawn(async move {
+                    barrier.wait().await;
+                    db.apply_token_settlement_payment(
+                        &receivable_id,
+                        sequence,
+                        &payment_type,
+                        &key,
+                        amount,
+                    )
+                    .await
+                }));
+            }
+            let mut results = Vec::new();
+            for task in tasks {
+                results.push(task.await.expect("join").expect("payment application"));
+            }
+            let wallet_after = db
+                .get_wallet_balance(&user_id)
+                .await
+                .expect("wallet after")
+                .0;
+            let payments: i64 = sqlx_core::query_scalar::query_scalar(
+                "SELECT COUNT(*) FROM token_settlement_payments WHERE receivable_id=$1",
+            )
+            .bind(&receivable_id)
+            .fetch_one(db.pg_pool())
+            .await
+            .expect("payments");
+            let identity_rows: i64 = sqlx_core::query_scalar::query_scalar("SELECT COUNT(*) FROM token_settlement_payments WHERE receivable_id=$1 AND idempotency_key=$2").bind(&receivable_id).bind(&key).fetch_one(db.pg_pool()).await.expect("identity");
+            let sequence_rows: i64 = sqlx_core::query_scalar::query_scalar("SELECT COUNT(*) FROM token_settlement_payments WHERE receivable_id=$1 AND payment_sequence=$2").bind(&receivable_id).bind(sequence).fetch_one(db.pg_pool()).await.expect("sequence");
+            let wallet_txs: i64 = sqlx_core::query_scalar::query_scalar("SELECT COUNT(*) FROM token_settlement_payments p JOIN wallet_transactions w ON w.id=p.wallet_transaction_id WHERE p.receivable_id=$1 AND p.amount > 0").bind(&receivable_id).fetch_one(db.pg_pool()).await.expect("wallet tx");
+            let settled: f64 = sqlx_core::query_scalar::query_scalar(
+                "SELECT settled_wallet_amount FROM token_settlement_receivables WHERE id=$1",
+            )
+            .bind(&receivable_id)
+            .fetch_one(db.pg_pool())
+            .await
+            .expect("settled");
+            let outstanding: f64 = sqlx_core::query_scalar::query_scalar(
+                "SELECT outstanding_amount FROM token_settlement_receivables WHERE id=$1",
+            )
+            .bind(&receivable_id)
+            .fetch_one(db.pg_pool())
+            .await
+            .expect("outstanding");
+            assert_eq!(results.iter().filter(|result| **result).count(), 1);
+            assert_eq!(payments, 1);
+            assert_eq!(identity_rows, 1);
+            assert_eq!(sequence_rows, 1);
+            assert_eq!(wallet_txs, i64::from(amount > Decimal::ZERO));
+            assert!(
+                (wallet_after.to_f64().unwrap()
+                    - (wallet_before.to_f64().unwrap() - amount.to_f64().unwrap()))
+                .abs()
+                    < 1e-12
+            );
+            println!("CONCURRENT_CASE={} request_id={} reservation_id={} receivable_id={} payment_sequence={} payment_type={} idempotency_key={} amount={} results={:?} payment_rows={} identity_rows={} sequence_rows={} wallet_tx_rows={} wallet_before={} wallet_after={} settled={} outstanding={}", case_name, request_id, reservation_id, receivable_id, sequence, payment_type, key, amount, results, payments, identity_rows, sequence_rows, wallet_txs, wallet_before, wallet_after, settled, outstanding);
+        }
+        let ledger = sqlx_core::query_as::query_as::<_, (i64, f64, i64, f64, f64, f64)>("SELECT COUNT(*), COALESCE(SUM(amount) FILTER (WHERE type='recharge' AND status='completed'),0), COUNT(*) FILTER (WHERE type='deduction' AND status='completed'), COALESCE(SUM(ABS(amount)) FILTER (WHERE type='deduction' AND status='completed'),0), COALESCE(SUM(amount) FILTER (WHERE type NOT IN ('recharge','deduction') AND status='completed'),0), (SELECT balance FROM users WHERE id=$1) FROM wallet_transactions WHERE user_id=$1").bind(&user_id).fetch_one(db.pg_pool()).await.expect("ledger");
+        println!("CONCURRENT_LEDGER user_id={} tx_count={} recharge={} deductions={} adjustments={} balance={}", user_id, ledger.0, ledger.1, ledger.2, ledger.3, ledger.4);
+    }
 
     fn record(user_id: &str, team_id: Option<&str>) -> UsageRecord {
         let mut r = UsageRecord {
@@ -7812,6 +8688,7 @@ mod billing_tests {
             r.prompt_tokens,
             r.completion_tokens,
             r.cache_hit_input_tokens,
+            r.cache_write_tokens,
             1.0,
             2.0,
             1.0,
@@ -7821,9 +8698,14 @@ mod billing_tests {
     }
 
     #[test]
+    fn cache_write_price_is_included() {
+        let cost = compute_cost_amount(0, 0, 0, 1_000_000, 0.0, 0.0, 0.0, 3.5);
+        assert!((cost - 3.5).abs() < 1e-9, "expected 3.5, got {}", cost);
+    }
+
+    #[test]
     fn zero_cost_when_no_tokens() {
-        let r = record("user-1", None);
-        let cost = compute_cost_amount(0, 0, 0, 1.0, 1.0, 1.0, 0.0);
+        let cost = compute_cost_amount(0, 0, 0, 0, 1.0, 1.0, 1.0, 0.0);
         assert_eq!(cost, 0.0);
     }
 

@@ -4,7 +4,8 @@ import { api } from './client';
 export interface WalletOverview {
   balance: number;
   frozen: number;
-  total_consumed: number;
+  request_reserved: number;
+  total_wallet_consumed: number;
   total_recharged: number;
 }
 

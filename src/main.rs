@@ -213,6 +213,23 @@ async fn main() {
     tokio::spawn(crate::service::token_reservation::run_expiry_reclaimer(
         db.clone(),
     ));
+    tracing::info!(
+        interval_secs = 10,
+        "starting token settlement recovery worker"
+    );
+    match db
+        .recover_token_settlement_receivables(100, "startup-recovery-probe")
+        .await
+    {
+        Ok(recovered) => tracing::info!(
+            recovered,
+            "startup token settlement recovery probe completed"
+        ),
+        Err(error) => tracing::error!(%error, "startup token settlement recovery probe failed"),
+    }
+    tokio::spawn(crate::service::token_reservation::run_receivable_recovery(
+        db.clone(),
+    ));
     let auth = Arc::new(AuthService::new(db.clone()).await);
     let routing = Arc::new(
         RoutingService::new(db.clone(), &encryption_key)

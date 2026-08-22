@@ -139,6 +139,12 @@ pub trait DbBackend: Send + Sync {
         month: u32,
         user_id: Option<&str>,
     ) -> Result<(Decimal, u64, u64), DbError>;
+    async fn period_wallet_amount(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+    ) -> Result<Decimal, DbError>;
     async fn period_summary_since(
         &self,
         start: &str,
@@ -376,7 +382,8 @@ pub trait DbBackend: Send + Sync {
 
     // ── Wallet ───────────────────────────────────────────────────────────
     async fn get_wallet_balance(&self, user_id: &str) -> Result<(Decimal, Decimal), DbError>;
-    async fn update_wallet_balance(&self, user_id: &str, balance: Decimal) -> Result<(), DbError>;
+    async fn get_wallet_request_reserved(&self, user_id: &str) -> Result<Decimal, DbError>;
+    async fn get_total_wallet_consumed(&self, user_id: &str) -> Result<Decimal, DbError>;
     async fn add_wallet_transaction(
         &self,
         id: &str,
@@ -405,7 +412,6 @@ pub trait DbBackend: Send + Sync {
         until: Option<&str>,
         tx_type: Option<&str>,
     ) -> Result<(Vec<WalletTransactionRow>, usize), DbError>;
-    async fn get_total_consumed(&self, user_id: &str) -> Result<Decimal, DbError>;
     async fn get_total_recharged(&self, user_id: &str) -> Result<Decimal, DbError>;
     async fn get_wallet_estimated_days(&self, user_id: &str) -> Result<Option<Decimal>, DbError>;
 
@@ -602,6 +608,19 @@ pub trait DbBackend: Send + Sync {
     /// Reclaim expired reservations. Only rows still in `reserved` state and
     /// whose expiry has passed are eligible; the operation is idempotent.
     async fn reclaim_expired_token_reservations(&self, limit: usize) -> Result<usize, DbError>;
+    async fn recover_token_settlement_receivables(
+        &self,
+        limit: usize,
+        worker_id: &str,
+    ) -> Result<usize, DbError>;
+    async fn apply_token_settlement_payment(
+        &self,
+        receivable_id: &str,
+        payment_sequence: i64,
+        payment_type: &str,
+        idempotency_key: &str,
+        amount: Decimal,
+    ) -> Result<bool, DbError>;
     async fn token_request_billing_amount(
         &self,
         request_id: &str,

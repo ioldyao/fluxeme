@@ -1385,7 +1385,7 @@ impl ClickHouseBackend {
                  prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
                  api_key_name, api_format, stream, \
                  cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, cache_write_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, \
-                 request_body, response_body, reasoning_body, billing_payment_mode \
+                 request_body, response_body, reasoning_body, billing_group_id, billing_group_name, billing_payment_mode \
                  FROM usage_events \
                  WHERE request_id = ? \
                  ORDER BY timestamp DESC LIMIT 1",

@@ -34,7 +34,6 @@ export default function Bills() {
     acc[item.activity_status] = (acc[item.activity_status] ?? 0) + 1;
     return acc;
   }, {} as Record<string, number>), [activities]);
-  const walletActivityAmount = activitiesData?.activities.reduce((sum, item) => sum + asBillingNumber(item.wallet_amount), 0) ?? 0;
   const deductions = deductionsData?.items;
   const dedTotal = deductionsData?.total ?? 0;
   const dedTotalPages = Math.max(1, Math.ceil(dedTotal / 15));
@@ -68,17 +67,25 @@ export default function Bills() {
         <div className={cardStyle}>
           <div className="flex items-center gap-2 text-muted-foreground">
             <Receipt className="h-4 w-4" />
-            <span className="text-xs font-medium uppercase tracking-wider">本期钱包扣款</span>
+            <span className="text-xs font-medium uppercase tracking-wider">本期理论费用</span>
           </div>
-          <div className="text-2xl font-bold">{activities.length ? fmt(walletActivityAmount) : '—'}</div>
-          <div className="text-xs text-muted-foreground">资源包和免费活动不产生钱包扣款</div>
+          <div className="text-2xl font-bold">{period ? fmt(period.priced_cost_amount) : '—'}</div>
+          <div className="text-xs text-muted-foreground">按请求价格快照计算，包含资源包活动</div>
+        </div>
+        <div className={cardStyle}>
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Wallet className="h-4 w-4" />
+            <span className="text-xs font-medium uppercase tracking-wider">本期钱包实扣</span>
+          </div>
+          <div className="text-2xl font-bold">{period ? fmt(period.wallet_amount) : '—'}</div>
+          <div className="text-xs text-muted-foreground">只统计实际钱包承担金额</div>
         </div>
         <div className={cardStyle}>
           <div className="flex items-center gap-2 text-muted-foreground">
             <Activity className="h-4 w-4" />
-            <span className="text-xs font-medium uppercase tracking-wider">本期活动记录</span>
+            <span className="text-xs font-medium uppercase tracking-wider">本期活动</span>
           </div>
-          <div className="text-2xl font-bold">{activitiesData ? activitiesData.total.toLocaleString() : '—'}</div>
+          <div className="text-2xl font-bold">{period ? period.request_count.toLocaleString() : '—'}</div>
           <div className="text-xs text-muted-foreground">成功 {activityCounts.success ?? 0} · 失败 {activityCounts.failed ?? 0} · 中断 {activityCounts.interrupted ?? 0}</div>
         </div>
       </div>
@@ -106,7 +113,7 @@ export default function Bills() {
             </div>
             {period && (
               <span className="text-xs text-muted-foreground">
-                {fmt(period.total_cost)}
+                {fmt(period.priced_cost_amount)}
               </span>
             )}
             {open && (
@@ -133,12 +140,12 @@ export default function Bills() {
               {/* Stats */}
               <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <div className="text-xs text-muted-foreground">{t('bills.totalCost')}</div>
-                  <div className="text-xl font-bold">{fmt(period.total_cost)}</div>
+                  <div className="text-xs text-muted-foreground">本期理论费用</div>
+                  <div className="text-xl font-bold">{fmt(period.priced_cost_amount)}</div>
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">{t('bills.requests')}</div>
-                  <div className="text-xl font-bold">{period.total_requests.toLocaleString()}</div>
+                  <div className="text-xl font-bold">{period.request_count.toLocaleString()}</div>
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">{t('bills.totalTokens')}</div>
@@ -259,7 +266,7 @@ export default function Bills() {
                 <div key={m.month} className="flex items-center justify-between px-3 py-2.5 rounded-lg hover:bg-accent/50 transition-colors">
                   <span className="font-medium text-sm">{label}</span>
                   <div className="flex items-center gap-4 text-sm">
-                    <span className="font-mono">{fmt(m.total_cost)}</span>
+                    <span className="font-mono">{fmt(m.priced_cost_amount ?? m.total_cost)}</span>
                     <span className="text-muted-foreground">{m.total_requests.toLocaleString()} 次</span>
                   </div>
                 </div>

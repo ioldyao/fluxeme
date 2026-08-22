@@ -115,9 +115,11 @@ export interface UsageRecord {
   api_format?: string;
   stream: boolean;
   cache_hit_input_tokens: number;
+  cache_write_tokens: number;
   prompt_price: number;
   completion_price: number;
   cache_read_price?: number;
+  cache_write_price?: number;
   original_model?: string;
   client_ip?: string | null;
 }

@@ -479,6 +479,17 @@ impl Database {
     ) -> Result<(Decimal, u64, u64), DbError> {
         self.backend.period_summary(year, month, user_id).await
     }
+    pub async fn period_wallet_amount(
+        &self,
+        year: i32,
+        month: u32,
+        user_id: Option<&str>,
+    ) -> Result<Decimal, DbError> {
+        self.backend
+            .period_wallet_amount(year, month, user_id)
+            .await
+    }
+
     pub async fn period_summary_since(
         &self,
         start: &str,
@@ -822,12 +833,12 @@ impl Database {
     pub async fn get_wallet_balance(&self, user_id: &str) -> Result<(Decimal, Decimal), DbError> {
         self.backend.get_wallet_balance(user_id).await
     }
-    pub async fn update_wallet_balance(
-        &self,
-        user_id: &str,
-        balance: Decimal,
-    ) -> Result<(), DbError> {
-        self.backend.update_wallet_balance(user_id, balance).await
+    pub async fn get_wallet_request_reserved(&self, user_id: &str) -> Result<Decimal, DbError> {
+        self.backend.get_wallet_request_reserved(user_id).await
+    }
+
+    pub async fn get_total_wallet_consumed(&self, user_id: &str) -> Result<Decimal, DbError> {
+        self.backend.get_total_wallet_consumed(user_id).await
     }
     #[allow(clippy::too_many_arguments)]
     pub async fn add_wallet_transaction(
@@ -881,9 +892,6 @@ impl Database {
         self.backend
             .list_wallet_tx_by_dates(user_id, page, size, since, until, tx_type)
             .await
-    }
-    pub async fn get_total_consumed(&self, user_id: &str) -> Result<Decimal, DbError> {
-        self.backend.get_total_consumed(user_id).await
     }
     pub async fn get_total_recharged(&self, user_id: &str) -> Result<Decimal, DbError> {
         self.backend.get_total_recharged(user_id).await
@@ -1158,6 +1166,33 @@ impl Database {
     }
     pub async fn reclaim_expired_token_reservations(&self, limit: usize) -> Result<usize, DbError> {
         self.backend.reclaim_expired_token_reservations(limit).await
+    }
+    pub async fn recover_token_settlement_receivables(
+        &self,
+        limit: usize,
+        worker_id: &str,
+    ) -> Result<usize, DbError> {
+        self.backend
+            .recover_token_settlement_receivables(limit, worker_id)
+            .await
+    }
+    pub async fn apply_token_settlement_payment(
+        &self,
+        receivable_id: &str,
+        payment_sequence: i64,
+        payment_type: &str,
+        idempotency_key: &str,
+        amount: Decimal,
+    ) -> Result<bool, DbError> {
+        self.backend
+            .apply_token_settlement_payment(
+                receivable_id,
+                payment_sequence,
+                payment_type,
+                idempotency_key,
+                amount,
+            )
+            .await
     }
     pub async fn token_request_billing_amount(
         &self,

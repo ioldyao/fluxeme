@@ -32,6 +32,8 @@ services:
       - DB_NAME=${DB_NAME:-aigateway}
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
+      # Test-only fault injection; empty by default and never enabled in production.
+      - BILLING_E2E_FAULT_INJECTION=${BILLING_E2E_FAULT_INJECTION:-}
     depends_on:
       redis:
         condition: service_healthy

@@ -10,7 +10,8 @@ use tokio::task;
 
 use crate::db::Database;
 use crate::domain::token_package::{
-    TokenReservationHandle, TokenReservationRequest, TokenSettlementRequest,
+    settle_usage as calculate_settlement, PriceSnapshot, TokenReservationHandle,
+    TokenReservationRequest, TokenSettlementRequest, TokenUsage,
 };
 
 #[derive(Clone)]
@@ -38,35 +39,29 @@ impl ReservationFinalizer {
         success: bool,
         reason: &str,
     ) {
-        let actual_units = if self.handle.accounting_mode
-            == Some(crate::domain::token_package::TokenAccountingMode::StandardizedCredits)
-        {
-            crate::domain::token_package::TokenUsage {
+        let breakdown = calculate_settlement(
+            TokenUsage {
                 prompt_tokens,
                 completion_tokens,
                 cache_hit_input_tokens,
-            }
-            .standardized_credits(
-                self.handle.input_factor,
-                self.handle.output_factor,
-                self.handle.cache_factor,
-            )
-        } else {
-            prompt_tokens.saturating_add(completion_tokens)
-        };
-        let reserved_total = self.handle.reserved_total_units.max(1);
-        let wallet_units = actual_units.saturating_sub(self.handle.reserved_package_units);
-        // Never cap actual overage at the hold: settlement charges the full
-        // amount represented by the reservation's pricing snapshot.
-        let wallet_amount = if wallet_units == 0 {
-            Decimal::ZERO
-        } else {
-            self.handle.reserved_wallet_amount * Decimal::from(wallet_units)
-                / Decimal::from(reserved_total)
-        };
+            },
+            cache_write_tokens,
+            PriceSnapshot {
+                prompt: self.handle.prompt_price,
+                completion: self.handle.completion_price,
+                cache_read: self.handle.cache_read_price,
+                cache_write: self.handle.cache_write_price,
+            },
+            self.handle.accounting_mode,
+            self.handle.input_factor,
+            self.handle.output_factor,
+            self.handle.cache_factor,
+            self.handle.reserved_package_units,
+            self.handle.billing_payment_mode,
+        );
         self.settle(
-            actual_units,
-            wallet_amount,
+            breakdown.actual_units,
+            breakdown.wallet_amount,
             prompt_tokens,
             completion_tokens,
             cache_hit_input_tokens,
@@ -126,61 +121,49 @@ impl ReservationFinalizer {
         prompt_tokens: u64,
         completion_tokens: u64,
         cache_hit_input_tokens: u64,
+        cache_write_tokens: u64,
         reason: &str,
     ) {
-        let actual_units = if self.handle.accounting_mode
-            == Some(crate::domain::token_package::TokenAccountingMode::StandardizedCredits)
-        {
-            crate::domain::token_package::TokenUsage {
+        let breakdown = calculate_settlement(
+            TokenUsage {
                 prompt_tokens,
                 completion_tokens,
                 cache_hit_input_tokens,
-            }
-            .standardized_credits(
-                self.handle.input_factor,
-                self.handle.output_factor,
-                self.handle.cache_factor,
-            )
-        } else {
-            prompt_tokens.saturating_add(completion_tokens)
-        };
-        let reserved_total = self.handle.reserved_total_units.max(1);
-        let wallet_units = actual_units.saturating_sub(self.handle.reserved_package_units);
-        // Never cap actual overage at the hold: settlement charges the full
-        // amount represented by the reservation's pricing snapshot.
-        let wallet_amount = if wallet_units == 0 {
-            Decimal::ZERO
-        } else {
-            self.handle.reserved_wallet_amount * Decimal::from(wallet_units)
-                / Decimal::from(reserved_total)
-        };
+            },
+            cache_write_tokens,
+            PriceSnapshot {
+                prompt: self.handle.prompt_price,
+                completion: self.handle.completion_price,
+                cache_read: self.handle.cache_read_price,
+                cache_write: self.handle.cache_write_price,
+            },
+            self.handle.accounting_mode,
+            self.handle.input_factor,
+            self.handle.output_factor,
+            self.handle.cache_factor,
+            self.handle.reserved_package_units,
+            self.handle.billing_payment_mode,
+        );
         self.settle(
-            actual_units,
-            wallet_amount,
+            breakdown.actual_units,
+            breakdown.wallet_amount,
             prompt_tokens,
             completion_tokens,
             cache_hit_input_tokens,
-            0,
+            cache_write_tokens,
             499,
             false,
             reason,
         );
     }
 
+    /// Finalize a request with no provider usage.
+    ///
+    /// This releases the authorization hold and persists an explicit actual
+    /// priced cost of zero. Keeping this on the settlement path prevents the
+    /// reservation estimate from leaking into billing_events as actual cost.
     pub fn release(&self, reason: &str) {
-        if self.finalized.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        let db = self.db.clone();
-        let reservation_id = self.handle.reservation_id.clone();
-        let finalized = self.finalized.clone();
-        let reason = reason.to_string();
-        task::spawn(async move {
-            if let Err(error) = db.release_token_request(&reservation_id, &reason).await {
-                tracing::error!(%error, "token reservation release failed");
-                finalized.store(false, Ordering::Release);
-            }
-        });
+        self.settle_usage(0, 0, 0, 0, false, reason);
     }
 }
 
@@ -214,6 +197,30 @@ pub fn estimated_cost(
         + (Decimal::from(completion_tokens) / Decimal::from(1_000_000u64)) * completion
         + (Decimal::from(cache_hit_input_tokens) / Decimal::from(1_000_000u64)) * cache_read
         + (Decimal::from(cache_write_tokens) / Decimal::from(1_000_000u64)) * cache_write
+}
+
+/// Periodically recovers receivables that have an outstanding wallet balance.
+pub async fn run_receivable_recovery(db: Arc<Database>) {
+    let worker_id = format!("gateway-{}", uuid::Uuid::new_v4());
+    tracing::info!(%worker_id, interval_secs = 10, "token settlement recovery worker started");
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        interval.tick().await;
+        tracing::debug!(%worker_id, "token settlement recovery worker tick");
+        match db
+            .recover_token_settlement_receivables(100, &worker_id)
+            .await
+        {
+            Ok(recovered) => {
+                tracing::info!(
+                    recovered,
+                    "token settlement receivables recovery pass completed"
+                );
+            }
+            Err(error) => tracing::warn!(%error, "token settlement receivable recovery failed"),
+        }
+    }
 }
 
 /// Periodically releases reservations that were never finalized before their

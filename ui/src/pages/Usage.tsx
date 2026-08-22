@@ -252,7 +252,7 @@ export default function Usage() {
                         <th className="text-right py-3 px-4">{t('table.cacheHit')}</th>
                         <th className="text-right py-3 px-4">{t('table.completion')}</th>
                         <th className="text-right py-3 px-4">{t('table.total')}</th>
-                        <th className="text-right py-3 px-4">{t('table.cost')}</th>
+                        <th className="text-right py-3 px-4">理论费用</th>
                         <th className="text-right py-3 px-4">{t('table.latency')}</th>
                         <th className="text-center py-3 px-4">{t('table.status')}</th>
                       </tr>
@@ -285,7 +285,7 @@ export default function Usage() {
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.cache_hit_input_tokens > 0 ? r.cache_hit_input_tokens : '—'}</td>
                           <td className="py-3 px-4 text-right">{r.completion_tokens}</td>
                           <td className="py-3 px-4 text-right font-medium">{r.total_tokens}</td>
-                          <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, r.cache_hit_input_tokens, getRecordPricing(r))}</td>
+                          <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, r.cache_hit_input_tokens, r.cache_write_tokens, getRecordPricing(r))}</td>
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>
                           <td className="py-3 px-4 text-center">
                             {r.success ? (

@@ -628,7 +628,12 @@ pub(crate) struct PeriodSummary {
     month: u32,
     #[serde(with = "rust_decimal::serde::float")]
     total_cost: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    priced_cost_amount: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    wallet_amount: Decimal,
     total_requests: u64,
+    request_count: u64,
     total_tokens: u64,
     by_model: Vec<ModelCostShare>,
     by_channel: Vec<ChannelCostShare>,
@@ -838,6 +843,11 @@ pub(crate) async fn billing_period_summary(
         .period_summary(year, month, Some(uid))
         .await
         .map_err(db_err)?;
+    let wallet_amount = state
+        .db
+        .period_wallet_amount(year, month, Some(uid))
+        .await
+        .map_err(db_err)?;
     let token_cost_breakdown = map_token_cost_breakdown(
         state
             .db
@@ -869,7 +879,10 @@ pub(crate) async fn billing_period_summary(
         year,
         month,
         total_cost,
+        priced_cost_amount: total_cost,
+        wallet_amount,
         total_requests,
+        request_count: total_requests,
         total_tokens,
         by_model,
         by_channel,
@@ -993,11 +1006,20 @@ pub(crate) async fn admin_billing_period_summary(
         total_cost,
     );
 
+    let wallet_amount = state
+        .db
+        .period_wallet_amount(year, month, None)
+        .await
+        .map_err(db_err)?;
+
     Ok(Json(PeriodSummary {
         year,
         month,
         total_cost,
+        priced_cost_amount: total_cost,
+        wallet_amount,
         total_requests,
+        request_count: total_requests,
         total_tokens,
         by_model,
         by_channel,
@@ -1030,6 +1052,11 @@ pub(crate) async fn admin_billing_scoped_period_summary(
         .await
         .map_err(db_err)?;
     let token_cost_breakdown = map_token_cost_breakdown(token_cost_rows, total_cost);
+    let wallet_amount = state
+        .db
+        .period_wallet_amount(year, month, q.user_id.as_deref())
+        .await
+        .map_err(db_err)?;
 
     let by_model = map_model_cost_shares(
         state
@@ -1063,7 +1090,10 @@ pub(crate) async fn admin_billing_scoped_period_summary(
         year,
         month,
         total_cost,
+        priced_cost_amount: total_cost,
+        wallet_amount,
         total_requests,
+        request_count: total_requests,
         total_tokens,
         by_model,
         by_channel,
