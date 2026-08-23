@@ -44,6 +44,7 @@ impl ReservationFinalizer {
                 prompt_tokens,
                 completion_tokens,
                 cache_hit_input_tokens,
+                cache_write_tokens,
             },
             cache_write_tokens,
             PriceSnapshot {
@@ -129,6 +130,7 @@ impl ReservationFinalizer {
                 prompt_tokens,
                 completion_tokens,
                 cache_hit_input_tokens,
+                cache_write_tokens,
             },
             cache_write_tokens,
             PriceSnapshot {

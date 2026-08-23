@@ -6630,8 +6630,9 @@ impl DbBackend for PgBackend {
                 prompt_tokens: request.prompt_tokens,
                 completion_tokens: request.completion_tokens,
                 cache_hit_input_tokens: request.cache_hit_input_tokens,
+                cache_write_tokens: 0,
             };
-            usage.standardized_credits(input_factor, output_factor, cache_factor)
+            usage.standardized_credits(input_factor, output_factor, cache_factor, Decimal::ONE)
         } else {
             requested_raw
         };
@@ -6811,6 +6812,7 @@ impl DbBackend for PgBackend {
             prompt_tokens: settlement.actual_prompt_tokens,
             completion_tokens: settlement.actual_completion_tokens,
             cache_hit_input_tokens: settlement.actual_cache_hit_input_tokens,
+            cache_write_tokens: settlement.actual_cache_write_tokens,
         };
         let breakdown = calculate_settlement(
             actual_usage,
@@ -6831,11 +6833,26 @@ impl DbBackend for PgBackend {
             billing_payment_mode,
         );
         let actual_units = breakdown.actual_units;
-        let consumed = breakdown.package_units;
-        if let Some(id) = grant_id.as_deref() {
-            query("UPDATE token_package_grants SET consumed_units = consumed_units + $1, reserved_units = reserved_units - $2, updated_at = $3 WHERE id = $4")
-                .bind(consumed as i64)
-                .bind(reserved as i64)
+        let package_units = if let Some(id) = grant_id.as_deref() {
+            // The initial reservation estimates uncached input and output only.
+            // Provider cache usage is known only now, so consume the grant's
+            // remaining eligible units under the grant row lock instead of
+            // sending cache-hit/write units straight to the wallet.
+            let (total_units, consumed_units, reserved_units): (i64, i64, i64) = query_as(
+                "SELECT total_units, consumed_units, reserved_units
+                 FROM token_package_grants WHERE id = $1 FOR UPDATE",
+            )
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+            let held_units = reserved.min(reserved_units.max(0) as u64);
+            let available_after_hold = (total_units.max(0) as u64)
+                .saturating_sub(consumed_units.max(0) as u64)
+                .saturating_sub((reserved_units.max(0) as u64).saturating_sub(held_units));
+            let package_units = actual_units.min(available_after_hold);
+            query("UPDATE token_package_grants SET consumed_units = consumed_units + $1, reserved_units = GREATEST(0, reserved_units - $2), updated_at = $3 WHERE id = $4")
+                .bind(package_units as i64)
+                .bind(held_units as i64)
                 .bind(chrono::Utc::now().to_rfc3339())
                 .bind(id)
                 .execute(&mut *tx)
@@ -6845,11 +6862,34 @@ impl DbBackend for PgBackend {
                 .bind(id)
                 .bind(&settlement.reservation_id)
                 .bind(&request_id)
-                .bind(consumed as i64)
+                .bind(package_units as i64)
                 .bind(chrono::Utc::now().to_rfc3339())
                 .execute(&mut *tx)
                 .await?;
-        }
+            package_units
+        } else {
+            0
+        };
+        // Recalculate package coverage with the actual post-provider package
+        // allocation. The theoretical cost remains all four price components.
+        let breakdown = calculate_settlement(
+            actual_usage,
+            settlement.actual_cache_write_tokens,
+            PriceSnapshot {
+                prompt: Decimal::try_from(prompt_price).unwrap_or(Decimal::ZERO),
+                completion: Decimal::try_from(completion_price).unwrap_or(Decimal::ZERO),
+                cache_read: Decimal::try_from(cache_read_price).unwrap_or(Decimal::ZERO),
+                cache_write: Decimal::try_from(cache_write_price).unwrap_or(Decimal::ZERO),
+            },
+            accounting_mode
+                .as_deref()
+                .and_then(|value| value.parse().ok()),
+            input_factor,
+            output_factor,
+            cache_factor,
+            package_units,
+            billing_payment_mode,
+        );
         let mut wallet_amount = breakdown.wallet_amount.to_f64().unwrap_or(f64::MAX);
         let receivable_id = format!("receivable-{}", settlement.reservation_id);
         let mut initial_wallet_transaction_id: Option<String> = None;
@@ -6989,7 +7029,7 @@ impl DbBackend for PgBackend {
             .bind(settlement.actual_prompt_tokens as i64)
             .bind(settlement.actual_completion_tokens as i64)
             .bind(settlement.actual_cache_write_tokens as i64)
-            .bind(consumed as i64)
+            .bind(package_units as i64)
             .bind(wallet_amount)
             .bind(wallet_shortfall)
             .bind(breakdown.actual_priced_cost.to_f64().unwrap_or(f64::MAX))

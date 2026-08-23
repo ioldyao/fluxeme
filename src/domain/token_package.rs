@@ -67,11 +67,15 @@ pub struct TokenUsage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub cache_hit_input_tokens: u64,
+    pub cache_write_tokens: u64,
 }
 
 impl TokenUsage {
     pub fn raw_units(self) -> u64 {
-        self.prompt_tokens.saturating_add(self.completion_tokens)
+        self.prompt_tokens
+            .saturating_add(self.completion_tokens)
+            .saturating_add(self.cache_hit_input_tokens)
+            .saturating_add(self.cache_write_tokens)
     }
 
     pub fn standardized_credits(
@@ -79,10 +83,12 @@ impl TokenUsage {
         input_factor: Decimal,
         output_factor: Decimal,
         cache_factor: Decimal,
+        cache_write_factor: Decimal,
     ) -> u64 {
         let value = Decimal::from(self.prompt_tokens) * input_factor
             + Decimal::from(self.completion_tokens) * output_factor
-            + Decimal::from(self.cache_hit_input_tokens) * cache_factor;
+            + Decimal::from(self.cache_hit_input_tokens) * cache_factor
+            + Decimal::from(self.cache_write_tokens) * cache_write_factor;
         value.max(Decimal::ZERO).ceil().to_u64().unwrap_or(u64::MAX)
     }
 }
@@ -106,9 +112,9 @@ pub struct SettlementBreakdown {
 
 /// Computes final usage cost independently from the reservation hold.
 ///
-/// Package units cover input first, then output, then cache-read credits.
-/// Cache-write has no package factor in the current contract and therefore
-/// remains part of monetary settlement.
+/// Package units cover every billable token component in a deterministic
+/// order: uncached input, output, cache-read input, then cache-write input.
+/// The monetary price remains independent from package-unit consumption.
 pub fn settle_usage(
     usage: TokenUsage,
     cache_write_tokens: u64,
@@ -122,7 +128,7 @@ pub fn settle_usage(
 ) -> SettlementBreakdown {
     let actual_units = match accounting_mode {
         Some(TokenAccountingMode::StandardizedCredits) => {
-            usage.standardized_credits(input_factor, output_factor, cache_factor)
+            usage.standardized_credits(input_factor, output_factor, cache_factor, Decimal::ONE)
         }
         _ => usage.raw_units(),
     };
@@ -144,11 +150,18 @@ pub fn settle_usage(
                 cache_factor,
                 prices.cache_read,
             ),
+            (usage.cache_write_tokens, Decimal::ONE, prices.cache_write),
         ]
     } else {
         vec![
             (usage.prompt_tokens, Decimal::ONE, prices.prompt),
             (usage.completion_tokens, Decimal::ONE, prices.completion),
+            (
+                usage.cache_hit_input_tokens,
+                Decimal::ONE,
+                prices.cache_read,
+            ),
+            (usage.cache_write_tokens, Decimal::ONE, prices.cache_write),
         ]
     };
     for (tokens, factor, price) in covered_components {
@@ -194,6 +207,7 @@ mod settlement_tests {
                 prompt_tokens: 23,
                 completion_tokens: 8,
                 cache_hit_input_tokens: 0,
+                cache_write_tokens: 0,
             },
             0,
             prices(),
@@ -215,6 +229,7 @@ mod settlement_tests {
                 prompt_tokens: 10,
                 completion_tokens: 10,
                 cache_hit_input_tokens: 0,
+                cache_write_tokens: 0,
             },
             0,
             prices(),
@@ -231,12 +246,38 @@ mod settlement_tests {
     }
 
     #[test]
+    fn raw_package_units_cover_cache_hit_and_cache_write_before_wallet() {
+        let mut snapshot = prices();
+        snapshot.cache_write = Decimal::ONE;
+        let result = settle_usage(
+            TokenUsage {
+                prompt_tokens: 10,
+                completion_tokens: 10,
+                cache_hit_input_tokens: 10,
+                cache_write_tokens: 10,
+            },
+            10,
+            snapshot,
+            Some(TokenAccountingMode::RawTokens),
+            Decimal::ONE,
+            Decimal::ONE,
+            Decimal::ZERO,
+            40,
+            BillingPaymentMode::Prepaid,
+        );
+        assert_eq!(result.actual_units, 40);
+        assert_eq!(result.package_units, 40);
+        assert_eq!(result.wallet_amount, Decimal::ZERO);
+    }
+
+    #[test]
     fn postpaid_keeps_theoretical_cost_but_does_not_debit_wallet() {
         let result = settle_usage(
             TokenUsage {
                 prompt_tokens: 1,
                 completion_tokens: 1,
                 cache_hit_input_tokens: 0,
+                cache_write_tokens: 0,
             },
             5,
             prices(),
@@ -260,6 +301,7 @@ mod settlement_tests {
                 prompt_tokens: 0,
                 completion_tokens: 0,
                 cache_hit_input_tokens: 0,
+                cache_write_tokens: 0,
             },
             10,
             snapshot,
