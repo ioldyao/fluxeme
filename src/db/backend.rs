@@ -24,14 +24,17 @@ use super::{AnnouncementRow, DbError, RechargeKeyRow, WalletTransactionRow};
 /// doubles without adding another production database implementation.
 #[allow(dead_code, clippy::too_many_arguments)]
 #[async_trait]
-pub trait DbBackend: Send + Sync {
+pub trait CoreBackend: Send + Sync {
     // ── Migration ────────────────────────────────────────────────────────
     async fn migrate(&self) -> Result<(), DbError>;
     /// Connectivity check (SELECT 1). Used by readiness probes.
     async fn ping(&self) -> Result<(), DbError>;
     /// PostgreSQL 连接池（供自洽子系统复用同一连接池）。
     fn pg_pool(&self) -> &sqlx_postgres::PgPool;
+}
 
+#[async_trait]
+pub trait UsersBackend: Send + Sync {
     // ── Users ────────────────────────────────────────────────────────────
     async fn list_users(&self, status: Option<&str>) -> Result<Vec<User>, DbError>;
     async fn get_user(&self, id: &str) -> Result<Option<User>, DbError>;
@@ -57,7 +60,10 @@ pub trait DbBackend: Send + Sync {
     async fn update_user_timezone(&self, id: &str, timezone: &str) -> Result<(), DbError>;
     async fn get_user_currency(&self, id: &str) -> Result<String, DbError>;
     async fn update_user_currency(&self, id: &str, currency: &str) -> Result<(), DbError>;
+}
 
+#[async_trait]
+pub trait AccessBackend: Send + Sync {
     // ── API Keys ─────────────────────────────────────────────────────────
     async fn list_api_keys(&self, user_id: &str) -> Result<Vec<ApiKey>, DbError>;
     async fn create_api_key(&self, key: &ApiKey) -> Result<(), DbError>;
@@ -101,7 +107,10 @@ pub trait DbBackend: Send + Sync {
         resource_id: &str,
         action: &str,
     ) -> Result<bool, DbError>;
+}
 
+#[async_trait]
+pub trait CatalogBackend: Send + Sync {
     // ── Channels & Endpoints ─────────────────────────────────────────────
     async fn list_channels(&self) -> Result<Vec<Channel>, DbError>;
     async fn get_channel(&self, id: &str) -> Result<Option<Channel>, DbError>;
@@ -130,7 +139,10 @@ pub trait DbBackend: Send + Sync {
     async fn delete_rule(&self, id: &str) -> Result<(), DbError>;
     /// List user-level routing rules for a specific user.
     async fn list_user_rules(&self, user_id: &str) -> Result<Vec<RoutingRule>, DbError>;
+}
 
+#[async_trait]
+pub trait BillingQueryBackend: Send + Sync {
     // ── Usage Logs ───────────────────────────────────────────────────────
     // ── Billing / Period ─────────────────────────────────────────────────
     async fn period_summary(
@@ -379,7 +391,10 @@ pub trait DbBackend: Send + Sync {
         &self,
         model_name: &str,
     ) -> Result<(Decimal, Decimal, Decimal, Decimal), DbError>;
+}
 
+#[async_trait]
+pub trait WalletBackend: Send + Sync {
     // ── Wallet ───────────────────────────────────────────────────────────
     async fn get_wallet_balance(&self, user_id: &str) -> Result<(Decimal, Decimal), DbError>;
     async fn get_wallet_request_reserved(&self, user_id: &str) -> Result<Decimal, DbError>;
@@ -450,7 +465,10 @@ pub trait DbBackend: Send + Sync {
         status: Option<&str>,
         user_search: Option<&str>,
     ) -> Result<Vec<RechargeKeyRow>, DbError>;
+}
 
+#[async_trait]
+pub trait SystemBackend: Send + Sync {
     // ── Settings ─────────────────────────────────────────────────────────
     async fn get_setting(&self, key: &str) -> Result<Option<String>, DbError>;
     async fn set_setting(&self, key: &str, value: &str) -> Result<(), DbError>;
@@ -547,7 +565,10 @@ pub trait DbBackend: Send + Sync {
         end: &str,
         model: Option<&str>,
     ) -> Result<Vec<(String, Option<i64>, Option<String>, u64, u64, f64, f64)>, DbError>;
+}
 
+#[async_trait]
+pub trait TokenBillingBackend: Send + Sync {
     // ── Batch Operations (used by background writer) ─────────────────────
     /// Insert a batch of usage records with wallet deduction in a single transaction.
     /// Returns Vec<(user_id, new_balance, frozen)> for each deduction that occurred.
@@ -632,7 +653,10 @@ pub trait DbBackend: Send + Sync {
         completion_tokens: u64,
         cache_hit_input_tokens: u64,
     ) -> Result<(), DbError>;
+}
 
+#[async_trait]
+pub trait TeamsSsoBackend: Send + Sync {
     // ── Teams ─────────────────────────────────────────────────────────────
     async fn create_team(&self, team: &Team, owner_id: &str) -> Result<(), DbError>;
     async fn get_team(&self, team_id: &str) -> Result<Option<Team>, DbError>;
@@ -692,4 +716,30 @@ pub trait DbBackend: Send + Sync {
     async fn list_sso_user_orgs(&self) -> Result<Vec<(String, String)>, DbError>;
     /// Upsert a user's IdP organizations (orgs_json = JSON array of SsoOrg).
     async fn upsert_sso_user_orgs(&self, user_id: &str, orgs_json: &str) -> Result<(), DbError>;
+}
+
+pub trait DbBackend:
+    CoreBackend
+    + UsersBackend
+    + AccessBackend
+    + CatalogBackend
+    + BillingQueryBackend
+    + WalletBackend
+    + SystemBackend
+    + TokenBillingBackend
+    + TeamsSsoBackend
+{
+}
+
+impl<T> DbBackend for T where
+    T: CoreBackend
+        + UsersBackend
+        + AccessBackend
+        + CatalogBackend
+        + BillingQueryBackend
+        + WalletBackend
+        + SystemBackend
+        + TokenBillingBackend
+        + TeamsSsoBackend
+{
 }
