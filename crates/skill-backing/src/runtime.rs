@@ -245,12 +245,7 @@ impl SkillBackingModule {
                     return json_error(
                         StatusCode::UNAUTHORIZED,
                         "unauthorized: API key lacks skill:{slug}:invoke scope",
-                        start,
                         slug,
-                        method,
-                        rest_path,
-                        "",
-                        "",
                     )
                 }
             },
@@ -258,12 +253,7 @@ impl SkillBackingModule {
                 return json_error(
                     StatusCode::UNAUTHORIZED,
                     "missing Authorization: Bearer <api-key>",
-                    start,
                     slug,
-                    method,
-                    rest_path,
-                    "",
-                    "",
                 )
             }
         };
@@ -275,12 +265,7 @@ impl SkillBackingModule {
                 return json_error(
                     StatusCode::NOT_FOUND,
                     "skill not found or not published",
-                    start,
                     slug,
-                    method,
-                    rest_path,
-                    &principal.user_id,
-                    &principal.api_key_id,
                 )
             }
         };
@@ -297,31 +282,11 @@ impl SkillBackingModule {
             .await
         {
             Ok(Some(e)) => e,
-            _ => {
-                return json_error(
-                    StatusCode::NOT_FOUND,
-                    "endpoint not found",
-                    start,
-                    slug,
-                    method,
-                    rest_path,
-                    &principal.user_id,
-                    &principal.api_key_id,
-                )
-            }
+            _ => return json_error(StatusCode::NOT_FOUND, "endpoint not found", slug),
         };
 
         if let Err(e) = self.policy.check_body(body.len()) {
-            return json_error(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                &e.to_string(),
-                start,
-                slug,
-                method,
-                rest_path,
-                &principal.user_id,
-                &principal.api_key_id,
-            );
+            return json_error(StatusCode::PAYLOAD_TOO_LARGE, &e.to_string(), slug);
         }
 
         // ⑤ 代理（禁重定向防 SSRF 绕过；超时取端点声明）
@@ -348,18 +313,9 @@ impl SkillBackingModule {
             Ok(r) => r,
             Err(e) => {
                 let msg = format!("upstream error: {e}");
-                self.meter(start, slug, &manifest, method, &path, 502, &principal)
+                self.meter(start, &manifest, method, &path, 502, &principal)
                     .await;
-                return json_error(
-                    StatusCode::BAD_GATEWAY,
-                    &msg,
-                    start,
-                    slug,
-                    method,
-                    rest_path,
-                    &principal.user_id,
-                    &principal.api_key_id,
-                );
+                return json_error(StatusCode::BAD_GATEWAY, &msg, slug);
             }
         };
 
@@ -368,31 +324,14 @@ impl SkillBackingModule {
         let body = match upstream.bytes().await {
             Ok(b) => b,
             Err(_) => {
-                self.meter(start, slug, &manifest, method, &path, 502, &principal)
+                self.meter(start, &manifest, method, &path, 502, &principal)
                     .await;
-                return json_error(
-                    StatusCode::BAD_GATEWAY,
-                    "upstream body read error",
-                    start,
-                    slug,
-                    method,
-                    rest_path,
-                    &principal.user_id,
-                    &principal.api_key_id,
-                );
+                return json_error(StatusCode::BAD_GATEWAY, "upstream body read error", slug);
             }
         };
 
-        self.meter(
-            start,
-            slug,
-            &manifest,
-            method,
-            &path,
-            status.as_u16(),
-            &principal,
-        )
-        .await;
+        self.meter(start, &manifest, method, &path, status.as_u16(), &principal)
+            .await;
 
         let mut resp = Response::new(Body::from(body));
         *resp.status_mut() = status;
@@ -414,7 +353,6 @@ impl SkillBackingModule {
     async fn meter(
         &self,
         start: Instant,
-        _slug: &str,
         manifest: &fluxeme_contract::RuntimeSkillManifest,
         method: &Method,
         path: &str,
@@ -452,16 +390,7 @@ impl SkillBackingModule {
     }
 }
 
-fn json_error(
-    status: StatusCode,
-    message: &str,
-    _start: Instant,
-    slug: &str,
-    _method: &Method,
-    _rest: &str,
-    _user_id: &str,
-    _key_id: &str,
-) -> Response {
+fn json_error(status: StatusCode, message: &str, slug: &str) -> Response {
     let body = serde_json::json!({
         "error": { "message": message, "type": "skill_runtime_error" },
         "skill": slug,
