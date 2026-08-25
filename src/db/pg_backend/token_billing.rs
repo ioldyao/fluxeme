@@ -780,35 +780,36 @@ impl TokenBillingBackend for PgBackend {
         {
             return Err(DbError("token package quota exceeded".to_string()));
         }
-        let wallet_hold = if request.billing_payment_mode == BillingPaymentMode::Metered {
-            Decimal::ZERO
-        } else if wallet_units > 0 {
-            calculate_settlement(
-                TokenUsage {
-                    prompt_tokens: request.prompt_tokens,
-                    completion_tokens: request.completion_tokens,
-                    cache_hit_input_tokens: request.cache_hit_input_tokens,
-                    cache_write_tokens: 0,
-                },
-                0,
-                PriceSnapshot {
-                    prompt: request.prompt_price,
-                    completion: request.completion_price,
-                    cache_read: request.cache_read_price,
-                    cache_write: request.cache_write_price,
-                },
-                mode,
-                input_factor,
-                output_factor,
-                cache_factor,
-                package_units,
-                request.billing_payment_mode,
-            )
-            .wallet_amount
-            .max(Decimal::ZERO)
-        } else {
-            Decimal::ZERO
-        };
+        let wallet_hold =
+            if request.billing_payment_mode == BillingPaymentMode::Metered && wallet_units > 0 {
+                calculate_settlement(
+                    TokenUsage {
+                        prompt_tokens: request.prompt_tokens,
+                        completion_tokens: request.completion_tokens,
+                        cache_hit_input_tokens: request.cache_hit_input_tokens,
+                        cache_write_tokens: 0,
+                    },
+                    0,
+                    PriceSnapshot {
+                        prompt: request.prompt_price,
+                        completion: request.completion_price,
+                        cache_read: request.cache_read_price,
+                        cache_write: request.cache_write_price,
+                    },
+                    mode,
+                    input_factor,
+                    output_factor,
+                    cache_factor,
+                    package_units,
+                    request.billing_payment_mode,
+                )
+                .wallet_amount
+                .max(Decimal::ZERO)
+            } else {
+                // Prepaid requests are record-only: do not reserve or debit the
+                // gateway wallet, even when package units do not cover the request.
+                Decimal::ZERO
+            };
         if wallet_hold > Decimal::ZERO {
             let amount = wallet_hold.to_f64().unwrap_or(f64::MAX);
             if let Some(team_id) = request.team_id.as_deref() {

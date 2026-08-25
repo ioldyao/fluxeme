@@ -225,15 +225,10 @@ impl CoreBackend for PgBackend {
         .execute(&self.pool)
         .await
         .map_err(|e| DbError(format!("Migration create billing_groups: {e}")))?;
-        // Migrate the persisted protocol values before enforcing the new
-        // product vocabulary: metered = wallet charging, prepaid = record-only.
+        // The legacy database may still have the old check constraint. Drop it
+        // before the one-time protocol migration below, then re-add the new
+        // constraint after all billing tables and columns exist.
         let _ = raw_sql("ALTER TABLE billing_groups DROP CONSTRAINT IF EXISTS billing_groups_payment_mode_check")
-            .execute(&self.pool)
-            .await;
-        let _ = raw_sql("UPDATE billing_groups SET payment_mode = CASE WHEN payment_mode = 'postpaid' THEN 'prepaid' WHEN payment_mode = 'prepaid' THEN 'metered' ELSE payment_mode END")
-            .execute(&self.pool)
-            .await;
-        let _ = raw_sql("ALTER TABLE billing_groups ADD CONSTRAINT billing_groups_payment_mode_check CHECK (payment_mode IN ('metered','prepaid'))")
             .execute(&self.pool)
             .await;
         raw_sql(
@@ -247,12 +242,11 @@ impl CoreBackend for PgBackend {
         add_col!("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS billing_group_id TEXT");
         add_col!("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT");
         add_col!("UPDATE api_keys SET billing_group_id = 'billing-group-default-prepaid' WHERE billing_group_id IS NULL OR billing_group_id = ''");
-        // One-time protocol migration: the old internal values had the
-        // opposite names from the product modes. Preserve all request facts,
-        // but make current and future fields match their actual behavior.
-        add_col!("UPDATE api_keys SET billing_payment_mode = CASE WHEN billing_payment_mode = 'postpaid' THEN 'prepaid' WHEN billing_payment_mode = 'prepaid' THEN 'metered' ELSE billing_payment_mode END");
-        add_col!("UPDATE billing_groups SET name = '默认按量计费' WHERE id = 'billing-group-default-prepaid' AND payment_mode = 'metered' AND name IN ('默认预付费', '默认按量计费')");
         add_col!("UPDATE api_keys SET billing_payment_mode = 'metered' WHERE billing_payment_mode IS NULL OR billing_payment_mode = ''");
+        // Keep the built-in group name aligned with its actual metered behavior.
+        add_col!("UPDATE billing_groups SET name = '默认按量计费' WHERE id = 'billing-group-default-prepaid' AND payment_mode = 'metered' AND name IN ('默认预付费', '默认按量计费')");
+        // Repair current API-key bindings from the authoritative group mode.
+        add_col!("UPDATE api_keys ak SET billing_payment_mode = g.payment_mode FROM billing_groups g WHERE ak.billing_group_id = g.id AND g.payment_mode IN ('metered', 'prepaid')");
         add_col!(
             "CREATE INDEX IF NOT EXISTS idx_api_keys_billing_group ON api_keys(billing_group_id)"
         );
@@ -789,8 +783,6 @@ impl CoreBackend for PgBackend {
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS billing_group_id TEXT",
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS billing_group_name TEXT",
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT NOT NULL DEFAULT 'metered'",
-            "UPDATE token_request_reservations SET billing_payment_mode = CASE WHEN billing_payment_mode = 'postpaid' THEN 'prepaid' WHEN billing_payment_mode = 'prepaid' THEN 'metered' ELSE billing_payment_mode END",
-            "UPDATE billing_events SET billing_payment_mode = CASE WHEN billing_payment_mode = 'postpaid' THEN 'prepaid' WHEN billing_payment_mode = 'prepaid' THEN 'metered' ELSE billing_payment_mode END",
             "ALTER TABLE token_package_plans ALTER COLUMN input_credit_factor TYPE DOUBLE PRECISION USING input_credit_factor::double precision",
             "ALTER TABLE token_package_plans ALTER COLUMN output_credit_factor TYPE DOUBLE PRECISION USING output_credit_factor::double precision",
             "ALTER TABLE token_package_plans ALTER COLUMN cache_credit_factor TYPE DOUBLE PRECISION USING cache_credit_factor::double precision",
@@ -813,6 +805,35 @@ impl CoreBackend for PgBackend {
         ] {
             let _ = raw_sql(index).execute(&self.pool).await;
         }
+        // Convert legacy snapshots exactly once. The marker makes this
+        // idempotent across restarts and prevents prepaid from drifting into
+        // metered again.
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS billing_mode_migration_marker (
+                id TEXT PRIMARY KEY,
+                migrated_at TEXT NOT NULL
+            )",
+        )
+        .execute(&self.pool)
+        .await;
+        let marker_inserted = raw_sql(
+            "INSERT INTO billing_mode_migration_marker (id, migrated_at)
+             VALUES ('legacy-prepaid-postpaid-v1', now()::text)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .execute(&self.pool)
+        .await
+        .map(|r| r.rows_affected() == 1)
+        .unwrap_or(false);
+        if marker_inserted {
+            let _ = raw_sql("UPDATE token_request_reservations SET billing_payment_mode = CASE WHEN billing_payment_mode = 'postpaid' THEN 'prepaid' WHEN billing_payment_mode = 'prepaid' THEN 'metered' ELSE billing_payment_mode END")
+                .execute(&self.pool).await;
+            let _ = raw_sql("UPDATE billing_events SET billing_payment_mode = CASE WHEN billing_payment_mode = 'postpaid' THEN 'prepaid' WHEN billing_payment_mode = 'prepaid' THEN 'metered' ELSE billing_payment_mode END")
+                .execute(&self.pool).await;
+        }
+        let _ = raw_sql("ALTER TABLE billing_groups ADD CONSTRAINT billing_groups_payment_mode_check CHECK (payment_mode IN ('metered','prepaid'))")
+            .execute(&self.pool)
+            .await;
         tracing::info!("token package tables ready");
 
         // ── Announcements ─────────────────────────────────────────────────

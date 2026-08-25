@@ -11,10 +11,10 @@ type NavGroup = {
 };
 
 const ADMIN_NAV_GROUPS: NavGroup[] = [
-  { label: 'nav.group.overview', items: ['nav.flowControl'] },
-  { label: 'nav.group.models', items: ['nav.models', 'nav.modelPricing', 'nav.bills', 'nav.usage', 'nav.skillHubAdmin', 'nav.tokenPackages', 'nav.billingGroups'] },
-  { label: 'nav.group.channels', items: ['nav.channels'] },
-  { label: 'nav.group.security', items: ['nav.rules', 'nav.moderation', 'nav.users', 'nav.teams', 'nav.rechargeKeys', 'nav.announcements', 'nav.adminSettings'] },
+  { label: 'nav.group.monitoring', items: ['nav.flowControl', 'nav.usage'] },
+  { label: 'nav.group.modelsChannels', items: ['nav.models', 'nav.modelPricing', 'nav.channels', 'nav.rules'] },
+  { label: 'nav.group.billingResources', items: ['nav.bills', 'nav.billingGroups', 'nav.tokenPackages', 'nav.rechargeKeys', 'nav.skillHubAdmin'] },
+  { label: 'nav.group.governance', items: ['nav.users', 'nav.teams', 'nav.moderation', 'nav.announcements', 'nav.adminSettings'] },
 ];
 
 function createNavIndex(routes: NavRoute[]) {
