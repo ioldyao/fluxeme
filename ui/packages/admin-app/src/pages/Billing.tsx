@@ -9,7 +9,6 @@ import {
 import { api } from '@fluxeme/shared/src/api/client';
 import { useQuery } from '@tanstack/react-query';
 import { UsageLogDetail } from '@/components/UsageLogDetail';
-import { formatCost, getRecordPricing } from '@fluxeme/shared/src/lib/cost';
 import { parseTimestamp, formatTime } from '@fluxeme/shared/src/lib/date';
 import BillingUserActivityDetail from './BillingUserActivityDetail';
 
@@ -413,7 +412,7 @@ export function UserBillingDetail({ userId, onBack }: { userId: string; onBack: 
                   <YAxis tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} axisLine={false} tickFormatter={(v: number) => fmtMoney(v)} />
                   <Tooltip formatter={(val: number, name: string) => name === '请求数' ? String(val) : fmtMoney(val)} />
                   <Legend wrapperStyle={{ fontSize: 11, color: 'var(--muted-foreground)' }} verticalAlign="top" />
-                  <Bar dataKey="cost" name="消费金额" fill="var(--accent-foreground)" radius={[4, 4, 0, 0]} maxBarSize={22} />
+                  <Bar dataKey="cost" name="钱包实扣" fill="var(--accent-foreground)" radius={[4, 4, 0, 0]} maxBarSize={22} />
                   <Line type="monotone" dataKey="requests" name="请求数" stroke="var(--chart-3)" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
@@ -424,7 +423,7 @@ export function UserBillingDetail({ userId, onBack }: { userId: string; onBack: 
         <div className="rounded-xl border border-border bg-card shadow-sm">
           <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
             <div>
-              <div className="text-[14px] font-bold">费用构成</div>
+              <div className="text-[14px] font-bold">钱包扣款构成</div>
               <div className="mt-[3px] text-[12px] text-muted-foreground">本期主要来源</div>
             </div>
           </div>
@@ -448,7 +447,7 @@ export function UserBillingDetail({ userId, onBack }: { userId: string; onBack: 
         <div className="rounded-xl border border-border bg-card shadow-sm">
           <div className="flex items-center justify-between border-b border-secondary px-4 py-[15px]">
             <div>
-              <div className="text-[14px] font-bold">模型消费分布</div>
+              <div className="text-[14px] font-bold">模型钱包扣款分布</div>
               <div className="mt-[3px] text-[12px] text-muted-foreground">按实际计费金额排序</div>
             </div>
           </div>
@@ -717,7 +716,6 @@ export function UserBillingDetail({ userId, onBack }: { userId: string; onBack: 
                 ) : (keyDetail?.recent_requests?.length ?? 0) > 0 ? (
                   <div className="mt-2">
                     {keyDetail!.recent_requests.map((r) => {
-                      const costStr = formatCost(r.prompt_tokens, r.completion_tokens, r.cache_hit_input_tokens, r.cache_write_tokens, getRecordPricing(r));
                       return (
                         <button key={r.request_id} className="w-full rounded-md px-1 py-2.5 text-left hover:bg-accent/50" onClick={() => setReqDetailId(r.request_id)}>
                           <div className="flex items-center justify-between gap-3 text-xs">
@@ -725,7 +723,7 @@ export function UserBillingDetail({ userId, onBack }: { userId: string; onBack: 
                             <span className="shrink-0 text-muted-foreground">{formatTime(parseTimestamp(r.timestamp))}</span>
                           </div>
                           <div className="mt-1 flex items-center justify-between gap-3 text-[11px]">
-                            <span className="truncate font-mono text-muted-foreground">{r.request_id.substring(0, 12)} · 输入 {r.prompt_tokens} · 输出 {r.completion_tokens} · {costStr || '—'}</span>
+                            <span className="truncate font-mono text-muted-foreground">{r.request_id.substring(0, 12)} · 输入 {r.prompt_tokens} · 输出 {r.completion_tokens}</span>
                             <span className={`shrink-0 font-medium ${r.success ? 'text-chart-2' : 'text-destructive'}`}>{r.success ? '成功' : '失败'} · {r.status_code}</span>
                           </div>
                         </button>

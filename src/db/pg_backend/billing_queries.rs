@@ -19,7 +19,7 @@ impl BillingQueryBackend for PgBackend {
         };
         let (cost, count, tokens): (f64, i64, i64) = if let Some(uid) = user_id {
             query_as(
-                "SELECT COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                "SELECT COALESCE(SUM(wallet_amount), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3",
             )
@@ -30,7 +30,7 @@ impl BillingQueryBackend for PgBackend {
             .await?
         } else {
             query_as(
-                "SELECT COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                "SELECT COALESCE(SUM(wallet_amount), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2",
             )
@@ -74,14 +74,14 @@ impl BillingQueryBackend for PgBackend {
         user_id: Option<&str>,
     ) -> Result<Decimal, DbError> {
         let cost: f64 = if let Some(uid) = user_id {
-            query_scalar("SELECT COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0) FROM billing_events WHERE timestamp >= $1 AND user_id = $2")
+            query_scalar("SELECT COALESCE(SUM(wallet_amount), 0) FROM billing_events WHERE timestamp >= $1 AND user_id = $2")
                 .bind(start)
                 .bind(uid)
                 .fetch_one(&self.pool)
                 .await?
         } else {
             query_scalar(
-                "SELECT COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0) FROM billing_events WHERE timestamp >= $1",
+                "SELECT COALESCE(SUM(wallet_amount), 0) FROM billing_events WHERE timestamp >= $1",
             )
             .bind(start)
             .fetch_one(&self.pool)
@@ -118,7 +118,7 @@ impl BillingQueryBackend for PgBackend {
         }
 
         let rows = query(
-            "SELECT request_id, COALESCE(wallet_amount, 0), settlement_state, account_type, billing_payment_mode, reservation_id, COALESCE(outstanding_amount, 0)
+            "SELECT request_id, COALESCE(package_units, 0), COALESCE(wallet_amount, 0), settlement_state, account_type, billing_payment_mode, reservation_id, COALESCE(outstanding_amount, 0), COALESCE(charge_source, 'unknown')
              FROM billing_events
              WHERE user_id = $1 AND request_id = ANY($2)",
         )
@@ -130,11 +130,12 @@ impl BillingQueryBackend for PgBackend {
         rows.into_iter()
             .map(|row| {
                 let request_id = row.try_get(0)?;
-                let wallet_amount = Decimal::try_from(row.try_get::<f64, _>(1)?)
+                let package_units = row.try_get::<i64, _>(1)?.max(0) as u64;
+                let wallet_amount = Decimal::try_from(row.try_get::<f64, _>(2)?)
                     .map_err(|error| DbError(format!("Invalid wallet amount: {error}")))?;
-                let settlement_state: String = row.try_get(2)?;
-                let reservation_id: Option<String> = row.try_get(5)?;
-                let outstanding_amount = Decimal::try_from(row.try_get::<f64, _>(6)?)
+                let settlement_state: String = row.try_get(3)?;
+                let reservation_id: Option<String> = row.try_get(6)?;
+                let outstanding_amount = Decimal::try_from(row.try_get::<f64, _>(7)?)
                     .map_err(|error| DbError(format!("Invalid outstanding amount: {error}")))?;
                 let wallet_debit_status = if matches!(
                     settlement_state.as_str(),
@@ -159,10 +160,66 @@ impl BillingQueryBackend for PgBackend {
                 };
                 Ok(crate::db::UsageBillingRow {
                     request_id,
+                    package_units,
                     wallet_amount,
                     wallet_debit_status: wallet_debit_status.to_string(),
-                    account_type: row.try_get(3)?,
-                    billing_payment_mode: row.try_get(4)?,
+                    charge_source: row.try_get(8)?,
+                    account_type: row.try_get(4)?,
+                    billing_payment_mode: row.try_get(5)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn usage_billing_for_requests(
+        &self,
+        request_ids: &[String],
+    ) -> Result<Vec<crate::db::UsageBillingRow>, DbError> {
+        if request_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = query(
+            "SELECT request_id, COALESCE(package_units, 0), COALESCE(wallet_amount, 0), settlement_state, account_type, billing_payment_mode, reservation_id, COALESCE(outstanding_amount, 0), COALESCE(charge_source, 'unknown')
+             FROM billing_events WHERE request_id = ANY($1)",
+        )
+        .bind(request_ids)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                let request_id = row.try_get(0)?;
+                let package_units = row.try_get::<i64, _>(1)?.max(0) as u64;
+                let wallet_amount = Decimal::try_from(row.try_get::<f64, _>(2)?)
+                    .map_err(|error| DbError(format!("Invalid wallet amount: {error}")))?;
+                let settlement_state: String = row.try_get(3)?;
+                let reservation_id: Option<String> = row.try_get(6)?;
+                let outstanding_amount = Decimal::try_from(row.try_get::<f64, _>(7)?)
+                    .map_err(|error| DbError(format!("Invalid outstanding amount: {error}")))?;
+                let wallet_debit_status = if matches!(
+                    settlement_state.as_str(),
+                    "reserved"
+                        | "settlement_pending"
+                        | "awaiting_actuals"
+                        | "pending"
+                        | "partially_settled"
+                ) || outstanding_amount > Decimal::ZERO
+                {
+                    "pending"
+                } else if reservation_id.is_none() && wallet_amount == Decimal::ZERO {
+                    "unavailable"
+                } else if wallet_amount > Decimal::ZERO {
+                    "charged"
+                } else {
+                    "no_charge"
+                };
+                Ok(crate::db::UsageBillingRow {
+                    request_id,
+                    package_units,
+                    wallet_amount,
+                    wallet_debit_status: wallet_debit_status.to_string(),
+                    charge_source: row.try_get(8)?,
+                    account_type: row.try_get(4)?,
+                    billing_payment_mode: row.try_get(5)?,
                 })
             })
             .collect()
@@ -342,7 +399,7 @@ impl BillingQueryBackend for PgBackend {
                     COALESCE(SUM(total_tokens), 0)::bigint, \
                     COALESCE(SUM(package_units), 0)::bigint, \
                     COALESCE(SUM(wallet_amount), 0), \
-                    COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                    COALESCE(SUM(wallet_amount), 0), \
                     COUNT(DISTINCT COALESCE(api_key_name, '未命名 Key'))::bigint, \
                     COUNT(DISTINCT model)::bigint FROM classified"
         );
@@ -484,7 +541,7 @@ impl BillingQueryBackend for PgBackend {
         };
         let rows: Vec<(String, f64)> = if let Some(uid) = user_id {
             query_as::<_, (String, f64)>(
-                "SELECT model, COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0) \
+                "SELECT model, COALESCE(SUM(wallet_amount), 0) \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY model ORDER BY 2 DESC",
             )
@@ -495,7 +552,7 @@ impl BillingQueryBackend for PgBackend {
             .await?
         } else {
             query_as::<_, (String, f64)>(
-                "SELECT model, COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0) \
+                "SELECT model, COALESCE(SUM(wallet_amount), 0) \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY model ORDER BY 2 DESC",
             )
@@ -567,7 +624,7 @@ impl BillingQueryBackend for PgBackend {
         let rows = if let Some(uid) = user_id {
             query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                 COALESCE(SUM(wallet_amount), 0), \
                  COUNT(*)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY day ORDER BY day DESC",
@@ -580,7 +637,7 @@ impl BillingQueryBackend for PgBackend {
         } else {
             query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                 COALESCE(SUM(wallet_amount), 0), \
                  COUNT(*)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY day ORDER BY day DESC",
@@ -648,7 +705,7 @@ impl BillingQueryBackend for PgBackend {
         let rows = if let Some(uid) = user_id {
             query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                 COALESCE(SUM(wallet_amount), 0), \
                  COUNT(*)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                  GROUP BY day ORDER BY day DESC LIMIT $4 OFFSET $5",
@@ -663,7 +720,7 @@ impl BillingQueryBackend for PgBackend {
         } else {
             query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                 COALESCE(SUM(wallet_amount), 0), \
                  COUNT(*)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY day ORDER BY day DESC LIMIT $3 OFFSET $4",
@@ -703,7 +760,7 @@ impl BillingQueryBackend for PgBackend {
     async fn period_summary_all(&self) -> Result<Vec<(String, Decimal, u64, u64)>, DbError> {
         let rows = query_as::<_, (String, f64, i64, i64)>(
             "SELECT LEFT(timestamp::text, 7) AS month, \
-             COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+             COALESCE(SUM(wallet_amount), 0), \
              COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
              FROM billing_events GROUP BY month ORDER BY month DESC",
         )
@@ -728,7 +785,7 @@ impl BillingQueryBackend for PgBackend {
     ) -> Result<Vec<(String, Decimal, u64, u64)>, DbError> {
         let rows = query_as::<_, (String, f64, i64, i64)>(
             "SELECT LEFT(timestamp::text, 7) AS month, \
-             COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+             COALESCE(SUM(wallet_amount), 0), \
              COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
              FROM billing_events WHERE user_id = $1 GROUP BY month ORDER BY month DESC",
         )
@@ -1120,7 +1177,7 @@ impl BillingQueryBackend for PgBackend {
         ): (f64, i64, i64, i64, f64, i64, f64, i64, f64) = if let Some(uid) = user_id {
             if let Some(tid) = team_id {
                 query_as(
-                    "SELECT COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                    "SELECT COALESCE(SUM(wallet_amount), 0), \
                      COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint, \
                      COALESCE(SUM(prompt_tokens),0)::bigint, \
                      COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price), 0), \
@@ -1140,7 +1197,7 @@ impl BillingQueryBackend for PgBackend {
                 .await?
             } else {
                 query_as(
-                    "SELECT COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                    "SELECT COALESCE(SUM(wallet_amount), 0), \
                      COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint, \
                      COALESCE(SUM(prompt_tokens),0)::bigint, \
                      COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price), 0), \
@@ -1159,7 +1216,7 @@ impl BillingQueryBackend for PgBackend {
             }
         } else if let Some(tid) = team_id {
             query_as(
-                "SELECT COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                "SELECT COALESCE(SUM(wallet_amount), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint, \
                  COALESCE(SUM(prompt_tokens),0)::bigint, \
                  COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price), 0), \
@@ -1178,7 +1235,7 @@ impl BillingQueryBackend for PgBackend {
             .await?
         } else {
             query_as(
-                "SELECT COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                "SELECT COALESCE(SUM(wallet_amount), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint, \
                  COALESCE(SUM(prompt_tokens),0)::bigint, \
                  COALESCE(SUM(prompt_tokens / 1000000.0 * prompt_price), 0), \
@@ -1233,7 +1290,7 @@ impl BillingQueryBackend for PgBackend {
         let rows: Vec<(String, f64)> = if let Some(uid) = user_id {
             if let Some(tid) = team_id {
                 query_as::<_, (String, f64)>(
-                    "SELECT model, COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0) \
+                    "SELECT model, COALESCE(SUM(wallet_amount), 0) \
                      FROM billing_events \
                      WHERE timestamp >= $1 AND timestamp < $2 \
                        AND team_id = $3 AND user_id = $4 AND account_type = 'team' \
@@ -1247,7 +1304,7 @@ impl BillingQueryBackend for PgBackend {
                 .await?
             } else {
                 query_as::<_, (String, f64)>(
-                    "SELECT model, COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0) \
+                    "SELECT model, COALESCE(SUM(wallet_amount), 0) \
                      FROM billing_events \
                      WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
                      GROUP BY model ORDER BY 2 DESC",
@@ -1260,7 +1317,7 @@ impl BillingQueryBackend for PgBackend {
             }
         } else if let Some(tid) = team_id {
             query_as::<_, (String, f64)>(
-                "SELECT model, COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0) \
+                "SELECT model, COALESCE(SUM(wallet_amount), 0) \
                  FROM billing_events \
                  WHERE timestamp >= $1 AND timestamp < $2 \
                    AND team_id = $3 AND account_type = 'team' \
@@ -1273,7 +1330,7 @@ impl BillingQueryBackend for PgBackend {
             .await?
         } else {
             query_as::<_, (String, f64)>(
-                "SELECT model, COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0) \
+                "SELECT model, COALESCE(SUM(wallet_amount), 0) \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY model ORDER BY 2 DESC",
             )
@@ -1383,7 +1440,7 @@ impl BillingQueryBackend for PgBackend {
             if let Some(tid) = team_id {
                 query_as::<_, (String, f64, i64, i64)>(
                     "SELECT LEFT(timestamp::text, 10) as day, \
-                     COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                     COALESCE(SUM(wallet_amount), 0), \
                      COUNT(*)::bigint, \
                      COALESCE(SUM(total_tokens), 0)::bigint \
                      FROM billing_events \
@@ -1400,7 +1457,7 @@ impl BillingQueryBackend for PgBackend {
             } else {
                 query_as::<_, (String, f64, i64, i64)>(
                     "SELECT LEFT(timestamp::text, 10) as day, \
-                     COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                     COALESCE(SUM(wallet_amount), 0), \
                      COUNT(*)::bigint, \
                      COALESCE(SUM(total_tokens), 0)::bigint \
                      FROM billing_events \
@@ -1416,7 +1473,7 @@ impl BillingQueryBackend for PgBackend {
         } else if let Some(tid) = team_id {
             query_as::<_, (String, f64, i64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                 COALESCE(SUM(wallet_amount), 0), \
                  COUNT(*)::bigint, \
                  COALESCE(SUM(total_tokens), 0)::bigint \
                  FROM billing_events \
@@ -1432,7 +1489,7 @@ impl BillingQueryBackend for PgBackend {
         } else {
             query_as::<_, (String, f64, i64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                 COALESCE(SUM(wallet_amount), 0), \
                  COUNT(*)::bigint, \
                  COALESCE(SUM(total_tokens), 0)::bigint \
                  FROM billing_events \
@@ -1540,7 +1597,7 @@ impl BillingQueryBackend for PgBackend {
             if let Some(tid) = team_id {
                 query_as::<_, (String, f64, i64)>(
                     "SELECT LEFT(timestamp::text, 10) as day, \
-                     COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                     COALESCE(SUM(wallet_amount), 0), \
                      COUNT(*)::bigint \
                      FROM billing_events \
                      WHERE timestamp >= $1 AND timestamp < $2 \
@@ -1558,7 +1615,7 @@ impl BillingQueryBackend for PgBackend {
             } else {
                 query_as::<_, (String, f64, i64)>(
                     "SELECT LEFT(timestamp::text, 10) as day, \
-                     COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                     COALESCE(SUM(wallet_amount), 0), \
                      COUNT(*)::bigint \
                      FROM billing_events \
                      WHERE timestamp >= $1 AND timestamp < $2 AND user_id = $3 \
@@ -1575,7 +1632,7 @@ impl BillingQueryBackend for PgBackend {
         } else if let Some(tid) = team_id {
             query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                 COALESCE(SUM(wallet_amount), 0), \
                  COUNT(*)::bigint \
                  FROM billing_events \
                  WHERE timestamp >= $1 AND timestamp < $2 \
@@ -1592,7 +1649,7 @@ impl BillingQueryBackend for PgBackend {
         } else {
             query_as::<_, (String, f64, i64)>(
                 "SELECT LEFT(timestamp::text, 10) as day, \
-                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                 COALESCE(SUM(wallet_amount), 0), \
                  COUNT(*)::bigint \
                  FROM billing_events WHERE timestamp >= $1 AND timestamp < $2 \
                  GROUP BY day ORDER BY day DESC LIMIT $3 OFFSET $4",
@@ -1619,7 +1676,7 @@ impl BillingQueryBackend for PgBackend {
             if let Some(tid) = team_id {
                 query_as::<_, (String, f64, i64, i64)>(
                     "SELECT LEFT(timestamp::text, 7) AS month, \
-                     COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                     COALESCE(SUM(wallet_amount), 0), \
                      COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                      FROM billing_events \
                      WHERE team_id = $1 AND user_id = $2 AND account_type = 'team' \
@@ -1632,7 +1689,7 @@ impl BillingQueryBackend for PgBackend {
             } else {
                 query_as::<_, (String, f64, i64, i64)>(
                     "SELECT LEFT(timestamp::text, 7) AS month, \
-                     COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                     COALESCE(SUM(wallet_amount), 0), \
                      COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                      FROM billing_events WHERE user_id = $1 \
                      GROUP BY month ORDER BY month DESC",
@@ -1644,7 +1701,7 @@ impl BillingQueryBackend for PgBackend {
         } else if let Some(tid) = team_id {
             query_as::<_, (String, f64, i64, i64)>(
                 "SELECT LEFT(timestamp::text, 7) AS month, \
-                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                 COALESCE(SUM(wallet_amount), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                  FROM billing_events \
                  WHERE team_id = $1 AND account_type = 'team' \
@@ -1656,7 +1713,7 @@ impl BillingQueryBackend for PgBackend {
         } else {
             query_as::<_, (String, f64, i64, i64)>(
                 "SELECT LEFT(timestamp::text, 7) AS month, \
-                 COALESCE(SUM(COALESCE(priced_cost_amount, cost_amount, 0)), 0), \
+                 COALESCE(SUM(wallet_amount), 0), \
                  COUNT(*)::bigint, COALESCE(SUM(total_tokens),0)::bigint \
                  FROM billing_events GROUP BY month ORDER BY month DESC",
             )

@@ -259,6 +259,7 @@ const en: Record<string, string> = {
   'usage.cost': 'Cost',
   'usage.walletDebit': 'Wallet Debit',
   'usage.settlementPending': 'Settling',
+  'usage.packageCharge': 'Package',
   'usage.billingMode': 'Billing mode',
   'usage.metered': 'Metered',
   'usage.prepaid': 'Prepaid',

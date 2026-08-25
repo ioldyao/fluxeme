@@ -21,6 +21,7 @@ interface UsageResponse {
 
 export interface UsageBillingRow {
   request_id: string;
+  package_units: number;
   wallet_amount: number;
   wallet_debit_status: 'charged' | 'no_charge' | 'pending' | 'unavailable';
   account_type?: string | null;
@@ -71,15 +72,24 @@ export function useMyUsageBilling(requestIds: string[]) {
   const userId = useAuth(state => state.userId);
   const stableRequestIds = [...requestIds].sort();
   const query = new URLSearchParams();
-  for (const requestId of stableRequestIds) {
-    query.append('request_id', requestId);
-  }
+  query.set('request_ids', stableRequestIds.join(','));
 
   return useQuery({
     queryKey: ['usage', 'billing', 'self', userId, stableRequestIds],
     queryFn: () => api<UsageBillingRow[]>(`/me/usage/billing?${query.toString()}`),
     enabled: !!userId && stableRequestIds.length > 0,
     refetchInterval: 10_000,
+  });
+}
+
+export function useAdminUsageBilling(requestIds: string[]) {
+  const stableRequestIds = [...requestIds].sort();
+  const query = new URLSearchParams();
+  query.set('request_ids', stableRequestIds.join(','));
+  return useQuery({
+    queryKey: ['usage', 'billing', 'admin', stableRequestIds],
+    queryFn: () => api<UsageBillingRow[]>(`/admin/usage/billing?${query.toString()}`),
+    enabled: stableRequestIds.length > 0,
   });
 }
 

@@ -4,7 +4,7 @@ import { useBillingSummary, usePeriodSummary, useBillingActivities, useDeduction
 import { useCurrency } from '@fluxeme/shared/src/store/currency';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@fluxeme/shared/src/components/ui/dialog';
-import { Wallet, Receipt, Activity, ChevronDown, BarChart3 } from 'lucide-react';
+import { Wallet, Activity, ChevronDown, BarChart3 } from 'lucide-react';
 
 function asBillingNumber(value: unknown): number {
   const parsed = typeof value === 'number' ? value : Number(value ?? 0);
@@ -62,14 +62,6 @@ export default function Bills() {
         </div>
         <div className={cardStyle}>
           <div className="flex items-center gap-2 text-muted-foreground">
-            <Receipt className="h-4 w-4" />
-            <span className="text-xs font-medium uppercase tracking-wider">本期理论费用</span>
-          </div>
-          <div className="text-2xl font-bold">{period ? fmt(period.priced_cost_amount) : '—'}</div>
-          <div className="text-xs text-muted-foreground">按请求价格快照计算，包含资源包活动</div>
-        </div>
-        <div className={cardStyle}>
-          <div className="flex items-center gap-2 text-muted-foreground">
             <Wallet className="h-4 w-4" />
             <span className="text-xs font-medium uppercase tracking-wider">本期钱包实扣</span>
           </div>
@@ -109,7 +101,7 @@ export default function Bills() {
             </div>
             {period && (
               <span className="text-xs text-muted-foreground">
-                {fmt(period.priced_cost_amount)}
+                {fmt(period.wallet_amount)}
               </span>
             )}
             {open && (
@@ -136,8 +128,8 @@ export default function Bills() {
               {/* Stats */}
               <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <div className="text-xs text-muted-foreground">本期理论费用</div>
-                  <div className="text-xl font-bold">{fmt(period.priced_cost_amount)}</div>
+                  <div className="text-xs text-muted-foreground">本期钱包实扣</div>
+                  <div className="text-xl font-bold">{fmt(period.wallet_amount)}</div>
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">{t('bills.requests')}</div>
@@ -150,25 +142,9 @@ export default function Bills() {
               </div>
 
               {/* Model breakdown */}
-              {period.by_model.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">{t('bills.byModel')}</h4>
-                  <div className="space-y-1.5">
-                    {period.by_model.map((m) => (
-                      <div key={m.model} className="flex items-center gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex justify-between text-sm">
-                            <span className="truncate">{m.model}</span>
-                            <span className="font-mono text-xs">{fmt(m.cost)}</span>
-                          </div>
-                          <div className="h-1.5 bg-muted rounded-full mt-1 overflow-hidden">
-                            <div className="h-full bg-brand rounded-full" style={{ width: `${m.percentage}%` }} />
-                          </div>
-                        </div>
-                        <span className="text-xs text-muted-foreground w-10 text-right">{m.percentage}%</span>
-                      </div>
-                    ))}
-                  </div>
+              {period.wallet_amount > 0 && (
+                <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+                  本期钱包实扣：<span className="font-mono font-semibold text-foreground">{fmt(period.wallet_amount)}</span>
                 </div>
               )}
             </div>
@@ -188,7 +164,7 @@ export default function Bills() {
           </div>
           {activities.length > 0 ? (
             <>
-              <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-xs text-muted-foreground"><th className="text-left px-5 py-3">时间</th><th className="text-left px-5 py-3">模型</th><th className="text-left px-5 py-3">状态</th><th className="text-right px-5 py-3">Token</th><th className="text-right px-5 py-3">资源包 units</th><th className="text-right px-5 py-3">钱包扣款</th><th className="text-left px-5 py-3">结算来源</th></tr></thead><tbody>{activities.map((item) => <tr key={item.request_id} className="border-b last:border-0"><td className="px-5 py-3 text-muted-foreground">{new Date(item.timestamp).toLocaleString()}</td><td className="px-5 py-3">{item.model}</td><td className="px-5 py-3"><span className="rounded-full bg-muted px-2 py-1 text-xs">{item.activity_status}</span></td><td className="px-5 py-3 text-right font-mono">{item.total_tokens.toLocaleString()}</td><td className="px-5 py-3 text-right font-mono">{item.package_units.toLocaleString()}</td><td className="px-5 py-3 text-right font-mono" title={item.wallet_amount.toFixed(8)}>{fmt(item.wallet_amount)}</td><td className="px-5 py-3">{item.charge_source}</td></tr>)}</tbody></table></div>
+              <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-xs text-muted-foreground"><th className="text-left px-5 py-3">时间</th><th className="text-left px-5 py-3">模型</th><th className="text-left px-5 py-3">状态</th><th className="text-right px-5 py-3">Token</th><th className="text-right px-5 py-3">资源包 units</th><th className="text-right px-5 py-3">钱包扣款</th><th className="text-left px-5 py-3">结算来源</th></tr></thead><tbody>{activities.map((item) => <tr key={item.request_id} className="border-b last:border-0"><td className="px-5 py-3 text-muted-foreground">{new Date(item.timestamp).toLocaleString()}</td><td className="px-5 py-3">{item.model}</td><td className="px-5 py-3"><span className="rounded-full bg-muted px-2 py-1 text-xs">{item.activity_status}</span></td><td className="px-5 py-3 text-right font-mono">{item.total_tokens.toLocaleString()}</td><td className="px-5 py-3 text-right font-mono">{item.package_units.toLocaleString()}</td><td className="px-5 py-3 text-right font-mono" title={asBillingNumber(item.wallet_amount).toFixed(8)}>{fmt(item.wallet_amount)}</td><td className="px-5 py-3">{item.charge_source}</td></tr>)}</tbody></table></div>
               <div className="flex items-center justify-between border-t px-5 py-3 text-xs text-muted-foreground"><span>第 {activityPage} / {activityTotalPages} 页 · 共 {activitiesData?.total ?? 0} 条活动</span><div className="flex gap-2"><button className="rounded border px-3 py-1 disabled:opacity-40" disabled={activityPage <= 1} onClick={() => setActivityPage((page) => page - 1)}>上一页</button><button className="rounded border px-3 py-1 disabled:opacity-40" disabled={activityPage >= activityTotalPages} onClick={() => setActivityPage((page) => page + 1)}>下一页</button></div></div>
             </>
           ) : deductions && deductions.length > 0 ? (
@@ -262,7 +238,7 @@ export default function Bills() {
                 <div key={m.month} className="flex items-center justify-between px-3 py-2.5 rounded-lg hover:bg-accent/50 transition-colors">
                   <span className="font-medium text-sm">{label}</span>
                   <div className="flex items-center gap-4 text-sm">
-                    <span className="font-mono">{fmt(m.priced_cost_amount ?? m.total_cost)}</span>
+                    <span className="font-mono">{fmt(m.wallet_amount ?? 0)}</span>
                     <span className="text-muted-foreground">{m.total_requests.toLocaleString()} 次</span>
                   </div>
                 </div>

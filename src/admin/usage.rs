@@ -135,7 +135,22 @@ pub(crate) async fn get_my_usage(
 
 #[derive(Deserialize)]
 pub(crate) struct UsageBillingQuery {
-    request_id: Vec<String>,
+    request_ids: Option<String>,
+}
+
+fn parse_usage_request_ids(query: UsageBillingQuery) -> Result<Vec<String>, AdminError> {
+    let request_ids = query
+        .request_ids
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|request_id| !request_id.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if request_ids.len() > 200 {
+        return Err(AdminError::bad_request("Too many request IDs"));
+    }
+    Ok(request_ids)
 }
 
 pub(crate) async fn get_usage_billing(
@@ -144,14 +159,28 @@ pub(crate) async fn get_usage_billing(
     Query(query): Query<UsageBillingQuery>,
 ) -> Result<Json<Vec<crate::db::UsageBillingRow>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    let request_ids = query.request_id;
-    if request_ids.len() > 200 {
-        return Err(AdminError::bad_request("Too many request IDs"));
-    }
+    let request_ids = parse_usage_request_ids(query)?;
 
     state
         .db
         .usage_billing(&session.user_id, &request_ids)
+        .await
+        .map(Json)
+        .map_err(db_err)
+}
+
+pub(crate) async fn get_admin_usage_billing(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<UsageBillingQuery>,
+) -> Result<Json<Vec<crate::db::UsageBillingRow>>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:usage").await?;
+    let request_ids = parse_usage_request_ids(query)?;
+
+    state
+        .db
+        .usage_billing_for_requests(&request_ids)
         .await
         .map(Json)
         .map_err(db_err)

@@ -120,9 +120,9 @@ export function useAdminBillingActivities(year: number, month: number, limit = 1
 export interface PeriodSummary {
   year: number;
   month: number;
-  /** Legacy alias; now represents the theoretical priced cost. */
+  /** Backward-compatible alias for actual wallet debit. */
   total_cost: number;
-  priced_cost_amount: number;
+  /** Actual wallet debit for the period. */
   wallet_amount: number;
   total_requests: number;
   request_count: number;
@@ -489,8 +489,8 @@ export function useAdminBillingRequestDetail(requestId: string | null, enabled =
 
 export interface MonthSummary {
   month: string;
+  /** Backward-compatible API field; now contains actual wallet debit. */
   total_cost: number;
-  priced_cost_amount?: number;
   wallet_amount?: number;
   total_requests: number;
   request_count?: number;

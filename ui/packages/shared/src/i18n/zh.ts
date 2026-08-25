@@ -259,6 +259,7 @@ const zh: Record<string, string> = {
   'usage.cost': '费用',
   'usage.walletDebit': '钱包实扣',
   'usage.settlementPending': '结算中',
+  'usage.packageCharge': '资源包',
   'usage.billingMode': '计费模式',
   'usage.metered': '按量计费',
   'usage.prepaid': '预付费',

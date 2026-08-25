@@ -324,9 +324,13 @@ export default function Usage() {
                               const billing = billingByRequestId.get(r.request_id);
                               if (isBillingError || !billing || billing.wallet_debit_status === 'unavailable') return '—';
                               if (billing.wallet_debit_status === 'pending') return t('usage.settlementPending');
-                              if (billing.wallet_debit_status === 'no_charge') return currency === 'cny' ? '¥0' : '$0';
                               const symbol = currency === 'cny' ? '¥' : '$';
-                              return `${symbol}${billing.wallet_amount.toFixed(6)}`;
+                              const walletAmount = Number(billing.wallet_amount) || 0;
+                              const wallet = `${symbol}${walletAmount.toFixed(6)}`;
+                              if (billing.package_units > 0 && walletAmount === 0) {
+                                return `${t('usage.packageCharge')} ${billing.package_units}u · ${wallet}`;
+                              }
+                              return wallet;
                             })()}
                           </td>
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>

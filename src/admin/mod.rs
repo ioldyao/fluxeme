@@ -827,6 +827,10 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             axum::routing::get(usage::get_usage_billing),
         )
         .route(
+            "/api/admin/usage/billing",
+            axum::routing::get(usage::get_admin_usage_billing),
+        )
+        .route(
             "/api/me/usage/aggregate",
             axum::routing::get(usage::my_usage_aggregate),
         )

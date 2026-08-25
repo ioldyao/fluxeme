@@ -2,7 +2,6 @@ import { useTranslation } from 'react-i18next';
 import { useUsageDetail } from '@fluxeme/shared/src/api/usage';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@fluxeme/shared/src/components/ui/dialog';
 import { useCurrency } from '@fluxeme/shared/src/store/currency';
-import { formatCost, getRecordPricing } from '@fluxeme/shared/src/lib/cost';
 import { parseTimestamp, formatTime } from '@fluxeme/shared/src/lib/date';
 import type { UsageRecord } from '@fluxeme/shared/src/types';
 
@@ -66,8 +65,6 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
   const { data: record, isLoading, error } = useUsageDetail(requestId);
   useCurrency();
 
-  const costStr = record ? formatCost(record.prompt_tokens, record.completion_tokens, record.cache_hit_input_tokens, record.cache_write_tokens, getRecordPricing(record)) : null;
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="!max-w-[90vw] max-h-[85vh] overflow-y-auto">
@@ -101,13 +98,12 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
               ))}
             </div>
 
-            {/* Token & Cost row */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* Token facts row */}
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
               {[
                 { label: '未缓存输入', value: record.prompt_tokens.toLocaleString() },
                 { label: '缓存输入', value: record.cache_hit_input_tokens > 0 ? record.cache_hit_input_tokens.toLocaleString() : '—' },
                 { label: '输出', value: record.completion_tokens.toLocaleString() },
-                { label: '理论费用', value: costStr || '—' },
               ].map(m => (
                 <div key={m.label} className="rounded-lg border bg-card p-3">
                   <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">{m.label}</div>
@@ -153,7 +149,6 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                       ['Request ID', record.request_id],
                       [t('table.latency'), `${record.latency_ms}ms`],
                       ['计费 Token', record.total_tokens.toLocaleString()],
-                      ['理论费用', costStr || '—'],
                     ].map((r, i) => (
                       <div key={i} className="flex justify-between gap-3 py-2 border-t border-border/60 first:border-0">
                         <span className="text-xs text-muted-foreground">{r[0]}</span>
