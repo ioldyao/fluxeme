@@ -110,7 +110,10 @@ pub async fn responses(
                 &expires_at,
             )
             .await
-            .map_err(|e| GatewayError::PaymentRequired(e.0))?,
+            .map_err(|e| {
+                state.flow_tracker.mark_completed(&request_id);
+                GatewayError::PaymentRequired(e.0)
+            })?,
         )
     } else {
         None
