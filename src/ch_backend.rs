@@ -343,7 +343,7 @@ impl ClickHouseBackend {
             team_id String DEFAULT '',\
             billing_group_id Nullable(String),\
             billing_group_name Nullable(String),\
-            billing_payment_mode String DEFAULT 'prepaid'\
+            billing_payment_mode String DEFAULT 'metered'\
         ) ENGINE = MergeTree()\
         PARTITION BY toYYYYMM(timestamp)\
         ORDER BY (model, channel_id, timestamp)\
@@ -410,7 +410,8 @@ impl ClickHouseBackend {
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS ttft_ms Nullable(UInt64)",
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS billing_group_id Nullable(String)",
             "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS billing_group_name Nullable(String)",
-            "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS billing_payment_mode String DEFAULT 'prepaid'",
+            "ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS billing_payment_mode String DEFAULT 'metered'",
+            "ALTER TABLE usage_events UPDATE billing_payment_mode = if(billing_payment_mode = 'postpaid', 'prepaid', if(billing_payment_mode = 'prepaid', 'metered', billing_payment_mode)) WHERE billing_payment_mode IN ('postpaid', 'prepaid')",
         ] {
             self.client
                 .query(alter)

@@ -29,7 +29,7 @@ export interface UserDetail extends User {
   keys: ApiKey[];
 }
 
-export type BillingPaymentMode = 'prepaid' | 'postpaid';
+export type BillingPaymentMode = 'metered' | 'prepaid';
 
 export interface BillingGroup {
   id: string;
@@ -171,7 +171,7 @@ export interface UsageRecord {
   client_ip?: string | null;
   /** Team scope. Null means the request used a personal API key. */
   team_id?: string | null;
-  billing_payment_mode?: 'prepaid' | 'postpaid' | null;
+  billing_payment_mode?: 'metered' | 'prepaid' | null;
 }
 
 export interface DashboardStats {

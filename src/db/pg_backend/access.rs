@@ -150,7 +150,7 @@ impl AccessBackend for PgBackend {
                     billing_payment_mode: r
                         .get::<Option<String>, _>(9)
                         .and_then(|v| v.parse().ok())
-                        .unwrap_or(BillingPaymentMode::Prepaid),
+                        .unwrap_or(BillingPaymentMode::Metered),
                 }
             })
             .collect();
@@ -248,7 +248,7 @@ impl AccessBackend for PgBackend {
                 billing_payment_mode: r
                     .get::<Option<String>, _>(20)
                     .and_then(|v| v.parse().ok())
-                    .unwrap_or(BillingPaymentMode::Prepaid),
+                    .unwrap_or(BillingPaymentMode::Metered),
             };
             let user = {
                 let rpm: Option<i64> = r.get(2);
@@ -311,7 +311,7 @@ impl AccessBackend for PgBackend {
                     billing_payment_mode: r
                         .get::<Option<String>, _>(20)
                         .and_then(|v| v.parse().ok())
-                        .unwrap_or(BillingPaymentMode::Prepaid),
+                        .unwrap_or(BillingPaymentMode::Metered),
                 };
                 let user = {
                     let rpm: Option<i64> = r.get(2);

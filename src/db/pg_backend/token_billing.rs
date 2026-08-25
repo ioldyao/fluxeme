@@ -186,7 +186,7 @@ impl TokenBillingBackend for PgBackend {
                          cost_amount = COALESCE(r.actual_wallet_amount, 0),
                          activity_status = CASE WHEN be.status_code = 499 THEN 'interrupted' WHEN be.success = false THEN 'failed' WHEN r.actual_package_units > 0 OR r.actual_wallet_amount > 0 THEN 'success' ELSE be.activity_status END,
                          status_reason = COALESCE(r.reason, be.status_reason),
-                         charge_source = CASE WHEN r.billing_payment_mode = 'postpaid' AND r.actual_package_units > 0 THEN 'postpaid_package' WHEN r.billing_payment_mode = 'postpaid' THEN 'postpaid' WHEN r.actual_package_units > 0 AND r.actual_wallet_amount > 0 THEN 'package_and_wallet' WHEN r.actual_package_units > 0 THEN 'package' WHEN r.actual_wallet_amount > 0 THEN 'wallet' ELSE be.charge_source END,
+                         charge_source = CASE WHEN r.billing_payment_mode = 'prepaid' AND r.actual_package_units > 0 THEN 'prepaid_package' WHEN r.billing_payment_mode = 'prepaid' THEN 'prepaid' WHEN r.actual_package_units > 0 AND r.actual_wallet_amount > 0 THEN 'package_and_wallet' WHEN r.actual_package_units > 0 THEN 'package' WHEN r.actual_wallet_amount > 0 THEN 'wallet' ELSE be.charge_source END,
                          api_key_name = COALESCE(NULLIF(r.api_key_name, ''), be.api_key_name),
                          billing_group_id = COALESCE(NULLIF(r.billing_group_id, ''), be.billing_group_id),
                          billing_group_name = COALESCE(NULLIF(r.billing_group_name, ''), be.billing_group_name),
@@ -776,11 +776,11 @@ impl TokenBillingBackend for PgBackend {
             .unwrap_or("package_then_wallet");
         if wallet_units > 0
             && policy == "package_only"
-            && request.billing_payment_mode == BillingPaymentMode::Prepaid
+            && request.billing_payment_mode == BillingPaymentMode::Metered
         {
             return Err(DbError("token package quota exceeded".to_string()));
         }
-        let wallet_hold = if request.billing_payment_mode == BillingPaymentMode::Postpaid {
+        let wallet_hold = if request.billing_payment_mode == BillingPaymentMode::Metered {
             Decimal::ZERO
         } else if wallet_units > 0 {
             calculate_settlement(
@@ -947,7 +947,7 @@ impl TokenBillingBackend for PgBackend {
             .try_get::<String, _>(11)
             .ok()
             .and_then(|value| value.parse().ok())
-            .unwrap_or(BillingPaymentMode::Prepaid);
+            .unwrap_or(BillingPaymentMode::Metered);
         let accounting_mode = row.try_get::<Option<String>, _>(9)?;
         let factor_snapshot = row
             .try_get::<String, _>(10)
@@ -1097,7 +1097,7 @@ impl TokenBillingBackend for PgBackend {
                     .await?;
             }
         }
-        if billing_payment_mode == BillingPaymentMode::Prepaid && wallet_amount > 0.0 {
+        if billing_payment_mode == BillingPaymentMode::Metered && wallet_amount > 0.0 {
             if let Some(team_id) = team_id.as_deref() {
                 let row = query("SELECT balance, frozen, token_wallet_reserved FROM team_wallets WHERE team_id = $1 FOR UPDATE")
                     .bind(team_id)
@@ -1151,7 +1151,7 @@ impl TokenBillingBackend for PgBackend {
                 wallet_amount = settled_wallet_amount;
             }
         }
-        let wallet_shortfall = if billing_payment_mode == BillingPaymentMode::Prepaid {
+        let wallet_shortfall = if billing_payment_mode == BillingPaymentMode::Metered {
             (breakdown.wallet_amount - Decimal::try_from(wallet_amount).unwrap_or(Decimal::ZERO))
                 .max(Decimal::ZERO)
                 .to_f64()
@@ -1248,8 +1248,8 @@ impl TokenBillingBackend for PgBackend {
                     COALESCE(r.actual_wallet_amount, 0), r.team_id, r.account_type, NULLIF(r.api_key_name, ''),
                     r.billing_group_id, r.billing_group_name, r.billing_payment_mode,
                     CASE WHEN $3 = 499 THEN 'interrupted' WHEN $3 >= 400 OR $2 = false THEN 'failed' ELSE 'success' END,
-                    CASE WHEN r.billing_payment_mode = 'postpaid' AND COALESCE(r.actual_package_units, 0) > 0 THEN 'postpaid_package'
-                         WHEN r.billing_payment_mode = 'postpaid' THEN 'postpaid'
+                    CASE WHEN r.billing_payment_mode = 'prepaid' AND COALESCE(r.actual_package_units, 0) > 0 THEN 'prepaid_package'
+                         WHEN r.billing_payment_mode = 'prepaid' THEN 'prepaid'
                          WHEN COALESCE(r.actual_package_units, 0) > 0 AND COALESCE(r.actual_wallet_amount, 0) > 0 THEN 'package_and_wallet'
                          WHEN COALESCE(r.actual_package_units, 0) > 0 THEN 'package'
                          WHEN COALESCE(r.actual_wallet_amount, 0) > 0 THEN 'wallet'
@@ -1613,7 +1613,7 @@ impl TokenBillingBackend for PgBackend {
             (
                 package_id.is_some(),
                 Decimal::try_from(amount.unwrap_or(0.0)).unwrap_or(Decimal::ZERO),
-                mode.unwrap_or_else(|| "prepaid".to_string()),
+                mode.unwrap_or_else(|| "metered".to_string()),
                 group_id,
                 group_name,
             )

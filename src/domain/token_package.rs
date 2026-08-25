@@ -172,7 +172,7 @@ pub fn settle_usage(
         package_priced_cost += covered_tokens * price / Decimal::from(1_000_000u64);
         remaining -= covered_tokens * factor;
     }
-    let wallet_amount = if payment_mode == BillingPaymentMode::Postpaid {
+    let wallet_amount = if payment_mode == BillingPaymentMode::Prepaid {
         Decimal::ZERO
     } else {
         (actual_priced_cost - package_priced_cost).max(Decimal::ZERO)
@@ -216,7 +216,7 @@ mod settlement_tests {
             Decimal::ONE,
             Decimal::ZERO,
             0,
-            BillingPaymentMode::Prepaid,
+            BillingPaymentMode::Metered,
         );
         assert_eq!(result.actual_priced_cost, Decimal::new(142, 7));
         assert_eq!(result.wallet_amount, result.actual_priced_cost);
@@ -238,7 +238,7 @@ mod settlement_tests {
             Decimal::ONE,
             Decimal::ZERO,
             10,
-            BillingPaymentMode::Prepaid,
+            BillingPaymentMode::Metered,
         );
         assert_eq!(result.package_units, 10);
         assert_eq!(result.package_priced_cost, Decimal::new(2, 6));
@@ -271,7 +271,7 @@ mod settlement_tests {
     }
 
     #[test]
-    fn postpaid_keeps_theoretical_cost_but_does_not_debit_wallet() {
+    fn prepaid_keeps_theoretical_cost_but_does_not_debit_wallet() {
         let result = settle_usage(
             TokenUsage {
                 prompt_tokens: 1,
@@ -286,7 +286,7 @@ mod settlement_tests {
             Decimal::ONE,
             Decimal::ZERO,
             0,
-            BillingPaymentMode::Postpaid,
+            BillingPaymentMode::Prepaid,
         );
         assert_eq!(result.actual_priced_cost, Decimal::new(14, 7));
         assert_eq!(result.wallet_amount, Decimal::ZERO);
@@ -310,7 +310,7 @@ mod settlement_tests {
             Decimal::ONE,
             Decimal::ZERO,
             0,
-            BillingPaymentMode::Prepaid,
+            BillingPaymentMode::Metered,
         );
         assert_eq!(result.actual_priced_cost, Decimal::new(1, 5));
         assert_eq!(result.wallet_amount, result.actual_priced_cost);

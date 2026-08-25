@@ -362,7 +362,7 @@ impl TeamsSsoBackend for PgBackend {
                     billing_payment_mode: r
                         .get::<Option<String>, _>(9)
                         .and_then(|v| v.parse().ok())
-                        .unwrap_or(BillingPaymentMode::Prepaid),
+                        .unwrap_or(BillingPaymentMode::Metered),
                 }
             })
             .collect())

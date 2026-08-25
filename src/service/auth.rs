@@ -163,7 +163,7 @@ impl AuthService {
                             billing_group_id:
                                 crate::domain::billing_group::DEFAULT_BILLING_GROUP_ID.to_string(),
                             billing_payment_mode:
-                                crate::domain::billing_group::BillingPaymentMode::Prepaid,
+                                crate::domain::billing_group::BillingPaymentMode::Metered,
                         }),
                         Some(_) => Err(AuthError("User account is suspended".into())),
                         None => {

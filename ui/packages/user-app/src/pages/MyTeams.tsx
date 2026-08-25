@@ -458,7 +458,7 @@ function TeamKeysView({ teamId }: { teamId: string }) {
               />
               <select className="h-10 w-full rounded-md border bg-background px-3 text-sm" required value={billingGroupId} onChange={(event) => setBillingGroupId(event.target.value)} disabled={billingGroups.isLoading}>
                 <option value="">{billingGroups.isLoading ? '正在加载计费分组…' : '请选择计费分组'}</option>
-                {billingGroups.data?.map((group) => <option key={group.id} value={group.id}>{group.name} · {group.payment_mode === 'postpaid' ? '后付费' : '预付费'}</option>)}
+                {billingGroups.data?.map((group) => <option key={group.id} value={group.id}>{group.name} · {group.payment_mode === 'prepaid' ? '预付费' : '按量计费'}</option>)}
               </select>
               <div className="flex justify-end gap-3">
                 <Button variant="outline" onClick={() => setShowCreate(false)}>

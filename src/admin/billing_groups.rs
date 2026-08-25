@@ -26,7 +26,7 @@ pub(crate) struct SetBillingGroupStatusReq {
 fn parse_payment_mode(value: &str) -> Result<BillingPaymentMode, AdminError> {
     value
         .parse()
-        .map_err(|_| AdminError::bad_request("payment_mode must be prepaid or postpaid"))
+        .map_err(|_| AdminError::bad_request("payment_mode must be metered or prepaid"))
 }
 
 pub(crate) async fn list_billing_groups(

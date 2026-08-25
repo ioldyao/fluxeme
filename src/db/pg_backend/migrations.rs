@@ -214,7 +214,7 @@ impl CoreBackend for PgBackend {
             "CREATE TABLE IF NOT EXISTS billing_groups (\
                 id TEXT PRIMARY KEY,\
                 name TEXT NOT NULL,\
-                payment_mode TEXT NOT NULL CHECK (payment_mode IN ('prepaid','postpaid')),\
+                payment_mode TEXT NOT NULL CHECK (payment_mode IN ('metered','prepaid')),\
                 status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),\
                 is_default BOOLEAN NOT NULL DEFAULT false,\
                 created_by TEXT NOT NULL DEFAULT '',\
@@ -225,9 +225,20 @@ impl CoreBackend for PgBackend {
         .execute(&self.pool)
         .await
         .map_err(|e| DbError(format!("Migration create billing_groups: {e}")))?;
+        // Migrate the persisted protocol values before enforcing the new
+        // product vocabulary: metered = wallet charging, prepaid = record-only.
+        let _ = raw_sql("ALTER TABLE billing_groups DROP CONSTRAINT IF EXISTS billing_groups_payment_mode_check")
+            .execute(&self.pool)
+            .await;
+        let _ = raw_sql("UPDATE billing_groups SET payment_mode = CASE WHEN payment_mode = 'postpaid' THEN 'prepaid' WHEN payment_mode = 'prepaid' THEN 'metered' ELSE payment_mode END")
+            .execute(&self.pool)
+            .await;
+        let _ = raw_sql("ALTER TABLE billing_groups ADD CONSTRAINT billing_groups_payment_mode_check CHECK (payment_mode IN ('metered','prepaid'))")
+            .execute(&self.pool)
+            .await;
         raw_sql(
             "INSERT INTO billing_groups (id, name, payment_mode, status, is_default, created_by, created_at, updated_at)\
-             VALUES ('billing-group-default-prepaid', '默认预付费', 'prepaid', 'active', true, '', now()::text, now()::text)\
+             VALUES ('billing-group-default-prepaid', '默认按量计费', 'metered', 'active', true, '', now()::text, now()::text)\
              ON CONFLICT (id) DO NOTHING",
         )
         .execute(&self.pool)
@@ -236,10 +247,12 @@ impl CoreBackend for PgBackend {
         add_col!("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS billing_group_id TEXT");
         add_col!("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT");
         add_col!("UPDATE api_keys SET billing_group_id = 'billing-group-default-prepaid' WHERE billing_group_id IS NULL OR billing_group_id = ''");
-        add_col!("UPDATE api_keys SET billing_payment_mode = 'prepaid' WHERE billing_payment_mode IS NULL OR billing_payment_mode = ''");
-        // Keep the protocol id and payment_mode stable while correcting the
-        // historical display name of the built-in prepaid group.
-        add_col!("UPDATE billing_groups SET name = '默认预付费' WHERE id = 'billing-group-default-prepaid' AND payment_mode = 'prepaid' AND name = '默认按量计费'");
+        // One-time protocol migration: the old internal values had the
+        // opposite names from the product modes. Preserve all request facts,
+        // but make current and future fields match their actual behavior.
+        add_col!("UPDATE api_keys SET billing_payment_mode = CASE WHEN billing_payment_mode = 'postpaid' THEN 'prepaid' WHEN billing_payment_mode = 'prepaid' THEN 'metered' ELSE billing_payment_mode END");
+        add_col!("UPDATE billing_groups SET name = '默认按量计费' WHERE id = 'billing-group-default-prepaid' AND payment_mode = 'metered' AND name IN ('默认预付费', '默认按量计费')");
+        add_col!("UPDATE api_keys SET billing_payment_mode = 'metered' WHERE billing_payment_mode IS NULL OR billing_payment_mode = ''");
         add_col!(
             "CREATE INDEX IF NOT EXISTS idx_api_keys_billing_group ON api_keys(billing_group_id)"
         );
@@ -752,8 +765,8 @@ impl CoreBackend for PgBackend {
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_total_units BIGINT NOT NULL DEFAULT 0",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS actual_cache_write_tokens BIGINT",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_group_id TEXT NOT NULL DEFAULT 'billing-group-default-prepaid'",
-            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_group_name TEXT NOT NULL DEFAULT '默认预付费'",
-            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT NOT NULL DEFAULT 'prepaid'",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_group_name TEXT NOT NULL DEFAULT '默认按量计费'",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT NOT NULL DEFAULT 'metered'",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS estimated_priced_cost_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS actual_priced_cost_amount DOUBLE PRECISION",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS wallet_shortfall_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
@@ -775,7 +788,9 @@ impl CoreBackend for PgBackend {
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS cache_write_price DOUBLE PRECISION NOT NULL DEFAULT 0",
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS billing_group_id TEXT",
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS billing_group_name TEXT",
-            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT NOT NULL DEFAULT 'prepaid'",
+            "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT NOT NULL DEFAULT 'metered'",
+            "UPDATE token_request_reservations SET billing_payment_mode = CASE WHEN billing_payment_mode = 'postpaid' THEN 'prepaid' WHEN billing_payment_mode = 'prepaid' THEN 'metered' ELSE billing_payment_mode END",
+            "UPDATE billing_events SET billing_payment_mode = CASE WHEN billing_payment_mode = 'postpaid' THEN 'prepaid' WHEN billing_payment_mode = 'prepaid' THEN 'metered' ELSE billing_payment_mode END",
             "ALTER TABLE token_package_plans ALTER COLUMN input_credit_factor TYPE DOUBLE PRECISION USING input_credit_factor::double precision",
             "ALTER TABLE token_package_plans ALTER COLUMN output_credit_factor TYPE DOUBLE PRECISION USING output_credit_factor::double precision",
             "ALTER TABLE token_package_plans ALTER COLUMN cache_credit_factor TYPE DOUBLE PRECISION USING cache_credit_factor::double precision",

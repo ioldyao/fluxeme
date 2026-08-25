@@ -43,7 +43,7 @@ export interface BillingActivity {
   reservation_id?: string | null;
   billing_group_id?: string | null;
   billing_group_name?: string | null;
-  billing_payment_mode?: 'prepaid' | 'postpaid';
+  billing_payment_mode?: 'metered' | 'prepaid';
 }
 
 export interface BillingActivityDimensionRow {

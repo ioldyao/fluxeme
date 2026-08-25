@@ -97,7 +97,7 @@ impl BillingQueryBackend for PgBackend {
         if request_ids.is_empty() {
             return Ok(std::collections::HashMap::new());
         }
-        let rows = query("SELECT request_id, COALESCE(billing_payment_mode, 'prepaid'), billing_group_name FROM billing_events WHERE request_id = ANY($1)")
+        let rows = query("SELECT request_id, COALESCE(billing_payment_mode, 'metered'), billing_group_name FROM billing_events WHERE request_id = ANY($1)")
             .bind(request_ids)
             .fetch_all(&self.pool)
             .await?;
@@ -125,14 +125,14 @@ impl BillingQueryBackend for PgBackend {
              COALESCE(status_reason, ''), status_code, success, prompt_tokens, completion_tokens,
              cache_hit_input_tokens, cache_write_tokens, total_tokens, package_units, package_grant_id,
              COALESCE(wallet_amount, 0), COALESCE(priced_cost_amount, cost_amount, 0),
-             CASE WHEN billing_payment_mode = 'postpaid' AND package_units > 0 THEN 'postpaid_package'
-             WHEN billing_payment_mode = 'postpaid' THEN 'postpaid'
+             CASE WHEN billing_payment_mode = 'prepaid' AND package_units > 0 THEN 'prepaid_package'
+             WHEN billing_payment_mode = 'prepaid' THEN 'prepaid'
              WHEN charge_source IN ('package_and_wallet', 'package', 'wallet', 'free_model', 'none') THEN charge_source
              WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet'
              WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet'
              WHEN status_code >= 400 OR success = false THEN 'none' ELSE 'none' END,
              account_type, team_id, api_key_name, latency_ms, reservation_id,
-             billing_group_id, billing_group_name, COALESCE(billing_payment_mode, 'prepaid')
+             billing_group_id, billing_group_name, COALESCE(billing_payment_mode, 'metered')
              FROM billing_events WHERE timestamp >= "#,
         );
         builder
@@ -162,7 +162,7 @@ impl BillingQueryBackend for PgBackend {
             builder.push(" AND model = ").push_bind(model);
         }
         if let Some(source) = &filter.charge_source {
-            builder.push(" AND (CASE WHEN billing_payment_mode = 'postpaid' AND package_units > 0 THEN 'postpaid_package' WHEN billing_payment_mode = 'postpaid' THEN 'postpaid' WHEN charge_source IN ('package_and_wallet', 'package', 'wallet', 'free_model', 'none') THEN charge_source WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN status_code >= 400 OR success = false THEN 'none' ELSE 'none' END) = ").push_bind(source);
+            builder.push(" AND (CASE WHEN billing_payment_mode = 'prepaid' AND package_units > 0 THEN 'prepaid_package' WHEN billing_payment_mode = 'prepaid' THEN 'prepaid' WHEN charge_source IN ('package_and_wallet', 'package', 'wallet', 'free_model', 'none') THEN charge_source WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN status_code >= 400 OR success = false THEN 'none' ELSE 'none' END) = ").push_bind(source);
         }
         builder
             .push(" ORDER BY timestamp DESC LIMIT ")
@@ -245,7 +245,7 @@ impl BillingQueryBackend for PgBackend {
             builder.push(" AND model = ").push_bind(model);
         }
         if let Some(source) = &filter.charge_source {
-            builder.push(" AND (CASE WHEN billing_payment_mode = 'postpaid' AND package_units > 0 THEN 'postpaid_package' WHEN billing_payment_mode = 'postpaid' THEN 'postpaid' WHEN charge_source IN ('package_and_wallet', 'package', 'wallet', 'free_model', 'none') THEN charge_source WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN status_code >= 400 OR success = false THEN 'none' ELSE 'none' END) = ").push_bind(source);
+            builder.push(" AND (CASE WHEN billing_payment_mode = 'prepaid' AND package_units > 0 THEN 'prepaid_package' WHEN billing_payment_mode = 'prepaid' THEN 'prepaid' WHEN charge_source IN ('package_and_wallet', 'package', 'wallet', 'free_model', 'none') THEN charge_source WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN status_code >= 400 OR success = false THEN 'none' ELSE 'none' END) = ").push_bind(source);
         }
         let (count,) = builder
             .build_query_as::<(i64,)>()
@@ -320,7 +320,7 @@ impl BillingQueryBackend for PgBackend {
         } else {
             ""
         };
-        let source_expr = "CASE WHEN billing_payment_mode = 'postpaid' AND package_units > 0 THEN 'postpaid_package' WHEN billing_payment_mode = 'postpaid' THEN 'postpaid' WHEN charge_source IN ('package_and_wallet', 'package', 'wallet', 'free_model', 'none') THEN charge_source WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN status_code >= 400 OR success = false THEN 'none' ELSE 'none' END";
+        let source_expr = "CASE WHEN billing_payment_mode = 'prepaid' AND package_units > 0 THEN 'prepaid_package' WHEN billing_payment_mode = 'prepaid' THEN 'prepaid' WHEN charge_source IN ('package_and_wallet', 'package', 'wallet', 'free_model', 'none') THEN charge_source WHEN package_units > 0 AND wallet_amount > 0 THEN 'package_and_wallet' WHEN package_units > 0 THEN 'package' WHEN wallet_amount > 0 THEN 'wallet' WHEN status_code >= 400 OR success = false THEN 'none' ELSE 'none' END";
         let filtered = format!(
             "WITH filtered AS (SELECT COALESCE(api_key_name, '未命名 Key') AS api_key_name, model, package_units, COALESCE(wallet_amount, 0) AS wallet_amount, COALESCE(priced_cost_amount, cost_amount, 0) AS priced_cost_amount, cost_amount, billing_payment_mode, {source_expr} AS charge_source, total_tokens FROM billing_events WHERE timestamp >= $1 AND timestamp < $2{predicate})"
         );

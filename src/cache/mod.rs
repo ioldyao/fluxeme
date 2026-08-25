@@ -529,7 +529,7 @@ pub async fn start_obs_consumer(
                 .as_ref()
                 .map(|(_, _, mode, _, _)| mode.as_str())
                 .or(r.billing_payment_mode.as_deref())
-                .unwrap_or("prepaid");
+                .unwrap_or("metered");
             let billing_group_id = package_billing
                 .as_ref()
                 .and_then(|(_, _, _, group_id, _)| group_id.clone())

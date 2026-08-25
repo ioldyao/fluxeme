@@ -327,7 +327,7 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
                 scopes: None,
                 billing_group_id: crate::domain::billing_group::DEFAULT_BILLING_GROUP_ID
                     .to_string(),
-                billing_payment_mode: crate::domain::billing_group::BillingPaymentMode::Prepaid,
+                billing_payment_mode: crate::domain::billing_group::BillingPaymentMode::Metered,
             };
             if let Err(e) = db.create_api_key(&ak).await {
                 tracing::warn!("Seed api_key for {}: {}", t.id, e);

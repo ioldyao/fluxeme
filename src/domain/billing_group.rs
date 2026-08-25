@@ -5,15 +5,15 @@ pub const DEFAULT_BILLING_GROUP_ID: &str = "billing-group-default-prepaid";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BillingPaymentMode {
+    Metered,
     Prepaid,
-    Postpaid,
 }
 
 impl BillingPaymentMode {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Metered => "metered",
             Self::Prepaid => "prepaid",
-            Self::Postpaid => "postpaid",
         }
     }
 }
@@ -23,8 +23,8 @@ impl std::str::FromStr for BillingPaymentMode {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
+            "metered" => Ok(Self::Metered),
             "prepaid" => Ok(Self::Prepaid),
-            "postpaid" => Ok(Self::Postpaid),
             other => Err(format!("unsupported billing payment mode: {other}")),
         }
     }

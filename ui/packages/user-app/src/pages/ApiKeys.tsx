@@ -122,8 +122,8 @@ export default function ApiKeys() {
                       </td>
                       <td className="py-3 px-4 text-xs">
                         {k.billing_group_id ? (
-                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${k.billing_payment_mode === 'postpaid' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'}`}>
-                            {k.billing_payment_mode === 'postpaid' ? '后付费' : '预付费'}
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${k.billing_payment_mode === 'prepaid' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'}`}>
+                            {k.billing_payment_mode === 'prepaid' ? '预付费' : '按量计费'}
                           </span>
                         ) : <span className="inline-flex rounded-full bg-red-100 px-2.5 py-1 text-xs font-medium text-red-700 dark:bg-red-950/40 dark:text-red-300">未绑定</span>}
                       </td>
