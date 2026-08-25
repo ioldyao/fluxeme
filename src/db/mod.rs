@@ -100,6 +100,16 @@ pub struct BillingActivityRow {
     pub billing_payment_mode: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UsageBillingRow {
+    pub request_id: String,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub wallet_amount: Decimal,
+    pub wallet_debit_status: String,
+    pub account_type: Option<String>,
+    pub billing_payment_mode: Option<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct BillingActivityFilter {
     pub search: Option<String>,
@@ -502,6 +512,13 @@ impl Database {
         request_ids: &[String],
     ) -> Result<std::collections::HashMap<String, (String, Option<String>)>, DbError> {
         self.backend.billing_event_modes(request_ids).await
+    }
+    pub async fn usage_billing(
+        &self,
+        user_id: &str,
+        request_ids: &[String],
+    ) -> Result<Vec<UsageBillingRow>, DbError> {
+        self.backend.usage_billing(user_id, request_ids).await
     }
     pub async fn list_billing_activities(
         &self,

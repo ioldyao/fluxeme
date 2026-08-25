@@ -1,9 +1,9 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { formatCost, getRecordPricing } from '@fluxeme/shared/src/lib/cost';
 import { formatTimestamp } from '@fluxeme/shared/src/lib/date';
-import { useMyUsage, useMyUsageAggregate, useMyModelActivity } from '@fluxeme/shared/src/api/usage';
+import { useCurrency } from '@fluxeme/shared/src/store/currency';
+import { useMyUsage, useMyUsageAggregate, useMyModelActivity, useMyUsageBilling } from '@fluxeme/shared/src/api/usage';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
 import { EmptyState } from '@fluxeme/shared/src/components/EmptyState';
 import { Button } from '@fluxeme/shared/src/components/ui/button';
@@ -125,6 +125,13 @@ export default function Usage() {
   };
   const { data: usage, isLoading, isError, refetch } = useMyUsage(params);
   const records = usage?.records ?? [];
+  const requestIds = useMemo(() => records.map((record) => record.request_id), [records]);
+  const { data: billingRows, isError: isBillingError } = useMyUsageBilling(requestIds);
+  const billingByRequestId = useMemo(
+    () => new Map((billingRows ?? []).map((row) => [row.request_id, row])),
+    [billingRows],
+  );
+  const currency = useCurrency((state) => state.currency);
   const total = usage?.total ?? 0;
   const page = offset / limit + 1;
   const totalPages = Math.max(1, Math.ceil(total / limit));
@@ -266,14 +273,14 @@ export default function Usage() {
                         <th className="text-left py-3 px-4">{t('table.requestId')}</th>
                         <th className="text-left py-3 px-4">{t('table.apiKey')}</th>
                         <th className="text-left py-3 px-4">{t('usage.keyScope')}</th>
-                        <th className="text-left py-3 px-4">计费模式</th>
+                        <th className="text-left py-3 px-4">{t('usage.billingMode')}</th>
                         <th className="text-left py-3 px-4">{t('table.model')}</th>
                         <th className="text-left py-3 px-4">{t('usage.apiFormat')}</th>
-                        <th className="text-right py-3 px-4">未缓存输入</th>
-                        <th className="text-right py-3 px-4">缓存输入</th>
-                        <th className="text-right py-3 px-4">输出</th>
-                        <th className="text-right py-3 px-4">计费 Token</th>
-                        <th className="text-right py-3 px-4">理论费用</th>
+                        <th className="text-right py-3 px-4">{t('usage.uncachedInput')}</th>
+                        <th className="text-right py-3 px-4">{t('usage.cachedInput')}</th>
+                        <th className="text-right py-3 px-4">{t('dash.completion')}</th>
+                        <th className="text-right py-3 px-4">{t('usage.billingTokens')}</th>
+                        <th className="text-right py-3 px-4">{t('usage.walletDebit')}</th>
                         <th className="text-right py-3 px-4">{t('table.latency')}</th>
                         <th className="text-left py-3 px-4">{t('usage.clientIp')}</th>
                         <th className="text-center py-3 px-4">{t('table.status')}</th>
@@ -292,7 +299,7 @@ export default function Usage() {
                               {r.team_id ? t('usage.teamKey') : t('usage.personalKey')}
                             </span>
                           </td>
-                          <td className="py-3 px-4"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${r.billing_payment_mode === 'prepaid' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{r.billing_payment_mode === 'prepaid' ? '预付费' : '按量计费'}</span></td>
+                          <td className="py-3 px-4"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${r.billing_payment_mode === 'prepaid' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{r.billing_payment_mode === 'prepaid' ? t('usage.prepaid') : t('usage.metered')}</span></td>
                           <td className="py-3 px-4">
                             <span className="inline-flex items-center gap-1">
                               <span>{r.model}</span>
@@ -310,10 +317,18 @@ export default function Usage() {
                           <td className="py-3 px-4 font-mono text-xs">{r.api_format ?? '—'}</td>
                           <td className="py-3 px-4 text-right">{r.prompt_tokens}</td>
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.cache_hit_input_tokens > 0 ? r.cache_hit_input_tokens : '—'}</td>
-                          <td className="py-3 px-4 text-right text-muted-foreground">{r.cache_write_tokens > 0 ? r.cache_write_tokens : '—'}</td>
                           <td className="py-3 px-4 text-right">{r.completion_tokens}</td>
                           <td className="py-3 px-4 text-right font-medium">{r.total_tokens}</td>
-                          <td className="py-3 px-4 text-right font-mono text-xs">{formatCost(r.prompt_tokens, r.completion_tokens, r.cache_hit_input_tokens, r.cache_write_tokens, getRecordPricing(r))}</td>
+                          <td className="py-3 px-4 text-right font-mono text-xs">
+                            {(() => {
+                              const billing = billingByRequestId.get(r.request_id);
+                              if (isBillingError || !billing || billing.wallet_debit_status === 'unavailable') return '—';
+                              if (billing.wallet_debit_status === 'pending') return t('usage.settlementPending');
+                              if (billing.wallet_debit_status === 'no_charge') return currency === 'cny' ? '¥0' : '$0';
+                              const symbol = currency === 'cny' ? '¥' : '$';
+                              return `${symbol}${billing.wallet_amount.toFixed(6)}`;
+                            })()}
+                          </td>
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>
                           <td className="py-3 px-4 text-muted-foreground whitespace-nowrap text-xs font-mono">{r.client_ip ?? '—'}</td>
                           <td className="py-3 px-4 text-center">

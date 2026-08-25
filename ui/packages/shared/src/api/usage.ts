@@ -19,6 +19,14 @@ interface UsageResponse {
   total: number;
 }
 
+export interface UsageBillingRow {
+  request_id: string;
+  wallet_amount: number;
+  wallet_debit_status: 'charged' | 'no_charge' | 'pending' | 'unavailable';
+  account_type?: string | null;
+  billing_payment_mode?: 'metered' | 'prepaid' | null;
+}
+
 function buildUsageSearchParams(params: UsageParams = {}) {
   const searchParams = new URLSearchParams();
   if (params.limit) searchParams.set('limit', String(params.limit));
@@ -56,6 +64,22 @@ export function useMyUsage(params: Omit<UsageParams, 'user_id'> = {}) {
     queryFn: () => api<UsageResponse>(`/me/usage${qs ? `?${qs}` : ''}`),
     placeholderData: keepPreviousData,
     refetchInterval: 60_000,
+  });
+}
+
+export function useMyUsageBilling(requestIds: string[]) {
+  const userId = useAuth(state => state.userId);
+  const stableRequestIds = [...requestIds].sort();
+  const query = new URLSearchParams();
+  for (const requestId of stableRequestIds) {
+    query.append('request_id', requestId);
+  }
+
+  return useQuery({
+    queryKey: ['usage', 'billing', 'self', userId, stableRequestIds],
+    queryFn: () => api<UsageBillingRow[]>(`/me/usage/billing?${query.toString()}`),
+    enabled: !!userId && stableRequestIds.length > 0,
+    refetchInterval: 10_000,
   });
 }
 

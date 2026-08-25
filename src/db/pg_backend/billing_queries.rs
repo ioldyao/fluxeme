@@ -108,6 +108,66 @@ impl BillingQueryBackend for PgBackend {
         Ok(result)
     }
 
+    async fn usage_billing(
+        &self,
+        user_id: &str,
+        request_ids: &[String],
+    ) -> Result<Vec<crate::db::UsageBillingRow>, DbError> {
+        if request_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows = query(
+            "SELECT request_id, COALESCE(wallet_amount, 0), settlement_state, account_type, billing_payment_mode, reservation_id, COALESCE(outstanding_amount, 0)
+             FROM billing_events
+             WHERE user_id = $1 AND request_id = ANY($2)",
+        )
+        .bind(user_id)
+        .bind(request_ids)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                let request_id = row.try_get(0)?;
+                let wallet_amount = Decimal::try_from(row.try_get::<f64, _>(1)?)
+                    .map_err(|error| DbError(format!("Invalid wallet amount: {error}")))?;
+                let settlement_state: String = row.try_get(2)?;
+                let reservation_id: Option<String> = row.try_get(5)?;
+                let outstanding_amount = Decimal::try_from(row.try_get::<f64, _>(6)?)
+                    .map_err(|error| DbError(format!("Invalid outstanding amount: {error}")))?;
+                let wallet_debit_status = if matches!(
+                    settlement_state.as_str(),
+                    "reserved"
+                        | "settlement_pending"
+                        | "awaiting_actuals"
+                        | "pending"
+                        | "partially_settled"
+                ) || outstanding_amount > Decimal::ZERO
+                {
+                    "pending"
+                } else if reservation_id.is_none() {
+                    if wallet_amount > Decimal::ZERO {
+                        "charged"
+                    } else {
+                        "unavailable"
+                    }
+                } else if wallet_amount > Decimal::ZERO {
+                    "charged"
+                } else {
+                    "no_charge"
+                };
+                Ok(crate::db::UsageBillingRow {
+                    request_id,
+                    wallet_amount,
+                    wallet_debit_status: wallet_debit_status.to_string(),
+                    account_type: row.try_get(3)?,
+                    billing_payment_mode: row.try_get(4)?,
+                })
+            })
+            .collect()
+    }
+
     async fn list_billing_activities(
         &self,
         start: &str,

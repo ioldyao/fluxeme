@@ -166,6 +166,11 @@ pub trait BillingQueryBackend: Send + Sync {
         &self,
         request_ids: &[String],
     ) -> Result<std::collections::HashMap<String, (String, Option<String>)>, DbError>;
+    async fn usage_billing(
+        &self,
+        user_id: &str,
+        request_ids: &[String],
+    ) -> Result<Vec<crate::db::UsageBillingRow>, DbError>;
     async fn list_billing_activities(
         &self,
         start: &str,

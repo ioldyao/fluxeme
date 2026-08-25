@@ -97,24 +97,10 @@ pub(crate) async fn get_usage(
         AdminError::internal("Internal server error")
     })?;
 
-    let mut records = ch.query_usage(limit, offset, &filter).await.map_err(|e| {
+    let records = ch.query_usage(limit, offset, &filter).await.map_err(|e| {
         tracing::error!("CH usage query failed: {}", e);
         AdminError::internal("Internal server error")
     })?;
-    let request_ids = records
-        .iter()
-        .map(|record| record.request_id.clone())
-        .collect::<Vec<_>>();
-    let modes = state
-        .db
-        .billing_event_modes(&request_ids)
-        .await
-        .map_err(db_err)?;
-    for record in &mut records {
-        if let Some((mode, _group_name)) = modes.get(&record.request_id) {
-            record.billing_payment_mode = Some(mode.clone());
-        }
-    }
 
     Ok(Json(UsageResponse { records, total }))
 }
@@ -139,26 +125,36 @@ pub(crate) async fn get_my_usage(
         AdminError::internal("Internal server error")
     })?;
 
-    let mut records = ch.query_usage(limit, offset, &filter).await.map_err(|e| {
+    let records = ch.query_usage(limit, offset, &filter).await.map_err(|e| {
         tracing::error!("CH self usage query failed: {}", e);
         AdminError::internal("Internal server error")
     })?;
-    let request_ids = records
-        .iter()
-        .map(|record| record.request_id.clone())
-        .collect::<Vec<_>>();
-    let modes = state
-        .db
-        .billing_event_modes(&request_ids)
-        .await
-        .map_err(db_err)?;
-    for record in &mut records {
-        if let Some((mode, _group_name)) = modes.get(&record.request_id) {
-            record.billing_payment_mode = Some(mode.clone());
-        }
-    }
 
     Ok(Json(UsageResponse { records, total }))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct UsageBillingQuery {
+    request_id: Vec<String>,
+}
+
+pub(crate) async fn get_usage_billing(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<UsageBillingQuery>,
+) -> Result<Json<Vec<crate::db::UsageBillingRow>>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    let request_ids = query.request_id;
+    if request_ids.len() > 200 {
+        return Err(AdminError::bad_request("Too many request IDs"));
+    }
+
+    state
+        .db
+        .usage_billing(&session.user_id, &request_ids)
+        .await
+        .map(Json)
+        .map_err(db_err)
 }
 
 pub(crate) async fn get_usage_detail(
