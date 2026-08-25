@@ -680,17 +680,17 @@ impl TokenBillingBackend for PgBackend {
         let requested_raw = request
             .prompt_tokens
             .saturating_add(request.completion_tokens);
-        let grant = if let Some(team_id) = request.team_id.as_deref() {
+        let grants = if let Some(team_id) = request.team_id.as_deref() {
             query(
                 "SELECT id, accounting_mode, exhaustion_policy, total_units, consumed_units, reserved_units \
                  FROM token_package_grants \
                  WHERE team_id = $1 AND status = 'active' AND (expires_at IS NULL OR expires_at > $2) \
                    AND total_units - consumed_units - reserved_units > 0 \
-                 ORDER BY priority DESC, expires_at NULLS LAST, created_at, id LIMIT 1 FOR UPDATE",
+                 ORDER BY priority DESC, expires_at NULLS LAST, created_at, id FOR UPDATE",
             )
             .bind(team_id)
             .bind(&request.expires_at)
-            .fetch_optional(&mut *tx)
+            .fetch_all(&mut *tx)
             .await?
         } else {
             query(
@@ -698,27 +698,16 @@ impl TokenBillingBackend for PgBackend {
                  FROM token_package_grants \
                  WHERE user_id = $1 AND status = 'active' AND (expires_at IS NULL OR expires_at > $2) \
                    AND total_units - consumed_units - reserved_units > 0 \
-                 ORDER BY priority DESC, expires_at NULLS LAST, created_at, id LIMIT 1 FOR UPDATE",
+                 ORDER BY priority DESC, expires_at NULLS LAST, created_at, id FOR UPDATE",
             )
             .bind(&request.user_id)
             .bind(&request.expires_at)
-            .fetch_optional(&mut *tx)
+            .fetch_all(&mut *tx)
             .await?
         };
-        let available = grant
-            .as_ref()
-            .map(|row| {
-                row.try_get::<i64, _>(3).unwrap_or(0)
-                    - row.try_get::<i64, _>(4).unwrap_or(0)
-                    - row.try_get::<i64, _>(5).unwrap_or(0)
-            })
-            .unwrap_or(0)
-            .max(0) as u64;
-        let grant_id = grant
-            .as_ref()
-            .map(|r| r.try_get::<String, _>(0))
-            .transpose()?;
-        let mode_text = grant.as_ref().and_then(|r| r.try_get::<String, _>(1).ok());
+        let grant = grants.first();
+        let grant_id = grant.map(|r| r.try_get::<String, _>(0)).transpose()?;
+        let mode_text = grant.and_then(|r| r.try_get::<String, _>(1).ok());
         let (input_factor, output_factor, cache_factor) = if let Some(id) = grant_id.as_deref() {
             query_as::<_, (f64, f64, f64)>(
                 "SELECT input_factor, output_factor, cache_factor
@@ -757,12 +746,34 @@ impl TokenBillingBackend for PgBackend {
         } else {
             requested_raw
         };
-        let package_units = requested.min(available);
-        let wallet_units = requested.saturating_sub(package_units);
-        let policy = grant
-            .as_ref()
-            .and_then(|r| r.try_get::<String, _>(2).ok())
-            .unwrap_or_else(|| "package_then_wallet".to_string());
+        let mut remaining_package_units = requested;
+        let mut allocations: Vec<(String, u64, String)> = Vec::new();
+        for row in &grants {
+            if remaining_package_units == 0 {
+                break;
+            }
+            let available = (row.try_get::<i64, _>(3).unwrap_or(0)
+                - row.try_get::<i64, _>(4).unwrap_or(0)
+                - row.try_get::<i64, _>(5).unwrap_or(0))
+            .max(0) as u64;
+            let units = remaining_package_units.min(available);
+            if units > 0 {
+                allocations.push((
+                    row.try_get(0)?,
+                    units,
+                    row.try_get::<String, _>(2)
+                        .unwrap_or_else(|_| "package_then_wallet".to_string()),
+                ));
+                remaining_package_units -= units;
+            }
+        }
+        let package_units = requested.saturating_sub(remaining_package_units);
+        let wallet_units = remaining_package_units;
+        let policy = allocations
+            .iter()
+            .find(|(_, units, _)| *units > 0)
+            .map(|(_, _, policy)| policy.as_str())
+            .unwrap_or("package_then_wallet");
         if wallet_units > 0
             && policy == "package_only"
             && request.billing_payment_mode == BillingPaymentMode::Prepaid
@@ -772,7 +783,29 @@ impl TokenBillingBackend for PgBackend {
         let wallet_hold = if request.billing_payment_mode == BillingPaymentMode::Postpaid {
             Decimal::ZERO
         } else if wallet_units > 0 {
-            request.estimated_wallet_amount.max(Decimal::ZERO)
+            calculate_settlement(
+                TokenUsage {
+                    prompt_tokens: request.prompt_tokens,
+                    completion_tokens: request.completion_tokens,
+                    cache_hit_input_tokens: request.cache_hit_input_tokens,
+                    cache_write_tokens: 0,
+                },
+                0,
+                PriceSnapshot {
+                    prompt: request.prompt_price,
+                    completion: request.completion_price,
+                    cache_read: request.cache_read_price,
+                    cache_write: request.cache_write_price,
+                },
+                mode,
+                input_factor,
+                output_factor,
+                cache_factor,
+                package_units,
+                request.billing_payment_mode,
+            )
+            .wallet_amount
+            .max(Decimal::ZERO)
         } else {
             Decimal::ZERO
         };
@@ -805,15 +838,15 @@ impl TokenBillingBackend for PgBackend {
                 }
             }
         }
-        if let Some(id) = grant_id.as_deref() {
+        let reservation_id = uuid::Uuid::new_v4().to_string();
+        for (id, units, _) in &allocations {
             query("UPDATE token_package_grants SET reserved_units = reserved_units + $1, updated_at = $2 WHERE id = $3")
-                .bind(package_units as i64)
+                .bind(*units as i64)
                 .bind(&request.expires_at)
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;
         }
-        let reservation_id = uuid::Uuid::new_v4().to_string();
         query(
             "INSERT INTO token_request_reservations \
              (id, request_id, request_fingerprint, user_id, user_name, api_key_name, team_id, account_type, package_grant_id, model, accounting_mode, \
@@ -855,6 +888,16 @@ impl TokenBillingBackend for PgBackend {
         .bind(chrono::Utc::now().to_rfc3339())
         .execute(&mut *tx)
         .await?;
+        for (id, units, _) in &allocations {
+            query("INSERT INTO token_package_reservation_allocations (id, reservation_id, package_grant_id, reserved_units, created_at) VALUES ($1, $2, $3, $4, $5)")
+                .bind(uuid::Uuid::new_v4().to_string())
+                .bind(&reservation_id)
+                .bind(id)
+                .bind(*units as i64)
+                .bind(chrono::Utc::now().to_rfc3339())
+                .execute(&mut *tx)
+                .await?;
+        }
         tx.commit().await?;
         Ok(crate::domain::token_package::TokenReservationHandle {
             reservation_id,
@@ -954,43 +997,63 @@ impl TokenBillingBackend for PgBackend {
             billing_payment_mode,
         );
         let actual_units = breakdown.actual_units;
-        let package_units = if let Some(id) = grant_id.as_deref() {
-            // The initial reservation estimates uncached input and output only.
-            // Provider cache usage is known only now, so consume the grant's
-            // remaining eligible units under the grant row lock instead of
-            // sending cache-hit/write units straight to the wallet.
+        let mut allocation_rows: Vec<(String, i64)> = query_as(
+            "SELECT package_grant_id, reserved_units
+             FROM token_package_reservation_allocations
+             WHERE reservation_id = $1 ORDER BY created_at, id FOR UPDATE",
+        )
+        .bind(&settlement.reservation_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        // Legacy reservations predate allocation rows and retain one grant id
+        // plus a reservation-level unit count. Keep those rows settleable.
+        if allocation_rows.is_empty() {
+            if let Some(id) = grant_id.as_deref() {
+                allocation_rows.push((id.to_string(), reserved as i64));
+            }
+        }
+        let mut remaining_actual_units = actual_units;
+        let mut package_units = 0u64;
+        for (id, reserved_for_grant) in allocation_rows {
             let (total_units, consumed_units, reserved_units): (i64, i64, i64) = query_as(
                 "SELECT total_units, consumed_units, reserved_units
                  FROM token_package_grants WHERE id = $1 FOR UPDATE",
             )
-            .bind(id)
+            .bind(&id)
             .fetch_one(&mut *tx)
             .await?;
-            let held_units = reserved.min(reserved_units.max(0) as u64);
+            let held_units = (reserved_for_grant.max(0) as u64).min(reserved_units.max(0) as u64);
             let available_after_hold = (total_units.max(0) as u64)
                 .saturating_sub(consumed_units.max(0) as u64)
                 .saturating_sub((reserved_units.max(0) as u64).saturating_sub(held_units));
-            let package_units = actual_units.min(available_after_hold);
+            let consumed = remaining_actual_units.min(available_after_hold);
             query("UPDATE token_package_grants SET consumed_units = consumed_units + $1, reserved_units = GREATEST(0, reserved_units - $2), updated_at = $3 WHERE id = $4")
-                .bind(package_units as i64)
+                .bind(consumed as i64)
                 .bind(held_units as i64)
                 .bind(chrono::Utc::now().to_rfc3339())
-                .bind(id)
+                .bind(&id)
                 .execute(&mut *tx)
                 .await?;
-            query("INSERT INTO token_package_ledger (id, package_grant_id, reservation_id, request_id, entry_type, units, created_at) VALUES ($1, $2, $3, $4, 'consume', $5, $6) ON CONFLICT DO NOTHING")
-                .bind(uuid::Uuid::new_v4().to_string())
-                .bind(id)
+            query("UPDATE token_package_reservation_allocations SET consumed_units = $1 WHERE reservation_id = $2 AND package_grant_id = $3")
+                .bind(consumed as i64)
                 .bind(&settlement.reservation_id)
-                .bind(&request_id)
-                .bind(package_units as i64)
-                .bind(chrono::Utc::now().to_rfc3339())
+                .bind(&id)
                 .execute(&mut *tx)
                 .await?;
-            package_units
-        } else {
-            0
-        };
+            if consumed > 0 {
+                query("INSERT INTO token_package_ledger (id, package_grant_id, reservation_id, request_id, entry_type, units, created_at) VALUES ($1, $2, $3, $4, 'consume', $5, $6) ON CONFLICT DO NOTHING")
+                    .bind(uuid::Uuid::new_v4().to_string())
+                    .bind(&id)
+                    .bind(&settlement.reservation_id)
+                    .bind(&request_id)
+                    .bind(consumed as i64)
+                    .bind(chrono::Utc::now().to_rfc3339())
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            package_units += consumed;
+            remaining_actual_units = remaining_actual_units.saturating_sub(consumed);
+        }
         // Recalculate package coverage with the actual post-provider package
         // allocation. The theoretical cost remains all four price components.
         let breakdown = calculate_settlement(
@@ -1616,24 +1679,53 @@ impl TokenBillingBackend for PgBackend {
                     .bind(reserved_wallet).bind(&user_id).execute(&mut *tx).await?;
             }
         }
-        if let Some(grant_id) = row.try_get::<Option<String>, _>(1)? {
-            let reserved = row.try_get::<i64, _>(2)?.max(0);
-            query("UPDATE token_package_grants SET reserved_units = GREATEST(0, reserved_units - $1), updated_at = $2 WHERE id = $3")
-                .bind(reserved)
-                .bind(chrono::Utc::now().to_rfc3339())
-                .bind(&grant_id)
-                .execute(&mut *tx)
-                .await?;
-            query("INSERT INTO token_package_ledger (id, package_grant_id, reservation_id, request_id, entry_type, units, created_at, note) VALUES ($1, $2, $3, $4, 'release', $5, $6, $7) ON CONFLICT DO NOTHING")
-                .bind(uuid::Uuid::new_v4().to_string())
-                .bind(&grant_id)
-                .bind(reservation_id)
-                .bind(&request_id)
-                .bind(-reserved)
-                .bind(chrono::Utc::now().to_rfc3339())
-                .bind(reason)
-                .execute(&mut *tx)
-                .await?;
+        let allocation_rows: Vec<(String, i64)> = query_as(
+            "SELECT package_grant_id, reserved_units
+             FROM token_package_reservation_allocations
+             WHERE reservation_id = $1 FOR UPDATE",
+        )
+        .bind(reservation_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        if allocation_rows.is_empty() {
+            if let Some(grant_id) = row.try_get::<Option<String>, _>(1)? {
+                let reserved = row.try_get::<i64, _>(2)?.max(0);
+                query("UPDATE token_package_grants SET reserved_units = GREATEST(0, reserved_units - $1), updated_at = $2 WHERE id = $3")
+                    .bind(reserved)
+                    .bind(chrono::Utc::now().to_rfc3339())
+                    .bind(&grant_id)
+                    .execute(&mut *tx)
+                    .await?;
+                query("INSERT INTO token_package_ledger (id, package_grant_id, reservation_id, request_id, entry_type, units, created_at, note) VALUES ($1, $2, $3, $4, 'release', $5, $6, $7) ON CONFLICT DO NOTHING")
+                    .bind(uuid::Uuid::new_v4().to_string())
+                    .bind(&grant_id)
+                    .bind(reservation_id)
+                    .bind(&request_id)
+                    .bind(-reserved)
+                    .bind(chrono::Utc::now().to_rfc3339())
+                    .bind(reason)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        } else {
+            for (grant_id, reserved) in allocation_rows {
+                query("UPDATE token_package_grants SET reserved_units = GREATEST(0, reserved_units - $1), updated_at = $2 WHERE id = $3")
+                    .bind(reserved.max(0))
+                    .bind(chrono::Utc::now().to_rfc3339())
+                    .bind(&grant_id)
+                    .execute(&mut *tx)
+                    .await?;
+                query("INSERT INTO token_package_ledger (id, package_grant_id, reservation_id, request_id, entry_type, units, created_at, note) VALUES ($1, $2, $3, $4, 'release', $5, $6, $7) ON CONFLICT DO NOTHING")
+                    .bind(uuid::Uuid::new_v4().to_string())
+                    .bind(&grant_id)
+                    .bind(reservation_id)
+                    .bind(&request_id)
+                    .bind(-reserved.max(0))
+                    .bind(chrono::Utc::now().to_rfc3339())
+                    .bind(reason)
+                    .execute(&mut *tx)
+                    .await?;
+            }
         }
         query("UPDATE token_request_reservations SET state = 'released', reason = $1, settled_at = $2 WHERE id = $3")
             .bind(reason)

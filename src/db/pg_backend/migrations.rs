@@ -227,7 +227,7 @@ impl CoreBackend for PgBackend {
         .map_err(|e| DbError(format!("Migration create billing_groups: {e}")))?;
         raw_sql(
             "INSERT INTO billing_groups (id, name, payment_mode, status, is_default, created_by, created_at, updated_at)\
-             VALUES ('billing-group-default-prepaid', '默认按量计费', 'prepaid', 'active', true, '', now()::text, now()::text)\
+             VALUES ('billing-group-default-prepaid', '默认预付费', 'prepaid', 'active', true, '', now()::text, now()::text)\
              ON CONFLICT (id) DO NOTHING",
         )
         .execute(&self.pool)
@@ -237,6 +237,9 @@ impl CoreBackend for PgBackend {
         add_col!("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT");
         add_col!("UPDATE api_keys SET billing_group_id = 'billing-group-default-prepaid' WHERE billing_group_id IS NULL OR billing_group_id = ''");
         add_col!("UPDATE api_keys SET billing_payment_mode = 'prepaid' WHERE billing_payment_mode IS NULL OR billing_payment_mode = ''");
+        // Keep the protocol id and payment_mode stable while correcting the
+        // historical display name of the built-in prepaid group.
+        add_col!("UPDATE billing_groups SET name = '默认预付费' WHERE id = 'billing-group-default-prepaid' AND payment_mode = 'prepaid' AND name = '默认按量计费'");
         add_col!(
             "CREATE INDEX IF NOT EXISTS idx_api_keys_billing_group ON api_keys(billing_group_id)"
         );
@@ -635,6 +638,20 @@ impl CoreBackend for PgBackend {
         .await
         .map_err(|e| DbError(format!("Migration create token_request_reservations: {e}")))?;
         let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS token_package_reservation_allocations (
+                id TEXT PRIMARY KEY,
+                reservation_id TEXT NOT NULL REFERENCES token_request_reservations(id) ON DELETE CASCADE,
+                package_grant_id TEXT NOT NULL REFERENCES token_package_grants(id),
+                reserved_units BIGINT NOT NULL DEFAULT 0 CHECK (reserved_units >= 0),
+                consumed_units BIGINT NOT NULL DEFAULT 0 CHECK (consumed_units >= 0),
+                created_at TEXT NOT NULL,
+                UNIQUE (reservation_id, package_grant_id)
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create token_package_reservation_allocations: {e}")))?;
+        let _ = raw_sql(
             "CREATE TABLE IF NOT EXISTS token_package_ledger (
                 id TEXT PRIMARY KEY,
                 package_grant_id TEXT NOT NULL REFERENCES token_package_grants(id),
@@ -735,7 +752,7 @@ impl CoreBackend for PgBackend {
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS reserved_total_units BIGINT NOT NULL DEFAULT 0",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS actual_cache_write_tokens BIGINT",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_group_id TEXT NOT NULL DEFAULT 'billing-group-default-prepaid'",
-            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_group_name TEXT NOT NULL DEFAULT '默认按量计费'",
+            "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_group_name TEXT NOT NULL DEFAULT '默认预付费'",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS billing_payment_mode TEXT NOT NULL DEFAULT 'prepaid'",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS estimated_priced_cost_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS actual_priced_cost_amount DOUBLE PRECISION",
