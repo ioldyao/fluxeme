@@ -9,7 +9,7 @@ import {
   YAxis,
 } from 'recharts';
 import { useFlowMetrics } from '@fluxeme/shared';
-import { useModels } from '@fluxeme/shared/src/api/models';
+import { usePublicModels } from '@fluxeme/shared/src/api/models';
 import { useChannels } from '@fluxeme/shared/src/api/channels';
 import { useProbeResults } from '@fluxeme/shared/src/api/probe';
 import { useRoutingHealth } from '@fluxeme/shared/src/api/routing';
@@ -428,7 +428,7 @@ export default function FlowTowerContent() {
 
   const rangeBounds = useMemo(() => formatRangeBounds(selectedRange, queryNowMs), [selectedRange, queryNowMs]);
 
-  const modelsQuery = useModels();
+  const modelsQuery = usePublicModels();
   const channelsQuery = useChannels();
   const routingHealthQuery = useRoutingHealth();
   const probeResultsQuery = useProbeResults({
