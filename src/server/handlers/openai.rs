@@ -477,6 +477,7 @@ pub async fn chat_completions(
     // the request as "in-flight" before the upstream call completes.
     let accepted_at = Utc::now().to_rfc3339();
     state.event_bus.route_decided(RouteDecided {
+        event_type: "route_decided".to_string(),
         timestamp: accepted_at.clone(),
         request_id: request_id.clone(),
         model: resolved_model.clone(),
@@ -677,6 +678,7 @@ pub async fn chat_completions(
                 )
                 .release("handler timeout");
             }
+            state.flow_tracker.mark_completed(&rid);
             tracing::error!(
                 rid,
                 handler_timeout_s = handler_timeout.as_secs(),

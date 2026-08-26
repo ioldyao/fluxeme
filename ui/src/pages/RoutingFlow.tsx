@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useModels } from '@/api/models';
+import { usePublicModels } from '@/api/models';
 import { useChannels } from '@/api/channels';
 import { fetchRoutingFlowSnapshot } from '@/api/routing';
 import type { Channel, Model } from '@/types';
@@ -325,7 +325,7 @@ function useRoutingStream(topology: TopoModel[]) {
 
       ws.onopen = () => { setConnected(true); setReconnectIn(0); if (reconnectTimer.current) { clearInterval(reconnectTimer.current); reconnectTimer.current = null; } };
       ws.onmessage = (e) => {
-        let ev: { model?: string; channel_id?: string; endpoint_id?: number | null; latency_ms?: number };
+        let ev: { type?: string; model?: string; channel_id?: string; endpoint_id?: number | null; latency_ms?: number };
         try { ev = JSON.parse(e.data); } catch { return; }
         if (!ev || typeof ev.model !== 'string' || typeof ev.channel_id !== 'string') return;
         const resolved = resolveEvent(topoRef.current, { model: ev.model, channel_id: ev.channel_id, endpoint_id: ev.endpoint_id });
@@ -335,7 +335,7 @@ function useRoutingStream(topology: TopoModel[]) {
         // RouteDecided (latency_ms == 0): count immediately, then pulse
         // hop-by-hop.  RequestCompleted (latency_ms > 0): silent; OTLP
         // has the full trace for retrospective inspection.
-        const isDecided = ev.latency_ms === undefined || ev.latency_ms === 0;
+        const isDecided = ev.type === 'route_decided' || (ev.type == null && ev.latency_ms == null);
         if (isDecided) {
           setCounts((prev) => {
             const next = { ...prev };
@@ -397,7 +397,7 @@ function useRoutingStream(topology: TopoModel[]) {
 // ── page ────────────────────────────────────────────────────────────
 export default function RoutingFlow() {
   const { t } = useTranslation();
-  const { data: models, isLoading: mLoading } = useModels();
+  const { data: models, isLoading: mLoading } = usePublicModels();
   const { data: channels, isLoading: cLoading } = useChannels();
 
   const topology = useMemo(() => {

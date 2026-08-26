@@ -18,13 +18,15 @@ pub(crate) async fn routing_health(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:dashboard").await?;
 
-    let models = state.db.list_models().await.map_err(db_err)?;
+    let models = state.db.list_published_models().await.map_err(db_err)?;
     let ch = state
         .ch
         .as_ref()
         .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let published_model_names: Vec<String> =
+        models.iter().map(|model| model.name.clone()).collect();
     let usage = ch
-        .query_channel_usage_24h()
+        .query_channel_usage_24h(&published_model_names)
         .await
         .map_err(AdminError::internal)?;
 
@@ -148,12 +150,20 @@ pub(crate) async fn recent_request_paths(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:dashboard").await?;
 
+    let published_model_names = state
+        .db
+        .list_published_models()
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(|model| model.name)
+        .collect::<Vec<_>>();
     let ch = state
         .ch
         .as_ref()
         .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
     let paths: Vec<serde_json::Value> = ch
-        .query_recent_request_paths(15)
+        .query_recent_request_paths(15, &published_model_names)
         .await
         .map_err(AdminError::internal)?
         .into_iter()
@@ -226,7 +236,15 @@ pub(crate) async fn routing_flow_snapshot_handler(
         .ch
         .as_ref()
         .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
-    ch.query_routing_flow_snapshot(24)
+    let published_model_names = state
+        .db
+        .list_published_models()
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(|model| model.name)
+        .collect::<Vec<_>>();
+    ch.query_routing_flow_snapshot(24, &published_model_names)
         .await
         .map(Json)
         .map_err(AdminError::internal)
@@ -240,16 +258,29 @@ pub(crate) async fn routing_history(
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:dashboard").await?;
 
-    let model_filter: Option<&str> = q.model.as_deref().filter(|m| !m.is_empty() && *m != "all");
+    let requested_model: Option<&str> = q.model.as_deref().filter(|m| !m.is_empty() && *m != "all");
+    let published_model_names = state
+        .db
+        .list_published_models()
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(|model| model.name)
+        .collect::<Vec<_>>();
 
-    tracing::info!(start = %q.start, end = %q.end, model = ?model_filter, "routing_history query");
+    tracing::info!(start = %q.start, end = %q.end, model = ?requested_model, "routing_history query");
 
     let ch = state
         .ch
         .as_ref()
         .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
     let buckets = ch
-        .query_routing_history_buckets_filtered(&q.start, &q.end, model_filter)
+        .query_routing_history_buckets_filtered(
+            &q.start,
+            &q.end,
+            requested_model,
+            &published_model_names,
+        )
         .await
         .map_err(|e| {
             tracing::error!(error = e, "routing_history_buckets (CH) failed");
@@ -257,7 +288,12 @@ pub(crate) async fn routing_history(
         })?;
 
     let stats = ch
-        .query_routing_history_stats_filtered(&q.start, &q.end, model_filter)
+        .query_routing_history_stats_filtered(
+            &q.start,
+            &q.end,
+            requested_model,
+            &published_model_names,
+        )
         .await
         .map_err(|e| {
             tracing::error!(error = e, "routing_history_stats (CH) failed");
@@ -265,7 +301,12 @@ pub(crate) async fn routing_history(
         })?;
 
     let details = ch
-        .query_routing_history_endpoint_details(&q.start, &q.end, model_filter)
+        .query_routing_history_endpoint_details(
+            &q.start,
+            &q.end,
+            requested_model,
+            &published_model_names,
+        )
         .await
         .map_err(|e| {
             tracing::error!(error = e, "routing_history_endpoint_details (CH) failed");
@@ -480,12 +521,25 @@ pub(crate) async fn flow_metrics(
         return Err(AdminError::bad_request("end must be after start"));
     }
 
+    let published_model_names = state
+        .db
+        .list_published_models()
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(|model| model.name)
+        .collect::<Vec<_>>();
+    let model = model.filter(|name| {
+        published_model_names
+            .iter()
+            .any(|published| published == name)
+    });
     let ch = state
         .ch
         .as_ref()
         .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
     let historical = ch
-        .query_flow_metrics(&start, &end, model)
+        .query_flow_metrics(&start, &end, model, &published_model_names)
         .await
         .map_err(AdminError::internal)?;
 
@@ -498,7 +552,11 @@ pub(crate) async fn flow_metrics(
         },
         historical,
         realtime: {
-            let snapshot = state.flow_tracker.snapshot();
+            let snapshot = state
+                .flow_tracker
+                .snapshot_global()
+                .await
+                .map_err(AdminError::internal)?;
             FlowMetricsRealtime {
                 as_of: snapshot.as_of,
                 in_flight: snapshot.in_flight,
@@ -509,8 +567,8 @@ pub(crate) async fn flow_metrics(
                     count: None,
                     reason: "admission_not_enabled",
                 },
-                consistency: "approximate",
-                source: "in_memory_flow_tracker",
+                consistency: "eventually_consistent",
+                source: "redis_flow_tracker",
             }
         },
     }))

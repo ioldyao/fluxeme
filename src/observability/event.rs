@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 /// Sent after the upstream response finishes — carries token counts and latency.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RequestCompleted {
+    #[serde(rename = "type")]
+    pub event_type: String,
     pub timestamp: String,
     pub request_id: String,
     pub model: String,
@@ -19,10 +21,12 @@ pub struct RequestCompleted {
 }
 
 /// Event published immediately after route resolution, before the upstream
-/// call starts.  `latency_ms` is always 0 — the frontend uses this to
-/// distinguish "in-flight" from "completed" events.
+/// call starts. The explicit event type distinguishes it from completion events;
+/// latency is not used as a discriminator because a completed request may be 0ms.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RouteDecided {
+    #[serde(rename = "type")]
+    pub event_type: String,
     pub timestamp: String,
     pub request_id: String,
     pub model: String,

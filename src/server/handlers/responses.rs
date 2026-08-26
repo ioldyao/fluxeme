@@ -52,6 +52,7 @@ pub async fn responses(
     // Broadcast route-decision event
     let accepted_at = Utc::now().to_rfc3339();
     state.event_bus.route_decided(RouteDecided {
+        event_type: "route_decided".to_string(),
         timestamp: accepted_at.clone(),
         request_id: request_id.clone(),
         model: resolved_model.clone(),

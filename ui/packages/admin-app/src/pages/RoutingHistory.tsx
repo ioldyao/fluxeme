@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useModels } from '@fluxeme/shared/src/api/models';
+import { usePublicModels } from '@fluxeme/shared/src/api/models';
 import { useChannels } from '@fluxeme/shared/src/api/channels';
 import { fetchRoutingHistory } from '@fluxeme/shared/src/api/routing';
 import type { RoutingHistoryResponse } from '@fluxeme/shared/src/api/routing';
@@ -50,7 +50,7 @@ function formatBucket(bucket: string): string {
 
 export default function RoutingHistory() {
   const { t } = useTranslation();
-  const { data: models } = useModels();
+  const { data: models } = usePublicModels();
   const { data: channels } = useChannels();
   const modelList = models || [];
 

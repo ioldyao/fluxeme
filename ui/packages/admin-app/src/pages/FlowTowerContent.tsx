@@ -527,7 +527,12 @@ export default function FlowTowerContent() {
     ? `当前不可用 · ${realtime?.queue.reason ?? '待后端支持'}`
     : `状态：${realtime?.queue.status}`;
 
-  const shareRows: FlowMetricsModelShare[] = historical?.model_share ?? [];
+  const publishedModelNames = useMemo(
+    () => new Set(catalogModels.map((model) => model.config.name)),
+    [catalogModels],
+  );
+  const shareRows: FlowMetricsModelShare[] = (historical?.model_share ?? [])
+    .filter((row) => publishedModelNames.has(row.model));
   const ipRows = useMemo(
     () => formatIpRows(historical?.client_ips ?? []),
     [historical?.client_ips],
@@ -610,14 +615,15 @@ export default function FlowTowerContent() {
     ];
   }, [endpointRows]);
 
-  const compareModelShareRows = compareMetricsQuery.data?.historical.model_share ?? [];
+  const compareModelShareRows = (compareMetricsQuery.data?.historical.model_share ?? [])
+    .filter((row) => publishedModelNames.has(row.model));
   const compareModelShareMap = useMemo(
     () => new Map(compareModelShareRows.map((row) => [row.model, row])),
     [compareModelShareRows],
   );
   const unmatchedCompareModels = useMemo(
-    () => compareModelShareRows.filter((row) => !catalogModels.some((model) => model.config.name === row.model)),
-    [catalogModels, compareModelShareRows],
+    () => compareModelShareRows.filter((row) => !publishedModelNames.has(row.model)),
+    [compareModelShareRows, publishedModelNames],
   );
 
   const compareRows = useMemo(() => {

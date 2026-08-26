@@ -346,7 +346,8 @@ async fn main() {
     }
 
     // Initialize usage service with billing workers (ClickHouse is now decoupled via Redis Stream)
-    let flow_tracker = crate::observability::flow_tracker::FlowTracker::new();
+    let flow_tracker =
+        crate::observability::flow_tracker::FlowTracker::new(cache.clone(), instance_id.clone());
     let (usage, usage_handles) = UsageService::new(
         db.clone(),
         cache.clone(),

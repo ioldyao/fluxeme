@@ -159,6 +159,128 @@ impl RedisCache {
         Ok(pubsub)
     }
 
+    // ── Distributed flow tracker registry ────────────────────────────
+
+    /// Register or refresh one active request in the shared flow registry.
+    /// The value is the lifecycle state and the key TTL is the crash-recovery
+    /// boundary. Redis is the sole source for the cluster-wide live snapshot.
+    pub async fn flow_set(
+        &self,
+        key: &str,
+        completed_key: &str,
+        index_key: &str,
+        state: &str,
+        sequence: u64,
+        ttl_secs: u64,
+    ) -> Result<(), String> {
+        let mut con = self.con.clone();
+        let value = format!("{sequence}:{state}");
+        redis::Script::new(
+            "local completed = redis.call('GET', KEYS[2])\n\
+             if completed and tonumber(completed) >= tonumber(ARGV[1]) then return 0 end\n\
+             local current = redis.call('GET', KEYS[1])\n\
+             if current then\n\
+               local separator = string.find(current, ':')\n\
+               if separator and tonumber(string.sub(current, 1, separator - 1)) >= tonumber(ARGV[1]) then return 0 end\n\
+             end\n\
+             redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])\n\
+             redis.call('SADD', KEYS[3], KEYS[1])\n\
+             return 1",
+        )
+        .key(key)
+        .key(completed_key)
+        .key(index_key)
+        .arg(sequence)
+        .arg(value)
+        .arg(ttl_secs.max(1))
+        .invoke_async::<i64>(&mut con)
+        .await
+        .map_err(|e| format!("Redis flow SET error: {e}"))?;
+        Ok(())
+    }
+
+    /// Remove an active request from the shared flow registry. A sequence
+    /// guard prevents an older queued SET from resurrecting a completed key.
+    pub async fn flow_remove(
+        &self,
+        key: &str,
+        completed_key: &str,
+        index_key: &str,
+        sequence: u64,
+    ) -> Result<(), String> {
+        let mut con = self.con.clone();
+        redis::Script::new(
+            "local current = redis.call('GET', KEYS[1])\n\
+             local separator = current and string.find(current, ':')\n\
+             if current and separator and tonumber(string.sub(current, 1, separator - 1)) > tonumber(ARGV[1]) then return 0 end\n\
+             redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2])\n\
+             redis.call('DEL', KEYS[1])\n\
+             redis.call('SREM', KEYS[3], KEYS[1])\n\
+             return 1",
+        )
+        .key(key)
+        .key(completed_key)
+        .key(index_key)
+        .arg(sequence)
+        .arg(3600u64)
+        .invoke_async::<i64>(&mut con)
+        .await
+        .map_err(|e| format!("Redis flow DEL error: {e}"))?;
+        Ok(())
+    }
+
+    /// Count active requests across all gateway instances. The index is
+    /// cleaned opportunistically when a request has expired from Redis.
+    pub async fn flow_snapshot(&self, index_key: &str) -> Result<(u64, u64, u64), String> {
+        let mut con = self.con.clone();
+        let keys: Vec<String> = redis::cmd("SMEMBERS")
+            .arg(index_key)
+            .query_async(&mut con)
+            .await
+            .map_err(|e| format!("Redis flow SMEMBERS error: {e}"))?;
+        if keys.is_empty() {
+            return Ok((0, 0, 0));
+        }
+
+        let states: Vec<Option<String>> = redis::cmd("MGET")
+            .arg(&keys)
+            .query_async(&mut con)
+            .await
+            .map_err(|e| format!("Redis flow MGET error: {e}"))?;
+        let mut counts = (0u64, 0u64, 0u64);
+        let mut expired = Vec::new();
+        for (key, state) in keys.into_iter().zip(states) {
+            let Some(state) = state else {
+                expired.push(key);
+                continue;
+            };
+            match state
+                .split_once(':')
+                .map_or(state.as_str(), |(_, value)| value)
+            {
+                "accepted" => counts.0 += 1,
+                "generating" => {
+                    counts.0 += 1;
+                    counts.1 += 1;
+                }
+                "outputting" => {
+                    counts.0 += 1;
+                    counts.2 += 1;
+                }
+                _ => expired.push(key),
+            }
+        }
+        if !expired.is_empty() {
+            let mut cleanup = redis::cmd("SREM");
+            cleanup.arg(index_key).arg(expired);
+            cleanup
+                .query_async::<()>(&mut con)
+                .await
+                .map_err(|e| format!("Redis flow index cleanup error: {e}"))?;
+        }
+        Ok(counts)
+    }
+
     /// Retrieve a cached value for the given tenant.
     ///
     /// The key is constructed as `cache:exact:{tenant_id}:{sha256(cache_key)}`

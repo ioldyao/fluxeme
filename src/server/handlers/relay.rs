@@ -56,14 +56,23 @@ async fn relay_to_upstream(
 
     // Broadcast route-decision event so the admin UI shows
     // the request as "in-flight" before the upstream call completes.
+    let accepted_at = Utc::now().to_rfc3339();
     state.event_bus.route_decided(RouteDecided {
-        timestamp: Utc::now().to_rfc3339(),
+        event_type: "route_decided".to_string(),
+        timestamp: accepted_at.clone(),
         request_id: request_id.clone(),
         model: resolved_model.clone(),
         channel_id: channel_id.clone(),
         endpoint_id: route.endpoint.id,
         user_id: user.user_id.clone(),
     });
+    state.flow_tracker.mark_accepted(
+        request_id.clone(),
+        resolved_model.clone(),
+        channel_id.clone(),
+        route.endpoint.id,
+        accepted_at,
+    );
 
     // ── Serialize body once (after all mutations), used for content filter + req_body ──
     let mut body_str = serde_json::to_string(&body).unwrap_or_default();
@@ -111,7 +120,10 @@ async fn relay_to_upstream(
                 &expires_at,
             )
             .await
-            .map_err(|e| GatewayError::PaymentRequired(e.0))?,
+            .map_err(|e| {
+                state.flow_tracker.mark_completed(&request_id);
+                GatewayError::PaymentRequired(e.0)
+            })?,
         )
     } else {
         None

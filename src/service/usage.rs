@@ -85,6 +85,7 @@ impl UsageService {
     pub fn record_with_endpoint(&self, record: UsageRecord, endpoint_id: Option<i64>) {
         // 1. Broadcast real-time event (always succeeds, non-blocking)
         let event = RequestCompleted {
+            event_type: "request_completed".to_string(),
             timestamp: record.timestamp.clone(),
             request_id: record.request_id.clone(),
             model: record.model.clone(),

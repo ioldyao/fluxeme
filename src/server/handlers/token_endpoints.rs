@@ -173,9 +173,10 @@ pub async fn responses_input_tokens(
     let mut route = resolve_route(&state, &channel_id)?;
 
     state.event_bus.route_decided(RouteDecided {
+        event_type: "route_decided".to_string(),
         timestamp: Utc::now().to_rfc3339(),
         request_id: request_id.clone(),
-        model: resolved_model,
+        model: resolved_model.clone(),
         channel_id: channel_id.clone(),
         endpoint_id: route.endpoint.id,
         user_id: user.user_id.clone(),
@@ -188,6 +189,15 @@ pub async fn responses_input_tokens(
         ));
     }
 
+    let accepted_at = Utc::now().to_rfc3339();
+    state.flow_tracker.mark_accepted(
+        request_id.clone(),
+        resolved_model.clone(),
+        channel_id.clone(),
+        route.endpoint.id,
+        accepted_at,
+    );
+
     let body_str = serde_json::to_string(&body).unwrap_or_default();
     if state.content_filter.is_enabled() {
         match state
@@ -195,6 +205,7 @@ pub async fn responses_input_tokens(
             .check_request(&body_str, Some(&channel_id))
         {
             crate::service::moderation::FilterOutcome::Blocked(rule_name) => {
+                state.flow_tracker.mark_completed(&request_id);
                 tracing::warn!(request_id, rule = %rule_name, "Responses input_tokens request blocked by content filter");
                 return Err(GatewayError::BadRequest(format!(
                     "Request blocked by content filter rule: {}",
@@ -216,10 +227,14 @@ pub async fn responses_input_tokens(
 
     let handler_timeout = Duration::from_secs(gw_cfg.handler_timeout_secs);
     let rid = request_id.clone();
+    state
+        .flow_tracker
+        .mark_upstream_started(&request_id, Utc::now().to_rfc3339());
     let result = tokio::time::timeout(handler_timeout, async move {
         handle_responses_input_tokens(&mut route, body, &request_id, gw_cfg.max_retries).await
     })
     .await;
+    state.flow_tracker.mark_completed(&rid);
 
     match result {
         Ok(inner) => Ok(Json(inner?).into_response()),

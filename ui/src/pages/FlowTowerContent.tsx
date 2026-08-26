@@ -4,7 +4,7 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import { Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/api/client';
-import { useModels } from '@/api/models';
+import { usePublicModels } from '@/api/models';
 import { useChannels } from '@/api/channels';
 import { useProbeResults } from '@/api/probe';
 import { useUsageFunnel, useUsageAggregate, useModelActivity } from '@/api/usage';
@@ -254,6 +254,7 @@ function useLiveTotal() {
       };
       ws.onmessage = (e) => {
         let ev: {
+          type?: string;
           model?: string;
           channel_id?: string;
           request_id?: string;
@@ -268,7 +269,8 @@ function useLiveTotal() {
           return;
         }
         if (typeof ev.model !== 'string' || typeof ev.channel_id !== 'string') return;
-        setTotalCount((c) => c + 1);
+        const isDecided = ev.type === 'route_decided' || (ev.type == null && ev.latency_ms == null);
+        if (isDecided) setTotalCount((c) => c + 1);
 
         // State timeline: RouteDecided (no latency) opens a request row;
         // RequestCompleted (latency_ms) closes it.
@@ -1300,8 +1302,7 @@ export default function FlowTowerContent() {
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
-  const { data: models } = useModels();
-  const { data: channels } = useChannels();
+  const { data: models } = usePublicModels();  const { data: channels } = useChannels();
   const { data: rh } = useRoutingHealth();
   const { data: agg } = useDashboardAggregations();
   const { data: funnel } = useUsageFunnel(1);

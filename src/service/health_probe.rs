@@ -131,16 +131,23 @@ impl HealthProbeService {
                 }
             };
 
-            let endpoint_jobs: Vec<_> = route
-                .1
-                .as_health_aware()
-                .endpoints()
+            let endpoints = route.1.as_health_aware().endpoints();
+            let endpoint_jobs: Vec<_> = endpoints
                 .iter()
                 .cloned()
                 .enumerate()
-                .filter(|(_, endpoint)| endpoint.enabled)
+                .filter(|(_, endpoint)| endpoint.enabled && !endpoint.full_url)
                 .collect();
             if endpoint_jobs.is_empty() {
+                // A complete operation URL cannot be used to derive a safe
+                // health-check or model-discovery URL. Skip such endpoints
+                // instead of manufacturing a false failure result.
+                if endpoints
+                    .iter()
+                    .any(|endpoint| endpoint.enabled && endpoint.full_url)
+                {
+                    continue;
+                }
                 ordered_results.push(OrderedProbeRow {
                     binding_order,
                     endpoint_order: 0,
