@@ -101,10 +101,14 @@ impl FlowTracker {
         accepted_at: String,
     ) {
         let now = Instant::now();
+        // Redis Lua compares sequences through IEEE-754 numbers. Microseconds
+        // stay below the exact-integer limit while leaving room for the
+        // per-request lifecycle increments below; nanoseconds would make
+        // sequence and sequence + 1 indistinguishable to Lua.
         let sequence = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_nanos()
+            .as_micros()
             .min(u64::MAX as u128) as u64;
         self.inner.lock().unwrap().insert(
             request_id.clone(),

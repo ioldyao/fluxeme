@@ -450,8 +450,20 @@ async fn handle_responses_streaming(
             let clean_eof2 = clean_eof.clone();
             let buf2 = resp_buf.clone();
             let rec2 = recorded.clone();
+            let flow_tracker = state.flow_tracker.clone();
+            let first_byte_seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let first_byte_seen2 = first_byte_seen.clone();
+            let first_byte_request_id = request_id.clone();
 
             let tracing_stream = stream.map(move |data| {
+                if !data.is_empty()
+                    && !first_byte_seen2.swap(true, std::sync::atomic::Ordering::SeqCst)
+                {
+                    flow_tracker.mark_first_byte(
+                        &first_byte_request_id,
+                        Utc::now().to_rfc3339(),
+                    );
+                }
                 let mut b = buf2.lock().unwrap();
                 b.push_str(&data);
                 data
