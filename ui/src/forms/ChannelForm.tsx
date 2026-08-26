@@ -29,7 +29,7 @@ interface Props {
 }
 
 function emptyEp(): Endpoint {
-  return { url: '', api_key: '', weight: 1, timeout_secs: 30, enabled: true };
+  return { url: '', api_key: '', weight: 1, timeout_secs: 30, enabled: true, full_url: false };
 }
 
 export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }: Props) {
@@ -63,7 +63,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
 
   useEffect(() => {
     if (fixedBaseUrl) {
-      setEndpoints((prev) => prev.map((ep) => ({ ...ep, url: fixedBaseUrl })));
+      setEndpoints((prev) => prev.map((ep) => ep.full_url ? ep : { ...ep, url: fixedBaseUrl }));
     }
   }, [fixedBaseUrl]);
 
@@ -206,16 +206,26 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                         </div>
                       </div>
 
-                      {!fixedBaseUrl && (
+                      <div className="flex items-center justify-between rounded-md border bg-background px-3 py-2">
+                        <div>
+                          <Label className="text-xs font-medium">{t('form.fullUrl')}</Label>
+                          <p className="text-[10px] text-muted-foreground">{t('form.fullUrlDesc')}</p>
+                        </div>
+                        <Switch
+                          checked={ep.full_url ?? false}
+                          onCheckedChange={(value) => updateEp(i, 'full_url', !!value)}
+                        />
+                      </div>
+                      {(!fixedBaseUrl || ep.full_url) && (
                         <Input
                           className="h-9 bg-background"
-                          placeholder="URL"
+                          placeholder={ep.full_url ? t('form.fullUrlPlaceholder') : 'URL'}
                           value={ep.url}
                           onChange={(e) => updateEp(i, 'url', e.target.value)}
                           required
                         />
                       )}
-                      {fixedBaseUrl && (
+                      {fixedBaseUrl && !ep.full_url && (
                         <div className="p-2.5 rounded-md bg-muted/50 text-xs text-muted-foreground">
                           {t('channel.baseUrl')}: <code className="text-xs font-mono">{fixedBaseUrl}</code>
                         </div>

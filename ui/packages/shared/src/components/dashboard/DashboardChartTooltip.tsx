@@ -8,9 +8,10 @@ type DashboardChartTooltipProps = {
   active?: boolean;
   payload?: TooltipEntry[];
   label?: string;
+  formatter?: (value: TooltipEntry['value'], name: string) => string;
 };
 
-export function DashboardChartTooltip({ active, payload, label }: DashboardChartTooltipProps) {
+export function DashboardChartTooltip({ active, payload, label, formatter }: DashboardChartTooltipProps) {
   if (!active || !payload?.length) {
     return null;
   }
@@ -23,7 +24,11 @@ export function DashboardChartTooltip({ active, payload, label }: DashboardChart
           <span className="size-2 rounded-full" style={{ background: entry.color }} />
           <span>{entry.name}</span>
           <span className="ml-auto font-mono font-medium text-popover-foreground">
-            {typeof entry.value === 'number' ? entry.value.toLocaleString() : entry.value}
+            {formatter
+              ? formatter(entry.value, entry.name ?? '')
+              : typeof entry.value === 'number'
+                ? entry.value.toLocaleString()
+                : entry.value}
           </span>
         </div>
       ))}

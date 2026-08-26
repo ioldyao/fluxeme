@@ -37,6 +37,9 @@ impl DashScopeAdapter {
     }
 
     fn detect_mode(endpoint: &EndpointConfig) -> Result<DashScopeMode, ProviderError> {
+        if endpoint.full_url {
+            return Ok(DashScopeMode::OpenAI);
+        }
         let url = &endpoint.url;
         if url.contains("/apps/anthropic") {
             Ok(DashScopeMode::Anthropic)
@@ -89,12 +92,13 @@ impl DashScopeAdapter {
     async fn build_chat_completions_url(
         endpoint: &EndpointConfig,
     ) -> Result<String, ProviderError> {
-        super::validate_endpoint_url(&endpoint.url).await?;
-        let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
-        Ok(format!("{}/v1/chat/completions", base))
+        super::resolve_endpoint_url(endpoint, "/v1/chat/completions").await
     }
 
     async fn build_messages_url(endpoint: &EndpointConfig) -> Result<String, ProviderError> {
+        if endpoint.full_url {
+            return super::resolve_endpoint_url(endpoint, "").await;
+        }
         super::validate_endpoint_url(&endpoint.url).await?;
         let base = endpoint.url.trim_end_matches('/');
         if base.ends_with("/apps/anthropic") {
@@ -110,6 +114,9 @@ impl DashScopeAdapter {
     }
 
     async fn build_count_tokens_url(endpoint: &EndpointConfig) -> Result<String, ProviderError> {
+        if endpoint.full_url {
+            return super::resolve_endpoint_url(endpoint, "").await;
+        }
         let messages_url = Self::build_messages_url(endpoint).await?;
         Ok(format!("{}count_tokens", messages_url))
     }

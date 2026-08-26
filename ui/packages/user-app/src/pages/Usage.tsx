@@ -3,68 +3,17 @@ import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { formatTimestamp } from '@fluxeme/shared/src/lib/date';
 import { useCurrency } from '@fluxeme/shared/src/store/currency';
-import { useMyUsage, useMyUsageAggregate, useMyModelActivity, useMyUsageBilling } from '@fluxeme/shared/src/api/usage';
+import { useMyUsage, useMyUsageBilling, useMyUsageAnalytics } from '@fluxeme/shared/src/api/usage';
+import { UsageAnalyticsCharts } from '@fluxeme/shared/src/components/usage/UsageAnalyticsCharts';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
 import { EmptyState } from '@fluxeme/shared/src/components/EmptyState';
 import { Button } from '@fluxeme/shared/src/components/ui/button';
 import { Input } from '@fluxeme/shared/src/components/ui/input';
 import { DateRangePicker } from '@fluxeme/shared/src/components/ui/date-range-picker';
-import { Card, CardContent, CardHeader, CardTitle } from '@fluxeme/shared/src/components/ui/card';
+import { Card, CardContent } from '@fluxeme/shared/src/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@fluxeme/shared/src/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@fluxeme/shared/src/components/ui/select';
 import { RefreshCw, CheckCircle2, XCircle, BarChart3, List, Radio, RadioIcon, Filter, ChevronDown, ChevronRight } from 'lucide-react';
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  LineChart, Line, Legend,
-} from 'recharts';
-
-interface ChartTooltipEntry {
-  value?: number | string;
-  name: string;
-  color: string;
-}
-
-interface ChartTooltipProps {
-  active?: boolean;
-  payload?: ChartTooltipEntry[];
-  label?: string;
-  formatter?: (value: number | string | undefined, name: string) => string;
-  showTotal?: boolean;
-}
-
-function ChartTooltip({ active, payload, label, formatter, showTotal }: ChartTooltipProps) {
-  const { t } = useTranslation();
-  if (!active || !payload?.length) return null;
-  const total = showTotal
-    ? payload.reduce<number>(
-        (sum, entry) => sum + (typeof entry.value === 'number' ? entry.value : 0),
-        0,
-      )
-    : null;
-  return (
-    <div className="rounded-lg border bg-popover px-3 py-2 text-xs shadow-md">
-      {label && <p className="mb-1 font-medium text-popover-foreground">{label}</p>}
-      {payload.map((entry: ChartTooltipEntry, i: number) => {
-        const formatted = formatter?.(entry.value, entry.name) ?? (
-          typeof entry.value === 'number' ? entry.value.toLocaleString() : entry.value
-        );
-        return (
-          <div key={i} className="flex items-center gap-2 text-muted-foreground">
-            <span className="size-2 rounded-full" style={{ background: entry.color }} />
-            <span>{entry.name}</span>
-            <span className="ml-auto font-mono font-medium text-popover-foreground">{formatted}</span>
-          </div>
-        );
-      })}
-      {total !== null && (
-        <div className="mt-1.5 pt-1.5 border-t flex items-center gap-2 text-muted-foreground">
-          <span className="font-medium">{t('dash.total')}</span>
-          <span className="ml-auto font-mono font-medium text-popover-foreground">{total.toLocaleString()}</span>
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function Usage() {
   const { t } = useTranslation();
@@ -137,8 +86,13 @@ export default function Usage() {
   const totalPages = Math.max(1, Math.ceil(total / limit));
   const [chartTab, setChartTab] = useState('list');
   const [chartDays, setChartDays] = useState(7);
-  const { data: aggregate, isLoading: aggLoading } = useMyUsageAggregate(chartDays);
-  const { data: modelActivity } = useMyModelActivity(chartDays);
+  const {
+    data: analytics,
+    isLoading: analyticsLoading,
+    isFetching: analyticsFetching,
+    isError: analyticsError,
+    refetch: refetchAnalytics,
+  } = useMyUsageAnalytics(chartDays, chartTab === 'chart');
 
   const handleChartTab = (tab: string) => {
     setChartTab(tab);
@@ -150,7 +104,7 @@ export default function Usage() {
         title={t('usage.title')}
         description={t('usage.subtitle')}
         actions={
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
+          <Button variant="outline" size="sm" onClick={() => { void refetch(); void refetchAnalytics(); }}>
             <RefreshCw className="size-4 mr-1" />{t('common.refresh')}
           </Button>
         }
@@ -393,115 +347,13 @@ export default function Usage() {
             ))}
           </div>
 
-          {aggLoading ? (
-            <Card>
-              <CardContent className="p-8 text-center text-muted-foreground">{t('common.loading')}</CardContent>
-            </Card>
-          ) : aggregate && aggregate.length > 0 ? (
-            <>
-              <Card>
-                <CardHeader><CardTitle className="text-base">{t('dash.requests')}</CardTitle></CardHeader>
-                <CardContent>
-                  <ResponsiveContainer width="100%" height={250}>
-                    <BarChart data={aggregate} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                      <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} />
-                      <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} width={50} />
-                      <Tooltip content={<ChartTooltip />} />
-                      <Bar dataKey="count" fill="var(--chart-1)" radius={[4, 4, 0, 0]} name={t('dash.requests')} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader><CardTitle className="text-base">计费 Token（未缓存输入 + 输出）</CardTitle></CardHeader>
-                <CardContent>
-                  <ResponsiveContainer width="100%" height={250}>
-                    <BarChart data={aggregate} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                      <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} />
-                      <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} width={50} tickFormatter={(v: number) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${(v / 1_000).toFixed(1)}K` : `${v}`} />
-                      <Tooltip content={<ChartTooltip />} />
-                      <Legend
-                        wrapperStyle={{ paddingTop: 8 }}
-                        formatter={(value: string) => <span style={{ color: 'hsl(var(--foreground))', fontSize: 12 }}>{value}</span>}
-                      />
-                      <Bar dataKey="prompt_tokens" stackId="tokens" fill="var(--chart-2)" radius={[0, 0, 0, 0]} name={t('dash.prompt')} />
-                      <Bar dataKey="cache_hit_tokens" stackId="tokens" fill="var(--chart-5)" radius={[0, 0, 0, 0]} name={t('usage.cacheHit')} />
-                      <Bar dataKey="completion_tokens" stackId="tokens" fill="var(--chart-3)" radius={[4, 4, 0, 0]} name={t('dash.completion')} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader><CardTitle className="text-base">{t('dash.successRate')}</CardTitle></CardHeader>
-                <CardContent>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <LineChart data={aggregate.map(d => ({ ...d, successRate: d.count > 0 ? +(d.success_count / d.count * 100).toFixed(1) : 100 }))} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                      <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} />
-                      <YAxis domain={[0, 100]} unit="%" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} width={40} />
-                      <Tooltip content={<ChartTooltip formatter={(value: number | string | undefined) => `${value ?? 0}%`} />} />
-                      <Line type="monotone" dataKey="successRate" stroke="var(--chart-2)" strokeWidth={2} dot={false} name={t('dash.successRate')} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-
-              {modelActivity && modelActivity.length > 0 && (
-                <>
-                  {/* Model Activity — nav group engraved section header */}
-                  <div className="px-1 pb-1">
-                    <span className="text-sm font-semibold uppercase tracking-widest text-muted-foreground/35 select-none">
-                      {t('usage.modelActivity')}
-                    </span>
-                  </div>
-
-                  {/* Two bar charts side by side */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <Card>
-                      <CardHeader><CardTitle className="text-base">{t('usage.modelUsage')}</CardTitle></CardHeader>
-                      <CardContent>
-                        <ResponsiveContainer width="100%" height={250}>
-                          <BarChart data={modelActivity} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                            <XAxis dataKey="model" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />
-                            <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} width={55} tickFormatter={(v: number) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${(v / 1_000).toFixed(1)}K` : `${v}`} />
-                            <Tooltip content={<ChartTooltip />} />
-                            <Bar dataKey="prompt_tokens" stackId="tokens" fill="var(--chart-2)" radius={[0, 0, 0, 0]} name={t('dash.prompt')} />
-                            <Bar dataKey="cache_hit_tokens" stackId="tokens" fill="var(--chart-5)" radius={[0, 0, 0, 0]} name={t('usage.cacheHit')} />
-                            <Bar dataKey="completion_tokens" stackId="tokens" fill="var(--chart-3)" radius={[4, 4, 0, 0]} name={t('dash.completion')} />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader><CardTitle className="text-base">{t('usage.modelSuccessRate')}</CardTitle></CardHeader>
-                      <CardContent>
-                        <ResponsiveContainer width="100%" height={250}>
-                          <BarChart data={modelActivity} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                            <XAxis dataKey="model" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />
-                            <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} width={45} />
-                            <Tooltip content={<ChartTooltip />} />
-                            <Bar dataKey="success_count" stackId="status" fill="var(--chart-2)" name={t('usage.success')} />
-                            <Bar dataKey="failure_count" stackId="status" fill="var(--destructive)" name={t('usage.failure')} />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </CardContent>
-                    </Card>
-                  </div>
-                </>
-              )}
-            </>
-          ) : (
-            <Card>
-              <CardContent className="p-8 text-center text-muted-foreground">{t('empty.noUsage')}</CardContent>
-            </Card>
-          )}
+          <UsageAnalyticsCharts
+            data={analytics}
+            isLoading={analyticsLoading}
+            isFetching={analyticsFetching}
+            isError={analyticsError}
+            onRetry={() => { void refetchAnalytics(); }}
+          />
         </TabsContent>
       </Tabs>
 

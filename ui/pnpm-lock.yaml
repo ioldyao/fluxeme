@@ -271,6 +271,9 @@ importers:
       react-i18next:
         specifier: ^15.7.4
         version: 15.7.4(i18next@24.2.3(typescript@6.0.3))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(typescript@6.0.3)
+      recharts:
+        specifier: ^2.15.4
+        version: 2.15.4(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       sonner:
         specifier: ^1.7.4
         version: 1.7.4(react-dom@19.2.7(react@19.2.7))(react@19.2.7)

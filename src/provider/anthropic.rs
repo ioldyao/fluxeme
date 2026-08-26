@@ -58,7 +58,7 @@ impl ProviderAdapter for AnthropicAdapter {
         super::validate_endpoint_url(&endpoint.url).await?;
         let client = shared_client();
 
-        let url = format!("{}/v1/messages", endpoint.url.trim_end_matches('/'));
+        let url = super::resolve_endpoint_url(endpoint, "/v1/messages").await?;
         let headers = build_anthropic_headers(endpoint)?;
 
         let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
@@ -140,7 +140,7 @@ impl ProviderAdapter for AnthropicAdapter {
         super::validate_endpoint_url(&endpoint.url).await?;
         let client = shared_client();
 
-        let url = format!("{}/v1/messages", endpoint.url.trim_end_matches('/'));
+        let url = super::resolve_endpoint_url(endpoint, "/v1/messages").await?;
         let headers = build_anthropic_headers(endpoint)?;
 
         let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
@@ -243,14 +243,8 @@ impl ProviderAdapter for AnthropicAdapter {
         path: &str,
         body: Value,
     ) -> Result<Value, ProviderError> {
-        super::validate_endpoint_url(&endpoint.url).await?;
         let client = shared_client();
-
-        let url = format!(
-            "{}/{}",
-            endpoint.url.trim_end_matches('/'),
-            path.trim_start_matches('/')
-        );
+        let url = super::resolve_endpoint_url(endpoint, path).await?;
         let headers = build_anthropic_headers(endpoint)?;
 
         let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);

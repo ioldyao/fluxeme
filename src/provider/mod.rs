@@ -226,17 +226,49 @@ pub fn set_allow_private_ips(allow: bool) {
     );
 }
 
-/// Validate that an endpoint URL doesn't resolve to a private/reserved IP (SSRF protection).
-pub async fn validate_endpoint_url(url_str: &str) -> Result<(), ProviderError> {
-    if ALLOW_PRIVATE_IPS.load(Ordering::Relaxed) {
-        return Ok(());
+/// Resolve a provider operation URL while preserving legacy suffix behavior.
+pub async fn resolve_endpoint_url(
+    endpoint: &EndpointConfig,
+    suffix: &str,
+) -> Result<String, ProviderError> {
+    validate_endpoint_url(&endpoint.url).await?;
+    if endpoint.full_url {
+        Ok(endpoint.url.clone())
+    } else {
+        let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
+        Ok(format!("{base}{suffix}"))
     }
+}
 
+/// Validate that an endpoint URL has a safe absolute HTTP(S) form and, when
+/// enabled, doesn't resolve to a private/reserved IP (SSRF protection).
+pub async fn validate_endpoint_url(url_str: &str) -> Result<(), ProviderError> {
+    if url_str.is_empty() || url_str.trim() != url_str || url_str.chars().any(char::is_control) {
+        return Err(ProviderError::new(
+            "Invalid endpoint URL format",
+            ErrorKind::Other,
+        ));
+    }
     let parsed = Url::parse(url_str)
         .map_err(|_| ProviderError::new("Invalid endpoint URL format", ErrorKind::Other))?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || parsed.fragment().is_some()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return Err(ProviderError::new(
+            "Invalid endpoint URL format",
+            ErrorKind::Other,
+        ));
+    }
     let host = parsed
         .host_str()
         .ok_or_else(|| ProviderError::new("Endpoint URL has no host", ErrorKind::Other))?;
+
+    if ALLOW_PRIVATE_IPS.load(Ordering::Relaxed) {
+        return Ok(());
+    }
 
     // Check if host is an IP literal
     if let Ok(ip) = host.parse::<IpAddr>() {
@@ -297,19 +329,8 @@ pub async fn relay_request(
     body: Value,
     provider_name: &str,
 ) -> Result<Value, ProviderError> {
-    validate_endpoint_url(&endpoint.url).await?;
     let client = shared_client();
-
-    let base = endpoint.url.trim_end_matches('/');
-    let url = if base.ends_with("/v1") && path.starts_with("/v1") {
-        format!(
-            "{}{}",
-            base.trim_end_matches("/v1").trim_end_matches('/'),
-            path
-        )
-    } else {
-        format!("{}{}", base, path)
-    };
+    let url = resolve_endpoint_url(endpoint, path).await?;
 
     let mut headers = reqwest::header::HeaderMap::new();
     if !endpoint.api_key.is_empty() {

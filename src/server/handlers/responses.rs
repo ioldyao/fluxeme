@@ -192,7 +192,7 @@ async fn handle_responses_non_streaming(
             let latency_ms = start.elapsed().as_millis() as u64;
 
             // Responses API usage: input_tokens, input_tokens_details.cached_tokens, output_tokens
-            let input_tokens = resp["usage"]["input_tokens"].as_u64().unwrap_or(0);
+            let raw_input_tokens = resp["usage"]["input_tokens"].as_u64().unwrap_or(0);
             let output_tokens = resp["usage"]["output_tokens"].as_u64().unwrap_or(0);
             let cache_hit = resp["usage"]["input_tokens_details"]["cached_tokens"]
                 .as_u64()
@@ -200,6 +200,9 @@ async fn handle_responses_non_streaming(
             let cache_write = resp["usage"]["input_tokens_details"]["cache_write_tokens"]
                 .as_u64()
                 .unwrap_or(0);
+            // Keep prompt_tokens consistent with the OpenAI chat path: it is
+            // the uncached input component, while cache tokens are reported separately.
+            let input_tokens = raw_input_tokens.saturating_sub(cache_hit + cache_write);
             if let Some(reservation) = &reservation {
                 reservation.settle_usage(
                     input_tokens,

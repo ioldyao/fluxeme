@@ -37,6 +37,7 @@ export interface Endpoint {
   weight: number;
   timeout_secs?: number | null;
   enabled?: boolean;
+  full_url?: boolean;
 }
 
 export type Provider = 'openai' | 'anthropic' | 'vllm' | 'sglang' | 'azure' | 'ollama' | string;

@@ -13,7 +13,7 @@ impl CatalogBackend for PgBackend {
         .await?;
 
         let ep_rows = query(
-            "SELECT id, channel_id, url, api_key, weight, timeout_secs, enabled FROM endpoints ORDER BY channel_id",
+            "SELECT id, channel_id, url, api_key, weight, timeout_secs, enabled, full_url FROM endpoints ORDER BY channel_id",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -49,6 +49,7 @@ impl CatalogBackend for PgBackend {
                     t.map(|v| v as u64)
                 },
                 enabled: r.get(6),
+                full_url: r.get(7),
             });
         }
         for ch in &mut channels {
@@ -78,7 +79,7 @@ impl CatalogBackend for PgBackend {
                 endpoints: Vec::new(),
             };
             let eps = query(
-                "SELECT id, channel_id, url, api_key, weight, timeout_secs, enabled FROM endpoints WHERE channel_id = $1",
+                "SELECT id, channel_id, url, api_key, weight, timeout_secs, enabled, full_url FROM endpoints WHERE channel_id = $1",
             )
             .bind(&ch.id)
             .fetch_all(&self.pool)
@@ -99,6 +100,7 @@ impl CatalogBackend for PgBackend {
                         t.map(|v| v as u64)
                     },
                     enabled: r.get(6),
+                    full_url: r.get(7),
                 })
                 .collect();
             Ok(Some(ch))
@@ -121,7 +123,7 @@ impl CatalogBackend for PgBackend {
         .await?;
         for ep in &ch.endpoints {
             query(
-                "INSERT INTO endpoints (channel_id, url, api_key, weight, timeout_secs, enabled) VALUES ($1, $2, $3, $4, $5, $6)",
+                "INSERT INTO endpoints (channel_id, url, api_key, weight, timeout_secs, enabled, full_url) VALUES ($1, $2, $3, $4, $5, $6, $7)",
             )
             .bind(&ch.id)
             .bind(&ep.url)
@@ -129,6 +131,7 @@ impl CatalogBackend for PgBackend {
             .bind(ep.weight as i32)
             .bind(ep.timeout_secs.map(|v| v as i64))
             .bind(ep.enabled)
+            .bind(ep.full_url)
             .execute(&self.pool)
             .await?;
         }
@@ -153,7 +156,7 @@ impl CatalogBackend for PgBackend {
             .await?;
         for ep in &ch.endpoints {
             query(
-                "INSERT INTO endpoints (channel_id, url, api_key, weight, timeout_secs, enabled) VALUES ($1, $2, $3, $4, $5, $6)",
+                "INSERT INTO endpoints (channel_id, url, api_key, weight, timeout_secs, enabled, full_url) VALUES ($1, $2, $3, $4, $5, $6, $7)",
             )
             .bind(&ch.id)
             .bind(&ep.url)
@@ -161,6 +164,7 @@ impl CatalogBackend for PgBackend {
             .bind(ep.weight as i32)
             .bind(ep.timeout_secs.map(|v| v as i64))
             .bind(ep.enabled)
+            .bind(ep.full_url)
             .execute(&self.pool)
             .await?;
         }
@@ -177,7 +181,7 @@ impl CatalogBackend for PgBackend {
 
     async fn get_endpoint(&self, id: i64) -> Result<Option<Endpoint>, DbError> {
         let rows = query(
-            "SELECT id, channel_id, url, api_key, weight, timeout_secs, enabled FROM endpoints WHERE id = $1",
+            "SELECT id, channel_id, url, api_key, weight, timeout_secs, enabled, full_url FROM endpoints WHERE id = $1",
         )
         .bind(id)
         .fetch_all(&self.pool)
@@ -196,6 +200,7 @@ impl CatalogBackend for PgBackend {
                 t.map(|v| v as u64)
             },
             enabled: r.get(6),
+            full_url: r.get(7),
         }))
     }
 

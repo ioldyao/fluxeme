@@ -169,6 +169,8 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
         #[serde(default = "default_one")]
         weight: u32,
         timeout_secs: Option<u64>,
+        #[serde(default)]
+        full_url: bool,
     }
 
     #[derive(Deserialize)]
@@ -355,6 +357,7 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
                         weight: ep.weight,
                         timeout_secs: ep.timeout_secs,
                         enabled: true,
+                        full_url: ep.full_url,
                     })
                     .collect(),
             };

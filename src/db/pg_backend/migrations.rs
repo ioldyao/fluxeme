@@ -191,6 +191,9 @@ impl CoreBackend for PgBackend {
         add_col!(
             "ALTER TABLE endpoints ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT true"
         );
+        add_col!(
+            "ALTER TABLE endpoints ADD COLUMN IF NOT EXISTS full_url BOOLEAN NOT NULL DEFAULT false"
+        );
         add_col!("ALTER TABLE models ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT ''");
         add_col!("ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC'");
         add_col!("ALTER TABLE users ADD COLUMN IF NOT EXISTS balance DOUBLE PRECISION NOT NULL DEFAULT 0.0");

@@ -39,7 +39,7 @@ interface Props {
 }
 
 function emptyEp(): Endpoint {
-  return { url: '', api_key: '', weight: 1, timeout_secs: 30, enabled: true };
+  return { url: '', api_key: '', weight: 1, timeout_secs: 30, enabled: true, full_url: false };
 }
 
 export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }: Props) {
@@ -94,12 +94,15 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
 
   const updateEp = (i: number, field: keyof Endpoint, value: string | number | boolean | null) =>
     setEndpoints((prev) => prev.map((ep, idx) => idx === i ? { ...ep, [field]: value } : ep));
+  const toggleFullUrl = (i: number, fullUrl: boolean) => {
+    updateEp(i, 'full_url', fullUrl);
+  };
   const addEp = () => setEndpoints((prev) => [...prev, fixedBaseUrl ? { ...emptyEp(), url: fixedBaseUrl } : emptyEp()]);
   const removeEp = (i: number) => setEndpoints((prev) => prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev);
 
   useEffect(() => {
     if (fixedBaseUrl) {
-      setEndpoints((prev) => prev.map((ep) => ({ ...ep, url: fixedBaseUrl })));
+      setEndpoints((prev) => prev.map((ep) => ep.full_url ? ep : { ...ep, url: fixedBaseUrl }));
     }
   }, [fixedBaseUrl]);
 
@@ -144,7 +147,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       // Update endpoints with the final URL
       (data as Record<string, unknown>).endpoints = (data.endpoints as Endpoint[]).map((ep: Endpoint) => ({
         ...ep,
-        url: finalUrl || ep.url,
+        url: ep.full_url ? ep.url : finalUrl || ep.url,
       }));
     }
 
@@ -297,16 +300,26 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                         </div>
                       </div>
 
-                      {!fixedBaseUrl && (
+                      <div className="flex items-center justify-between rounded-md border bg-background px-3 py-2">
+                        <div>
+                          <Label className="text-xs font-medium">{t('form.fullUrl')}</Label>
+                          <p className="text-[10px] text-muted-foreground">{t('form.fullUrlDesc')}</p>
+                        </div>
+                        <Switch
+                          checked={ep.full_url ?? false}
+                          onCheckedChange={(value) => toggleFullUrl(i, !!value)}
+                        />
+                      </div>
+                      {(!fixedBaseUrl || ep.full_url) && (
                         <Input
                           className="h-9 bg-background"
-                          placeholder="URL"
+                          placeholder={ep.full_url ? t('form.fullUrlPlaceholder') : 'URL'}
                           value={ep.url}
                           onChange={(e) => updateEp(i, 'url', e.target.value)}
                           required
                         />
                       )}
-                      {fixedBaseUrl && (
+                      {fixedBaseUrl && !ep.full_url && (
                         <div className="p-2.5 rounded-md bg-muted/50 text-xs text-muted-foreground">
                           {t('channel.baseUrl')}: <code className="text-xs font-mono">{fixedBaseUrl}</code>
                         </div>

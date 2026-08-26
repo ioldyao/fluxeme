@@ -72,6 +72,7 @@ impl RoutingService {
                             weight: ep.weight,
                             timeout_secs: ep.timeout_secs,
                             enabled: ep.enabled,
+                            full_url: ep.full_url,
                         })
                     })
                     .collect::<Result<Vec<_>, String>>()?;
@@ -147,6 +148,7 @@ impl RoutingService {
                     weight: ep.weight,
                     timeout_secs: ep.timeout_secs,
                     enabled: ep.enabled,
+                    full_url: ep.full_url,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;

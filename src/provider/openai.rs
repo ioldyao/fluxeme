@@ -45,11 +45,8 @@ impl ProviderAdapter for OpenAIAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<StreamResult, ProviderError> {
-        super::validate_endpoint_url(&endpoint.url).await?;
         let client = shared_client();
-
-        let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
-        let url = format!("{}/v1/responses", base);
+        let url = super::resolve_endpoint_url(endpoint, "/v1/responses").await?;
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -121,8 +118,7 @@ impl ProviderAdapter for OpenAIAdapter {
             ));
         }
         let client = shared_client();
-        let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
-        let url = format!("{}/v1/chat/completions", base);
+        let url = super::resolve_endpoint_url(endpoint, "/v1/chat/completions").await?;
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -223,8 +219,7 @@ impl ProviderAdapter for OpenAIAdapter {
         }
         let client = shared_client();
 
-        let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
-        let url = format!("{}/v1/chat/completions", base);
+        let url = super::resolve_endpoint_url(endpoint, "/v1/chat/completions").await?;
 
         let mut headers = HeaderMap::new();
         headers.insert(

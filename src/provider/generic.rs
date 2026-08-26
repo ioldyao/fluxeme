@@ -102,12 +102,9 @@ impl ProviderAdapter for GenericAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<Value, ProviderError> {
-        super::validate_endpoint_url(&endpoint.url).await?;
         let client = shared_client();
-
-        let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
         let path = count_tokens_path(self.anthropic_path);
-        let url = format!("{}{}", base, path);
+        let url = super::resolve_endpoint_url(endpoint, &path).await?;
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -188,7 +185,6 @@ impl ProviderAdapter for GenericAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<Value, ProviderError> {
-        super::validate_endpoint_url(&endpoint.url).await?;
         if std::env::var("BILLING_E2E_FAULT_INJECTION").as_deref() == Ok("1") {
             return Err(ProviderError::new(
                 "test-only upstream failure injection",
@@ -196,8 +192,7 @@ impl ProviderAdapter for GenericAdapter {
             ));
         }
         let client = shared_client();
-        let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
-        let url = format!("{}/v1/chat/completions", base);
+        let url = super::resolve_endpoint_url(endpoint, "/v1/chat/completions").await?;
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -289,7 +284,6 @@ impl ProviderAdapter for GenericAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<StreamResult, ProviderError> {
-        super::validate_endpoint_url(&endpoint.url).await?;
         if std::env::var("BILLING_E2E_FAULT_INJECTION").as_deref() == Ok("1") {
             return Err(ProviderError::new(
                 "test-only upstream failure injection",
@@ -298,8 +292,7 @@ impl ProviderAdapter for GenericAdapter {
         }
         let client = shared_client();
 
-        let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
-        let url = format!("{}/v1/chat/completions", base);
+        let url = super::resolve_endpoint_url(endpoint, "/v1/chat/completions").await?;
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -366,8 +359,7 @@ impl ProviderAdapter for GenericAdapter {
         super::validate_endpoint_url(&endpoint.url).await?;
         let client = shared_client();
 
-        let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
-        let url = format!("{}{}", base, self.anthropic_path);
+        let url = super::resolve_endpoint_url(endpoint, self.anthropic_path).await?;
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -463,8 +455,7 @@ impl ProviderAdapter for GenericAdapter {
         super::validate_endpoint_url(&endpoint.url).await?;
         let client = shared_client();
 
-        let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
-        let url = format!("{}{}", base, self.anthropic_path);
+        let url = super::resolve_endpoint_url(endpoint, self.anthropic_path).await?;
 
         let mut headers = HeaderMap::new();
         headers.insert(

@@ -28,6 +28,47 @@ export interface UsageBillingRow {
   billing_payment_mode?: 'metered' | 'prepaid' | null;
 }
 
+export interface UsageAnalyticsBucket {
+  date: string;
+  requests: number;
+  succeeded: number;
+  failed: number;
+  input_tokens: number;
+  cache_read_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  latency_ms: number;
+}
+
+export interface UsageAnalyticsModel {
+  model: string;
+  requests: number;
+  succeeded: number;
+  failed: number;
+  input_tokens: number;
+  cache_read_tokens: number;
+  output_tokens: number;
+}
+
+export interface UsageAnalyticsTotals {
+  requests: number;
+  succeeded: number;
+  failed: number;
+  input_tokens: number;
+  cache_read_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  latency_ms: number;
+}
+
+export interface UsageAnalyticsResponse {
+  schema_version: number;
+  days: number;
+  buckets: UsageAnalyticsBucket[];
+  totals: UsageAnalyticsTotals;
+  models: UsageAnalyticsModel[];
+}
+
 function buildUsageSearchParams(params: UsageParams = {}) {
   const searchParams = new URLSearchParams();
   if (params.limit) searchParams.set('limit', String(params.limit));
@@ -63,6 +104,19 @@ export function useMyUsage(params: Omit<UsageParams, 'user_id'> = {}) {
   return useQuery({
     queryKey: ['usage', 'self', userId, stableKey],
     queryFn: () => api<UsageResponse>(`/me/usage${qs ? `?${qs}` : ''}`),
+    placeholderData: keepPreviousData,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useMyUsageAnalytics(days: number = 7, enabled = true) {
+  const userId = useAuth(state => state.userId);
+  const safeDays = Math.min(30, Math.max(1, days));
+
+  return useQuery({
+    queryKey: ['usage', 'analytics', 'self', userId, safeDays],
+    queryFn: () => api<UsageAnalyticsResponse>(`/me/usage/analytics?days=${safeDays}`),
+    enabled: enabled && !!userId,
     placeholderData: keepPreviousData,
     refetchInterval: 60_000,
   });

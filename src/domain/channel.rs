@@ -33,6 +33,9 @@ pub struct Endpoint {
     pub timeout_secs: Option<u64>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    /// When true, use `url` exactly without appending a provider path.
+    #[serde(default)]
+    pub full_url: bool,
 }
 
 fn default_priority() -> i32 {

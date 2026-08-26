@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
+use chrono::{Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::ch_backend::normalize_clickhouse_datetime;
@@ -328,6 +330,202 @@ pub(crate) async fn usage_aggregate(
         .collect();
 
     Ok(Json(records))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct UsageAnalyticsQuery {
+    days: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct UsageAnalyticsBucket {
+    pub date: String,
+    pub requests: u64,
+    pub succeeded: u64,
+    pub failed: u64,
+    pub input_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    pub latency_ms: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct UsageAnalyticsModel {
+    pub model: String,
+    pub requests: u64,
+    pub succeeded: u64,
+    pub failed: u64,
+    pub input_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub output_tokens: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct UsageAnalyticsTotals {
+    pub requests: u64,
+    pub succeeded: u64,
+    pub failed: u64,
+    pub input_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    pub latency_ms: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct UsageAnalyticsResponse {
+    pub schema_version: u8,
+    pub days: i64,
+    pub buckets: Vec<UsageAnalyticsBucket>,
+    pub totals: UsageAnalyticsTotals,
+    pub models: Vec<UsageAnalyticsModel>,
+}
+
+fn validate_usage_analytics_days(days: Option<i64>) -> Result<i64, AdminError> {
+    let days = days.unwrap_or(7);
+    if !(1..=30).contains(&days) {
+        return Err(AdminError::bad_request("days must be between 1 and 30"));
+    }
+    Ok(days)
+}
+
+pub(crate) async fn my_usage_analytics(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<UsageAnalyticsQuery>,
+) -> Result<Json<UsageAnalyticsResponse>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    let days = validate_usage_analytics_days(q.days)?;
+    let tz = state
+        .db
+        .get_user_timezone(&session.user_id)
+        .await
+        .map_err(db_err)?;
+    let offset = tz_offset_seconds(Some(&tz));
+    let since = since_local_days_ago(days, offset);
+    let user_filter = Some(session.user_id.as_str());
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+
+    let bucket_rows = ch
+        .query_daily_usage_stats(&since, user_filter, offset)
+        .await
+        .map_err(AdminError::internal)?;
+    let bucket_by_date: HashMap<_, _> = bucket_rows
+        .into_iter()
+        .map(
+            |(
+                date,
+                requests,
+                input_tokens,
+                output_tokens,
+                total_tokens,
+                succeeded,
+                latency_ms,
+                cache_read_tokens,
+            )| {
+                (
+                    date.clone(),
+                    UsageAnalyticsBucket {
+                        date,
+                        requests,
+                        succeeded,
+                        failed: requests.saturating_sub(succeeded),
+                        input_tokens,
+                        cache_read_tokens,
+                        output_tokens,
+                        total_tokens,
+                        latency_ms,
+                    },
+                )
+            },
+        )
+        .collect();
+    let local_today = (Utc::now() + ChronoDuration::seconds(offset)).date_naive();
+    let buckets = (0..days)
+        .rev()
+        .map(|days_ago| {
+            let date = local_today - ChronoDuration::days(days_ago);
+            let date_key = date.format("%Y-%m-%d").to_string();
+            bucket_by_date
+                .get(&date_key)
+                .cloned()
+                .unwrap_or(UsageAnalyticsBucket {
+                    date: date_key,
+                    requests: 0,
+                    succeeded: 0,
+                    failed: 0,
+                    input_tokens: 0,
+                    cache_read_tokens: 0,
+                    output_tokens: 0,
+                    total_tokens: 0,
+                    latency_ms: 0,
+                })
+        })
+        .collect::<Vec<_>>();
+
+    let models = ch
+        .query_model_activity(&since, user_filter)
+        .await
+        .map_err(AdminError::internal)?
+        .into_iter()
+        .map(
+            |(
+                model,
+                requests,
+                input_tokens,
+                output_tokens,
+                succeeded,
+                failed,
+                cache_read_tokens,
+            )| {
+                UsageAnalyticsModel {
+                    model,
+                    requests,
+                    succeeded,
+                    failed,
+                    input_tokens,
+                    cache_read_tokens,
+                    output_tokens,
+                }
+            },
+        )
+        .collect::<Vec<_>>();
+
+    let totals = buckets.iter().fold(
+        UsageAnalyticsTotals {
+            requests: 0,
+            succeeded: 0,
+            failed: 0,
+            input_tokens: 0,
+            cache_read_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+            latency_ms: 0,
+        },
+        |mut totals, bucket| {
+            totals.requests += bucket.requests;
+            totals.succeeded += bucket.succeeded;
+            totals.failed += bucket.failed;
+            totals.input_tokens += bucket.input_tokens;
+            totals.cache_read_tokens += bucket.cache_read_tokens;
+            totals.output_tokens += bucket.output_tokens;
+            totals.total_tokens += bucket.total_tokens;
+            totals.latency_ms += bucket.latency_ms;
+            totals
+        },
+    );
+
+    Ok(Json(UsageAnalyticsResponse {
+        schema_version: 1,
+        days,
+        buckets,
+        totals,
+        models,
+    }))
 }
 
 pub(crate) async fn my_usage_aggregate(

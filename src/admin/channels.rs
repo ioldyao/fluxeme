@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::domain::channel::Channel;
+use crate::provider::validate_endpoint_url;
 use crate::server::AppState;
 
 use super::*;
@@ -45,6 +46,11 @@ pub(crate) async fn create_channel(
     }
     if ch.provider.is_empty() {
         return Err(AdminError::bad_request("Provider is required"));
+    }
+    for ep in &ch.endpoints {
+        validate_endpoint_url(&ep.url)
+            .await
+            .map_err(|_| AdminError::bad_request("Endpoint URL must be a valid HTTP(S) URL"))?;
     }
 
     // Encrypt endpoint API keys before storing.
@@ -92,6 +98,11 @@ pub(crate) async fn update_channel(
         .await
         .map_err(db_err)?
         .ok_or_else(|| AdminError::not_found("Channel not found"))?;
+    for ep in &ch.endpoints {
+        validate_endpoint_url(&ep.url)
+            .await
+            .map_err(|_| AdminError::bad_request("Endpoint URL must be a valid HTTP(S) URL"))?;
+    }
     let secret = state.admin.encryption_key.clone();
     for ep in &mut ch.endpoints {
         if ep.api_key.is_empty() {

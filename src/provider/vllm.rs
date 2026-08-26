@@ -44,19 +44,8 @@ impl VllmAdapter {
         body: Value,
         headers: HeaderMap,
     ) -> Result<Value, ProviderError> {
-        super::validate_endpoint_url(&endpoint.url).await?;
         let client = shared_client();
-
-        let base = endpoint.url.trim_end_matches('/');
-        let url = if base.ends_with("/v1") && path.starts_with("/v1") {
-            format!(
-                "{}{}",
-                base.trim_end_matches("/v1").trim_end_matches('/'),
-                path
-            )
-        } else {
-            format!("{}{}", base, path)
-        };
+        let url = super::resolve_endpoint_url(endpoint, path).await?;
 
         let body_size = serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0);
         let timeout = request_timeout(
@@ -175,8 +164,7 @@ impl ProviderAdapter for VllmAdapter {
         super::validate_endpoint_url(&endpoint.url).await?;
         let client = shared_client();
 
-        let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
-        let url = format!("{}/v1/messages", base);
+        let url = super::resolve_endpoint_url(endpoint, "/v1/messages").await?;
 
         let mut headers = HeaderMap::new();
         if !endpoint.api_key.is_empty() {
@@ -255,8 +243,7 @@ impl ProviderAdapter for VllmAdapter {
         super::validate_endpoint_url(&endpoint.url).await?;
         let client = shared_client();
 
-        let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
-        let url = format!("{}/v1/chat/completions", base);
+        let url = super::resolve_endpoint_url(endpoint, "/v1/chat/completions").await?;
 
         let mut headers = HeaderMap::new();
         if !endpoint.api_key.is_empty() {

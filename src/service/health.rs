@@ -69,6 +69,12 @@ impl HealthService {
 
         let mut ep_results = Vec::new();
         for ep in &ch.endpoints {
+            if ep.full_url {
+                continue;
+            }
+            if ep.full_url {
+                continue;
+            }
             let base = ep.url.trim_end_matches('/').trim_end_matches("/v1");
             let url = format!("{}/v1/models", base);
             let api_key = crate::crypto::decrypt_load(&ep.api_key, &self.enc_key).map_err(|e| {
@@ -154,6 +160,12 @@ impl HealthService {
         let mut seen: std::collections::HashMap<String, Option<i64>> =
             std::collections::HashMap::new();
         for ep in &ch.endpoints {
+            if ep.full_url {
+                continue;
+            }
+            if ep.full_url {
+                continue;
+            }
             let base = ep.url.trim_end_matches('/').trim_end_matches("/v1");
             let url = format!("{}/v1/models", base);
             let api_key = crate::crypto::decrypt_load(&ep.api_key, &self.enc_key).map_err(|e| {
