@@ -34,7 +34,7 @@ export default function Usage() {
     if (urlDate && urlDate !== dateFilter) {
       setDateFilter(urlDate);
     }
-  }, [urlDate]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [urlDate, dateFilter]);
   const dateParams = useMemo(() => {
     // Custom datetime range takes priority over quick tabs when set.
     if (startDt || endDt) {
@@ -99,7 +99,7 @@ export default function Usage() {
   };
 
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="animate-fade-in">
       <PageHeader
         title={t('usage.title')}
         description={t('usage.subtitle')}
@@ -111,7 +111,7 @@ export default function Usage() {
       />
 
       <Tabs value={chartTab} onValueChange={handleChartTab}>
-        <TabsList>
+        <TabsList className="w-full justify-start border-b bg-transparent p-0">
           <TabsTrigger value="list">
             <List className="size-4 mr-1" />{t('usage.list')}
           </TabsTrigger>
@@ -120,17 +120,17 @@ export default function Usage() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="list" className="space-y-4">
+        <TabsContent value="list" className="mt-5 space-y-4">
           {/* Collapsible filter bar */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-3">
             <Button variant="outline" size="sm" onClick={() => setShowFilters(!showFilters)}>
               <Filter className="size-4 mr-1" />
               {t('usage.filter')}
               {filtersActive && <span className="ml-1.5 size-2 rounded-full bg-primary" />}
               {showFilters ? <ChevronDown className="size-3 ml-1" /> : <ChevronRight className="size-3 ml-1" />}
             </Button>
-            <div className="flex items-center gap-2 ml-auto">
-              <span className="text-xs text-muted-foreground whitespace-nowrap">{t('common.pageSize')}</span>
+            <div className="ml-auto flex items-center gap-2">
+              <span className="whitespace-nowrap text-xs text-muted-foreground">{t('common.pageSize')}</span>
               <Select value={String(limit)} onValueChange={(v) => { setLimit(Number(v)); setOffset(0); }}>
                 <SelectTrigger className="w-20 h-9">
                   <SelectValue />
@@ -147,7 +147,7 @@ export default function Usage() {
 
           {/* Filter inputs */}
           {showFilters && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 p-3 rounded-lg border bg-muted/30">
+            <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-muted/20 p-4 sm:grid-cols-2 lg:grid-cols-3">
               <Input
                 placeholder={t('usage.filterModel')}
                 value={modelFilter} onChange={(e) => { setModelFilter(e.target.value); setOffset(0); }}
@@ -172,11 +172,12 @@ export default function Usage() {
 
           {/* Date range filter tabs + custom datetime range */}
           {showFilters && (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <div className="flex items-center gap-1">
+            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-3 text-xs">
+              <div className="flex flex-wrap items-center gap-1">
                 {(['today', '7d', '30d', 'all'] as const).map((key) => (
                   <button
                     key={key}
+                    type="button"
                     onClick={() => { setDateFilter(key); setStartDt(''); setEndDt(''); setOffset(0); }}
                     className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
                       (!isCustomDate && !startDt && !endDt && dateFilter === key)
@@ -193,7 +194,7 @@ export default function Usage() {
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-1.5 ml-auto">
+              <div className="ml-auto flex w-full items-center gap-1.5 sm:w-auto">
                 <DateRangePicker
                   start={startDt}
                   end={endDt}
@@ -201,7 +202,7 @@ export default function Usage() {
                   onEndChange={(v) => { setEndDt(v); setOffset(0); }}
                   startPlaceholder={t('usage.startTime')}
                   endPlaceholder={t('usage.endTime')}
-                  className="w-auto"
+                  className="w-full sm:w-auto"
                 />
               </div>
             </div>
@@ -219,44 +220,53 @@ export default function Usage() {
                   </div>
                 </div>
               ) : records.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                <div className="overflow-x-auto rounded-xl border border-border">
+                  <table className="w-full min-w-[1560px] table-fixed border-collapse text-sm">
+                    <caption className="sr-only">{t('usage.title')}</caption>
+                    <colgroup>
+                      <col className="w-[130px]" /><col className="w-[100px]" /><col className="w-[120px]" />
+                      <col className="w-[90px]" /><col className="w-[100px]" /><col className="w-[200px]" />
+                      <col className="w-[90px]" /><col className="w-[100px]" /><col className="w-[90px]" />
+                      <col className="w-[100px]" /><col className="w-[130px]" /><col className="w-[120px]" />
+                      <col className="w-[110px]" /><col className="w-[110px]" /><col className="w-[110px]" /><col className="w-[70px]" />
+                    </colgroup>
                     <thead>
-                      <tr className="border-b text-muted-foreground">
-                        <th className="text-left py-3 px-4">{t('table.time')}</th>
-                        <th className="text-left py-3 px-4">{t('table.requestId')}</th>
-                        <th className="text-left py-3 px-4">{t('table.apiKey')}</th>
-                        <th className="text-left py-3 px-4">{t('usage.keyScope')}</th>
-                        <th className="text-left py-3 px-4">{t('usage.billingMode')}</th>
-                        <th className="text-left py-3 px-4">{t('table.model')}</th>
-                        <th className="text-left py-3 px-4">{t('usage.apiFormat')}</th>
-                        <th className="text-right py-3 px-4">{t('usage.uncachedInput')}</th>
-                        <th className="text-right py-3 px-4">{t('usage.cachedInput')}</th>
-                        <th className="text-right py-3 px-4">{t('dash.completion')}</th>
-                        <th className="text-right py-3 px-4">{t('usage.totalTokens')}</th>
-                        <th className="text-right py-3 px-4">{t('usage.walletDebit')}</th>
-                        <th className="text-right py-3 px-4">{t('table.latency')}</th>
-                        <th className="text-left py-3 px-4">{t('usage.clientIp')}</th>
-                        <th className="text-center py-3 px-4">{t('table.status')}</th>
+                      <tr className="border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground">
+                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('table.time')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('table.requestId')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('table.apiKey')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.keyScope')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.billingMode')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('table.model')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.apiFormat')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-right">{t('usage.uncachedInput')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-right">{t('usage.cachedInput')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-right">{t('dash.completion')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-right">{t('usage.totalTokens')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-right">资源包</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-right">{t('usage.walletDebit')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-right">{t('table.latency')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.clientIp')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-center">{t('table.status')}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {records.map((r) => (
                         <tr key={r.request_id} className="border-b last:border-0 hover:bg-muted/50">
-                          <td className="py-3 px-4 text-muted-foreground whitespace-nowrap text-xs">
+                          <td className="whitespace-nowrap px-3 py-3 text-xs text-muted-foreground">
                             {formatTimestamp(r.timestamp)}
                           </td>
-                          <td className="py-3 px-4 font-mono text-xs">{r.request_id.substring(0, 8)}</td>
-                          <td className="py-3 px-4">{r.api_key_name}</td>
-                          <td className="py-3 px-4">
+                          <td className="whitespace-nowrap px-3 py-3 font-mono text-xs" title={r.request_id}>{r.request_id.substring(0, 8)}…</td>
+                          <td className="max-w-[180px] truncate whitespace-nowrap px-3 py-3" title={r.api_key_name ?? undefined}>{r.api_key_name ?? '—'}</td>
+                          <td className="whitespace-nowrap px-3 py-3">
                             <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${r.team_id ? 'bg-chart-4/15 text-chart-4 dark:bg-chart-4/15 dark:text-chart-4' : 'bg-muted text-muted-foreground dark:bg-secondary dark:text-muted-foreground'}`}>
                               {r.team_id ? t('usage.teamKey') : t('usage.personalKey')}
                             </span>
                           </td>
-                          <td className="py-3 px-4"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${r.billing_payment_mode === 'prepaid' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{r.billing_payment_mode === 'prepaid' ? t('usage.prepaid') : t('usage.metered')}</span></td>
-                          <td className="py-3 px-4">
-                            <span className="inline-flex items-center gap-1">
-                              <span>{r.model}</span>
+                          <td className="whitespace-nowrap px-3 py-3"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${r.billing_payment_mode === 'prepaid' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{r.billing_payment_mode === 'prepaid' ? t('usage.prepaid') : t('usage.metered')}</span></td>
+                          <td className="max-w-[230px] whitespace-nowrap px-3 py-3">
+                            <span className="inline-flex max-w-full min-w-0 items-center gap-1">
+                              <span className="min-w-0 truncate" title={r.model}>{r.model}</span>
                               {r.stream ? (
                                 <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-accent-foreground bg-accent border border-border px-1.5 py-0.5 rounded">
                                   <Radio className="h-2.5 w-2.5" />stream
@@ -268,28 +278,35 @@ export default function Usage() {
                               )}
                             </span>
                           </td>
-                          <td className="py-3 px-4 font-mono text-xs">{r.api_format ?? '—'}</td>
-                          <td className="py-3 px-4 text-right">{r.prompt_tokens}</td>
-                          <td className="py-3 px-4 text-right text-muted-foreground">{r.cache_hit_input_tokens > 0 ? r.cache_hit_input_tokens : '—'}</td>
-                          <td className="py-3 px-4 text-right">{r.completion_tokens}</td>
-                          <td className="py-3 px-4 text-right font-medium">{(r.prompt_tokens + r.cache_hit_input_tokens + r.completion_tokens).toLocaleString()}</td>
-                          <td className="py-3 px-4 text-right font-mono text-xs">
-                            {(() => {
-                              const billing = billingByRequestId.get(r.request_id);
-                              if (isBillingError || !billing || billing.wallet_debit_status === 'unavailable') return '—';
-                              if (billing.wallet_debit_status === 'pending') return t('usage.settlementPending');
-                              const symbol = currency === 'cny' ? '¥' : '$';
-                              const walletAmount = Number(billing.wallet_amount) || 0;
-                              const wallet = `${symbol}${walletAmount.toFixed(6)}`;
-                              if (billing.package_units > 0 && walletAmount === 0) {
-                                return `${t('usage.packageCharge')} ${billing.package_units}u · ${wallet}`;
-                              }
-                              return wallet;
-                            })()}
+                          <td className="whitespace-nowrap px-3 py-3 font-mono text-xs">{r.api_format ?? '—'}</td>
+                          <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{r.prompt_tokens.toLocaleString()}</td>
+                          <td className="whitespace-nowrap px-3 py-3 text-right text-muted-foreground tabular-nums">{r.cache_hit_input_tokens > 0 ? r.cache_hit_input_tokens.toLocaleString() : '—'}</td>
+                          <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{r.completion_tokens.toLocaleString()}</td>
+                          <td className="whitespace-nowrap px-3 py-3 text-right font-medium tabular-nums">{(r.prompt_tokens + r.cache_hit_input_tokens + r.completion_tokens).toLocaleString()}</td>
+                          <td className="whitespace-nowrap px-3 py-3 text-right font-mono text-xs tabular-nums">
+                            {billingByRequestId.get(r.request_id)?.package_units?.toLocaleString() ?? '—'}
                           </td>
-                          <td className="py-3 px-4 text-right text-muted-foreground">{r.latency_ms}ms</td>
-                          <td className="py-3 px-4 text-muted-foreground whitespace-nowrap text-xs font-mono">{r.client_ip ?? '—'}</td>
-                          <td className="py-3 px-4 text-center">
+                          {(() => {
+                            const billing = billingByRequestId.get(r.request_id);
+                            let walletDisplay = '—';
+                            if (!isBillingError && billing && billing.wallet_debit_status !== 'unavailable') {
+                              if (billing.wallet_debit_status === 'pending') {
+                                walletDisplay = t('usage.settlementPending');
+                              } else {
+                                const symbol = currency === 'cny' ? '¥' : '$';
+                                const walletAmount = Number(billing.wallet_amount) || 0;
+                                walletDisplay = `${symbol}${walletAmount.toFixed(6)}`;
+                              }
+                            }
+                            return (
+                              <td className="whitespace-nowrap px-3 py-3 text-right font-mono text-xs tabular-nums">
+                                <span className="block truncate" title={walletDisplay}>{walletDisplay}</span>
+                              </td>
+                            );
+                          })()}
+                          <td className="whitespace-nowrap px-3 py-3 text-right text-muted-foreground tabular-nums">{r.latency_ms}ms</td>
+                          <td className="max-w-[120px] truncate whitespace-nowrap px-3 py-3 text-xs font-mono text-muted-foreground" title={r.client_ip ?? undefined}>{r.client_ip ?? '—'}</td>
+                          <td className="whitespace-nowrap px-3 py-3 text-center">
                             {r.success ? (
                               <CheckCircle2 className="size-4 text-chart-2 inline" />
                             ) : (
@@ -305,11 +322,11 @@ export default function Usage() {
                 <EmptyState message={t('empty.noUsage')} />
               )}
               {records.length > 0 && (
-                <div className="flex items-center justify-between px-4 py-3 border-t">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3">
                   <span className="text-xs text-muted-foreground">
                     {total > 0 && `${(page - 1) * limit + 1}–${Math.min(page * limit, total)} / ${total}`}
                   </span>
-                  <div className="flex items-center gap-1">
+                  <div className="flex flex-wrap items-center justify-end gap-1">
                     <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setOffset(0)} title="第一页">
                       ⟪
                     </Button>
