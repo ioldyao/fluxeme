@@ -719,22 +719,35 @@ impl ClickHouseBackend {
         end: &str,
         model: Option<&str>,
         published_models: &[String],
+        bucket_unit: &str,
     ) -> Result<Vec<super::db::RoutingHistoryBucket>, String> {
         #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
         struct BktRow {
             bucket: String,
             channel_id: String,
-            endpoint_id: Option<i64>,
             requests: u64,
             successes: u64,
             avg_latency: f64,
         }
-        let sql = if model.is_some() {
-            "SELECT toStartOfHour(timestamp)::String AS bucket, channel_id, endpoint_id, count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency FROM usage_events WHERE timestamp >= ? AND timestamp <= ? AND model = ? AND has(?, model) GROUP BY bucket, channel_id, endpoint_id ORDER BY bucket ASC"
-        } else {
-            "SELECT toStartOfHour(timestamp)::String AS bucket, channel_id, endpoint_id, count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency FROM usage_events WHERE timestamp >= ? AND timestamp <= ? AND has(?, model) GROUP BY bucket, channel_id, endpoint_id ORDER BY bucket ASC"
+        let bucket_expr = match bucket_unit {
+            "day" => {
+                "formatDateTime(toTimeZone(toStartOfDay(timestamp), 'UTC'), '%Y-%m-%dT00:00:00Z')"
+            }
+            "hour" => {
+                "formatDateTime(toTimeZone(toStartOfHour(timestamp), 'UTC'), '%Y-%m-%dT%H:00:00Z')"
+            }
+            _ => {
+                return Err(format!(
+                    "unsupported routing history bucket unit: {bucket_unit}"
+                ))
+            }
         };
-        let mut query = self.client.query(sql).bind(start).bind(end);
+        let sql = if model.is_some() {
+            format!("SELECT {bucket_expr} AS bucket, channel_id, count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) AND timestamp <= parseDateTimeBestEffort(?) AND model = ? AND has(?, model) GROUP BY bucket, channel_id ORDER BY bucket ASC, channel_id ASC")
+        } else {
+            format!("SELECT {bucket_expr} AS bucket, channel_id, count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) AND timestamp <= parseDateTimeBestEffort(?) AND has(?, model) GROUP BY bucket, channel_id ORDER BY bucket ASC, channel_id ASC")
+        };
+        let mut query = self.client.query(&sql).bind(start).bind(end);
         if let Some(model) = model {
             query = query.bind(model);
         }
@@ -748,7 +761,7 @@ impl ClickHouseBackend {
             .map(|r| super::db::RoutingHistoryBucket {
                 bucket: r.bucket,
                 channel_id: r.channel_id,
-                endpoint_id: r.endpoint_id,
+                endpoint_id: None,
                 requests: r.requests,
                 successes: r.successes,
                 avg_latency: r.avg_latency,
@@ -1640,9 +1653,9 @@ impl ClickHouseBackend {
             p95_latency: f64,
         }
         let sql = if model.is_some() {
-            "SELECT channel_id, endpoint_id, count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency, quantileExact(0.95)(latency_ms)::Float64 AS p95_latency FROM usage_events WHERE timestamp >= ? AND timestamp <= ? AND model = ? AND has(?, model) GROUP BY channel_id, endpoint_id"
+            "SELECT channel_id, CAST(NULL AS Nullable(Int64)) AS endpoint_id, count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency, quantileExact(0.95)(latency_ms)::Float64 AS p95_latency FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) AND timestamp <= parseDateTimeBestEffort(?) AND model = ? AND has(?, model) GROUP BY channel_id"
         } else {
-            "SELECT channel_id, endpoint_id, count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency, quantileExact(0.95)(latency_ms)::Float64 AS p95_latency FROM usage_events WHERE timestamp >= ? AND timestamp <= ? AND has(?, model) GROUP BY channel_id, endpoint_id"
+            "SELECT channel_id, CAST(NULL AS Nullable(Int64)) AS endpoint_id, count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency, quantileExact(0.95)(latency_ms)::Float64 AS p95_latency FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) AND timestamp <= parseDateTimeBestEffort(?) AND has(?, model) GROUP BY channel_id"
         };
         let mut query = self.client.query(sql).bind(start).bind(end);
         if let Some(model) = model {
@@ -1666,6 +1679,43 @@ impl ClickHouseBackend {
             .collect())
     }
 
+    /// Overall routing history statistics from observability data.
+    pub async fn query_routing_history_overall_stats_filtered(
+        &self,
+        start: &str,
+        end: &str,
+        model: Option<&str>,
+        published_models: &[String],
+    ) -> Result<(u64, u64, f64, f64), String> {
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct OverallRow {
+            requests: u64,
+            successes: u64,
+            avg_latency: f64,
+            p95_latency: f64,
+        }
+        let sql = if model.is_some() {
+            "SELECT count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency, quantileExact(0.95)(latency_ms)::Float64 AS p95_latency FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) AND timestamp <= parseDateTimeBestEffort(?) AND model = ? AND has(?, model)"
+        } else {
+            "SELECT count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency, quantileExact(0.95)(latency_ms)::Float64 AS p95_latency FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) AND timestamp <= parseDateTimeBestEffort(?) AND has(?, model)"
+        };
+        let mut query = self.client.query(sql).bind(start).bind(end);
+        if let Some(model) = model {
+            query = query.bind(model);
+        }
+        let row = query
+            .bind(published_models)
+            .fetch_one::<OverallRow>()
+            .await
+            .map_err(|e| format!("CH routing_history_overall_stats: {e}"))?;
+        Ok((
+            row.requests,
+            row.successes,
+            row.avg_latency,
+            row.p95_latency,
+        ))
+    }
+
     /// Endpoint-level routing history details from observability data.
     pub async fn query_routing_history_endpoint_details(
         &self,
@@ -1673,21 +1723,22 @@ impl ClickHouseBackend {
         end: &str,
         model: Option<&str>,
         published_models: &[String],
-    ) -> Result<Vec<(String, Option<i64>, Option<String>, u64, u64, f64, f64)>, String> {
+    ) -> Result<Vec<(String, Option<i64>, Option<String>, u64, u64, u64, f64, f64)>, String> {
         #[derive(clickhouse::Row, serde::Deserialize)]
         struct DetailRow {
             channel_id: String,
             endpoint_id: Option<i64>,
             endpoint_url: Option<String>,
+            url_variant_count: u64,
             requests: u64,
             successes: u64,
             avg_latency: f64,
             p95_latency: f64,
         }
         let sql = if model.is_some() {
-            "SELECT channel_id, endpoint_id, any(endpoint_url) AS endpoint_url, count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency, quantileExact(0.95)(latency_ms)::Float64 AS p95_latency FROM usage_events WHERE timestamp >= ? AND timestamp <= ? AND model = ? AND has(?, model) GROUP BY channel_id, endpoint_id"
+            "SELECT ue.channel_id, ue.endpoint_id, anyIf(ue.endpoint_url, ue.endpoint_url != '') AS endpoint_url, uniqExactIf(ue.endpoint_url, ue.endpoint_url != '')::UInt64 AS url_variant_count, count()::UInt64 AS requests, countIf(ue.success = 1)::UInt64 AS successes, avg(ue.latency_ms)::Float64 AS avg_latency, quantileExact(0.95)(ue.latency_ms)::Float64 AS p95_latency FROM usage_events AS ue WHERE ue.timestamp >= parseDateTimeBestEffort(?) AND ue.timestamp <= parseDateTimeBestEffort(?) AND ue.model = ? AND has(?, ue.model) GROUP BY ue.channel_id, ue.endpoint_id"
         } else {
-            "SELECT channel_id, endpoint_id, any(endpoint_url) AS endpoint_url, count()::UInt64 AS requests, countIf(success = 1)::UInt64 AS successes, avg(latency_ms)::Float64 AS avg_latency, quantileExact(0.95)(latency_ms)::Float64 AS p95_latency FROM usage_events WHERE timestamp >= ? AND timestamp <= ? AND has(?, model) GROUP BY channel_id, endpoint_id"
+            "SELECT ue.channel_id, ue.endpoint_id, anyIf(ue.endpoint_url, ue.endpoint_url != '') AS endpoint_url, uniqExactIf(ue.endpoint_url, ue.endpoint_url != '')::UInt64 AS url_variant_count, count()::UInt64 AS requests, countIf(ue.success = 1)::UInt64 AS successes, avg(ue.latency_ms)::Float64 AS avg_latency, quantileExact(0.95)(ue.latency_ms)::Float64 AS p95_latency FROM usage_events AS ue WHERE ue.timestamp >= parseDateTimeBestEffort(?) AND ue.timestamp <= parseDateTimeBestEffort(?) AND has(?, ue.model) GROUP BY ue.channel_id, ue.endpoint_id"
         };
         let mut query = self.client.query(sql).bind(start).bind(end);
         if let Some(model) = model {
@@ -1705,6 +1756,7 @@ impl ClickHouseBackend {
                     r.channel_id,
                     r.endpoint_id,
                     r.endpoint_url,
+                    r.url_variant_count,
                     r.requests,
                     r.successes,
                     r.avg_latency,

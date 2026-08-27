@@ -13,31 +13,47 @@ export interface RoutingRecentPath {
 
 export interface RoutingHistoryChannelSeries {
   channel_name: string;
-  volume: number[];
-  success_rate: number[];
+  requests: number[];
+  successes: number[];
+  success_rate_percent: Array<number | null>;
+}
+
+export interface RoutingHistoryEndpoint {
+  endpoint_id: number | null;
+  url: string | null;
+  url_status: 'stable' | 'varied' | 'missing';
+  url_variant_count: number;
+  requests: number;
+  successes: number;
+  success_rate_percent: number | null;
+  avg_latency_ms: number | null;
+  p95_latency_ms: number | null;
 }
 
 export interface RoutingHistorySummary {
   channel_id: string;
   requests: number;
-  success_rate: number;
-  avg_latency: number;
-  p95_latency: number;
+  successes: number;
+  success_rate_percent: number | null;
+  avg_latency_ms: number | null;
+  p95_latency_ms: number | null;
   endpoints: RoutingHistoryEndpoint[];
 }
 
-export interface RoutingHistoryEndpoint {
-  endpoint_id: number | null;
-  url: string;
-  requests: number;
-  success_rate: number;
-  avg_latency: number;
-  p95_latency: number;
-}
-
 export interface RoutingHistoryResponse {
+  schema_version: 2;
+  timezone: 'UTC';
+  bucket_unit: 'hour' | 'day';
   buckets: string[];
   series: Record<string, RoutingHistoryChannelSeries>;
+  totals: {
+    requests: number;
+    successes: number;
+    success_rate_percent: number | null;
+    avg_latency_ms: number | null;
+    p95_latency_ms: number | null;
+    unattributed_requests: number;
+  };
   summary: RoutingHistorySummary[];
 }
 
@@ -62,8 +78,8 @@ function routingWindow(days: number) {
   const now = new Date();
   const start = new Date(now.getTime() - days * 86400000);
   return {
-    start: start.toISOString().replace('T', ' ').slice(0, 19),
-    end: now.toISOString().replace('T', ' ').slice(0, 19),
+    start: start.toISOString(),
+    end: now.toISOString(),
   };
 }
 

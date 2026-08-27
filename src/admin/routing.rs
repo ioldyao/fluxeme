@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
+use chrono::Timelike;
 use serde::{Deserialize, Serialize};
 
 use crate::server::AppState;
@@ -192,38 +193,109 @@ pub(crate) struct RoutingHistoryQuery {
     model: Option<String>,
 }
 
+fn routing_history_bucket_unit(start: &str, end: &str) -> Result<&'static str, AdminError> {
+    let start_dt = chrono::DateTime::parse_from_rfc3339(start)
+        .map_err(|_| AdminError::bad_request("Invalid start datetime"))?;
+    let end_dt = chrono::DateTime::parse_from_rfc3339(end)
+        .map_err(|_| AdminError::bad_request("Invalid end datetime"))?;
+    if end_dt <= start_dt {
+        return Err(AdminError::bad_request("end must be after start"));
+    }
+    Ok(if (end_dt - start_dt).num_seconds() < 172_800 {
+        "hour"
+    } else {
+        "day"
+    })
+}
+
+fn routing_history_bucket_axis(
+    start: &str,
+    end: &str,
+    bucket_unit: &str,
+) -> Result<Vec<String>, AdminError> {
+    let start_dt = chrono::DateTime::parse_from_rfc3339(start)
+        .map_err(|_| AdminError::bad_request("Invalid start datetime"))?
+        .with_timezone(&chrono::Utc);
+    let end_dt = chrono::DateTime::parse_from_rfc3339(end)
+        .map_err(|_| AdminError::bad_request("Invalid end datetime"))?
+        .with_timezone(&chrono::Utc);
+    let mut cursor = if bucket_unit == "day" {
+        start_dt
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+    } else {
+        start_dt
+            .date_naive()
+            .and_hms_opt(start_dt.hour(), 0, 0)
+            .unwrap()
+            .and_utc()
+    };
+    let step = if bucket_unit == "day" {
+        chrono::Duration::days(1)
+    } else {
+        chrono::Duration::hours(1)
+    };
+    let mut axis = Vec::new();
+    while cursor <= end_dt {
+        axis.push(cursor.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+        cursor += step;
+    }
+    Ok(axis)
+}
+
 #[derive(Serialize)]
 pub(crate) struct RoutingHistoryResponse {
+    schema_version: u8,
+    timezone: &'static str,
+    bucket_unit: &'static str,
     buckets: Vec<String>,
     series: std::collections::HashMap<String, ChannelSeries>,
+    totals: RoutingHistoryTotals,
     summary: Vec<ChannelSummary>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct RoutingHistoryTotals {
+    requests: u64,
+    successes: u64,
+    success_rate_percent: Option<f64>,
+    avg_latency_ms: Option<f64>,
+    p95_latency_ms: Option<f64>,
+    unattributed_requests: u64,
 }
 
 #[derive(Serialize)]
 pub(crate) struct ChannelSeries {
     channel_name: String,
-    volume: Vec<u64>,
-    success_rate: Vec<f64>,
+    requests: Vec<u64>,
+    successes: Vec<u64>,
+    success_rate_percent: Vec<Option<f64>>,
 }
 
 #[derive(Serialize)]
 pub(crate) struct ChannelSummary {
     channel_id: String,
     requests: u64,
-    success_rate: f64,
-    avg_latency: f64,
-    p95_latency: f64,
+    successes: u64,
+    success_rate_percent: Option<f64>,
+    avg_latency_ms: Option<f64>,
+    p95_latency_ms: Option<f64>,
     endpoints: Vec<EndptDetail>,
 }
 
 #[derive(Serialize)]
 pub(crate) struct EndptDetail {
     endpoint_id: Option<i64>,
-    url: String,
+    url: Option<String>,
+    url_status: &'static str,
+    url_variant_count: u64,
     requests: u64,
-    success_rate: f64,
-    avg_latency: f64,
-    p95_latency: f64,
+    successes: u64,
+    success_rate_percent: Option<f64>,
+    avg_latency_ms: Option<f64>,
+    p95_latency_ms: Option<f64>,
 }
 
 pub(crate) async fn routing_flow_snapshot_handler(
@@ -259,6 +331,8 @@ pub(crate) async fn routing_history(
     check_perm(&state.authz, &session, "admin:dashboard").await?;
 
     let requested_model: Option<&str> = q.model.as_deref().filter(|m| !m.is_empty() && *m != "all");
+    let bucket_unit = routing_history_bucket_unit(&q.start, &q.end)?;
+    let bucket_axis = routing_history_bucket_axis(&q.start, &q.end, bucket_unit)?;
     let published_model_names = state
         .db
         .list_published_models()
@@ -268,7 +342,7 @@ pub(crate) async fn routing_history(
         .map(|model| model.name)
         .collect::<Vec<_>>();
 
-    tracing::info!(start = %q.start, end = %q.end, model = ?requested_model, "routing_history query");
+    tracing::info!(start = %q.start, end = %q.end, model = ?requested_model, bucket_unit, "routing_history query");
 
     let ch = state
         .ch
@@ -280,13 +354,10 @@ pub(crate) async fn routing_history(
             &q.end,
             requested_model,
             &published_model_names,
+            bucket_unit,
         )
         .await
-        .map_err(|e| {
-            tracing::error!(error = e, "routing_history_buckets (CH) failed");
-            AdminError::internal(e)
-        })?;
-
+        .map_err(|e| AdminError::internal(format!("routing history buckets: {e}")))?;
     let stats = ch
         .query_routing_history_stats_filtered(
             &q.start,
@@ -295,11 +366,16 @@ pub(crate) async fn routing_history(
             &published_model_names,
         )
         .await
-        .map_err(|e| {
-            tracing::error!(error = e, "routing_history_stats (CH) failed");
-            AdminError::internal(e)
-        })?;
-
+        .map_err(|e| AdminError::internal(format!("routing history stats: {e}")))?;
+    let overall = ch
+        .query_routing_history_overall_stats_filtered(
+            &q.start,
+            &q.end,
+            requested_model,
+            &published_model_names,
+        )
+        .await
+        .map_err(|e| AdminError::internal(format!("routing history overall stats: {e}")))?;
     let details = ch
         .query_routing_history_endpoint_details(
             &q.start,
@@ -308,111 +384,135 @@ pub(crate) async fn routing_history(
             &published_model_names,
         )
         .await
-        .map_err(|e| {
-            tracing::error!(error = e, "routing_history_endpoint_details (CH) failed");
-            AdminError::internal(e)
-        })?;
-    let mut ep_by_channel: std::collections::HashMap<String, Vec<EndptDetail>> =
-        std::collections::HashMap::new();
-    for (ch, eid, url, reqs, succs, avg, p95) in &details {
-        let rate = if *reqs > 0 {
-            (*succs as f64 / *reqs as f64) * 100.0
-        } else {
-            0.0
-        };
-        ep_by_channel
-            .entry(ch.clone())
-            .or_default()
-            .push(EndptDetail {
-                endpoint_id: *eid,
-                url: url.clone().unwrap_or_default(),
-                requests: *reqs,
-                success_rate: (rate * 10.0).round() / 10.0,
-                avg_latency: (avg * 10.0).round() / 10.0,
-                p95_latency: (p95 * 10.0).round() / 10.0,
-            });
+        .map_err(|e| AdminError::internal(format!("routing history endpoint details: {e}")))?;
+
+    let mut points: std::collections::HashMap<
+        String,
+        std::collections::HashMap<String, (u64, u64)>,
+    > = std::collections::HashMap::new();
+    for bucket in buckets {
+        let entry = points.entry(bucket.channel_id).or_default();
+        let point = entry.entry(bucket.bucket).or_default();
+        point.0 = point.0.saturating_add(bucket.requests);
+        point.1 = point.1.saturating_add(bucket.successes);
     }
 
-    // Build time-series: one series per channel
-    let mut channel_map: std::collections::HashMap<String, Vec<(String, u64, u64)>> =
-        std::collections::HashMap::new();
-    let mut all_buckets: Vec<String> = Vec::new();
-    for b in &buckets {
-        if all_buckets.last() != Some(&b.bucket) {
-            all_buckets.push(b.bucket.clone());
-        }
-        channel_map.entry(b.channel_id.clone()).or_default().push((
-            b.bucket.clone(),
-            b.requests,
-            b.successes,
-        ));
-    }
-
+    let mut channel_ids: Vec<String> = stats.iter().map(|row| row.channel_id.clone()).collect();
+    channel_ids.sort();
+    channel_ids.dedup();
     let mut series = std::collections::HashMap::new();
-    for (ch_id, points) in &channel_map {
-        let ch_name = state
+    for channel_id in &channel_ids {
+        let channel_name = state
             .routing
-            .get_channel(ch_id)
-            .map(|c| c.name)
-            .unwrap_or_else(|| ch_id.clone());
-        let volume: Vec<u64> = all_buckets
+            .get_channel(channel_id)
+            .map(|channel| channel.name)
+            .unwrap_or_else(|| channel_id.clone());
+        let channel_points = points.get(channel_id);
+        let requests: Vec<u64> = bucket_axis
             .iter()
-            .map(|bk| {
-                points
-                    .iter()
-                    .find(|(b, _, _)| b == bk)
-                    .map(|(_, v, _)| *v)
+            .map(|bucket| {
+                channel_points
+                    .and_then(|p| p.get(bucket))
+                    .map(|v| v.0)
                     .unwrap_or(0)
             })
             .collect();
-        let success_rate: Vec<f64> = all_buckets
+        let successes: Vec<u64> = bucket_axis
             .iter()
-            .map(|bk| {
-                points
-                    .iter()
-                    .find(|(b, _, _)| b == bk)
-                    .map(|(_, v, s)| {
-                        if *v > 0 {
-                            (*s as f64 / *v as f64) * 100.0
-                        } else {
-                            0.0
-                        }
-                    })
-                    .unwrap_or(0.0)
+            .map(|bucket| {
+                channel_points
+                    .and_then(|p| p.get(bucket))
+                    .map(|v| v.1)
+                    .unwrap_or(0)
+            })
+            .collect();
+        let success_rate_percent = requests
+            .iter()
+            .zip(&successes)
+            .map(|(request_count, success_count)| {
+                (*request_count > 0)
+                    .then(|| (*success_count as f64 / *request_count as f64) * 100.0)
             })
             .collect();
         series.insert(
-            ch_id.clone(),
+            channel_id.clone(),
             ChannelSeries {
-                channel_name: ch_name,
-                volume,
-                success_rate,
+                channel_name,
+                requests,
+                successes,
+                success_rate_percent,
             },
         );
     }
 
+    let mut ep_by_channel: std::collections::HashMap<String, Vec<EndptDetail>> =
+        std::collections::HashMap::new();
+    for (channel_id, endpoint_id, url, url_variant_count, requests, successes, avg, p95) in details
+    {
+        let success_rate_percent =
+            (requests > 0).then(|| (successes as f64 / requests as f64) * 100.0);
+        ep_by_channel
+            .entry(channel_id)
+            .or_default()
+            .push(EndptDetail {
+                endpoint_id,
+                url: url.clone(),
+                url_status: if url_variant_count == 0 {
+                    "missing"
+                } else if url_variant_count == 1 {
+                    "stable"
+                } else {
+                    "varied"
+                },
+                url_variant_count,
+                requests,
+                successes,
+                success_rate_percent,
+                avg_latency_ms: (requests > 0).then_some(avg),
+                p95_latency_ms: (requests > 0).then_some(p95),
+            });
+    }
+    for endpoints in ep_by_channel.values_mut() {
+        endpoints.sort_by_key(|endpoint| (endpoint.endpoint_id.is_none(), endpoint.endpoint_id));
+    }
+
     let summary: Vec<ChannelSummary> = stats
-        .iter()
-        .map(|s| {
-            let rate = if s.requests > 0 {
-                (s.successes as f64 / s.requests as f64) * 100.0
-            } else {
-                0.0
-            };
-            ChannelSummary {
-                channel_id: s.channel_id.clone(),
-                requests: s.requests,
-                success_rate: (rate * 10.0).round() / 10.0,
-                avg_latency: (s.avg_latency * 10.0).round() / 10.0,
-                p95_latency: (s.p95_latency * 10.0).round() / 10.0,
-                endpoints: ep_by_channel.remove(&s.channel_id).unwrap_or_default(),
-            }
+        .into_iter()
+        .map(|stat| ChannelSummary {
+            channel_id: stat.channel_id.clone(),
+            requests: stat.requests,
+            successes: stat.successes,
+            success_rate_percent: (stat.requests > 0)
+                .then(|| (stat.successes as f64 / stat.requests as f64) * 100.0),
+            avg_latency_ms: (stat.requests > 0).then_some(stat.avg_latency),
+            p95_latency_ms: (stat.requests > 0).then_some(stat.p95_latency),
+            endpoints: ep_by_channel.remove(&stat.channel_id).unwrap_or_default(),
         })
         .collect();
+    let (requests, successes, avg_latency, p95_latency) = overall;
+    let avg_latency_ms = (requests > 0).then_some(avg_latency);
+    let p95_latency_ms = (requests > 0).then_some(p95_latency);
 
     Ok(Json(RoutingHistoryResponse {
-        buckets: all_buckets,
+        schema_version: 2,
+        timezone: "UTC",
+        bucket_unit,
+        buckets: bucket_axis,
         series,
+        totals: RoutingHistoryTotals {
+            requests,
+            successes,
+            success_rate_percent: (requests > 0)
+                .then(|| (successes as f64 / requests as f64) * 100.0),
+            avg_latency_ms,
+            p95_latency_ms,
+            unattributed_requests: summary
+                .iter()
+                .flat_map(|row| row.endpoints.iter())
+                .filter(|endpoint| endpoint.endpoint_id.is_none())
+                .map(|endpoint| endpoint.requests)
+                .sum(),
+        },
         summary,
     }))
 }

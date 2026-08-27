@@ -1,328 +1,194 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { usePublicModels } from '@fluxeme/shared/src/api/models';
 import { useChannels } from '@fluxeme/shared/src/api/channels';
 import { fetchRoutingHistory } from '@fluxeme/shared/src/api/routing';
-import type { RoutingHistoryResponse } from '@fluxeme/shared/src/api/routing';
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer,
-  LineChart, Line,
-} from 'recharts';
+import type {
+  RoutingHistoryChannelSeries,
+  RoutingHistoryResponse,
+  RoutingHistorySummary,
+} from '@fluxeme/shared/src/api/routing';
 
-/**
- * ============================================================================
- * 历史负载查询面板（独立页面）
- * ============================================================================
- */
+const CHANNEL_COLORS = [
+  'var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)',
+  'var(--chart-5)', 'var(--sidebar-primary)', 'var(--destructive)',
+];
 
-const C = {
-  bg: 'var(--muted)',
-  cardBg: 'var(--card)',
-  border: 'var(--secondary)',
-  textPrimary: 'var(--foreground)',
-  textSecondary: 'var(--muted-foreground)',
-  textMuted: 'var(--muted-foreground)',
-  nodeBg: 'var(--muted)',
-  barTrack: 'var(--secondary)',
-  green: 'var(--chart-2)',
-  low: 'var(--chart-1)',
-  mid: 'var(--sidebar-primary)',
-  high: 'var(--destructive)',
-};
+type Preset = '1h' | '24h' | '7d' | '30d' | 'custom';
+type ChartPoint = { bucket: string; label: string; [channelId: string]: string | number | null };
 
-const HISTORY_COLORS = ['var(--chart-1)', 'var(--sidebar-primary)', 'var(--chart-3)', 'var(--destructive)', 'var(--chart-2)', 'var(--sidebar-primary)'];
-
-function rateClass(rate: number) {
-  if (rate >= 97) return 'ok';
-  if (rate >= 90) return 'warn';
-  return 'bad';
+function formatNumber(value: number | null | undefined): string {
+  return value == null ? '—' : value.toLocaleString('zh-CN');
 }
-const RATE_STYLE: Record<string, { color: string; bg: string }> = {
-  ok: { color: C.green, bg: 'var(--chart-2/15)' },
-  warn: { color: 'var(--sidebar-primary)', bg: 'var(--sidebar-primary/15)' },
-  bad: { color: 'var(--destructive)', bg: 'var(--destructive/15)' },
-};
 
-function formatBucket(bucket: string): string {
-  if (bucket.includes('T')) return bucket.split('T')[1]?.slice(0, 5) || bucket;
-  return bucket.slice(5);
+function formatPercent(value: number | null | undefined): string {
+  return value == null || Number.isNaN(value) ? '—' : `${value.toFixed(1)}%`;
+}
+
+function formatMs(value: number | null | undefined): string {
+  return value == null || Number.isNaN(value) ? '—' : `${Math.round(value)} ms`;
+}
+
+function toApiDate(value: string): string {
+  if (!value) return '';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString();
+}
+
+function presetRange(preset: Exclude<Preset, 'custom'>): { start: string; end: string } {
+  const end = new Date();
+  const duration = { '1h': 3600000, '24h': 86400000, '7d': 7 * 86400000, '30d': 30 * 86400000 }[preset];
+  const start = new Date(end.getTime() - duration);
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
+function formatBucket(bucket: string, unit: RoutingHistoryResponse['bucket_unit']): string {
+  const date = new Date(bucket);
+  if (Number.isNaN(date.getTime())) return bucket;
+  return unit === 'day'
+    ? date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit', timeZone: 'UTC' })
+    : date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', timeZone: 'UTC' });
+}
+
+function getChannelName(id: string, names: Map<string, string>, series?: RoutingHistoryChannelSeries): string {
+  return names.get(id) || series?.channel_name || id;
+}
+
+function chartData(response: RoutingHistoryResponse, success: boolean): ChartPoint[] {
+  return response.buckets.map((bucket, index) => {
+    const point: ChartPoint = { bucket, label: formatBucket(bucket, response.bucket_unit) };
+    Object.entries(response.series).forEach(([channelId, series]) => {
+      point[channelId] = success ? series.success_rate_percent[index] ?? null : series.requests[index] ?? 0;
+    });
+    return point;
+  });
+}
+
+function SummaryRow({ row, names, total }: { row: RoutingHistorySummary; names: Map<string, string>; total: number }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <>
+      <tr className="border-b border-border bg-muted/30">
+        <td className="px-4 py-3">
+          <button type="button" className="flex items-center gap-2 text-left font-medium text-foreground hover:text-primary" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
+            <span className="w-4 text-muted-foreground">{expanded ? '−' : '+'}</span>{getChannelName(row.channel_id, names)}
+          </button>
+          <div className="ml-6 mt-1 font-mono text-[10px] text-muted-foreground">{row.channel_id}</div>
+        </td>
+        <td className="px-4 py-3 text-right tabular-nums">{total > 0 ? `${((row.requests / total) * 100).toFixed(1)}%` : '—'}</td>
+        <td className="px-4 py-3 text-right tabular-nums">{formatNumber(row.requests)}</td>
+        <td className="px-4 py-3 text-right tabular-nums">{formatPercent(row.success_rate_percent)}</td>
+        <td className="px-4 py-3 text-right tabular-nums">{formatMs(row.avg_latency_ms)}</td>
+        <td className="px-4 py-3 text-right tabular-nums">{formatMs(row.p95_latency_ms)}</td>
+      </tr>
+      {expanded && row.endpoints.map((endpoint, index) => (
+        <tr key={`${row.channel_id}-${endpoint.endpoint_id ?? 'unknown'}-${index}`} className="border-b border-border/60 text-sm">
+          <td className="py-3 pl-12 pr-4 text-muted-foreground">
+            <div>{endpoint.url || '未识别端点'}</div>
+            <div className="mt-1 text-[10px]">{endpoint.endpoint_id == null ? '渠道级 / 未识别端点' : `Endpoint #${endpoint.endpoint_id}`}{endpoint.url_status === 'varied' ? ` · ${endpoint.url_variant_count} 个 URL 变体` : ''}</div>
+          </td>
+          <td className="px-4 py-3 text-right text-muted-foreground">{total > 0 ? `${((endpoint.requests / total) * 100).toFixed(1)}%` : '—'}</td>
+          <td className="px-4 py-3 text-right tabular-nums">{formatNumber(endpoint.requests)}</td>
+          <td className="px-4 py-3 text-right tabular-nums">{formatPercent(endpoint.success_rate_percent)}</td>
+          <td className="px-4 py-3 text-right tabular-nums">{formatMs(endpoint.avg_latency_ms)}</td>
+          <td className="px-4 py-3 text-right tabular-nums">{formatMs(endpoint.p95_latency_ms)}</td>
+        </tr>
+      ))}
+    </>
+  );
 }
 
 export default function RoutingHistory() {
   const { t } = useTranslation();
   const { data: models } = usePublicModels();
   const { data: channels } = useChannels();
-  const modelList = models || [];
-
-  const ChannelNameMap = useMemo(() => {
-    const m = new Map<string, string>();
-    if (channels) for (const c of channels) m.set(c.id, c.name || c.id);
-    return m;
-  }, [channels]);
-
-  const channelName = (id: string) => ChannelNameMap.get(id) || id;
-
-  const [preset, setPreset] = useState('24h');
+  const [preset, setPreset] = useState<Preset>('24h');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
-  const [modelFilter, setModelFilter] = useState('all');
+  const [model, setModel] = useState('all');
+  const [appliedRange, setAppliedRange] = useState(() => presetRange('24h'));
   const [data, setData] = useState<RoutingHistoryResponse | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const requestVersion = useRef(0);
 
-  // Spread NULL-endpoint rows across configured endpoints for channels
-  // where historical records lack endpoint_id.
-  const channelEndpoints = useMemo(() => {
-    const m = new Map<string, { id: number | null; url: string }[]>();
-    if (channels) for (const c of channels)
-      m.set(c.id, c.endpoints.map((e, i) => ({ id: e.id ?? null, url: e.url || `端点${i + 1}` })));
-    return m;
-  }, [channels]);
-
-  const summaryForTable = useMemo(() => {
-    if (!data) return [];
-    return data.summary.map((s) => {
-      const eps = channelEndpoints.get(s.channel_id);
-      if (!eps || eps.length <= 1) return s;
-      if (s.endpoints.length !== 1 || s.endpoints[0].endpoint_id !== null) return s;
-      const nr = s.endpoints[0];
-      const each = Math.floor(nr.requests / eps.length);
-      let rem = nr.requests - each * eps.length;
-      return { ...s, endpoints: eps.map((ep) => {
-        const cnt = each + (rem > 0 ? 1 : 0);
-        if (rem > 0) rem--;
-        return { endpoint_id: ep.id, url: ep.url, requests: cnt,
-          success_rate: nr.success_rate, avg_latency: nr.avg_latency, p95_latency: nr.p95_latency };
-      })};
-    });
-  }, [data, channelEndpoints]);
-
-  const fetchData = useCallback(async (start: string, end: string) => {
+  const channelNames = useMemo(() => new Map((channels ?? []).map((channel) => [channel.id, channel.name || channel.id])), [channels]);
+  const load = useCallback(async (range: { start: string; end: string }) => {
+    const version = ++requestVersion.current;
     setLoading(true);
+    setError(false);
     try {
-      const res = await fetchRoutingHistory(start, end, modelFilter !== 'all' ? modelFilter : undefined);
-      setData(res);
+      const response = await fetchRoutingHistory(toApiDate(range.start), toApiDate(range.end), model === 'all' ? undefined : model);
+      if (version === requestVersion.current) setData(response);
     } catch {
-      setData(null);
+      if (version === requestVersion.current) setError(true);
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
-  }, [modelFilter]);
+  }, [model]);
 
-  useEffect(() => {
-    const now = new Date();
-    let start: string;
-    const end = now.toISOString().slice(0, 16);
-    switch (preset) {
-      case '1h': { const d = new Date(now.getTime() - 3600000); start = d.toISOString().slice(0, 16); break; }
-      case '24h': { const d = new Date(now.getTime() - 86400000); start = d.toISOString().slice(0, 16); break; }
-      case '7d': { const d = new Date(now.getTime() - 7 * 86400000); start = d.toISOString().slice(0, 16); break; }
-      case '30d': { const d = new Date(now.getTime() - 30 * 86400000); start = d.toISOString().slice(0, 16); break; }
-      default: return;
-    }
-    fetchData(start.replace('T', ' ') + ':00', end.replace('T', ' ') + ':00');
-  }, [preset, fetchData]);
+  useEffect(() => { void load(appliedRange); }, [appliedRange, load]);
 
-  const handleApply = () => {
-    if (!customStart || !customEnd) return;
-    setPreset('');
-    fetchData(customStart.replace('T', ' ') + ':00', customEnd.replace('T', ' ') + ':00');
+  const applyPreset = (next: Exclude<Preset, 'custom'>) => { setPreset(next); setAppliedRange(presetRange(next)); };
+  const applyCustom = () => {
+    if (!customStart || !customEnd || new Date(customStart) >= new Date(customEnd)) return;
+    setPreset('custom');
+    setAppliedRange({ start: customStart, end: customEnd });
   };
 
-  const rangeLabel = preset
-    ? ({ '1h': t('routingFlow.history1h'), '24h': t('routingFlow.history24h'), '7d': t('routingFlow.history7d'), '30d': t('routingFlow.history30d') } as Record<string, string>)[preset]
-    : `${customStart.replace('T', ' ')} ~ ${customEnd.replace('T', ' ')}`;
-
-  const volumeData = useMemo(() => {
-    if (!data) return [];
-    return data.buckets.map((bk, i) => {
-      const row: Record<string, string | number> = { bucket: formatBucket(bk) };
-      for (const [chId, s] of Object.entries(data.series)) row[chId] = s.volume[i] || 0;
-      return row;
-    });
-  }, [data]);
-
-  const successData = useMemo(() => {
-    if (!data) return [];
-    return data.buckets.map((bk, i) => {
-      const row: Record<string, string | number> = { bucket: formatBucket(bk) };
-      for (const [chId, s] of Object.entries(data.series)) row[chId] = s.success_rate[i] || 0;
-      return row;
-    });
-  }, [data]);
-
-  const channelIds = data ? Object.keys(data.series) : [];
-  const totalReq = summaryForTable.length ? summaryForTable.reduce((s: number, c: typeof summaryForTable[number]) => s + c.requests, 0) : 0;
-
-  const btnStyle = (p: string): React.CSSProperties => ({
-    fontSize: 12.5, padding: '6px 12px', borderRadius: 6,
-    border: `1px solid ${C.border}`,
-    background: preset === p ? 'var(--accent)' : 'var(--muted)',
-    color: preset === p ? 'var(--accent-foreground)' : C.textSecondary,
-    fontWeight: preset === p ? 500 : 400,
-    cursor: 'pointer', transition: 'all 0.12s',
-  });
-
-  const fontFamily = '-apple-system, PingFang SC, Microsoft YaHei, Segoe UI, sans-serif';
+  const volumeData = useMemo(() => data ? chartData(data, false) : [], [data]);
+  const successData = useMemo(() => data ? chartData(data, true) : [], [data]);
+  const channelIds = useMemo(() => data ? Object.keys(data.series).sort() : [], [data]);
+  const total = data?.totals.requests ?? 0;
+  const rows = useMemo(() => data ? [...data.summary].sort((a, b) => b.requests - a.requests) : [], [data]);
+  const presets: Array<{ key: Exclude<Preset, 'custom'>; label: string }> = [
+    { key: '1h', label: t('routingFlow.history1h') }, { key: '24h', label: t('routingFlow.history24h') },
+    { key: '7d', label: t('routingFlow.history7d') }, { key: '30d', label: t('routingFlow.history30d') },
+  ];
 
   return (
-    <div style={{ fontFamily, color: C.textPrimary }}>
-      <h1 style={{ fontSize: 20, fontWeight: 600, margin: '0 0 4px' }}>{t('routingFlow.historyTitle')}</h1>
-      <p style={{ fontSize: 13, color: C.textSecondary, margin: '0 0 20px' }}>{t('routingFlow.historySubtitle')}</p>
+    <div className="space-y-5 animate-fade-in">
+      <header><h1 className="text-2xl font-semibold tracking-tight">历史负载查询</h1><p className="mt-1 text-sm text-muted-foreground">查看已发布模型在各路由渠道的请求量、成功率和延迟表现。</p></header>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 10, padding: '12px 16px', marginBottom: 20 }}>
-        <button style={btnStyle('1h')} onClick={() => setPreset('1h')}>{t('routingFlow.history1h')}</button>
-        <button style={btnStyle('24h')} onClick={() => setPreset('24h')}>{t('routingFlow.history24h')}</button>
-        <button style={btnStyle('7d')} onClick={() => setPreset('7d')}>{t('routingFlow.history7d')}</button>
-        <button style={btnStyle('30d')} onClick={() => setPreset('30d')}>{t('routingFlow.history30d')}</button>
-        <div style={{ width: 1, height: 20, background: C.border, margin: '0 4px' }} />
-        <input type="datetime-local" style={{ fontSize: 12.5, padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.border}`, color: C.textPrimary, background: 'var(--card)' }} value={customStart} onChange={(e) => setCustomStart(e.target.value)} />
-        <span style={{ color: C.textMuted, fontSize: 12 }}>{t('routingFlow.historyTo')}</span>
-        <input type="datetime-local" style={{ fontSize: 12.5, padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.border}`, color: C.textPrimary, background: 'var(--card)' }} value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} />
-        <button style={{ fontSize: 12.5, padding: '6px 14px', borderRadius: 6, border: 'none', background: C.textPrimary, color: 'var(--card)', cursor: 'pointer' }} onClick={handleApply}>{t('routingFlow.historyApply')}</button>
-        <select style={{ fontSize: 12.5, padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.border}`, color: C.textPrimary, background: 'var(--card)', marginLeft: 'auto' }} value={modelFilter} onChange={(e) => setModelFilter(e.target.value)}>
-          <option value="all">{t('routingFlow.historyAllModels')}</option>
-          {modelList.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
-        </select>
-      </div>
+      <section className="rounded-xl border border-border bg-card p-4 shadow-sm" aria-label="历史查询筛选条件">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex rounded-lg bg-muted p-1" role="group" aria-label="快捷时间范围">
+            {presets.map((item) => <button key={item.key} type="button" onClick={() => applyPreset(item.key)} className={`rounded-md px-3 py-1.5 text-xs transition ${preset === item.key ? 'bg-background font-semibold text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>{item.label}</button>)}
+          </div>
+          <label className="space-y-1 text-xs text-muted-foreground"><span>开始时间（本地输入，按 UTC 查询）</span><input aria-label="开始时间" type="datetime-local" value={customStart} onChange={(event) => setCustomStart(event.target.value)} className="block h-9 rounded-md border border-border bg-background px-2 text-xs text-foreground" /></label>
+          <label className="space-y-1 text-xs text-muted-foreground"><span>结束时间</span><input aria-label="结束时间" type="datetime-local" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} className="block h-9 rounded-md border border-border bg-background px-2 text-xs text-foreground" /></label>
+          <button type="button" onClick={applyCustom} disabled={!customStart || !customEnd} className="h-9 rounded-md bg-primary px-4 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">应用</button>
+          <label className="ml-auto space-y-1 text-xs text-muted-foreground"><span>模型</span><select aria-label="模型筛选" value={model} onChange={(event) => setModel(event.target.value)} className="block h-9 min-w-44 rounded-md border border-border bg-background px-2 text-xs text-foreground"><option value="all">全部已发布模型</option>{(models ?? []).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground"><span className="rounded-full bg-muted px-2.5 py-1">数据源：ClickHouse usage_events</span><span className="rounded-full bg-muted px-2.5 py-1">时区：UTC</span>{data ? <span className="rounded-full bg-muted px-2.5 py-1">粒度：{data.bucket_unit === 'day' ? '按天' : '按小时'}</span> : null}</div>
+      </section>
 
-      {loading ? (
-        <div style={{ fontSize: 13, color: C.textSecondary, padding: 40, textAlign: 'center' }}>{t('common.loading')}</div>
-      ) : !data ? (
-        <div style={{ borderRadius: 10, border: `1px dashed ${C.border}`, background: C.cardBg, padding: '40px 24px', textAlign: 'center', fontSize: 13, color: C.textSecondary }}>{t('routingFlow.noData')}</div>
-      ) : (
+      {loading ? <div className="rounded-xl border border-dashed border-border p-12 text-center text-sm text-muted-foreground">正在查询历史负载…</div> : error ? <div className="rounded-xl border border-dashed border-destructive/50 bg-destructive/5 p-10 text-center"><p className="text-sm text-destructive">历史负载查询失败</p><button type="button" onClick={() => void load(appliedRange)} className="mt-3 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-muted">重试</button></div> : !data || data.totals.requests === 0 ? <div className="rounded-xl border border-dashed border-border p-12 text-center text-sm text-muted-foreground">当前时间范围没有观测数据</div> : (
         <>
-          <div style={{ background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 10, padding: '18px 20px', marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <span style={{ fontSize: 13.5, fontWeight: 600 }}>{t('routingFlow.historyVolume')}</span>
-              <span style={{ fontSize: 11.5, color: C.textMuted }}>{rangeLabel}</span>
-            </div>
-            <div style={{ width: '100%', height: 230 }}>
-              <ResponsiveContainer>
-                <BarChart data={volumeData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--secondary)" />
-                  <XAxis dataKey="bucket" tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />
-                  <YAxis tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />
-                  <ReTooltip contentStyle={{ borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12 }} />
-                  {channelIds.map((chId, i) => (
-                    <Bar key={chId} dataKey={chId} stackId="a" fill={HISTORY_COLORS[i % HISTORY_COLORS.length]} radius={[2, 2, 0, 0]} />
-                  ))}
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 10, fontSize: 11.5, color: C.textSecondary }}>
-              {channelIds.map((chId, i) => (
-                <div key={chId} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                  <span style={{ width: 10, height: 10, borderRadius: 2, background: HISTORY_COLORS[i % HISTORY_COLORS.length], display: 'inline-block' }} />
-                  {data!.series[chId]?.channel_name || chId}
-                </div>
-              ))}
-            </div>
+          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{[
+            ['总请求数', formatNumber(data.totals.requests), '观测到的请求总量'], ['成功率', formatPercent(data.totals.success_rate_percent), '成功请求 / 总请求'],
+            ['平均延迟', formatMs(data.totals.avg_latency_ms), '按请求数加权'], ['P95 延迟', formatMs(data.totals.p95_latency_ms), '全渠道请求分位数'],
+            ['未识别端点', formatNumber(data.totals.unattributed_requests), '保留原始归属，不做均摊'],
+          ].map(([label, value, note]) => <div key={label} className="rounded-xl border border-border bg-card p-4 shadow-sm"><div className="text-xs text-muted-foreground">{label}</div><div className="mt-2 text-2xl font-semibold tracking-tight tabular-nums">{value}</div><div className="mt-1 text-[10px] text-muted-foreground">{note}</div></div>)}</section>
+
+          <div className="grid gap-4 xl:grid-cols-2">
+            <section className="rounded-xl border border-border bg-card p-4 shadow-sm"><div className="mb-4"><h2 className="font-semibold">请求量趋势</h2><p className="text-xs text-muted-foreground">按渠道统计请求数 · 空 bucket 表示 0 请求</p></div><div className="h-72"><ResponsiveContainer width="100%" height="100%"><BarChart data={volumeData} margin={{ left: 0, right: 12, top: 8, bottom: 8 }}><CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} /><XAxis dataKey="label" tick={{ fontSize: 10 }} minTickGap={24} /><YAxis allowDecimals={false} tick={{ fontSize: 10 }} /><Tooltip formatter={(value, name) => [formatNumber(Number(value)), getChannelName(String(name), channelNames, data.series[String(name)])]} labelFormatter={(label) => `时间：${label}`} /><Legend formatter={(value) => getChannelName(String(value), channelNames, data.series[String(value)])} />{channelIds.map((id, index) => <Bar key={id} dataKey={id} name={id} stackId="requests" fill={CHANNEL_COLORS[index % CHANNEL_COLORS.length]} />)}</BarChart></ResponsiveContainer></div></section>
+            <section className="rounded-xl border border-border bg-card p-4 shadow-sm"><div className="mb-4"><h2 className="font-semibold">成功率趋势</h2><p className="text-xs text-muted-foreground">按渠道统计 · 无请求 bucket 不显示为 0%</p></div><div className="h-72"><ResponsiveContainer width="100%" height="100%"><LineChart data={successData} margin={{ left: 0, right: 12, top: 8, bottom: 8 }}><CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} /><XAxis dataKey="label" tick={{ fontSize: 10 }} minTickGap={24} /><YAxis domain={[0, 100]} tick={{ fontSize: 10 }} tickFormatter={(value) => `${value}%`} /><Tooltip formatter={(value, name) => [value == null ? '—' : `${Number(value).toFixed(1)}%`, getChannelName(String(name), channelNames, data.series[String(name)])]} labelFormatter={(label) => `时间：${label}`} /><Legend formatter={(value) => getChannelName(String(value), channelNames, data.series[String(value)])} />{channelIds.map((id, index) => <Line key={id} dataKey={id} name={id} connectNulls={false} stroke={CHANNEL_COLORS[index % CHANNEL_COLORS.length]} strokeWidth={2} dot={false} />)}</LineChart></ResponsiveContainer></div></section>
           </div>
 
-          <div style={{ background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 10, padding: '18px 20px', marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <span style={{ fontSize: 13.5, fontWeight: 600 }}>{t('routingFlow.historySuccess')}</span>
-            </div>
-            <div style={{ width: '100%', height: 230 }}>
-              <ResponsiveContainer>
-                <LineChart data={successData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--secondary)" />
-                  <XAxis dataKey="bucket" tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />
-                  <YAxis domain={[0, 100]} tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }} tickFormatter={(v: number) => v + '%'} />
-                  <ReTooltip contentStyle={{ borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12 }} formatter={(v: number) => [`${v}%`, '']} />
-                  {channelIds.map((chId, i) => (
-                    <Line key={chId} type="monotone" dataKey={chId} stroke={HISTORY_COLORS[i % HISTORY_COLORS.length]} strokeWidth={2} dot={false} />
-                  ))}
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 10, fontSize: 11.5, color: C.textSecondary }}>
-              {channelIds.map((chId, i) => (
-                <div key={chId} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                  <span style={{ width: 10, height: 10, borderRadius: 2, background: HISTORY_COLORS[i % HISTORY_COLORS.length], display: 'inline-block' }} />
-                  {data!.series[chId]?.channel_name || chId}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div style={{ background: C.cardBg, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: 'left', fontSize: 11, fontWeight: 500, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.03em', padding: '10px 18px', borderBottom: `1px solid ${C.border}`, background: C.nodeBg }}>{t('routingFlow.tableChannel')}</th>
-                  <th style={{ textAlign: 'left', fontSize: 11, fontWeight: 500, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.03em', padding: '10px 18px', borderBottom: `1px solid ${C.border}`, background: C.nodeBg }}>{t('routingFlow.tableReqShare')}</th>
-                  <th style={{ textAlign: 'right', fontSize: 11, fontWeight: 500, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.03em', padding: '10px 18px', borderBottom: `1px solid ${C.border}`, background: C.nodeBg }}>{t('routingFlow.tableRequests')}</th>
-                  <th style={{ textAlign: 'right', fontSize: 11, fontWeight: 500, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.03em', padding: '10px 18px', borderBottom: `1px solid ${C.border}`, background: C.nodeBg }}>{t('routingFlow.tableSuccess')}</th>
-                  <th style={{ textAlign: 'right', fontSize: 11, fontWeight: 500, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.03em', padding: '10px 18px', borderBottom: `1px solid ${C.border}`, background: C.nodeBg }}>{t('routingFlow.tableAvgLatency')}</th>
-                  <th style={{ textAlign: 'right', fontSize: 11, fontWeight: 500, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.03em', padding: '10px 18px', borderBottom: `1px solid ${C.border}`, background: C.nodeBg }}>{t('routingFlow.tableP95')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summaryForTable.map((s: typeof summaryForTable[number]) => {
-                  const pct = totalReq > 0 ? Math.round((s.requests / totalReq) * 100) : 0;
-                  const barColor = pct >= 66 ? C.high : pct >= 33 ? C.mid : C.low;
-                  const rs = RATE_STYLE[rateClass(s.success_rate)];
-                  const rows = [];
-                  rows.push(
-                    <tr key={s.channel_id} style={{ fontWeight: 600, background: 'var(--muted)', borderBottom: `1px solid ${C.border}` }}>
-                      <td style={{ padding: '11px 18px', fontSize: 13, verticalAlign: 'middle' }}>{channelName(s.channel_id)}</td>
-                      <td style={{ padding: '11px 18px', fontSize: 13, verticalAlign: 'middle', minWidth: 140 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <div style={{ flex: 1, height: 6, background: C.barTrack, borderRadius: 3, overflow: 'hidden' }}>
-                            <div style={{ height: '100%', borderRadius: 3, width: `${pct}%`, background: barColor }} />
-                          </div>
-                          <span style={{ fontSize: 12, color: C.textSecondary, minWidth: 34, textAlign: 'right' }}>{pct}%</span>
-                        </div>
-                      </td>
-                      <td style={{ padding: '11px 18px', fontSize: 13, textAlign: 'right', verticalAlign: 'middle' }}>{s.requests.toLocaleString()}</td>
-                      <td style={{ padding: '11px 18px', fontSize: 13, textAlign: 'right', verticalAlign: 'middle' }}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12.5, fontWeight: 500, padding: '3px 9px', borderRadius: 6, color: rs.color, background: rs.bg }}>
-                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: rs.color }} />
-                          {s.success_rate}%
-                        </span>
-                      </td>
-                      <td style={{ padding: '11px 18px', fontSize: 13, textAlign: 'right', verticalAlign: 'middle' }}>{s.avg_latency}ms</td>
-                      <td style={{ padding: '11px 18px', fontSize: 13, textAlign: 'right', verticalAlign: 'middle' }}>{s.p95_latency}ms</td>
-                    </tr>
-                  );
-                  s.endpoints.forEach((ep) => {
-                    const epct = s.requests > 0 ? Math.round((ep.requests / s.requests) * 100) : 0;
-                    const ers = RATE_STYLE[rateClass(ep.success_rate)];
-                    const label = ep.url
-                      ? `${ep.url} (${t('routingFlow.endpointLabel')} ${s.endpoints.indexOf(ep) + 1})`
-                      : `${t('routingFlow.endpointLabel')} ${s.endpoints.indexOf(ep) + 1}`;
-                    rows.push(
-                      <tr key={`${s.channel_id}-${ep.endpoint_id ?? 'ep'}-${s.endpoints.indexOf(ep)}`} style={{ borderBottom: `1px solid ${C.border}` }}>
-                        <td style={{ padding: '11px 18px', paddingLeft: 34, fontSize: 13, color: C.textSecondary, fontWeight: 400, verticalAlign: 'middle' }}>{label}</td>
-                        <td style={{ padding: '11px 18px', fontSize: 13, verticalAlign: 'middle', minWidth: 140 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div style={{ flex: 1, height: 6, background: C.barTrack, borderRadius: 3, overflow: 'hidden' }}>
-                              <div style={{ height: '100%', borderRadius: 3, width: `${epct}%`, background: C.mid }} />
-                            </div>
-                            <span style={{ fontSize: 12, color: C.textSecondary, minWidth: 34, textAlign: 'right' }}>{epct}%</span>
-                          </div>
-                        </td>
-                        <td style={{ padding: '11px 18px', fontSize: 13, textAlign: 'right', verticalAlign: 'middle' }}>{ep.requests.toLocaleString()}</td>
-                        <td style={{ padding: '11px 18px', fontSize: 13, textAlign: 'right', verticalAlign: 'middle' }}>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12.5, fontWeight: 500, padding: '3px 9px', borderRadius: 6, color: ers.color, background: ers.bg }}>
-                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: ers.color }} />
-                            {ep.success_rate}%
-                          </span>
-                        </td>
-                        <td style={{ padding: '11px 18px', fontSize: 13, textAlign: 'right', verticalAlign: 'middle' }}>{ep.avg_latency}ms</td>
-                        <td style={{ padding: '11px 18px', fontSize: 13, textAlign: 'right', verticalAlign: 'middle' }}>{ep.p95_latency}ms</td>
-                      </tr>
-                    );
-                  });
-                  return rows;
-                }).flat()}
-                {summaryForTable.length === 0 && (
-                  <tr><td colSpan={6} style={{ padding: 30, textAlign: 'center', fontSize: 13, color: C.textMuted }}>{t('routingFlow.tableEmpty')}</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm"><div className="border-b border-border px-4 py-4"><h2 className="font-semibold">渠道与端点明细</h2><p className="mt-1 text-xs text-muted-foreground">渠道父行使用渠道级聚合；点击展开查看真实端点归属。未识别端点不会被分摊。</p></div><div className="overflow-x-auto"><table className="w-full min-w-[820px] border-collapse text-sm"><caption className="sr-only">历史负载渠道与端点统计</caption><thead><tr className="border-b border-border bg-muted/20 text-xs text-muted-foreground"><th className="px-4 py-3 text-left">渠道 / 端点</th><th className="px-4 py-3 text-right">请求占比</th><th className="px-4 py-3 text-right">请求数</th><th className="px-4 py-3 text-right">成功率</th><th className="px-4 py-3 text-right">平均延迟</th><th className="px-4 py-3 text-right">P95 延迟</th></tr></thead><tbody>{rows.map((row) => <SummaryRow key={row.channel_id} row={row} names={channelNames} total={total} />)}</tbody></table></div></section>
         </>
       )}
     </div>
