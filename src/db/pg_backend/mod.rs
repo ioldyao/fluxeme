@@ -929,6 +929,7 @@ mod billing_tests {
         r.completion_price = rust_decimal::Decimal::from(2);
         r.cache_hit_input_tokens = 500_000;
         r.cache_read_price = rust_decimal::Decimal::from(1);
+        r.total_tokens = r.prompt_tokens + r.cache_hit_input_tokens + r.completion_tokens;
         r
     }
 

@@ -265,7 +265,6 @@ const en: Record<string, string> = {
   'usage.prepaid': 'Prepaid',
   'usage.uncachedInput': 'Uncached input',
   'usage.cachedInput': 'Cached input',
-  'usage.billingTokens': 'Billing tokens',
   'usage.channel': 'Channel',
   'usage.apiKey': 'API Key',
   'usage.keyScope': 'Key type',

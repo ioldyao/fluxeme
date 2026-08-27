@@ -22,6 +22,8 @@ pub struct UsageRecord {
     pub model: String,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+    /// Total tokens including uncached input, cached input, and output.
+    #[serde(default)]
     pub total_tokens: u64,
     pub latency_ms: u64,
     pub status_code: u16,

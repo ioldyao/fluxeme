@@ -189,7 +189,7 @@ async fn relay_to_upstream(
                     model,
                     prompt_tokens,
                     completion_tokens,
-                    total_tokens: prompt_tokens + completion_tokens,
+                    total_tokens: prompt_tokens + cache_hit + completion_tokens,
                     cache_hit_input_tokens: cache_hit,
                     cache_write_tokens: cache_write,
                     latency_ms,

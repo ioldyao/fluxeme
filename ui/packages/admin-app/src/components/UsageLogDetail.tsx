@@ -26,7 +26,7 @@ function estimateEvents(record: UsageRecord) {
 
     if (record.success) {
       const startTs = new Date(ts.getTime() + record.latency_ms * 0.3);
-      events.push({ cls: record.stream ? 'streaming' : 'ok', title: record.stream ? 'Streaming Started' : 'Provider Processing', time: formatTime(startTs), detail: record.stream ? `Streaming ${record.completion_tokens} tokens` : `Processing ${record.total_tokens} tokens` });
+      events.push({ cls: record.stream ? 'streaming' : 'ok', title: record.stream ? 'Streaming Started' : 'Provider Processing', time: formatTime(startTs), detail: record.stream ? `Streaming ${record.completion_tokens} tokens` : `Processing ${record.prompt_tokens + record.cache_hit_input_tokens + record.completion_tokens} tokens` });
       const endTs = new Date(ts.getTime() + record.latency_ms);
       events.push({ cls: 'ok', title: record.stream ? 'Completed' : 'Response Received', time: formatTime(endTs), detail: `Status ${record.status_code} · ${record.latency_ms}ms` });
     } else {
@@ -148,7 +148,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                       [t('table.status'), `${record.success ? t('usage.success') : t('usage.failure')}`],
                       ['Request ID', record.request_id],
                       [t('table.latency'), `${record.latency_ms}ms`],
-                      ['计费 Token', record.total_tokens.toLocaleString()],
+                      [t('usage.totalTokens'), (record.prompt_tokens + record.cache_hit_input_tokens + record.completion_tokens).toLocaleString()],
                     ].map((r, i) => (
                       <div key={i} className="flex justify-between gap-3 py-2 border-t border-border/60 first:border-0">
                         <span className="text-xs text-muted-foreground">{r[0]}</span>

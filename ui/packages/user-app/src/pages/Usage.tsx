@@ -233,7 +233,7 @@ export default function Usage() {
                         <th className="text-right py-3 px-4">{t('usage.uncachedInput')}</th>
                         <th className="text-right py-3 px-4">{t('usage.cachedInput')}</th>
                         <th className="text-right py-3 px-4">{t('dash.completion')}</th>
-                        <th className="text-right py-3 px-4">{t('usage.billingTokens')}</th>
+                        <th className="text-right py-3 px-4">{t('usage.totalTokens')}</th>
                         <th className="text-right py-3 px-4">{t('usage.walletDebit')}</th>
                         <th className="text-right py-3 px-4">{t('table.latency')}</th>
                         <th className="text-left py-3 px-4">{t('usage.clientIp')}</th>
@@ -272,7 +272,7 @@ export default function Usage() {
                           <td className="py-3 px-4 text-right">{r.prompt_tokens}</td>
                           <td className="py-3 px-4 text-right text-muted-foreground">{r.cache_hit_input_tokens > 0 ? r.cache_hit_input_tokens : '—'}</td>
                           <td className="py-3 px-4 text-right">{r.completion_tokens}</td>
-                          <td className="py-3 px-4 text-right font-medium">{r.total_tokens}</td>
+                          <td className="py-3 px-4 text-right font-medium">{(r.prompt_tokens + r.cache_hit_input_tokens + r.completion_tokens).toLocaleString()}</td>
                           <td className="py-3 px-4 text-right font-mono text-xs">
                             {(() => {
                               const billing = billingByRequestId.get(r.request_id);

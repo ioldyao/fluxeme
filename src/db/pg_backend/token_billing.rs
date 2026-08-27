@@ -1241,7 +1241,7 @@ impl TokenBillingBackend for PgBackend {
              activity_status, charge_source, priced_cost_amount, settlement_state, settled_amount, outstanding_amount, token_settlement_id)
              SELECT r.request_id, r.user_id, COALESCE(NULLIF(r.user_name, ''), u.name), '', r.model,
                     COALESCE(r.actual_prompt_tokens, 0), COALESCE(r.actual_completion_tokens, 0),
-                    COALESCE(r.actual_prompt_tokens, 0) + COALESCE(r.actual_completion_tokens, 0),
+                    COALESCE(r.actual_prompt_tokens, 0) + COALESCE($1, 0) + COALESCE(r.actual_completion_tokens, 0),
                     COALESCE($1, 0), COALESCE(r.actual_cache_write_tokens, 0), r.prompt_price,
                     r.completion_price, r.cache_read_price, r.cache_write_price,
                     COALESCE(r.actual_wallet_amount, 0), $2, $3, COALESCE(r.created_at, $4),

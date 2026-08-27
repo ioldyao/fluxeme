@@ -417,7 +417,7 @@ impl<S> UsageTrackingStream<S> {
                 model: self.model.clone(),
                 prompt_tokens: p_tokens,
                 completion_tokens: c_tokens,
-                total_tokens: p_tokens + c_tokens,
+                total_tokens: p_tokens + cache_hit + c_tokens,
                 cache_hit_input_tokens: cache_hit,
                 cache_write_tokens: cache_write,
                 latency_ms,

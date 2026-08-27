@@ -136,7 +136,7 @@ export default function Bills() {
                   <div className="text-xl font-bold">{period.request_count.toLocaleString()}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-muted-foreground">计费 Token</div>
+                  <div className="text-xs text-muted-foreground">总 Token</div>
                   <div className="text-xl font-bold">{period.total_tokens.toLocaleString()}</div>
                 </div>
               </div>

@@ -213,7 +213,7 @@ export default function UsageLog() {
                     <th className="text-right py-3 px-4">{t('usage.uncachedInput')}</th>
                     <th className="text-right py-3 px-4">{t('usage.cachedInput')}</th>
                     <th className="text-right py-3 px-4">{t('dash.completion')}</th>
-                    <th className="text-right py-3 px-4">{t('usage.billingTokens')}</th>
+                    <th className="text-right py-3 px-4">{t('usage.totalTokens')}</th>
                     <th className="text-right py-3 px-4">资源包 units</th>
                     <th className="text-right py-3 px-4">钱包实扣</th>
                     <th className="text-right py-3 px-4">{t('table.latency')}</th>
@@ -234,7 +234,7 @@ export default function UsageLog() {
                       <td className="py-3 px-4 text-right">{r.prompt_tokens}</td>
                       <td className="py-3 px-4 text-right text-muted-foreground">{r.cache_hit_input_tokens > 0 ? r.cache_hit_input_tokens : '—'}</td>
                       <td className="py-3 px-4 text-right">{r.completion_tokens}</td>
-                      <td className="py-3 px-4 text-right font-medium">{r.total_tokens}</td>
+                      <td className="py-3 px-4 text-right font-medium">{(r.prompt_tokens + r.cache_hit_input_tokens + r.completion_tokens).toLocaleString()}</td>
                       {(() => {
                         const billing = billingByRequestId.get(r.request_id);
                         const wallet = currency === 'cny' ? '¥' : '$';

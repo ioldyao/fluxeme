@@ -165,7 +165,10 @@ impl From<UsageEventRow> for crate::domain::usage::UsageRecord {
             model: row.model,
             prompt_tokens: row.prompt_tokens,
             completion_tokens: row.completion_tokens,
-            total_tokens: row.total_tokens,
+            total_tokens: row
+                .prompt_tokens
+                .saturating_add(row.cache_hit_input_tokens)
+                .saturating_add(row.completion_tokens),
             latency_ms: row.latency_ms,
             status_code: row.status_code,
             success: row.success != 0,
@@ -206,7 +209,10 @@ impl From<UsageDetailRow> for crate::domain::usage::UsageRecord {
             model: row.model,
             prompt_tokens: row.prompt_tokens,
             completion_tokens: row.completion_tokens,
-            total_tokens: row.total_tokens,
+            total_tokens: row
+                .prompt_tokens
+                .saturating_add(row.cache_hit_input_tokens)
+                .saturating_add(row.completion_tokens),
             latency_ms: row.latency_ms,
             status_code: row.status_code,
             success: row.success != 0,
