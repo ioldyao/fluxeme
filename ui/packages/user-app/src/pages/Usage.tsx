@@ -111,11 +111,11 @@ export default function Usage() {
       />
 
       <Tabs value={chartTab} onValueChange={handleChartTab}>
-        <TabsList className="w-full justify-start border-b bg-transparent p-0">
-          <TabsTrigger value="list">
+        <TabsList className="w-fit justify-start border-b bg-transparent p-0">
+          <TabsTrigger className="flex-none px-3" value="list">
             <List className="size-4 mr-1" />{t('usage.list')}
           </TabsTrigger>
-          <TabsTrigger value="chart">
+          <TabsTrigger className="flex-none px-3" value="chart">
             <BarChart3 className="size-4 mr-1" />{t('usage.chart')}
           </TabsTrigger>
         </TabsList>
