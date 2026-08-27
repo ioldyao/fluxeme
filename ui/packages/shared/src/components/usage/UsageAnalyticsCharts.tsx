@@ -41,7 +41,7 @@ type ChartCardProps = {
 
 function ChartCard({ title, description, children }: ChartCardProps) {
   return (
-    <Card>
+    <Card className="min-w-0">
       <CardHeader>
         <CardTitle className="text-base">{title}</CardTitle>
         {description && <p className="text-sm text-muted-foreground">{description}</p>}
@@ -147,23 +147,24 @@ export function UsageAnalyticsCharts({ data, isLoading, isFetching, isError, onR
 
       {isError && <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{t('usage.chartShowingPrevious')}</p>}
 
-      <ChartCard title={t('usage.chartOutcomes')} description={t('usage.chartOutcomesDescription')}>
-        <ResponsiveContainer width="100%" height={260}>
-          <BarChart data={buckets} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-            <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} />
-            <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} allowDecimals={false} />
-            <Tooltip content={<DashboardChartTooltip />} />
-            <Legend />
-            <Bar dataKey="succeeded" stackId="outcomes" fill={USAGE_CHART_COLORS[1]} name={t('usage.chartSuccessful')} />
-            <Bar dataKey="failed" stackId="outcomes" fill="var(--destructive)" name={t('usage.chartFailed')} radius={[4, 4, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </ChartCard>
+      <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <ChartCard title={t('usage.chartOutcomes')} description={t('usage.chartOutcomesDescription')}>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={buckets} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+              <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} />
+              <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} allowDecimals={false} />
+              <Tooltip content={<DashboardChartTooltip />} />
+              <Legend />
+              <Bar dataKey="succeeded" stackId="outcomes" fill={USAGE_CHART_COLORS[1]} name={t('usage.chartSuccessful')} />
+              <Bar dataKey="failed" stackId="outcomes" fill="var(--destructive)" name={t('usage.chartFailed')} radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
 
-      <ChartCard title={t('usage.chartComposition')} description={t('usage.chartCompositionDescription')}>
-        <ResponsiveContainer width="100%" height={260}>
-          <BarChart data={buckets} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+        <ChartCard title={t('usage.chartComposition')} description={t('usage.chartCompositionDescription')}>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={buckets} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
             <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} />
             <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }} tickFormatter={formatCompactNumber} />
@@ -172,11 +173,11 @@ export function UsageAnalyticsCharts({ data, isLoading, isFetching, isError, onR
             <Bar dataKey="input_tokens" stackId="tokens" fill={USAGE_CHART_COLORS[0]} name={t('usage.chartInputTokens')} />
             <Bar dataKey="cache_read_tokens" stackId="tokens" fill={USAGE_CHART_COLORS[4]} name={t('usage.chartCacheTokens')} />
             <Bar dataKey="output_tokens" stackId="tokens" fill={USAGE_CHART_COLORS[2]} name={t('usage.chartOutputTokens')} radius={[4, 4, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </ChartCard>
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
 
-      <ChartCard title={t('usage.chartRate')} description={t('usage.chartRateDescription')}>
+        <ChartCard title={t('usage.chartRate')} description={t('usage.chartRateDescription')}>
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={buckets} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
@@ -213,8 +214,9 @@ export function UsageAnalyticsCharts({ data, isLoading, isFetching, isError, onR
               </>
             )}
           </BarChart>
-        </ResponsiveContainer>
-      </ChartCard>
+          </ResponsiveContainer>
+        </ChartCard>
+      </div>
 
       <AnalyticsTable data={data} />
     </div>
