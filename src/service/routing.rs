@@ -25,6 +25,39 @@ pub struct RoutingService {
     zone_counter: AtomicU64,
 }
 
+#[derive(Clone, Copy)]
+enum RouteVisibility {
+    Public,
+    Internal,
+}
+
+fn is_published_model(models: &[Model], model_name: &str) -> bool {
+    models
+        .iter()
+        .any(|configured| configured.name == model_name && configured.published)
+}
+
+fn models_for_display(models: &[Model]) -> Vec<serde_json::Value> {
+    let mut seen: HashSet<String> = HashSet::new();
+    models
+        .iter()
+        .filter(|model| model.published && seen.insert(model.name.clone()))
+        .map(|model| {
+            serde_json::json!({
+                "id": model.name,
+                "type": "model",
+                "display_name": model.name,
+                "created_at": "2026-01-01T00:00:00Z",
+                "max_input_tokens": model.context_length.unwrap_or(0),
+                "max_tokens": model.context_length.unwrap_or(0),
+                "capabilities": {},
+                "upstream_id": model.id,
+                "category": model.category,
+            })
+        })
+        .collect()
+}
+
 impl RoutingService {
     pub async fn new(db: Arc<Database>, enc_key: &str) -> Result<Self, String> {
         let svc = Self {
@@ -201,42 +234,59 @@ impl RoutingService {
         Vec::new()
     }
 
-    /// Route a model to a channel ID for the given user.
-    /// Return models in a format suitable for the /v1/models endpoint.
+    /// Return published models in a format suitable for the /v1/models endpoint.
     /// Same-named models are merged into one entry (they share the "id" field).
     pub fn list_display_models(&self) -> Vec<serde_json::Value> {
         let models = self.models.read().unwrap_or_else(|e| e.into_inner());
-        let mut seen: HashSet<String> = HashSet::new();
-        models
-            .iter()
-            .filter(|m| seen.insert(m.name.clone()))
-            .map(|m| {
-                serde_json::json!({
-                    "id": m.name,
-                    "type": "model",
-                    "display_name": m.name,
-                    "created_at": "2026-01-01T00:00:00Z",
-                    "max_input_tokens": m.context_length.unwrap_or(0),
-                    "max_tokens": m.context_length.unwrap_or(0),
-                    "capabilities": {},
-                    "upstream_id": m.id,
-                    "category": m.category,
-                })
-            })
-            .collect()
+        models_for_display(&models)
     }
 
-    /// Returns (channel_id, resolved_model_name, upstream_model_override).
-    /// `team_id` is the active team of the request (None for personal accounts);
-    /// user rules scoped to that team apply.
+    /// Route a public data-plane request. Only published logical models may be used.
+    pub async fn route_public(
+        &self,
+        user_id: &str,
+        model: &str,
+        team_id: Option<&str>,
+    ) -> Result<(String, String, Option<String>), RouteError> {
+        self.route_with_visibility(user_id, model, team_id, RouteVisibility::Public)
+            .await
+    }
+
+    /// Route a trusted internal request, retaining access to all configured models.
+    pub async fn route_internal(
+        &self,
+        user_id: &str,
+        model: &str,
+        team_id: Option<&str>,
+    ) -> Result<(String, String, Option<String>), RouteError> {
+        self.route_with_visibility(user_id, model, team_id, RouteVisibility::Internal)
+            .await
+    }
+
+    /// Backward-compatible public routing entry point.
+    /// New internal callers should use `route_internal` explicitly.
     pub async fn route(
         &self,
         user_id: &str,
         model: &str,
         team_id: Option<&str>,
     ) -> Result<(String, String, Option<String>), RouteError> {
+        self.route_public(user_id, model, team_id).await
+    }
+
+    /// Returns (channel_id, resolved_model_name, upstream_model_override).
+    /// `team_id` is the active team of the request (None for personal accounts);
+    /// user rules scoped to that team apply.
+    async fn route_with_visibility(
+        &self,
+        user_id: &str,
+        model: &str,
+        team_id: Option<&str>,
+        visibility: RouteVisibility,
+    ) -> Result<(String, String, Option<String>), RouteError> {
         let mut model_name = model.to_string();
         let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
+        let models = self.models.read().unwrap_or_else(|e| e.into_inner());
         let rules = self.rules.read().unwrap_or_else(|e| e.into_inner());
 
         // Step 1: User/team-level rules — model name rewrite (self-service)
@@ -264,6 +314,11 @@ impl RoutingService {
             }
             if !rule.target_model.is_empty() && match_pattern(&model_name, &rule.source_model) {
                 model_name = rule.target_model.clone();
+                if matches!(visibility, RouteVisibility::Public)
+                    && !is_published_model(&models, &model_name)
+                {
+                    return Err(RouteError(format!("No route found for model '{}'", model)));
+                }
                 tracing::info!(
                     user_id,
                     original = model,
@@ -304,6 +359,11 @@ impl RoutingService {
 
             for (_priority, rule) in &matched {
                 if !rule.channel_id.is_empty() {
+                    if matches!(visibility, RouteVisibility::Public)
+                        && !is_published_model(&models, &model_name)
+                    {
+                        return Err(RouteError(format!("No route found for model '{}'", model)));
+                    }
                     if let Some(ch) = chs.get(&rule.channel_id) {
                         if ch.enabled {
                             let upstream = if !rule.upstream_model.is_empty() {
@@ -328,6 +388,11 @@ impl RoutingService {
             for (_priority, rule) in &matched {
                 if rule.channel_id.is_empty() && !rule.target_model.is_empty() {
                     model_name = rule.target_model.clone();
+                    if matches!(visibility, RouteVisibility::Public)
+                        && !is_published_model(&models, &model_name)
+                    {
+                        return Err(RouteError(format!("No route found for model '{}'", model)));
+                    }
                     tracing::info!(
                         user_id,
                         original = &model_name,
@@ -339,13 +404,20 @@ impl RoutingService {
             }
         }
 
+        if matches!(visibility, RouteVisibility::Public)
+            && !is_published_model(&models, &model_name)
+        {
+            return Err(RouteError(format!("No route found for model '{}'", model)));
+        }
+
         // Step 3: Model console — exact name match only (no glob matching)
         {
-            let models = self.models.read().unwrap_or_else(|e| e.into_inner());
             let mut candidates: Vec<(i32, String, String)> = Vec::new();
 
             for model_cfg in models.iter() {
-                if model_cfg.name != model_name {
+                if model_cfg.name != model_name
+                    || (matches!(visibility, RouteVisibility::Public) && !model_cfg.published)
+                {
                     continue;
                 }
                 for binding in &model_cfg.channels {
@@ -417,5 +489,62 @@ pub struct RouteError(pub String);
 impl std::fmt::Display for RouteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Route error: {}", self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn model(id: &str, name: &str, published: bool) -> Model {
+        Model {
+            id: id.to_string(),
+            name: name.to_string(),
+            model_pattern: name.to_string(),
+            pricing: Default::default(),
+            channels: Vec::new(),
+            published,
+            context_length: None,
+            category: String::new(),
+        }
+    }
+
+    #[test]
+    fn display_models_exclude_unpublished_models() {
+        let models = vec![
+            model("hidden", "hidden-model", false),
+            model("visible", "visible-model", true),
+        ];
+
+        let displayed = models_for_display(&models);
+        let ids: Vec<&str> = displayed
+            .iter()
+            .filter_map(|entry| entry.get("id").and_then(|id| id.as_str()))
+            .collect();
+
+        assert_eq!(ids, vec!["visible-model"]);
+    }
+
+    #[test]
+    fn published_duplicate_is_not_hidden_by_unpublished_model() {
+        let models = vec![
+            model("hidden", "shared-model", false),
+            model("visible", "shared-model", true),
+        ];
+
+        let displayed = models_for_display(&models);
+
+        assert_eq!(displayed.len(), 1);
+        assert_eq!(displayed[0]["id"], "shared-model");
+        assert_eq!(displayed[0]["upstream_id"], "visible");
+    }
+
+    #[test]
+    fn publication_check_uses_logical_model_name() {
+        let models = vec![model("model-id", "published-model", true)];
+
+        assert!(is_published_model(&models, "published-model"));
+        assert!(!is_published_model(&models, "model-id"));
+        assert!(!is_published_model(&models, "unpublished-model"));
     }
 }

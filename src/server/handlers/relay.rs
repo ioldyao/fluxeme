@@ -42,7 +42,7 @@ async fn relay_to_upstream(
 
     let (channel_id, resolved_model, upstream_model) = state
         .routing
-        .route(&user.user_id, &model, user.team_id.as_deref())
+        .route_public(&user.user_id, &model, user.team_id.as_deref())
         .await?;
     let orig_model = if model != resolved_model {
         model.clone()

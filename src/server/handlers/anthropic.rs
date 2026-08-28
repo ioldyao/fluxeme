@@ -413,7 +413,7 @@ pub async fn messages_count_tokens(
 
     let (channel_id, resolved_model, upstream_model) = state
         .routing
-        .route(&user.user_id, &model, user.team_id.as_deref())
+        .route_public(&user.user_id, &model, user.team_id.as_deref())
         .await?;
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
@@ -547,7 +547,7 @@ pub async fn messages(
 
     let (channel_id, resolved_model, upstream_model) = state
         .routing
-        .route(&user.user_id, &model, user.team_id.as_deref())
+        .route_public(&user.user_id, &model, user.team_id.as_deref())
         .await?;
     let orig_model = if model != resolved_model {
         model.clone()
