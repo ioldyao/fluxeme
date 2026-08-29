@@ -195,48 +195,6 @@ pub(crate) async fn set_probe_interval(
     ))
 }
 
-// ── Backend Management API ─────────────────────────────────────────
-
-pub(crate) async fn get_management_api_setting(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Result<Json<Value>, AdminError> {
-    let session = require_session(&state.admin, &headers).await?;
-    check_perm(&state.authz, &session, "admin:settings").await?;
-    let value = state
-        .db
-        .get_setting("management_api_enabled")
-        .await
-        .map_err(db_err)?;
-    Ok(Json(serde_json::json!({
-        "enabled": value.as_deref() == Some("true")
-    })))
-}
-
-#[derive(Deserialize)]
-pub(crate) struct ManagementApiSettingReq {
-    enabled: bool,
-}
-
-pub(crate) async fn set_management_api_setting(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(req): Json<ManagementApiSettingReq>,
-) -> Result<Json<Value>, AdminError> {
-    let session = require_session(&state.admin, &headers).await?;
-    check_perm(&state.authz, &session, "admin:settings").await?;
-    state
-        .db
-        .set_setting(
-            "management_api_enabled",
-            if req.enabled { "true" } else { "false" },
-        )
-        .await
-        .map_err(db_err)?;
-    notify_config_changed(&state).await;
-    Ok(Json(serde_json::json!({ "enabled": req.enabled })))
-}
-
 // ── Gateway Config ──────────────────────────────────────────────────
 
 pub(crate) async fn get_gateway_config_handler(

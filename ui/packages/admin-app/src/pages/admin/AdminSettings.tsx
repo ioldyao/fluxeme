@@ -4,9 +4,7 @@ import { toast } from 'sonner';
 import { api } from '@fluxeme/shared/src/api/client';
 import {
   fetchAppConfig,
-  fetchManagementApiSetting,
   saveCurrencySettings,
-  saveManagementApiSetting,
 } from '@fluxeme/shared/src/api/settings';
 import { CURRENCY_SYMBOL, useCurrency, type CurrencyCode } from '@fluxeme/shared/src/store/currency';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
@@ -38,9 +36,6 @@ export default function AdminSettings() {
   const [gatewaySaving, setGatewaySaving] = useState(false);
   const [allowPrivateIps, setAllowPrivateIps] = useState(true);
   const [privateIpsLoading, setPrivateIpsLoading] = useState(true);
-  const [managementApiEnabled, setManagementApiEnabled] = useState(false);
-  const [managementApiLoading, setManagementApiLoading] = useState(true);
-  const [managementApiSaving, setManagementApiSaving] = useState(false);
 
   useEffect(() => {
     api<{ interval_secs: number }>('/settings/probe-interval')
@@ -55,10 +50,6 @@ export default function AdminSettings() {
       .then((r) => setAllowPrivateIps(r.enabled))
       .catch(() => {})
       .finally(() => setPrivateIpsLoading(false));
-    fetchManagementApiSetting()
-      .then((r) => setManagementApiEnabled(r.enabled))
-      .catch(() => {})
-      .finally(() => setManagementApiLoading(false));
   }, []);
 
   useEffect(() => {
@@ -134,22 +125,6 @@ export default function AdminSettings() {
       await api('/settings/allow-private-ips', { method: 'PUT', body: { enabled: checked } });
     } catch {
       setAllowPrivateIps(!checked);
-    }
-  };
-
-  const toggleManagementApi = async (checked: boolean) => {
-    const previous = managementApiEnabled;
-    setManagementApiEnabled(checked);
-    setManagementApiSaving(true);
-    try {
-      const result = await saveManagementApiSetting(checked);
-      setManagementApiEnabled(result.enabled);
-      toast.success(t('settings.managementApiSaved'));
-    } catch {
-      setManagementApiEnabled(previous);
-      toast.error(t('settings.saveFailed'));
-    } finally {
-      setManagementApiSaving(false);
     }
   };
 
@@ -229,28 +204,6 @@ export default function AdminSettings() {
               checked={allowPrivateIps}
               onCheckedChange={toggleAllowPrivateIps}
               disabled={privateIpsLoading}
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Backend Management API ───────────────────────────────── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{t('settings.managementApi')}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1 min-w-0">
-              <Label className="text-sm">{t('settings.managementApiLabel')}</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {t('settings.managementApiHint')}
-              </p>
-            </div>
-            <Switch
-              checked={managementApiEnabled}
-              onCheckedChange={toggleManagementApi}
-              disabled={managementApiLoading || managementApiSaving}
             />
           </div>
         </CardContent>

@@ -29,6 +29,7 @@ pub mod billing_groups;
 pub mod channels;
 pub mod dashboard;
 pub mod health;
+pub mod management_keys;
 pub mod me;
 pub mod models;
 pub mod moderation;
@@ -291,6 +292,57 @@ fn is_safe_method(method: &Method) -> bool {
     )
 }
 
+fn is_management_api_path(path: &str) -> bool {
+    path == "/api/dashboard"
+        || path == "/api/dashboard/aggregations"
+        || path.starts_with("/api/admin/")
+        || path == "/api/users"
+        || path.starts_with("/api/users/")
+        || path == "/api/channels"
+        || path.starts_with("/api/channels/")
+        || path.starts_with("/api/endpoints/")
+        || path == "/api/models"
+        || path.starts_with("/api/models/")
+        || path == "/api/rules"
+        || path.starts_with("/api/rules/")
+        || path.starts_with("/api/settings/")
+        || path == "/api/gateway/config"
+        || path == "/api/announcements"
+        || path.starts_with("/api/announcements/")
+        || path.starts_with("/api/moderation/")
+        || path == "/api/probe-results"
+        || path.starts_with("/api/probe-results/")
+        || path.starts_with("/api/health/")
+        || path.starts_with("/api/health-check/")
+        || path == "/api/usage"
+        || path.starts_with("/api/usage/")
+        || path.starts_with("/api/routing/")
+}
+
+async fn reject_management_key_outside_control_plane(
+    request: Request,
+    next: Next,
+) -> Result<Response, AdminError> {
+    let is_management_key = request
+        .headers()
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .is_some_and(|value| value.starts_with("mk-"))
+        || extract_cookie_value(request.headers(), HOST_SESSION_COOKIE_NAME)
+            .is_some_and(|value| value.starts_with("mk-"))
+        || extract_cookie_value(request.headers(), SESSION_COOKIE_NAME)
+            .is_some_and(|value| value.starts_with("mk-"));
+
+    if is_management_key && !is_management_api_path(request.uri().path()) {
+        return Err(AdminError::forbidden(
+            "Management API keys are limited to control-plane endpoints",
+        ));
+    }
+
+    Ok(next.run(request).await)
+}
+
 async fn reject_cross_origin_cookie_requests(
     request: Request,
     next: Next,
@@ -331,6 +383,12 @@ async fn require_session(
     let session = match admin.decode_token(&token) {
         Ok(s) => s,
         Err(_) => {
+            // Dedicated management keys are separate from data-plane API keys.
+            // They authenticate control-plane requests only; each handler still
+            // performs its normal Casbin permission check.
+            if token.starts_with("mk-") {
+                return management_keys::authenticate_management_key(admin, &token).await;
+            }
             // Mode 2: not a gateway session JWT — try it as an external IdP
             // access token (e.g. Keycloak) so the portal can fetch its own
             // data. Admin endpoints stay protected by the later role checks.
@@ -1033,6 +1091,21 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             "/api/channels/{id}/upstream-models",
             axum::routing::get(channels::list_upstream_models),
         )
+        // Dedicated backend management keys. These are separate from ordinary
+        // data-plane API keys and are authenticated with the mk-* credential.
+        .route(
+            "/api/admin/management-keys",
+            axum::routing::get(management_keys::list_management_api_keys)
+                .post(management_keys::create_management_api_key),
+        )
+        .route(
+            "/api/admin/management-keys/{id}",
+            axum::routing::delete(management_keys::delete_management_api_key),
+        )
+        .route(
+            "/api/admin/management-keys/{id}/enabled",
+            axum::routing::put(management_keys::set_management_api_key_enabled),
+        )
         // Settings
         .route(
             "/api/settings/allow-private-ips",
@@ -1047,11 +1120,6 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         .route(
             "/api/settings/probe-interval",
             axum::routing::get(settings::get_probe_interval).put(settings::set_probe_interval),
-        )
-        .route(
-            "/api/settings/management-api",
-            axum::routing::get(settings::get_management_api_setting)
-                .put(settings::set_management_api_setting),
         )
         .route(
             "/api/gateway/config",
@@ -1174,4 +1242,7 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             axum::routing::get(crate::server::ws::ws_handler),
         )
         .route_layer(middleware::from_fn(reject_cross_origin_cookie_requests))
+        .route_layer(middleware::from_fn(
+            reject_management_key_outside_control_plane,
+        ))
 }

@@ -59,6 +59,7 @@ export const adminRoutes: RouteConfig[] = [
   { path: '/skills', Component: lazy(() => import('@/pages/SkillHubAdmin')), guard: 'admin', label: 'nav.skillHubAdmin', icon: Package, nav: true, perm: 'admin:skillhub' },
   { path: '/token-packages', Component: lazy(() => import('@/pages/TokenPackages')), guard: 'admin', label: 'nav.tokenPackages', icon: Package, nav: true, perm: 'admin:bills' },
   { path: '/gateway-settings', Component: lazy(() => import('@/pages/admin/AdminSettings')), guard: 'admin', label: 'nav.adminSettings', icon: Cog, nav: true, perm: 'admin:settings' },
+  { path: '/management-keys', Component: lazy(() => import('@/pages/admin/ManagementKeys')), guard: 'admin', label: 'nav.managementKeys', icon: KeyRound, nav: true, perm: 'admin:management-keys' },
 ];
 
 export const catchAllRoutes: RouteConfig[] = [

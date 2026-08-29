@@ -26,6 +26,7 @@ const DEFAULT_POLICIES: &[(&str, &str)] = &[
     ("admin", "admin:announcements"),
     ("admin", "admin:teams"),
     ("admin", "admin:skillhub"),
+    ("admin", "admin:management-keys"),
 ];
 
 /// Wraps a Casbin enforcer behind an RwLock for thread-safe access.

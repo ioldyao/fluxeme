@@ -160,6 +160,20 @@ impl CoreBackend for PgBackend {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS management_api_keys (
+                id TEXT PRIMARY KEY,
+                key_hash TEXT NOT NULL UNIQUE,
+                key_prefix TEXT NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                enabled BOOLEAN NOT NULL DEFAULT true,
+                created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL,
+                expires_at TEXT,
+                last_used_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_management_api_keys_enabled
+                ON management_api_keys(enabled, expires_at);
             ",
         )
         .execute(&self.pool)
@@ -190,6 +204,7 @@ impl CoreBackend for PgBackend {
         add_col!(
             "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_kind TEXT NOT NULL DEFAULT 'user'"
         );
+        add_col!("DELETE FROM balancer_settings WHERE key = 'management_api_enabled'");
         add_col!("UPDATE api_keys SET key_kind = 'user' WHERE key_kind IS NULL OR key_kind NOT IN ('user', 'platform')");
         add_col!("ALTER TABLE api_keys DROP CONSTRAINT IF EXISTS api_keys_key_kind_check");
         add_col!("ALTER TABLE api_keys ADD CONSTRAINT api_keys_key_kind_check CHECK (key_kind IN ('user', 'platform'))");

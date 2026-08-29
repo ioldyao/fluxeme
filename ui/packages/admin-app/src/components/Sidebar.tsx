@@ -14,7 +14,7 @@ const ADMIN_NAV_GROUPS: NavGroup[] = [
   { label: 'nav.group.monitoring', items: ['nav.flowControl', 'nav.usage'] },
   { label: 'nav.group.modelsChannels', items: ['nav.models', 'nav.modelPricing', 'nav.channels', 'nav.rules'] },
   { label: 'nav.group.billingResources', items: ['nav.bills', 'nav.billingGroups', 'nav.tokenPackages', 'nav.rechargeKeys', 'nav.skillHubAdmin'] },
-  { label: 'nav.group.governance', items: ['nav.users', 'nav.teams', 'nav.moderation', 'nav.announcements', 'nav.adminSettings'] },
+  { label: 'nav.group.governance', items: ['nav.users', 'nav.teams', 'nav.moderation', 'nav.announcements', 'nav.adminSettings', 'nav.managementKeys'] },
 ];
 
 function createNavIndex(routes: NavRoute[]) {

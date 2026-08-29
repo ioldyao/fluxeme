@@ -19,6 +19,7 @@ export type Permission =
   | 'admin:announcements'
   | 'admin:teams'
   | 'admin:skillhub'
+  | 'admin:management-keys'
   | 'team:*'
   | 'team:member:manage'
   | 'team:key:manage'
@@ -49,6 +50,7 @@ export const PERMISSIONS = {
   ANNOUNCEMENTS: 'admin:announcements' as Permission,
   TEAMS: 'admin:teams' as Permission,
   SKILLHUB: 'admin:skillhub' as Permission,
+  MANAGEMENT_KEYS: 'admin:management-keys' as Permission,
   TEAM_ALL: 'team:*' as Permission,
   TEAM_MEMBER_MANAGE: 'team:member:manage' as Permission,
   TEAM_KEY_MANAGE: 'team:key:manage' as Permission,

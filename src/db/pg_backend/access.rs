@@ -455,4 +455,100 @@ impl AccessBackend for PgBackend {
         .await?;
         Ok(row > 0)
     }
+
+    async fn list_management_api_keys(&self) -> Result<Vec<ManagementApiKey>, DbError> {
+        let rows = query(
+            "SELECT id, key_hash, key_prefix, name, enabled, created_by, created_at, expires_at, last_used_at
+             FROM management_api_keys ORDER BY created_at DESC, id DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|row| ManagementApiKey {
+                id: row.get(0),
+                key_hash: row.get(1),
+                key_prefix: row.get(2),
+                name: row.get(3),
+                enabled: row.get(4),
+                created_by: row.get(5),
+                created_at: row.get(6),
+                expires_at: row.get(7),
+                last_used_at: row.get(8),
+            })
+            .collect())
+    }
+
+    async fn create_management_api_key(&self, key: &ManagementApiKey) -> Result<(), DbError> {
+        query(
+            "INSERT INTO management_api_keys
+             (id, key_hash, key_prefix, name, enabled, created_by, created_at, expires_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        )
+        .bind(&key.id)
+        .bind(&key.key_hash)
+        .bind(&key.key_prefix)
+        .bind(&key.name)
+        .bind(key.enabled)
+        .bind(&key.created_by)
+        .bind(&key.created_at)
+        .bind(&key.expires_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn set_management_api_key_enabled(
+        &self,
+        id: &str,
+        enabled: bool,
+    ) -> Result<bool, DbError> {
+        let result = query("UPDATE management_api_keys SET enabled = $1 WHERE id = $2")
+            .bind(enabled)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn delete_management_api_key(&self, id: &str) -> Result<bool, DbError> {
+        let result = query("DELETE FROM management_api_keys WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn lookup_management_api_key(
+        &self,
+        key_hash: &str,
+    ) -> Result<Option<ManagementApiKey>, DbError> {
+        let row = query(
+            "SELECT id, key_hash, key_prefix, name, enabled, created_by, created_at, expires_at, last_used_at
+             FROM management_api_keys WHERE key_hash = $1",
+        )
+        .bind(key_hash)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|row| ManagementApiKey {
+            id: row.get(0),
+            key_hash: row.get(1),
+            key_prefix: row.get(2),
+            name: row.get(3),
+            enabled: row.get(4),
+            created_by: row.get(5),
+            created_at: row.get(6),
+            expires_at: row.get(7),
+            last_used_at: row.get(8),
+        }))
+    }
+
+    async fn touch_management_api_key(&self, id: &str, used_at: &str) -> Result<(), DbError> {
+        query("UPDATE management_api_keys SET last_used_at = $1 WHERE id = $2")
+            .bind(used_at)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }

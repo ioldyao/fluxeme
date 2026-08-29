@@ -58,6 +58,17 @@ export interface ApiKey {
   billing_payment_mode: BillingPaymentMode;
 }
 
+export interface ManagementApiKey {
+  id: string;
+  key_prefix: string;
+  name: string;
+  enabled: boolean;
+  created_by: string;
+  created_at: string;
+  expires_at?: string | null;
+  last_used_at?: string | null;
+}
+
 export type TeamRole = 'owner' | 'admin' | 'member';
 
 export interface Team {

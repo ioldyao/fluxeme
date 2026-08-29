@@ -222,6 +222,19 @@ pub struct RoutingEndpointStat {
     pub p95_latency: f64,
 }
 
+#[derive(Debug, Clone)]
+pub struct ManagementApiKey {
+    pub id: String,
+    pub key_hash: String,
+    pub key_prefix: String,
+    pub name: String,
+    pub enabled: bool,
+    pub created_by: String,
+    pub created_at: String,
+    pub expires_at: Option<String>,
+    pub last_used_at: Option<String>,
+}
+
 pub struct Database {
     pub backend: Box<dyn DbBackend>,
 }
@@ -347,6 +360,33 @@ impl Database {
     }
     pub async fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError> {
         self.backend.all_api_keys().await
+    }
+    pub async fn list_management_api_keys(&self) -> Result<Vec<ManagementApiKey>, DbError> {
+        self.backend.list_management_api_keys().await
+    }
+    pub async fn create_management_api_key(&self, key: &ManagementApiKey) -> Result<(), DbError> {
+        self.backend.create_management_api_key(key).await
+    }
+    pub async fn set_management_api_key_enabled(
+        &self,
+        id: &str,
+        enabled: bool,
+    ) -> Result<bool, DbError> {
+        self.backend
+            .set_management_api_key_enabled(id, enabled)
+            .await
+    }
+    pub async fn delete_management_api_key(&self, id: &str) -> Result<bool, DbError> {
+        self.backend.delete_management_api_key(id).await
+    }
+    pub async fn lookup_management_api_key(
+        &self,
+        key_hash: &str,
+    ) -> Result<Option<ManagementApiKey>, DbError> {
+        self.backend.lookup_management_api_key(key_hash).await
+    }
+    pub async fn touch_management_api_key(&self, id: &str, used_at: &str) -> Result<(), DbError> {
+        self.backend.touch_management_api_key(id, used_at).await
     }
 
     // ── Billing groups

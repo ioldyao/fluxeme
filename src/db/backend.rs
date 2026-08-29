@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use rust_decimal::Decimal;
 
+use crate::db::ManagementApiKey;
 use crate::domain::billing_group::{BillingGroupRow, BillingPaymentMode};
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, Pricing};
@@ -83,6 +84,21 @@ pub trait AccessBackend: Send + Sync {
     async fn update_api_key(&self, key: &ApiKey) -> Result<(), DbError>;
     async fn lookup_key(&self, key: &str) -> Result<Option<(User, ApiKey)>, DbError>;
     async fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError>;
+
+    // ── Dedicated backend management keys ───────────────────────────────
+    async fn list_management_api_keys(&self) -> Result<Vec<ManagementApiKey>, DbError>;
+    async fn create_management_api_key(&self, key: &ManagementApiKey) -> Result<(), DbError>;
+    async fn set_management_api_key_enabled(
+        &self,
+        id: &str,
+        enabled: bool,
+    ) -> Result<bool, DbError>;
+    async fn delete_management_api_key(&self, id: &str) -> Result<bool, DbError>;
+    async fn lookup_management_api_key(
+        &self,
+        key_hash: &str,
+    ) -> Result<Option<ManagementApiKey>, DbError>;
+    async fn touch_management_api_key(&self, id: &str, used_at: &str) -> Result<(), DbError>;
 
     // ── Billing groups ────────────────────────────────────────────────
     async fn list_billing_groups(&self, active_only: bool)

@@ -8,7 +8,7 @@ use sqlx_postgres::{PgPool, PgRow, Postgres};
 
 use crate::config::types::GatewayRuntimeConfig;
 use crate::db::backend::*;
-use crate::db::{AnnouncementRow, DbError, RechargeKeyRow, WalletTransactionRow};
+use crate::db::{AnnouncementRow, DbError, ManagementApiKey, RechargeKeyRow, WalletTransactionRow};
 use crate::domain::billing_group::{BillingGroupRow, BillingPaymentMode};
 use crate::domain::channel::{Channel, Endpoint};
 use crate::domain::model::{Model, ModelChannel, Pricing};
