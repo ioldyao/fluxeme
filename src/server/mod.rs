@@ -156,6 +156,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Liveness/readiness probes for load balancers (no auth, no dependency)
         .route("/healthz", axum::routing::get(health::liveness))
         .route("/readyz", axum::routing::get(health::readiness))
+        // Dedicated external management API. It has its own mk-* only
+        // authentication layer and is intentionally separate from /api.
+        .nest("/management/v1", crate::management::routes(state.clone()))
         // admin API
         .merge(crate::admin::admin_routes())
         // static files — SPA routing

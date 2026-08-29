@@ -276,6 +276,15 @@ fn flow_metrics_bucket_granularity(start: &str, end: &str) -> Result<(&'static s
 }
 
 impl ClickHouseBackend {
+    /// Run a sanitized connectivity check without exposing ClickHouse errors.
+    pub async fn ping(&self) -> bool {
+        self.client
+            .query("SELECT 1")
+            .fetch_all::<u8>()
+            .await
+            .is_ok()
+    }
+
     /// Create a new ClickHouse client. Returns None when the config is empty
     /// (ClickHouse disabled) or connection fails.
     pub async fn new(cfg: &ClickHouseConfig) -> Result<Option<Arc<Self>>, String> {
@@ -670,6 +679,51 @@ impl ClickHouseBackend {
             .fetch_all::<ChUsageRow>()
             .await
             .map_err(|e| format!("CH channel_usage_24h: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.channel_id,
+                    r.model,
+                    r.requests,
+                    r.successes,
+                    r.avg_latency,
+                    r.p95_latency,
+                )
+            })
+            .collect())
+    }
+
+    /// 24h channel usage across all observed models. Observability-only query;
+    /// callers must apply any presentation filtering after the query.
+    pub async fn query_channel_usage_24h_all(
+        &self,
+    ) -> Result<Vec<(String, String, u64, u64, f64, f64)>, String> {
+        #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
+        struct ChUsageRow {
+            channel_id: String,
+            model: String,
+            requests: u64,
+            successes: u64,
+            avg_latency: f64,
+            p95_latency: f64,
+        }
+        let rows = self
+            .client
+            .query(
+                "SELECT channel_id, model, \
+                 count()::UInt64 AS requests, \
+                 countIf(success = 1)::UInt64 AS successes, \
+                 avg(latency_ms)::Float64 AS avg_latency, \
+                 quantileExact(0.95)(latency_ms)::Float64 AS p95_latency \
+                 FROM usage_events \
+                 WHERE timestamp >= now() - INTERVAL 24 HOUR \
+                 GROUP BY channel_id, model \
+                 ORDER BY requests DESC",
+            )
+            .fetch_all::<ChUsageRow>()
+            .await
+            .map_err(|e| format!("CH channel_usage_24h_all: {e}"))?;
         Ok(rows
             .into_iter()
             .map(|r| {

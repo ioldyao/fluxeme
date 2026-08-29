@@ -181,10 +181,10 @@ pub(crate) async fn delete_management_api_key(
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
 
-pub(crate) async fn authenticate_management_key(
+pub(crate) async fn authenticate_management_key_metadata(
     admin: &AdminModule,
     presented: &str,
-) -> Result<SessionInfo, AdminError> {
+) -> Result<(ManagementApiKey, crate::domain::user::User), AdminError> {
     if !presented.starts_with("mk-") {
         return Err(AdminError::unauthorized("Invalid management API key"));
     }
@@ -228,10 +228,5 @@ pub(crate) async fn authenticate_management_key(
     {
         tracing::warn!(key_id = %key.id, %error, "Failed to update management key last-used timestamp");
     }
-    Ok(SessionInfo {
-        user_id: creator.id,
-        user_name: creator.name,
-        role: creator.role,
-        token_version: creator.token_version,
-    })
+    Ok((key, creator))
 }

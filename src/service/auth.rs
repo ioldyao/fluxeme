@@ -93,6 +93,11 @@ impl AuthService {
         let key = self
             .extract_key(headers)
             .ok_or_else(|| AuthError("Missing or invalid API key".into()))?;
+        if key.starts_with("mk-") {
+            return Err(AuthError(
+                "Management API key is not valid for data-plane APIs".into(),
+            ));
+        }
 
         // Check user API keys
         {

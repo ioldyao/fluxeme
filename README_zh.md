@@ -124,6 +124,28 @@ curl http://localhost:8080/v1/chat/completions \
 
 也支持 Anthropic 格式（`POST /v1/messages`）和 OpenAI 兼容 SDK。
 
+### 后台管理 API
+
+后台管理 API 使用后台管理页面创建的独立 `mk-*` 管理 Key，与普通 `sk-*` 数据面 Key 完全分离。普通用户或管理员前端创建的 API Key 永远只能使用已授予的 `model`、`skill`、`mcp` 范围，不能调用本接口。
+
+当前仅提供只读接口：
+
+```text
+GET /management/v1/status
+GET /management/v1/models
+GET /management/v1/channels
+GET /management/v1/routing/health
+```
+
+请求必须使用唯一的标准 Bearer Header：
+
+```bash
+curl http://localhost:8080/management/v1/models \\
+  -H "Authorization: Bearer <management-key>"
+```
+
+不接受 Cookie、`X-API-Key`、OIDC Token、普通 `sk-*` Key 或查询字符串凭据。管理 Key 明文只在创建成功时显示一次；如果泄露，应立即在后台页面禁用或删除。
+
 ---
 
 ## 端口占用

@@ -124,6 +124,28 @@ curl http://localhost:8080/v1/chat/completions \
 
 Also supports Anthropic format (`POST /v1/messages`) and any OpenAI-compatible SDK.
 
+### Backend management API
+
+The backend management API uses a dedicated `mk-*` key created in the admin management-key page. It is completely separate from ordinary `sk-*` data-plane keys. User-created and admin-created data-plane keys remain limited to their `model`, `skill`, and `mcp` scopes and cannot call this API.
+
+The initial API is read-only:
+
+```text
+GET /management/v1/status
+GET /management/v1/models
+GET /management/v1/channels
+GET /management/v1/routing/health
+```
+
+Requests must use one standard Bearer header:
+
+```bash
+curl http://localhost:8080/management/v1/models \\
+  -H "Authorization: Bearer <management-key>"
+```
+
+Cookies, `X-API-Key`, OIDC tokens, ordinary `sk-*` keys, and query-string credentials are rejected. The management key is shown only once after creation; revoke or delete it immediately if exposed.
+
 ---
 
 ## Ports
