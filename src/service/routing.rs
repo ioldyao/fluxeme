@@ -39,6 +39,19 @@ fn is_published_model(models: &[Model], model_name: &str) -> bool {
         .any(|configured| configured.name == model_name && configured.published)
 }
 
+fn channel_is_routable(
+    channels: &HashMap<String, Arc<Channel>>,
+    cache: &HashMap<String, RouteCacheEntry>,
+    channel_id: &str,
+) -> bool {
+    channels.get(channel_id).is_some_and(|channel| {
+        channel.enabled
+            && cache
+                .get(channel_id)
+                .is_some_and(|(_, balancer)| balancer.as_health_aware().has_available_endpoint())
+    })
+}
+
 fn models_for_display(models: &[Model]) -> Vec<serde_json::Value> {
     let mut seen: HashSet<String> = HashSet::new();
     models
@@ -234,7 +247,7 @@ impl RoutingService {
                             (
                                 id,
                                 balancer.breakers()[i].is_enabled(),
-                                balancer.breakers()[i].is_available(),
+                                balancer.breakers()[i].is_available_readonly(),
                             )
                         })
                     })
@@ -319,6 +332,7 @@ impl RoutingService {
     ) -> Result<(String, String, Option<String>), RouteError> {
         let mut model_name = model.to_string();
         let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
+        let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
         let models = self.models.read().unwrap_or_else(|e| e.into_inner());
         let rules = self.rules.read().unwrap_or_else(|e| e.into_inner());
 
@@ -391,30 +405,30 @@ impl RoutingService {
             matched.sort_by_key(|(p, _)| *p);
 
             for (_priority, rule) in &matched {
-                if !rule.channel_id.is_empty() {
-                    if matches!(visibility, RouteVisibility::Public)
-                        && !is_published_model(&models, &model_name)
-                    {
-                        return Err(RouteError(format!("No route found for model '{}'", model)));
-                    }
-                    if let Some(ch) = chs.get(&rule.channel_id) {
-                        if ch.enabled {
-                            let upstream = if !rule.upstream_model.is_empty() {
-                                Some(rule.upstream_model.clone())
-                            } else {
-                                None
-                            };
-                            tracing::info!(
-                                user_id,
-                                model = &model_name,
-                                rule = rule.name,
-                                channel = &rule.channel_id,
-                                "System routing rule matched"
-                            );
-                            return Ok((rule.channel_id.clone(), model_name.clone(), upstream));
-                        }
-                    }
+                if rule.channel_id.is_empty() {
+                    continue;
                 }
+                if matches!(visibility, RouteVisibility::Public)
+                    && !is_published_model(&models, &model_name)
+                {
+                    return Err(RouteError(format!("No route found for model '{}'", model)));
+                }
+                if !channel_is_routable(&chs, &cache, &rule.channel_id) {
+                    continue;
+                }
+                let upstream = if !rule.upstream_model.is_empty() {
+                    Some(rule.upstream_model.clone())
+                } else {
+                    None
+                };
+                tracing::info!(
+                    user_id,
+                    model = &model_name,
+                    rule = rule.name,
+                    channel = &rule.channel_id,
+                    "System routing rule matched"
+                );
+                return Ok((rule.channel_id.clone(), model_name.clone(), upstream));
             }
 
             // System rules with no channel_id: apply target_model rewrite only
@@ -454,19 +468,14 @@ impl RoutingService {
                     continue;
                 }
                 for binding in &model_cfg.channels {
-                    if let Some(ch) = chs.get(&binding.channel_id) {
-                        if ch.enabled {
-                            let upstream = binding
-                                .upstream_model
-                                .clone()
-                                .unwrap_or(model_cfg.name.clone());
-                            candidates.push((
-                                binding.priority,
-                                binding.channel_id.clone(),
-                                upstream,
-                            ));
-                        }
+                    if !channel_is_routable(&chs, &cache, &binding.channel_id) {
+                        continue;
                     }
+                    let upstream = binding
+                        .upstream_model
+                        .clone()
+                        .unwrap_or(model_cfg.name.clone());
+                    candidates.push((binding.priority, binding.channel_id.clone(), upstream));
                 }
             }
 

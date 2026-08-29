@@ -21,6 +21,7 @@ struct BreakerInner {
     status: BreakerStatus,
     failure_count: u32,
     last_failure: Option<Instant>,
+    half_open_in_flight: bool,
 }
 
 #[derive(Debug)]
@@ -38,6 +39,7 @@ impl CircuitBreaker {
                 status: BreakerStatus::Closed,
                 failure_count: 0,
                 last_failure: None,
+                half_open_in_flight: false,
             })),
             threshold,
             cooldown_secs,
@@ -45,24 +47,53 @@ impl CircuitBreaker {
     }
 
     /// Whether this endpoint can receive traffic.
+    ///
+    /// An Open breaker may grant exactly one trial request after its cooldown.
+    /// The claim is made while holding the write lock so concurrent requests
+    /// cannot all pass through the HalfOpen state.
     pub fn is_available(&self) -> bool {
+        let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        if !inner.enabled {
+            return false;
+        }
+        match inner.status {
+            BreakerStatus::Closed => true,
+            BreakerStatus::HalfOpen => {
+                if inner.half_open_in_flight {
+                    false
+                } else {
+                    inner.half_open_in_flight = true;
+                    true
+                }
+            }
+            BreakerStatus::Open => {
+                if inner
+                    .last_failure
+                    .is_some_and(|t| t.elapsed().as_secs() >= self.cooldown_secs)
+                {
+                    inner.status = BreakerStatus::HalfOpen;
+                    inner.failure_count = 0;
+                    inner.half_open_in_flight = true;
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    /// Check availability without claiming a HalfOpen trial.
+    pub fn is_available_readonly(&self) -> bool {
         let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         if !inner.enabled {
             return false;
         }
         match inner.status {
             BreakerStatus::Closed => true,
-            BreakerStatus::HalfOpen => true,
-            BreakerStatus::Open => {
-                if let Some(t) = inner.last_failure {
-                    if t.elapsed().as_secs() >= self.cooldown_secs {
-                        drop(inner);
-                        self.try_half_open();
-                        return true;
-                    }
-                }
-                false
-            }
+            BreakerStatus::HalfOpen => !inner.half_open_in_flight,
+            BreakerStatus::Open => inner
+                .last_failure
+                .is_some_and(|t| t.elapsed().as_secs() >= self.cooldown_secs),
         }
     }
 
@@ -72,6 +103,12 @@ impl CircuitBreaker {
 
     pub fn set_enabled(&self, enabled: bool) {
         let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        if enabled && !inner.enabled {
+            inner.status = BreakerStatus::Closed;
+            inner.failure_count = 0;
+            inner.last_failure = None;
+            inner.half_open_in_flight = false;
+        }
         inner.enabled = enabled;
     }
 
@@ -84,22 +121,16 @@ impl CircuitBreaker {
         let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
         inner.failure_count = 0;
         inner.status = BreakerStatus::Closed;
+        inner.half_open_in_flight = false;
     }
 
     pub fn record_failure(&self) {
         let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
         inner.failure_count += 1;
         inner.last_failure = Some(Instant::now());
-        if inner.failure_count >= self.threshold {
+        inner.half_open_in_flight = false;
+        if inner.status == BreakerStatus::HalfOpen || inner.failure_count >= self.threshold {
             inner.status = BreakerStatus::Open;
-        }
-    }
-
-    fn try_half_open(&self) {
-        let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
-        if inner.status == BreakerStatus::Open {
-            inner.status = BreakerStatus::HalfOpen;
-            inner.failure_count = 0;
         }
     }
 }
@@ -109,7 +140,7 @@ impl CircuitBreaker {
 #[derive(Clone)]
 enum Strategy {
     RoundRobin,
-    WeightedRoundRobin { total: u32 },
+    WeightedRoundRobin,
 }
 
 #[derive(Clone)]
@@ -127,12 +158,15 @@ impl HealthAwareBalancer {
             .map(|ep| Arc::new(CircuitBreaker::new(ep.enabled, 3, 30)))
             .collect();
 
-        let all_equal = endpoints.iter().all(|e| e.weight == endpoints[0].weight);
-        let strategy = if all_equal {
+        let all_equal = endpoints
+            .first()
+            .map(|first| endpoints.iter().all(|e| e.weight == first.weight))
+            .unwrap_or(true);
+        let total = endpoints.iter().map(|e| e.weight).sum::<u32>();
+        let strategy = if all_equal || total == 0 {
             Strategy::RoundRobin
         } else {
-            let total: u32 = endpoints.iter().map(|e| e.weight).sum();
-            Strategy::WeightedRoundRobin { total }
+            Strategy::WeightedRoundRobin
         };
 
         Self {
@@ -153,35 +187,42 @@ impl HealthAwareBalancer {
     }
 
     /// Pick an available endpoint index + the endpoint config.
-    /// Returns `None` only if the group is empty.
+    /// Returns `None` when no endpoint can currently receive traffic.
     pub fn select(&self) -> Option<(usize, &EndpointConfig)> {
         let available: Vec<usize> = (0..self.endpoints.len())
             .filter(|&i| self.breakers[i].is_available())
             .collect();
 
-        let candidates = if available.is_empty() {
-            (0..self.endpoints.len())
-                .filter(|&i| self.breakers[i].is_enabled())
-                .collect::<Vec<_>>()
-        } else {
-            available
-        };
-
-        if candidates.is_empty() {
+        if available.is_empty() {
             return None;
         }
 
-        let idx = self.pick_index(&candidates);
-        Some((candidates[idx], &self.endpoints[candidates[idx]]))
+        let idx = self.pick_index(&available);
+        Some((available[idx], &self.endpoints[available[idx]]))
+    }
+
+    /// Whether this balancer currently has an endpoint available for traffic.
+    /// This deliberately does not advance the load-balancing counter.
+    pub fn has_available_endpoint(&self) -> bool {
+        self.breakers
+            .iter()
+            .any(|breaker| breaker.is_available_readonly())
     }
 
     fn pick_index(&self, candidates: &[usize]) -> usize {
         match &self.strategy {
             Strategy::RoundRobin => self.counter.fetch_add(1, Ordering::Relaxed) % candidates.len(),
-            Strategy::WeightedRoundRobin { total } => {
-                let counter_val = self.counter.fetch_add(1, Ordering::Relaxed);
-                let pos = counter_val % *total as usize;
+            Strategy::WeightedRoundRobin { .. } => {
+                let total: u32 = candidates
+                    .iter()
+                    .map(|&index| self.endpoints[index].weight)
+                    .sum();
+                if total == 0 {
+                    return self.counter.fetch_add(1, Ordering::Relaxed) % candidates.len();
+                }
 
+                let counter_val = self.counter.fetch_add(1, Ordering::Relaxed);
+                let pos = counter_val % total as usize;
                 let mut cumulative = 0u32;
                 for (i, &ci) in candidates.iter().enumerate() {
                     cumulative += self.endpoints[ci].weight;
@@ -240,5 +281,82 @@ impl LoadBalancer {
     /// Expose inner balancer for health/status queries.
     pub fn as_health_aware(&self) -> &HealthAwareBalancer {
         &self.inner
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn endpoint(id: i64, enabled: bool) -> EndpointConfig {
+        EndpointConfig {
+            id: Some(id),
+            url: format!("https://example-{id}.test/v1"),
+            api_key: String::new(),
+            weight: 1,
+            timeout_secs: None,
+            enabled,
+            full_url: false,
+        }
+    }
+
+    #[test]
+    fn open_endpoint_is_excluded_when_healthy_peers_exist() {
+        let endpoints = vec![endpoint(1, true), endpoint(2, true), endpoint(3, true)];
+        let balancer = HealthAwareBalancer::new(&endpoints);
+        for _ in 0..3 {
+            balancer.record_failure(0);
+        }
+
+        for _ in 0..12 {
+            let (idx, _) = balancer
+                .select()
+                .expect("healthy peers should remain selectable");
+            assert_ne!(idx, 0);
+        }
+    }
+
+    #[test]
+    fn all_open_endpoints_are_not_selected_as_fallback() {
+        let endpoints = vec![endpoint(1, true), endpoint(2, true)];
+        let balancer = HealthAwareBalancer::new(&endpoints);
+        for idx in 0..endpoints.len() {
+            for _ in 0..3 {
+                balancer.record_failure(idx);
+            }
+        }
+
+        assert!(balancer.select().is_none());
+        assert!(!balancer.has_available_endpoint());
+    }
+
+    #[test]
+    fn disabled_endpoint_is_never_available() {
+        let endpoints = vec![endpoint(1, false)];
+        let balancer = HealthAwareBalancer::new(&endpoints);
+
+        assert!(balancer.select().is_none());
+        assert!(!balancer.has_available_endpoint());
+    }
+
+    #[test]
+    fn readonly_health_check_does_not_consume_half_open_trial() {
+        let breaker = CircuitBreaker::new(true, 1, 0);
+        breaker.record_failure();
+
+        assert!(breaker.is_available_readonly());
+        assert!(breaker.is_available());
+        assert!(!breaker.is_available());
+    }
+
+    #[test]
+    fn re_enabling_endpoint_resets_breaker_state() {
+        let breaker = CircuitBreaker::new(true, 1, 30);
+        breaker.record_failure();
+        breaker.set_enabled(false);
+        breaker.set_enabled(true);
+
+        assert_eq!(breaker.status(), BreakerStatus::Closed);
+        assert!(breaker.is_available());
     }
 }
