@@ -67,6 +67,18 @@ pub trait AccessBackend: Send + Sync {
     // ── API Keys ─────────────────────────────────────────────────────────
     async fn list_api_keys(&self, user_id: &str) -> Result<Vec<ApiKey>, DbError>;
     async fn create_api_key(&self, key: &ApiKey) -> Result<(), DbError>;
+    async fn create_api_key_with_scopes(
+        &self,
+        key: &ApiKey,
+        scopes: &[String],
+    ) -> Result<(), DbError> {
+        self.create_api_key(key).await?;
+        for scope in scopes {
+            self.add_api_key_scope(&key.key, scope, "*", "invoke")
+                .await?;
+        }
+        Ok(())
+    }
     async fn delete_api_key(&self, key: &str) -> Result<(), DbError>;
     async fn update_api_key(&self, key: &ApiKey) -> Result<(), DbError>;
     async fn lookup_key(&self, key: &str) -> Result<Option<(User, ApiKey)>, DbError>;
@@ -137,6 +149,7 @@ pub trait CatalogBackend: Send + Sync {
     async fn create_rule(&self, r: &RoutingRule) -> Result<(), DbError>;
     async fn update_rule(&self, r: &RoutingRule) -> Result<(), DbError>;
     async fn delete_rule(&self, id: &str) -> Result<(), DbError>;
+    async fn delete_team_rule(&self, team_id: &str, rule_id: &str) -> Result<bool, DbError>;
     /// List user-level routing rules for a specific user.
     async fn list_user_rules(&self, user_id: &str) -> Result<Vec<RoutingRule>, DbError>;
 }

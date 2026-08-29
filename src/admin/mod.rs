@@ -1049,6 +1049,11 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             axum::routing::get(settings::get_probe_interval).put(settings::set_probe_interval),
         )
         .route(
+            "/api/settings/management-api",
+            axum::routing::get(settings::get_management_api_setting)
+                .put(settings::set_management_api_setting),
+        )
+        .route(
             "/api/gateway/config",
             axum::routing::get(settings::get_gateway_config_handler)
                 .put(settings::set_gateway_config_handler),

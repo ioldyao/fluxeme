@@ -85,6 +85,37 @@ impl From<FilterBlocked> for GatewayError {
 
 // ── Helpers ───────────────────────────────────────────────────────
 
+fn authorize_effective_model(
+    user: &crate::domain::user::AuthResult,
+    resolved_model: &str,
+) -> Result<(), GatewayError> {
+    if user.key_kind == "platform" {
+        if !user
+            .scopes
+            .as_ref()
+            .is_some_and(|scopes| scopes.iter().any(|scope| scope == "model"))
+        {
+            return Err(GatewayError::Auth(
+                "API key is not authorized for model access".into(),
+            ));
+        }
+    } else if let Some(ref scopes) = user.scopes {
+        if !scopes.iter().any(|scope| scope == "model") {
+            return Err(GatewayError::Auth(
+                "API key is not authorized for model access".into(),
+            ));
+        }
+    }
+    if let Some(ref allowed) = user.allowed_models {
+        if !allowed.iter().any(|model| model == resolved_model) {
+            return Err(GatewayError::Auth(
+                "Model not allowed for this API key".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn trim_model(body: &mut Value) -> Result<String, GatewayError> {
     let model_val = body["model"].clone();
     let s = model_val

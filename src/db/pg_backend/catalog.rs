@@ -639,6 +639,16 @@ impl CatalogBackend for PgBackend {
         Ok(())
     }
 
+    async fn delete_team_rule(&self, team_id: &str, rule_id: &str) -> Result<bool, DbError> {
+        let result =
+            query("DELETE FROM routing_rules WHERE id = $1 AND scope = 'user' AND team_id = $2")
+                .bind(rule_id)
+                .bind(team_id)
+                .execute(&self.pool)
+                .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     async fn list_user_rules(&self, user_id: &str) -> Result<Vec<RoutingRule>, DbError> {
         let rows = query(
             "SELECT id, name, scope, user_id, source_model, target_model, \

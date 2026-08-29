@@ -1,11 +1,47 @@
 #[cfg(test)]
 mod tests {
     use super::{
-        count_tokens_supported_for_channel, estimate_tokens_responses, parse_responses_sse_usage,
-        responses_input_tokens_supported_for_channel,
+        authorize_effective_model, count_tokens_supported_for_channel, estimate_tokens_responses,
+        parse_responses_sse_usage, responses_input_tokens_supported_for_channel,
     };
     use crate::domain::channel::Channel;
     use serde_json::json;
+
+    fn auth(allowed_models: Option<Vec<String>>, scopes: Option<Vec<String>>) -> crate::domain::user::AuthResult {
+        crate::domain::user::AuthResult {
+            user_id: "user".to_string(),
+            user_name: "user".to_string(),
+            rate_limits: None,
+            allowed_models,
+            scopes,
+            key_kind: "user".to_string(),
+            api_key_name: "test".to_string(),
+            concurrency_limit: 1,
+            team_id: None,
+            team_role: None,
+            billing_group_id: "default".to_string(),
+            billing_payment_mode: crate::domain::billing_group::BillingPaymentMode::Metered,
+        }
+    }
+
+    #[test]
+    fn effective_model_must_be_in_allowlist_after_rewrite() {
+        let user = auth(Some(vec!["model-a".to_string()]), None);
+        assert!(authorize_effective_model(&user, "model-a").is_ok());
+        assert!(authorize_effective_model(&user, "model-b").is_err());
+    }
+
+    #[test]
+    fn model_scope_is_required_when_scopes_are_present() {
+        let user = auth(None, Some(vec!["skill".to_string()]));
+        assert!(authorize_effective_model(&user, "model-a").is_err());
+    }
+
+    #[test]
+    fn legacy_keys_keep_existing_model_access() {
+        let user = auth(None, None);
+        assert!(authorize_effective_model(&user, "model-a").is_ok());
+    }
 
     fn channel(provider: &str, anthropic_compat: bool) -> Channel {
         Channel {

@@ -1,6 +1,26 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+pub const API_KEY_SCOPES: [&str; 3] = ["model", "skill", "mcp"];
+
+pub fn normalize_api_key_scopes(scopes: Option<Vec<String>>) -> Result<Vec<String>, String> {
+    let requested = scopes.unwrap_or_else(|| vec!["model".to_string(), "skill".to_string()]);
+    if requested.is_empty() {
+        return Err("At least one API key scope is required".to_string());
+    }
+
+    let mut normalized = Vec::with_capacity(requested.len());
+    for scope in requested {
+        if !API_KEY_SCOPES.contains(&scope.as_str()) {
+            return Err(format!("Unknown API key scope: {}", scope));
+        }
+        if !normalized.iter().any(|existing| existing == &scope) {
+            normalized.push(scope);
+        }
+    }
+    Ok(normalized)
+}
+
 use crate::domain::billing_group::BillingPaymentMode;
 
 pub const USER_STATUS_ACTIVE: &str = "active";
@@ -52,6 +72,9 @@ pub struct RateLimit {
 pub struct ApiKey {
     pub key: String,
     pub user_id: String,
+    /// `platform` marks a key created by an administrator; it remains data-plane only.
+    #[serde(default = "default_api_key_kind")]
+    pub key_kind: String,
     #[serde(default)]
     pub name: String,
     #[serde(default = "default_enabled")]
@@ -78,6 +101,10 @@ fn default_enabled() -> bool {
     true
 }
 
+fn default_api_key_kind() -> String {
+    "user".to_string()
+}
+
 /// Resolved auth result for request processing.
 #[derive(Debug, Clone)]
 pub struct AuthResult {
@@ -85,6 +112,11 @@ pub struct AuthResult {
     pub user_name: String,
     pub rate_limits: Option<(u64, u64)>,
     pub allowed_models: Option<Vec<String>>,
+    /// Coarse data-plane capabilities: model, skill, or mcp.
+    /// `None` preserves legacy keys, which historically had model access.
+    pub scopes: Option<Vec<String>>,
+    /// `platform` keys are administrator-created data-plane keys only.
+    pub key_kind: String,
     pub api_key_name: String,
     #[allow(dead_code)]
     pub concurrency_limit: u32,

@@ -565,8 +565,11 @@ async fn main() {
                     }
                 };
                 if current != last_version {
+                    if let Err(e) = poll_state.routing.reload().await {
+                        tracing::error!("Routing cache reload failed: {}", e);
+                        continue;
+                    }
                     last_version = current;
-                    let _ = poll_state.routing.reload().await;
                     poll_state.auth.reload().await;
                     poll_state.content_filter.reload().await;
                     poll_state.oidc.refresh(&poll_state.sso.providers()).await;

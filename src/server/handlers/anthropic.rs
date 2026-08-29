@@ -394,15 +394,6 @@ pub async fn messages_count_tokens(
 
     tracing::info!(request_id, user = %user.user_id, model = %model, "Incoming messages count_tokens request");
 
-    if let Some(ref allowed) = user.allowed_models {
-        if !allowed.contains(&model) {
-            return Err(GatewayError::Auth(format!(
-                "Model '{}' not allowed for this API key",
-                model
-            )));
-        }
-    }
-
     if let Some((rpm, tpm)) = user.rate_limits {
         state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
         state
@@ -415,6 +406,7 @@ pub async fn messages_count_tokens(
         .routing
         .route_public(&user.user_id, &model, user.team_id.as_deref())
         .await?;
+    authorize_effective_model(&user, &resolved_model)?;
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
@@ -528,15 +520,6 @@ pub async fn messages(
 
     tracing::info!(request_id, user = %user.user_id, model = %model, "Incoming messages request");
 
-    if let Some(ref allowed) = user.allowed_models {
-        if !allowed.contains(&model) {
-            return Err(GatewayError::Auth(format!(
-                "Model '{}' not allowed for this API key",
-                model
-            )));
-        }
-    }
-
     if let Some((rpm, tpm)) = user.rate_limits {
         state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
         state
@@ -549,6 +532,7 @@ pub async fn messages(
         .routing
         .route_public(&user.user_id, &model, user.team_id.as_deref())
         .await?;
+    authorize_effective_model(&user, &resolved_model)?;
     let orig_model = if model != resolved_model {
         model.clone()
     } else {

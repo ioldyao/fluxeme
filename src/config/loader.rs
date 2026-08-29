@@ -320,6 +320,7 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
             let ak = ApiKey {
                 key: k.key.clone(),
                 user_id: t.id.clone(),
+                key_kind: "user".to_string(),
                 name: k.name.clone(),
                 enabled: k.enabled,
                 expires_at: k.expires_at.clone(),

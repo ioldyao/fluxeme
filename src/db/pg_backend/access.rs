@@ -1,5 +1,6 @@
 use super::*;
 use async_trait::async_trait;
+use std::collections::HashMap;
 
 #[async_trait]
 impl AccessBackend for PgBackend {
@@ -123,7 +124,7 @@ impl AccessBackend for PgBackend {
         // Personal key list only: team-scoped keys (team_id NOT NULL) are
         // managed via the team endpoints (list_team_api_keys).
         let rows = query(
-            "SELECT key, user_id, name, enabled, expires_at, spend_limit, allowed_models, team_id, billing_group_id, billing_payment_mode FROM api_keys WHERE user_id = $1 AND team_id IS NULL ORDER BY key",
+            "SELECT key, user_id, name, enabled, expires_at, spend_limit, allowed_models, team_id, billing_group_id, billing_payment_mode, key_kind FROM api_keys WHERE user_id = $1 AND team_id IS NULL ORDER BY key",
         )
         .bind(user_id)
         .fetch_all(&self.pool)
@@ -135,6 +136,7 @@ impl AccessBackend for PgBackend {
                 ApiKey {
                     key: r.get(0),
                     user_id: r.get(1),
+                    key_kind: r.get(10),
                     name: r.get(2),
                     enabled: r.get(3),
                     expires_at: r.get(4),
@@ -175,7 +177,7 @@ impl AccessBackend for PgBackend {
     async fn create_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
         let allowed = key.allowed_models.as_ref().map(|m| m.join(","));
         query(
-            "INSERT INTO api_keys (key, user_id, name, enabled, expires_at, spend_limit, allowed_models, team_id, billing_group_id, billing_payment_mode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            "INSERT INTO api_keys (key, user_id, name, enabled, expires_at, spend_limit, allowed_models, team_id, billing_group_id, billing_payment_mode, key_kind) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(&key.key)
         .bind(&key.user_id)
@@ -187,8 +189,49 @@ impl AccessBackend for PgBackend {
         .bind(&key.team_id)
         .bind(&key.billing_group_id)
         .bind(key.billing_payment_mode.as_str())
+        .bind(&key.key_kind)
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    async fn create_api_key_with_scopes(
+        &self,
+        key: &ApiKey,
+        scopes: &[String],
+    ) -> Result<(), DbError> {
+        let mut tx = self.pool.begin().await?;
+        let allowed = key.allowed_models.as_ref().map(|m| m.join(","));
+        query(
+            "INSERT INTO api_keys (key, user_id, name, enabled, expires_at, spend_limit, allowed_models, team_id, billing_group_id, billing_payment_mode, key_kind) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+        )
+        .bind(&key.key)
+        .bind(&key.user_id)
+        .bind(&key.name)
+        .bind(key.enabled)
+        .bind(&key.expires_at)
+        .bind(key.spend_limit.map(|v| v.to_f64().unwrap_or(0.0)))
+        .bind(allowed)
+        .bind(&key.team_id)
+        .bind(&key.billing_group_id)
+        .bind(key.billing_payment_mode.as_str())
+        .bind(&key.key_kind)
+        .execute(&mut *tx)
+        .await?;
+        for scope in scopes {
+            query(
+                "INSERT INTO api_key_scopes (id, api_key_id, resource_type, resource_id, action, created_at) VALUES ($1,$2,$3,$4,$5,$6)",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&key.key)
+            .bind(scope)
+            .bind("*")
+            .bind("invoke")
+            .bind(chrono::Utc::now().to_rfc3339())
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -203,7 +246,7 @@ impl AccessBackend for PgBackend {
     async fn update_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
         let allowed = key.allowed_models.as_ref().map(|m| m.join(","));
         query(
-            "UPDATE api_keys SET name = $1, enabled = $2, expires_at = $3, spend_limit = $4, allowed_models = $5, team_id = $6, billing_group_id = $7, billing_payment_mode = $8 WHERE key = $9",
+            "UPDATE api_keys SET name = $1, enabled = $2, expires_at = $3, spend_limit = $4, allowed_models = $5, team_id = $6, billing_group_id = $7, billing_payment_mode = $8, key_kind = $9 WHERE key = $10",
         )
         .bind(&key.name)
         .bind(key.enabled)
@@ -213,6 +256,7 @@ impl AccessBackend for PgBackend {
         .bind(&key.team_id)
         .bind(&key.billing_group_id)
         .bind(key.billing_payment_mode.as_str())
+        .bind(&key.key_kind)
         .bind(&key.key)
         .execute(&self.pool)
         .await?;
@@ -222,7 +266,7 @@ impl AccessBackend for PgBackend {
     async fn lookup_key(&self, key: &str) -> Result<Option<(User, ApiKey)>, DbError> {
         let rows = query(
             "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, u.concurrency_limit, u.currency, u.status, u.suspended_at, \
-             a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models, a.team_id, a.billing_group_id, a.billing_payment_mode \
+             a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models, a.team_id, a.billing_group_id, a.billing_payment_mode, a.key_kind \
              FROM api_keys a JOIN users u ON u.id = a.user_id WHERE a.key = $1",
         )
         .bind(key)
@@ -243,6 +287,7 @@ impl AccessBackend for PgBackend {
                     .filter(|s| !s.is_empty())
                     .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                 team_id: r.get(18),
+                key_kind: r.get(21),
                 scopes: None,
                 billing_group_id: r.get::<Option<String>, _>(19).unwrap_or_default(),
                 billing_payment_mode: r
@@ -284,12 +329,12 @@ impl AccessBackend for PgBackend {
     async fn all_api_keys(&self) -> Result<Vec<(User, ApiKey)>, DbError> {
         let rows = query(
             "SELECT u.id, u.name, u.rpm, u.tpm, u.timezone, u.token_version, u.role, u.concurrency_limit, u.currency, u.status, u.suspended_at, \
-             a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models, a.team_id, a.billing_group_id, a.billing_payment_mode \
+             a.key, a.user_id, a.name, a.enabled, a.expires_at, a.spend_limit, a.allowed_models, a.team_id, a.billing_group_id, a.billing_payment_mode, a.key_kind \
              FROM api_keys a JOIN users u ON u.id = a.user_id ORDER BY a.key",
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows
+        let mut keys: Vec<(User, ApiKey)> = rows
             .iter()
             .map(|r| {
                 let allowed_models_str: Option<String> = r.get(17);
@@ -306,6 +351,7 @@ impl AccessBackend for PgBackend {
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                     team_id: r.get(18),
+                    key_kind: r.get(21),
                     scopes: None,
                     billing_group_id: r.get::<Option<String>, _>(19).unwrap_or_default(),
                     billing_payment_mode: r
@@ -342,7 +388,26 @@ impl AccessBackend for PgBackend {
                 };
                 (user, api_key)
             })
-            .collect())
+            .collect();
+        let scope_rows = query(
+            "SELECT api_key_id, resource_type FROM api_key_scopes \
+             WHERE action='invoke' AND api_key_id = ANY($1)",
+        )
+        .bind(
+            keys.iter()
+                .map(|(_, key)| key.key.clone())
+                .collect::<Vec<String>>(),
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut scope_map: HashMap<String, Vec<String>> = HashMap::new();
+        for row in &scope_rows {
+            scope_map.entry(row.get(0)).or_default().push(row.get(1));
+        }
+        for (_, key) in &mut keys {
+            key.scopes = scope_map.get(&key.key).cloned();
+        }
+        Ok(keys)
     }
 
     // ── API Key Scopes（Platform API Key） ─────────────────────────────

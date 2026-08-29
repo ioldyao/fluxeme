@@ -329,6 +329,13 @@ impl Database {
     pub async fn create_api_key(&self, key: &ApiKey) -> Result<(), DbError> {
         self.backend.create_api_key(key).await
     }
+    pub async fn create_api_key_with_scopes(
+        &self,
+        key: &ApiKey,
+        scopes: &[String],
+    ) -> Result<(), DbError> {
+        self.backend.create_api_key_with_scopes(key, scopes).await
+    }
     pub async fn delete_api_key(&self, key: &str) -> Result<(), DbError> {
         self.backend.delete_api_key(key).await
     }
@@ -477,6 +484,9 @@ impl Database {
     }
     pub async fn delete_rule(&self, id: &str) -> Result<(), DbError> {
         self.backend.delete_rule(id).await
+    }
+    pub async fn delete_team_rule(&self, team_id: &str, rule_id: &str) -> Result<bool, DbError> {
+        self.backend.delete_team_rule(team_id, rule_id).await
     }
     pub async fn list_user_rules(&self, user_id: &str) -> Result<Vec<RoutingRule>, DbError> {
         self.backend.list_user_rules(user_id).await

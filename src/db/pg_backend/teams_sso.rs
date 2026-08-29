@@ -334,7 +334,7 @@ impl TeamsSsoBackend for PgBackend {
 
     async fn list_team_api_keys(&self, team_id: &str) -> Result<Vec<ApiKey>, DbError> {
         let rows = query(
-            "SELECT key, user_id, name, enabled, expires_at, spend_limit, allowed_models, team_id, billing_group_id, billing_payment_mode \
+            "SELECT key, user_id, name, enabled, expires_at, spend_limit, allowed_models, team_id, billing_group_id, billing_payment_mode, key_kind \
              FROM api_keys WHERE team_id = $1 ORDER BY key",
         )
         .bind(team_id)
@@ -357,6 +357,7 @@ impl TeamsSsoBackend for PgBackend {
                         .filter(|s| !s.is_empty())
                         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect()),
                     team_id: r.get(7),
+                    key_kind: r.get(10),
                     scopes: None,
                     billing_group_id: r.get::<Option<String>, _>(8).unwrap_or_default(),
                     billing_payment_mode: r

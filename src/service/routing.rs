@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use crate::balancer::LoadBalancer;
@@ -23,6 +23,8 @@ pub struct RoutingService {
     enc_key: String,
     /// Atomic counter for round-robin channel selection across same-named models.
     zone_counter: AtomicU64,
+    /// Public routing is disabled while a snapshot reload is in progress or failed.
+    public_snapshot_valid: AtomicBool,
 }
 
 #[derive(Clone, Copy)]
@@ -68,28 +70,29 @@ impl RoutingService {
             cache: RwLock::new(HashMap::new()),
             enc_key: enc_key.to_string(),
             zone_counter: AtomicU64::new(0),
+            public_snapshot_valid: AtomicBool::new(false),
         };
         svc.reload().await?;
         Ok(svc)
     }
 
     pub async fn reload(&self) -> Result<(), String> {
-        match self.db.list_channels().await {
-            Ok(chs) => {
-                let map: HashMap<_, _> = chs
-                    .into_iter()
-                    .map(|c| (c.id.clone(), Arc::new(c)))
-                    .collect();
-                *self.channels.write().unwrap_or_else(|e| e.into_inner()) = map;
-            }
-            Err(e) => tracing::error!("Failed to load channels: {}", e),
-        }
-        {
-            let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
-            let mut cache_map = HashMap::new();
-            for (id, ch) in chs.iter() {
-                let endpoints: Vec<EndpointConfig> = ch
-                    .endpoints
+        self.public_snapshot_valid.store(false, Ordering::Release);
+
+        let chs = self
+            .db
+            .list_channels()
+            .await
+            .map_err(|e| format!("Failed to load channels: {}", e))?;
+        let channel_map: HashMap<_, _> = chs
+            .into_iter()
+            .map(|c| (c.id.clone(), Arc::new(c)))
+            .collect();
+
+        let mut cache_map = HashMap::new();
+        for (id, ch) in channel_map.iter() {
+            let endpoints: Vec<EndpointConfig> =
+                ch.endpoints
                     .iter()
                     .map(|ep| {
                         Ok(EndpointConfig {
@@ -109,21 +112,28 @@ impl RoutingService {
                         })
                     })
                     .collect::<Result<Vec<_>, String>>()?;
-                cache_map.insert(
-                    id.clone(),
-                    (ch.provider.clone(), Arc::new(LoadBalancer::new(&endpoints))),
-                );
-            }
-            *self.cache.write().unwrap_or_else(|e| e.into_inner()) = cache_map;
+            cache_map.insert(
+                id.clone(),
+                (ch.provider.clone(), Arc::new(LoadBalancer::new(&endpoints))),
+            );
         }
-        match self.db.list_models().await {
-            Ok(ms) => *self.models.write().unwrap_or_else(|e| e.into_inner()) = ms,
-            Err(e) => tracing::error!("Failed to load models: {}", e),
-        }
-        match self.db.list_rules().await {
-            Ok(rs) => *self.rules.write().unwrap_or_else(|e| e.into_inner()) = rs,
-            Err(e) => tracing::error!("Failed to load routing rules: {}", e),
-        }
+
+        let model_list = self
+            .db
+            .list_models()
+            .await
+            .map_err(|e| format!("Failed to load models: {}", e))?;
+        let rule_list = self
+            .db
+            .list_rules()
+            .await
+            .map_err(|e| format!("Failed to load routing rules: {}", e))?;
+
+        *self.channels.write().unwrap_or_else(|e| e.into_inner()) = channel_map;
+        *self.cache.write().unwrap_or_else(|e| e.into_inner()) = cache_map;
+        *self.models.write().unwrap_or_else(|e| e.into_inner()) = model_list;
+        *self.rules.write().unwrap_or_else(|e| e.into_inner()) = rule_list;
+        self.public_snapshot_valid.store(true, Ordering::Release);
         Ok(())
     }
 
@@ -237,8 +247,28 @@ impl RoutingService {
     /// Return published models in a format suitable for the /v1/models endpoint.
     /// Same-named models are merged into one entry (they share the "id" field).
     pub fn list_display_models(&self) -> Vec<serde_json::Value> {
+        self.list_display_models_for(None)
+    }
+
+    pub fn list_display_models_for(
+        &self,
+        allowed_models: Option<&[String]>,
+    ) -> Vec<serde_json::Value> {
+        if !self.public_snapshot_valid.load(Ordering::Acquire) {
+            return Vec::new();
+        }
         let models = self.models.read().unwrap_or_else(|e| e.into_inner());
-        models_for_display(&models)
+        if !self.public_snapshot_valid.load(Ordering::Acquire) {
+            return Vec::new();
+        }
+        let filtered: Vec<Model> = models
+            .iter()
+            .filter(|model| {
+                allowed_models.is_none_or(|allowed| allowed.iter().any(|name| name == &model.name))
+            })
+            .cloned()
+            .collect();
+        models_for_display(&filtered)
     }
 
     /// Route a public data-plane request. Only published logical models may be used.
@@ -248,6 +278,9 @@ impl RoutingService {
         model: &str,
         team_id: Option<&str>,
     ) -> Result<(String, String, Option<String>), RouteError> {
+        if !self.public_snapshot_valid.load(Ordering::Acquire) {
+            return Err(RouteError("No route found for requested model".into()));
+        }
         self.route_with_visibility(user_id, model, team_id, RouteVisibility::Public)
             .await
     }

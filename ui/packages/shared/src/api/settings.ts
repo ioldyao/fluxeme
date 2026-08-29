@@ -17,6 +17,17 @@ export function saveCurrencySettings(currency: string) {
   });
 }
 
+export function fetchManagementApiSetting() {
+  return api<{ enabled: boolean }>('/settings/management-api');
+}
+
+export function saveManagementApiSetting(enabled: boolean) {
+  return api<{ enabled: boolean }>('/settings/management-api', {
+    method: 'PUT',
+    body: { enabled },
+  });
+}
+
 /** Load global currency settings into the zustand store (no auth needed). */
 export async function loadCurrencySettings() {
   try {

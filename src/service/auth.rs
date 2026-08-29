@@ -49,7 +49,13 @@ impl AuthService {
                 }
                 *self.api_keys.write().unwrap() = map;
             }
-            Err(e) => tracing::error!("Failed to load API keys: {}", e),
+            Err(e) => {
+                tracing::error!(
+                    "Failed to load API keys; rejecting cached credentials: {}",
+                    e
+                );
+                self.api_keys.write().unwrap().clear();
+            }
         }
 
         match self.db.list_users(None).await {
@@ -57,7 +63,10 @@ impl AuthService {
                 let map: HashMap<_, _> = users.into_iter().map(|u| (u.id.clone(), u)).collect();
                 *self.users.write().unwrap() = map;
             }
-            Err(e) => tracing::error!("Failed to load users: {}", e),
+            Err(e) => {
+                tracing::error!("Failed to load users; rejecting cached user state: {}", e);
+                self.users.write().unwrap().clear();
+            }
         }
 
         match self.db.all_team_members().await {
@@ -70,7 +79,13 @@ impl AuthService {
                 }
                 *self.team_memberships.write().unwrap() = map;
             }
-            Err(e) => tracing::error!("Failed to load team memberships: {}", e),
+            Err(e) => {
+                tracing::error!(
+                    "Failed to load team memberships; rejecting cached memberships: {}",
+                    e
+                );
+                self.team_memberships.write().unwrap().clear();
+            }
         }
     }
 
@@ -129,6 +144,8 @@ impl AuthService {
                         .as_ref()
                         .map(|rl| (rl.rpm.unwrap_or(u64::MAX), rl.tpm.unwrap_or(u64::MAX))),
                     allowed_models: api_key.allowed_models.clone(),
+                    scopes: api_key.scopes.clone(),
+                    key_kind: api_key.key_kind.clone(),
                     api_key_name: api_key.name.clone(),
                     concurrency_limit: user.concurrency_limit,
                     team_id,
@@ -156,6 +173,8 @@ impl AuthService {
                                 .as_ref()
                                 .map(|rl| (rl.rpm.unwrap_or(u64::MAX), rl.tpm.unwrap_or(u64::MAX))),
                             allowed_models: None,
+                            scopes: None,
+                            key_kind: "oidc".to_string(),
                             api_key_name: "oidc".to_string(),
                             concurrency_limit: user.concurrency_limit,
                             team_id: None,

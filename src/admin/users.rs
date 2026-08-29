@@ -412,10 +412,13 @@ pub(crate) async fn create_user_key(
         .map_err(db_err)?
         .filter(|group| group.is_active())
         .ok_or_else(|| AdminError::bad_request("Billing group is not active"))?;
+    let scopes = crate::domain::user::normalize_api_key_scopes(req.scopes.clone())
+        .map_err(AdminError::bad_request)?;
     let key_value = format!("sk-{}", uuid::Uuid::new_v4());
     let ak = ApiKey {
         key: key_value.clone(),
         user_id: user_id.clone(),
+        key_kind: "platform".to_string(),
         name: req.name.unwrap_or_default(),
         enabled: req.enabled.unwrap_or(true),
         expires_at: req.expires_at,
@@ -427,21 +430,11 @@ pub(crate) async fn create_user_key(
         billing_payment_mode: billing_group.payment_mode,
     };
 
-    state.db.create_api_key(&ak).await.map_err(db_err)?;
-    // 访问范围：缺省 model+skill；写入 api_key_scopes(resource_id='*')。
-    let scopes = req
-        .scopes
-        .clone()
-        .unwrap_or_else(|| vec!["model".to_string(), "skill".to_string()]);
-    for scope in scopes {
-        if matches!(scope.as_str(), "model" | "skill" | "mcp") {
-            state
-                .db
-                .add_api_key_scope(&ak.key, &scope, "*", "invoke")
-                .await
-                .map_err(db_err)?;
-        }
-    }
+    state
+        .db
+        .create_api_key_with_scopes(&ak, &scopes)
+        .await
+        .map_err(db_err)?;
     state.auth.reload().await;
     notify_config_changed(&state).await;
 
@@ -494,6 +487,7 @@ pub(crate) async fn update_user_key(
     let ak = ApiKey {
         key: key_val.clone(),
         user_id: user_id.clone(),
+        key_kind: existing.key_kind.clone(),
         name: req.name.unwrap_or(existing.name.clone()),
         enabled: req.enabled.unwrap_or(existing.enabled),
         expires_at: req.expires_at.or(existing.expires_at.clone()),

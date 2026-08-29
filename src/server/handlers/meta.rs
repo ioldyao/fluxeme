@@ -88,9 +88,21 @@ pub async fn list_models(
     headers: HeaderMap,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<Value>, GatewayError> {
-    let _user = state.auth.authenticate(&headers)?;
+    let user = state.auth.authenticate(&headers)?;
 
-    let mut models: Vec<Value> = state.routing.list_display_models().into_iter().collect();
+    let mut models: Vec<Value> = if user
+        .scopes
+        .as_ref()
+        .is_some_and(|scopes| !scopes.iter().any(|scope| scope == "model"))
+    {
+        Vec::new()
+    } else {
+        state
+            .routing
+            .list_display_models_for(user.allowed_models.as_deref())
+            .into_iter()
+            .collect()
+    };
 
     let limit: usize = params
         .get("limit")

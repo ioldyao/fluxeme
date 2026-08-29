@@ -27,7 +27,8 @@ impl CoreBackend for PgBackend {
                 user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 name TEXT DEFAULT '',
                 enabled BOOLEAN NOT NULL DEFAULT true,
-                expires_at TEXT
+                expires_at TEXT,
+                key_kind TEXT NOT NULL DEFAULT 'user' CHECK (key_kind IN ('user', 'platform'))
             );
 
             -- Platform API Key scopes: api_key_id 引用 api_keys.key（sk_...）。
@@ -186,6 +187,12 @@ impl CoreBackend for PgBackend {
         add_col!("ALTER TABLE models ADD COLUMN IF NOT EXISTS audio_output_price DOUBLE PRECISION NOT NULL DEFAULT 0.0");
         add_col!("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS spend_limit DOUBLE PRECISION");
         add_col!("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS allowed_models TEXT");
+        add_col!(
+            "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_kind TEXT NOT NULL DEFAULT 'user'"
+        );
+        add_col!("UPDATE api_keys SET key_kind = 'user' WHERE key_kind IS NULL OR key_kind NOT IN ('user', 'platform')");
+        add_col!("ALTER TABLE api_keys DROP CONSTRAINT IF EXISTS api_keys_key_kind_check");
+        add_col!("ALTER TABLE api_keys ADD CONSTRAINT api_keys_key_kind_check CHECK (key_kind IN ('user', 'platform'))");
         add_col!("ALTER TABLE users ADD COLUMN IF NOT EXISTS concurrency_limit BIGINT NOT NULL DEFAULT 2000");
         add_col!("ALTER TABLE users ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'usd'");
         add_col!(

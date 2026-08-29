@@ -436,15 +436,6 @@ pub async fn chat_completions(
 
     tracing::info!(request_id, user = %user.user_id, model = %model, content_length = %content_len, "Incoming request");
 
-    if let Some(ref allowed) = user.allowed_models {
-        if !allowed.contains(&model) {
-            return Err(GatewayError::Auth(format!(
-                "Model '{}' not allowed for this API key",
-                model
-            )));
-        }
-    }
-
     if let Some((rpm, tpm)) = user.rate_limits {
         state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
         state
@@ -457,6 +448,7 @@ pub async fn chat_completions(
         .routing
         .route_public(&user.user_id, &model, user.team_id.as_deref())
         .await?;
+    authorize_effective_model(&user, &resolved_model)?;
     let orig_model = if model != resolved_model {
         model.clone()
     } else {
