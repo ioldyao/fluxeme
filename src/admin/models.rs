@@ -6,10 +6,56 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::domain::model::{Model, Pricing};
+use crate::domain::channel::Channel;
+use crate::domain::model::{MarketplaceFormats, MarketplaceModel, Model, Pricing};
 use crate::server::AppState;
 
 use super::*;
+
+fn marketplace_projection(models: Vec<Model>, channels: Vec<Channel>) -> Vec<MarketplaceModel> {
+    let channel_map = channels
+        .into_iter()
+        .map(|channel| (channel.id.clone(), channel))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut published = models
+        .into_iter()
+        .filter(|model| model.published)
+        .collect::<Vec<_>>();
+    published.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
+
+    let mut grouped = std::collections::BTreeMap::<String, Vec<Model>>::new();
+    for model in published {
+        grouped.entry(model.name.clone()).or_default().push(model);
+    }
+
+    grouped
+        .into_iter()
+        .filter_map(|(name, entries)| {
+            let representative = entries.first()?;
+            let mut formats = MarketplaceFormats::default();
+            for entry in &entries {
+                for binding in &entry.channels {
+                    let Some(channel) = channel_map.get(&binding.channel_id) else {
+                        continue;
+                    };
+                    if channel.provider.eq_ignore_ascii_case("openai") {
+                        formats.openai = true;
+                        formats.anthropic |= channel.anthropic_compat;
+                    } else if channel.provider.eq_ignore_ascii_case("anthropic") {
+                        formats.anthropic = true;
+                    }
+                }
+            }
+            Some(MarketplaceModel {
+                name,
+                pricing: representative.pricing.clone(),
+                context_length: representative.context_length,
+                category: representative.category.clone(),
+                formats,
+            })
+        })
+        .collect()
+}
 
 // ── Model CRUD ────────────────────────────────────────────────────
 
@@ -109,6 +155,16 @@ pub(crate) async fn list_public_models(
     Ok(Json(models))
 }
 
+pub(crate) async fn list_marketplace_models(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<MarketplaceModel>>, AdminError> {
+    require_session(&state.admin, &headers).await?;
+    let models = state.db.list_published_models().await.map_err(db_err)?;
+    let channels = state.db.list_channels().await.map_err(db_err)?;
+    Ok(Json(marketplace_projection(models, channels)))
+}
+
 pub(crate) async fn toggle_publish_model(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -194,6 +250,92 @@ pub(crate) async fn model_health_check(
         "model_id": model_id,
         "channel_results": results,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::model::{ModelChannel, Pricing};
+
+    fn model(id: &str, name: &str, published: bool, channel_id: &str) -> Model {
+        Model {
+            id: id.to_string(),
+            name: name.to_string(),
+            model_pattern: name.to_string(),
+            pricing: Pricing::default(),
+            channels: vec![ModelChannel {
+                model_id: id.to_string(),
+                channel_id: channel_id.to_string(),
+                priority: 0,
+                provider: String::new(),
+                upstream_model: Some("internal-upstream-name".to_string()),
+            }],
+            published,
+            context_length: Some(32_000),
+            category: "chat".to_string(),
+        }
+    }
+
+    fn channel(id: &str, provider: &str, anthropic_compat: bool) -> Channel {
+        Channel {
+            id: id.to_string(),
+            name: id.to_string(),
+            provider: provider.to_string(),
+            priority: 0,
+            enabled: true,
+            anthropic_compat,
+            endpoints: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn marketplace_projection_filters_and_merges_by_display_name() {
+        let models = vec![
+            model("published", "DeepSeek-V4-Flash", true, "openai"),
+            model("unpublished", "DeepSeek-V4-Flash", false, "anthropic"),
+            model("other", "Claude", true, "anthropic"),
+        ];
+        let result = marketplace_projection(
+            models,
+            vec![
+                channel("openai", "openai", false),
+                channel("anthropic", "anthropic", false),
+            ],
+        );
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].name, "Claude");
+        assert_eq!(result[1].name, "DeepSeek-V4-Flash");
+        assert!(result[1].formats.openai);
+        assert!(!result[1].formats.anthropic);
+    }
+
+    #[test]
+    fn marketplace_projection_aggregates_compatibility_without_internal_fields() {
+        let mut configured = model("model", "DeepSeek-V4-Flash", true, "openai");
+        configured.channels.push(ModelChannel {
+            model_id: configured.id.clone(),
+            channel_id: "openai-compat".to_string(),
+            priority: 0,
+            provider: String::new(),
+            upstream_model: Some("another-internal-name".to_string()),
+        });
+        let result = marketplace_projection(
+            vec![configured],
+            vec![
+                channel("openai", "openai", false),
+                channel("openai-compat", "openai", true),
+            ],
+        );
+        let json = serde_json::to_value(&result[0]).unwrap();
+
+        assert!(result[0].formats.openai);
+        assert!(result[0].formats.anthropic);
+        assert!(json.get("id").is_none());
+        assert!(json.get("model_pattern").is_none());
+        assert!(json.get("channels").is_none());
+        assert!(json.get("upstream_model").is_none());
+    }
 }
 
 fn normalize_and_validate_model(model: &mut Model) -> Result<(), AdminError> {

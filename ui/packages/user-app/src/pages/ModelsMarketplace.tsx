@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { usePublicModels } from '@fluxeme/shared/src/api/models';
+import { useMarketplaceModels } from '@fluxeme/shared/src/api/models';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
 import { EmptyState } from '@fluxeme/shared/src/components/EmptyState';
 import { ModelDetailDialog } from '../components/ModelDetailDialog';
@@ -10,7 +10,7 @@ import { Badge } from '@fluxeme/shared/src/components/ui/badge';
 import { Search, Cpu, RefreshCw, Info } from 'lucide-react';
 import { cn } from '@fluxeme/shared/src/lib/utils';
 import { CURRENCY_SYMBOL, usePricingCurrency, useCurrency } from '@fluxeme/shared/src/store/currency';
-import type { Model } from '@fluxeme/shared/src/types';
+import type { MarketplaceModel } from '@fluxeme/shared/src/types';
 
 function inferProvider(pattern: string): string {
   const p = pattern.toLowerCase();
@@ -54,7 +54,7 @@ const ICON_BASE = '/icons';
 
 export default function ModelsMarketplace() {
   const { t } = useTranslation();
-  const { data: models, isLoading, isError, refetch } = usePublicModels();
+  const { data: models, isLoading, isError, refetch } = useMarketplaceModels();
   const [author, setAuthor] = useState<string | null>(null);
   const [serviceProvider, setServiceProvider] = useState<string | null>(null);
   const [modality, setModality] = useState<string | null>(null);
@@ -155,7 +155,7 @@ export default function ModelsMarketplace() {
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {enriched.map((model) => (
                 <ModelCard
-                  key={model.id}
+                  key={model.name}
                   model={model}
                 />
               ))}
@@ -200,13 +200,13 @@ function formatContextLength(len: number | null | undefined): string {
 function ModelCard({
   model,
 }: {
-  model: Model & { _provider: string };
+  model: MarketplaceModel & { _provider: string };
 }) {
   const { t } = useTranslation();
   const [detailOpen, setDetailOpen] = useState(false);
   const { currency } = useCurrency();
   const { effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
-  const sym = CURRENCY_SYMBOL[getEffectiveCurrency(currency, model.id)];
+  const sym = CURRENCY_SYMBOL[getEffectiveCurrency(currency, model.name)];
 
   return (
     <Card className="group flex flex-col transition-colors hover:border-primary/40">

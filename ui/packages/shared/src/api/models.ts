@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
-import type { Model, Pricing, ModelHealthCheckResult } from '../types';
+import type { MarketplaceModel, Model, Pricing, ModelHealthCheckResult } from '../types';
 
 export function useModels() {
   return useQuery({
@@ -13,6 +13,13 @@ export function usePublicModels() {
   return useQuery({
     queryKey: ['models', 'public'],
     queryFn: () => api<Model[]>('/models/public'),
+  });
+}
+
+export function useMarketplaceModels() {
+  return useQuery({
+    queryKey: ['models', 'marketplace'],
+    queryFn: () => api<MarketplaceModel[]>('/models/marketplace'),
   });
 }
 

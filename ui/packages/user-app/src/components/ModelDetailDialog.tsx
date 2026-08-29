@@ -7,13 +7,13 @@ import { Button } from '@fluxeme/shared/src/components/ui/button';
 import { Copy, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { useCurrency, usePricingCurrency, CURRENCY_SYMBOL } from '@fluxeme/shared/src/store/currency';
-import type { Model } from '@fluxeme/shared/src/types';
+import type { MarketplaceModel } from '@fluxeme/shared/src/types';
 
 const GATEWAY_BASE = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080';
 const CATEGORY_ORDER = ['chat', 'reasoning', 'tools', 'web', 'vision', 'rerank', 'embedding'];
 
 interface Props {
-  model: Model | null;
+  model: MarketplaceModel | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   provider?: string;
@@ -36,20 +36,32 @@ const PROVIDER_ICON: Record<string, string> = {
 };
 
 type ApiFormat = 'openai' | 'anthropic';
+type OpenAiEndpoint = 'chat-completions' | 'responses';
 type Lang = 'curl' | 'python' | 'typescript' | 'javascript';
 
-function buildCode(model: Model, format: ApiFormat, lang: Lang): string {
+function buildCode(
+  model: MarketplaceModel,
+  format: ApiFormat,
+  lang: Lang,
+  endpoint: OpenAiEndpoint = 'chat-completions',
+): string {
   const pattern = model.name;
   const keyVar = '$API_KEY';
   const apiKey = keyVar.replace('$', '');
 
   if (format === 'openai') {
-    const url = `${GATEWAY_BASE}/v1/chat/completions`;
-    const body = {
-      model: pattern,
-      messages: [{ role: 'user', content: 'Explain quantum entanglement in one paragraph.' }],
-      temperature: 0.7,
-    };
+    const isResponses = endpoint === 'responses';
+    const url = `${GATEWAY_BASE}/v1/${isResponses ? 'responses' : 'chat/completions'}`;
+    const body = isResponses
+      ? {
+          model: pattern,
+          input: [{ role: 'user', content: 'Explain quantum entanglement in one paragraph.' }],
+        }
+      : {
+          model: pattern,
+          messages: [{ role: 'user', content: 'Explain quantum entanglement in one paragraph.' }],
+          temperature: 0.7,
+        };
     switch (lang) {
       case 'curl':
         return `curl ${url} \\
@@ -57,7 +69,20 @@ function buildCode(model: Model, format: ApiFormat, lang: Lang): string {
   -H "Content-Type: application/json" \\
   -d '${JSON.stringify(body, null, 2).replace(/\n/g, '\n     ')}'`;
       case 'python':
-        return `from openai import OpenAI
+        return isResponses
+          ? `from openai import OpenAI
+
+client = OpenAI(
+    base_url="${GATEWAY_BASE}/v1",
+    api_key="${apiKey}",
+)
+
+resp = client.responses.create(
+    model="${pattern}",
+    input=[{"role": "user", "content": "Explain quantum entanglement in one paragraph."}],
+)
+print(resp.output_text)`
+          : `from openai import OpenAI
 
 client = OpenAI(
     base_url="${GATEWAY_BASE}/v1",
@@ -71,7 +96,20 @@ resp = client.chat.completions.create(
 )
 print(resp.choices[0].message.content)`;
       case 'typescript':
-        return `import OpenAI from "openai";
+        return isResponses
+          ? `import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "${GATEWAY_BASE}/v1",
+  apiKey: "${apiKey}",
+});
+
+const resp = await client.responses.create({
+  model: "${pattern}",
+  input: [{ role: "user", content: "Explain quantum entanglement in one paragraph." }],
+});
+console.log(resp.output_text);`
+          : `import OpenAI from "openai";
 
 const client = new OpenAI({
   baseURL: "${GATEWAY_BASE}/v1",
@@ -94,7 +132,7 @@ console.log(resp.choices[0].message.content);`;
   body: JSON.stringify(${JSON.stringify(body, null, 2)}),
 });
 const data = await resp.json();
-console.log(data.choices[0].message.content);`;
+console.log(${isResponses ? 'data.output_text' : 'data.choices[0].message.content'});`;
     }
   }
 
@@ -188,29 +226,24 @@ function fmtPrice(price: number): string {
 export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props) {
   const { t } = useTranslation();
   const [format, setFormat] = useState<ApiFormat>('openai');
+  const [openAiEndpoint, setOpenAiEndpoint] = useState<OpenAiEndpoint>('chat-completions');
   const [lang, setLang] = useState<Lang>('curl');
   const [copied, setCopied] = useState(false);
 
   const { currency } = useCurrency();
   const { effectiveCurrency: getEffectiveCurrency } = usePricingCurrency();
-  const sym = CURRENCY_SYMBOL[model ? getEffectiveCurrency(currency, model.id) : 'usd'];
-
-  const ANTHROPIC_COMPAT_PROVIDERS = ['anthropic', 'deepseek', 'dashscope', 'zhipu', 'minimax'];
-  const hasAnthropic = model?.channels?.some(c => c.provider && ANTHROPIC_COMPAT_PROVIDERS.includes(c.provider)) ?? false;
-  const hasOpenAi = model?.channels?.some(c => c.provider && c.provider !== 'anthropic') ?? true;
+  const sym = CURRENCY_SYMBOL[model ? getEffectiveCurrency(currency, model.name) : 'usd'];
+  const hasOpenAi = model?.formats.openai ?? false;
+  const hasAnthropic = model?.formats.anthropic ?? false;
 
   useEffect(() => {
-    if (!hasAnthropic && format === 'anthropic') {
-      setFormat('openai');
-    }
-    if (!hasOpenAi && format === 'openai') {
-      setFormat('anthropic');
-    }
-  }, [model?.id, hasAnthropic, hasOpenAi, format]);
+    if (!hasAnthropic && format === 'anthropic') setFormat(hasOpenAi ? 'openai' : 'anthropic');
+    if (!hasOpenAi && format === 'openai') setFormat(hasAnthropic ? 'anthropic' : 'openai');
+  }, [model?.name, hasAnthropic, hasOpenAi, format]);
 
   if (!model) return null;
 
-  const code = buildCode(model, format, lang);
+  const code = buildCode(model, format, lang, openAiEndpoint);
 
   const handleCopy = async () => {
     try {
@@ -285,12 +318,22 @@ export function ModelDetailDialog({ model, open, onOpenChange, provider }: Props
             <h3 className="text-sm font-semibold">API 调用示例</h3>
 
             <div className="flex items-center justify-between gap-3 flex-wrap">
-              <Tabs value={format} onValueChange={(v) => setFormat(v as ApiFormat)}>
-                <TabsList>
-                  {hasOpenAi && <TabsTrigger value="openai">OpenAI</TabsTrigger>}
-                  {hasAnthropic && <TabsTrigger value="anthropic">Anthropic</TabsTrigger>}
-                </TabsList>
-              </Tabs>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Tabs value={format} onValueChange={(v) => setFormat(v as ApiFormat)}>
+                  <TabsList>
+                    {hasOpenAi && <TabsTrigger value="openai">OpenAI</TabsTrigger>}
+                    {hasAnthropic && <TabsTrigger value="anthropic">Anthropic</TabsTrigger>}
+                  </TabsList>
+                </Tabs>
+                {hasOpenAi && format === 'openai' && (
+                  <Tabs value={openAiEndpoint} onValueChange={(v) => setOpenAiEndpoint(v as OpenAiEndpoint)}>
+                    <TabsList>
+                      <TabsTrigger value="chat-completions">Chat Completions</TabsTrigger>
+                      <TabsTrigger value="responses">Responses</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                )}
+              </div>
 
               <Tabs value={lang} onValueChange={(v) => setLang(v as Lang)}>
                 <TabsList>

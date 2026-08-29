@@ -739,6 +739,10 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             axum::routing::get(models::list_public_models),
         )
         .route(
+            "/api/models/marketplace",
+            axum::routing::get(models::list_marketplace_models),
+        )
+        .route(
             "/api/models/{id}/publish",
             axum::routing::post(models::toggle_publish_model),
         )

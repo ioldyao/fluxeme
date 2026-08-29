@@ -1,6 +1,21 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize)]
+pub struct MarketplaceModel {
+    pub name: String,
+    pub pricing: Pricing,
+    pub context_length: Option<i64>,
+    pub category: String,
+    pub formats: MarketplaceFormats,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct MarketplaceFormats {
+    pub openai: bool,
+    pub anthropic: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Model {
     #[serde(default)]

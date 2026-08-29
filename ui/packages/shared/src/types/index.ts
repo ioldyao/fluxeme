@@ -125,6 +125,19 @@ export interface ModelChannel {
   upstream_model?: string | null;
 }
 
+export interface MarketplaceFormats {
+  openai: boolean;
+  anthropic: boolean;
+}
+
+export interface MarketplaceModel {
+  name: string;
+  pricing: Pricing;
+  context_length?: number | null;
+  category?: string;
+  formats: MarketplaceFormats;
+}
+
 export interface Model {
   id: string;
   name: string;
