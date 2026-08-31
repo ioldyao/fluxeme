@@ -44,7 +44,7 @@ async fn relay_to_upstream(
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
-    let mut route = resolve_route(state, &channel_id)?;
+    let mut route = resolve_route_for_model(state, &resolved_model, &channel_id)?;
 
     // Broadcast route-decision event so the admin UI shows
     // the request as "in-flight" before the upstream call completes.
@@ -224,6 +224,7 @@ async fn relay_to_upstream(
                 continue;
             }
             Err(e) if is_retryable_error(&e) => {
+                route.report_failure();
                 if retry_count >= gw_cfg.max_retries {
                     if let Some(reservation) = &reservation_finalizer {
                         reservation.release("relay retries exhausted");

@@ -412,7 +412,7 @@ pub async fn messages_count_tokens(
     }
 
     normalize_messages_body(&mut body);
-    let mut route = resolve_route(&state, &channel_id)?;
+    let mut route = resolve_route_for_model(&state, &resolved_model, &channel_id)?;
 
     state.event_bus.route_decided(RouteDecided {
         event_type: "route_decided".to_string(),
@@ -545,7 +545,7 @@ pub async fn messages(
     // top-level "system" field.  SGLang's /v1/messages rejects role=system
     // in the messages array (only "user"/"assistant" are allowed).
     normalize_messages_body(&mut body);
-    let mut route = resolve_route(&state, &channel_id)?;
+    let mut route = resolve_route_for_model(&state, &resolved_model, &channel_id)?;
 
     // Broadcast route-decision event immediately so the admin UI shows
     // the request as "in-flight" before the upstream call completes.

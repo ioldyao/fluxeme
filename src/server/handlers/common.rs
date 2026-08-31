@@ -319,13 +319,23 @@ struct RouteTarget {
     endpoint_idx: usize,
     adapter: Arc<dyn crate::provider::ProviderAdapter>,
     balancer: Arc<LoadBalancer>,
+    /// Endpoint identities already attempted by this request. A retry must
+    /// never immediately revisit the same binding endpoint.
+    attempted_endpoint_ids: std::collections::HashSet<i64>,
 }
 
 impl RouteTarget {
     /// Try the next available endpoint from the balancer.
     /// Returns `false` if no more endpoints available.
     fn retry_next(&mut self) -> bool {
-        if let Some((idx, ep)) = self.balancer.as_health_aware().select() {
+        if let Some(id) = self.endpoint.id {
+            self.attempted_endpoint_ids.insert(id);
+        }
+        if let Some((idx, ep)) = self
+            .balancer
+            .as_health_aware()
+            .select_healthy_excluding(&self.attempted_endpoint_ids)
+        {
             self.endpoint_idx = idx;
             self.endpoint = ep.clone();
             true
@@ -371,6 +381,60 @@ fn resolve_route(state: &AppState, channel_id: &str) -> Result<RouteTarget, Gate
         endpoint_idx: idx,
         adapter,
         balancer,
+        attempted_endpoint_ids: std::collections::HashSet::new(),
+    })
+}
+
+/// Resolve the endpoint from the model-binding pool. System-rule targets
+/// without a model binding retain a channel-level compatibility fallback.
+fn resolve_route_for_model(
+    state: &AppState,
+    model: &str,
+    channel_id: &str,
+) -> Result<RouteTarget, GatewayError> {
+    if state.routing.has_model_binding(model, channel_id) {
+        let plan = state
+            .routing
+            .route_model_binding_for_channel(model, channel_id, &[])
+            .map_err(GatewayError::from)?;
+        let provider_name = state
+            .routing
+            .get_route(&plan.channel_id)
+            .map(|(provider, _)| provider)
+            .ok_or_else(|| GatewayError::Internal("Channel route unavailable".into()))?;
+        let adapter = state
+            .providers
+            .get(provider_name.as_str())
+            .ok_or_else(|| GatewayError::Internal("Provider not available".into()))?;
+        return Ok(RouteTarget {
+            channel_id: plan.channel_id,
+            endpoint: plan.endpoint,
+            endpoint_idx: plan.endpoint_idx,
+            adapter,
+            balancer: plan.balancer,
+            attempted_endpoint_ids: std::collections::HashSet::new(),
+        });
+    }
+
+    let (provider_name, balancer) = state
+        .routing
+        .get_route(channel_id)
+        .ok_or_else(|| GatewayError::Internal("Channel route unavailable".into()))?;
+    let adapter = state
+        .providers
+        .get(provider_name.as_str())
+        .ok_or_else(|| GatewayError::Internal("Provider not available".into()))?;
+    let (idx, endpoint) = balancer
+        .as_health_aware()
+        .select_healthy()
+        .ok_or_else(|| GatewayError::Route("No available endpoints".into()))?;
+    Ok(RouteTarget {
+        channel_id: channel_id.to_string(),
+        endpoint: endpoint.clone(),
+        endpoint_idx: idx,
+        adapter,
+        balancer,
+        attempted_endpoint_ids: std::collections::HashSet::new(),
     })
 }
 

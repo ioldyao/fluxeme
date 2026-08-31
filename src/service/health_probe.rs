@@ -7,7 +7,9 @@ use uuid::Uuid;
 use crate::balancer::LoadBalancer;
 use crate::config::types::EndpointConfig;
 use crate::db::{Database, ProbeResultRow};
-use crate::provider::{ProviderAdapter, ProviderError, ProviderRegistry};
+use crate::provider::{
+    is_retryable_error, ErrorKind, ProviderAdapter, ProviderError, ProviderRegistry,
+};
 use crate::service::routing::RoutingService;
 
 const MAX_CONCURRENT_ENDPOINT_PROBES: usize = 8;
@@ -131,7 +133,11 @@ impl HealthProbeService {
                 }
             };
 
-            let endpoints = route.1.as_health_aware().endpoints();
+            let probe_balancer = self
+                .routing
+                .get_binding_route(model_id, &binding.channel_id)
+                .unwrap_or_else(|| route.1.clone());
+            let endpoints = probe_balancer.as_health_aware().endpoints();
             let endpoint_jobs: Vec<_> = endpoints
                 .iter()
                 .cloned()
@@ -172,7 +178,7 @@ impl HealthProbeService {
                     provider_name: provider_name.clone(),
                     upstream_name: upstream_name.clone(),
                     adapter: adapter.clone(),
-                    balancer: route.1.clone(),
+                    balancer: probe_balancer.clone(),
                     endpoint,
                     stream,
                 });
@@ -205,6 +211,86 @@ impl HealthProbeService {
             .await
             .map_err(|e| format!("CH probe write failed: {e}"))?;
 
+        Ok(rows)
+    }
+
+    /// Probe only binding endpoints whose breaker is Open and whose cooldown
+    /// has elapsed. A probe claim is separate from business traffic, so a
+    /// recovering endpoint cannot re-enter routing until this request succeeds.
+    pub async fn probe_open_bindings(&self) -> Result<Vec<ProbeResultRow>, String> {
+        let models = self.db.list_models().await.map_err(|e| e.0)?;
+        let mut jobs = Vec::new();
+
+        for model in &models {
+            for binding in &model.channels {
+                let Some(channel) = self.routing.get_channel(&binding.channel_id) else {
+                    continue;
+                };
+                if !channel.enabled {
+                    continue;
+                }
+                let Some(route) = self.routing.get_route(&binding.channel_id) else {
+                    continue;
+                };
+                let Some(balancer) = self
+                    .routing
+                    .get_binding_route(&model.id, &binding.channel_id)
+                else {
+                    continue;
+                };
+                let provider_name = route.0.clone();
+                let Some(adapter) = self.providers.get(&provider_name) else {
+                    continue;
+                };
+                let upstream_name = binding
+                    .upstream_model
+                    .clone()
+                    .unwrap_or_else(|| model.name.clone());
+                for endpoint_order in 0..balancer.as_health_aware().endpoint_count() {
+                    let Some(endpoint) = balancer.as_health_aware().endpoint(endpoint_order) else {
+                        continue;
+                    };
+                    if !endpoint.enabled || endpoint.full_url {
+                        continue;
+                    }
+                    let Some((_, endpoint)) = balancer
+                        .as_health_aware()
+                        .claim_probe_endpoint(endpoint_order)
+                    else {
+                        continue;
+                    };
+                    jobs.push(ProbeJob {
+                        binding_order: jobs.len(),
+                        endpoint_order,
+                        channel_id: binding.channel_id.clone(),
+                        model_id: model.id.clone(),
+                        provider_name: provider_name.clone(),
+                        upstream_name: upstream_name.clone(),
+                        adapter: adapter.clone(),
+                        balancer: balancer.clone(),
+                        endpoint: endpoint.clone(),
+                        stream: false,
+                    });
+                }
+            }
+        }
+
+        if jobs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = stream::iter(jobs)
+            .map(|job| async move { Self::run_probe_job(job).await })
+            .buffer_unordered(MAX_CONCURRENT_ENDPOINT_PROBES)
+            .collect::<Vec<_>>()
+            .await;
+        let rows: Vec<ProbeResultRow> = rows.into_iter().map(|result| result.row).collect();
+        let ch = self
+            .ch
+            .as_ref()
+            .ok_or_else(|| "ClickHouse not configured — probe results require CH".to_string())?;
+        ch.insert_probe_results(&rows)
+            .await
+            .map_err(|e| format!("CH probe write failed: {e}"))?;
         Ok(rows)
     }
 
@@ -249,7 +335,15 @@ impl HealthProbeService {
                 )
             }
             Err(error) => {
-                balancer.as_health_aware().record_failure(endpoint_order);
+                if matches!(error.kind(), ErrorKind::ConnectFailed | ErrorKind::Timeout)
+                    || is_retryable_error(&error)
+                {
+                    balancer.as_health_aware().record_failure(endpoint_order);
+                } else {
+                    // Authentication, model, and request errors describe the
+                    // probe input/upstream contract, not endpoint liveness.
+                    balancer.as_health_aware().record_success(endpoint_order);
+                }
                 Self::make_row(
                     &channel_id,
                     &model_id,

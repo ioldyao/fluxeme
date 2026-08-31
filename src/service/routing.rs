@@ -11,14 +11,25 @@ use crate::db::Database;
 use crate::domain::channel::Channel;
 use crate::domain::model::Model;
 use crate::domain::routing::RoutingRule;
+use crate::service::endpoint_pool::BindingStatePool;
 
 /// In-memory route cache, rebuilt from DB on startup and after admin changes.
+#[derive(Clone)]
+pub struct RoutePlan {
+    pub channel_id: String,
+    pub endpoint_idx: usize,
+    pub endpoint: EndpointConfig,
+    pub balancer: Arc<LoadBalancer>,
+}
+
 pub struct RoutingService {
     db: Arc<Database>,
     channels: RwLock<HashMap<String, Arc<Channel>>>,
     models: RwLock<Vec<Model>>,
     rules: RwLock<Vec<RoutingRule>>,
     cache: RouteCache,
+    /// Model-binding endpoint state, kept across configuration reloads.
+    binding_pool: Arc<BindingStatePool>,
     /// Independent persistent encryption key used for endpoint credentials.
     enc_key: String,
     /// Atomic counter for round-robin channel selection across same-named models.
@@ -81,6 +92,7 @@ impl RoutingService {
             models: RwLock::new(Vec::new()),
             rules: RwLock::new(Vec::new()),
             cache: RwLock::new(HashMap::new()),
+            binding_pool: Arc::new(BindingStatePool::new()),
             enc_key: enc_key.to_string(),
             zone_counter: AtomicU64::new(0),
             public_snapshot_valid: AtomicBool::new(false),
@@ -90,8 +102,6 @@ impl RoutingService {
     }
 
     pub async fn reload(&self) -> Result<(), String> {
-        self.public_snapshot_valid.store(false, Ordering::Release);
-
         let chs = self
             .db
             .list_channels()
@@ -142,6 +152,7 @@ impl RoutingService {
             .await
             .map_err(|e| format!("Failed to load routing rules: {}", e))?;
 
+        self.binding_pool.reconcile(&model_list, &cache_map);
         *self.channels.write().unwrap_or_else(|e| e.into_inner()) = channel_map;
         *self.cache.write().unwrap_or_else(|e| e.into_inner()) = cache_map;
         *self.models.write().unwrap_or_else(|e| e.into_inner()) = model_list;
@@ -215,10 +226,86 @@ impl RoutingService {
         self.cache.read().ok()?.get(channel_id).cloned()
     }
 
+    pub fn get_binding_route(&self, model_id: &str, channel_id: &str) -> Option<Arc<LoadBalancer>> {
+        self.binding_pool.get(model_id, channel_id)
+    }
+
+    pub fn models_snapshot(&self) -> Vec<Model> {
+        self.models
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    pub fn has_model_binding(&self, model: &str, channel_id: &str) -> bool {
+        self.models
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|configured| {
+                configured.name == model
+                    && configured
+                        .channels
+                        .iter()
+                        .any(|binding| binding.channel_id == channel_id)
+            })
+    }
+
+    /// Select a healthy endpoint for the channel already chosen by the model
+    /// routing rules. Open endpoints are not promoted by business traffic.
+    pub fn route_model_binding_for_channel(
+        &self,
+        model: &str,
+        channel_id: &str,
+        attempted: &[(String, i64)],
+    ) -> Result<RoutePlan, RouteError> {
+        let models = self.models.read().unwrap_or_else(|e| e.into_inner());
+        let channel_enabled = self
+            .channels
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(channel_id)
+            .is_some_and(|channel| channel.enabled);
+        let (model_cfg, balancer) = models
+            .iter()
+            .filter(|configured| {
+                configured.name == model
+                    && configured.published
+                    && channel_enabled
+                    && configured
+                        .channels
+                        .iter()
+                        .any(|binding| binding.channel_id == channel_id)
+            })
+            .find_map(|configured| {
+                self.binding_pool
+                    .get(&configured.id, channel_id)
+                    .filter(|balancer| balancer.as_health_aware().has_healthy_endpoint())
+                    .map(|balancer| (configured, balancer))
+            })
+            .ok_or_else(|| RouteError(format!("No route found for model '{}'", model)))?;
+        let excluded: HashSet<i64> = attempted
+            .iter()
+            .filter(|(channel, _)| channel == channel_id)
+            .map(|(_, endpoint)| *endpoint)
+            .collect();
+        let (endpoint_idx, endpoint) = balancer
+            .as_health_aware()
+            .select_healthy_excluding(&excluded)
+            .ok_or_else(|| RouteError("No available endpoints".into()))?;
+        Ok(RoutePlan {
+            channel_id: channel_id.to_string(),
+            endpoint_idx,
+            endpoint: endpoint.clone(),
+            balancer,
+        })
+    }
+
     /// Find an endpoint by DB id and update its enabled state in the circuit breaker.
     pub fn set_endpoint_enabled(&self, endpoint_id: i64, enabled: bool) {
         let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
         let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
+        self.binding_pool.set_endpoint_enabled(endpoint_id, enabled);
         for (_, ch) in chs.iter() {
             for (i, ep) in ch.endpoints.iter().enumerate() {
                 if ep.id == Some(endpoint_id) {
@@ -413,7 +500,24 @@ impl RoutingService {
                 {
                     return Err(RouteError(format!("No route found for model '{}'", model)));
                 }
-                if !channel_is_routable(&chs, &cache, &rule.channel_id) {
+                let rule_routable = if matches!(visibility, RouteVisibility::Public) {
+                    models.iter().any(|model_cfg| {
+                        model_cfg.name == model_name
+                            && model_cfg.published
+                            && model_cfg.channels.iter().any(|binding| {
+                                binding.channel_id == rule.channel_id
+                                    && chs
+                                        .get(&rule.channel_id)
+                                        .is_some_and(|channel| channel.enabled)
+                                    && self
+                                        .binding_pool
+                                        .has_healthy(&model_cfg.id, &rule.channel_id)
+                            })
+                    })
+                } else {
+                    channel_is_routable(&chs, &cache, &rule.channel_id)
+                };
+                if !rule_routable {
                     continue;
                 }
                 let upstream = if !rule.upstream_model.is_empty() {
@@ -468,7 +572,16 @@ impl RoutingService {
                     continue;
                 }
                 for binding in &model_cfg.channels {
-                    if !channel_is_routable(&chs, &cache, &binding.channel_id) {
+                    let routable = if matches!(visibility, RouteVisibility::Public) {
+                        chs.get(&binding.channel_id)
+                            .is_some_and(|channel| channel.enabled)
+                            && self
+                                .binding_pool
+                                .has_healthy(&model_cfg.id, &binding.channel_id)
+                    } else {
+                        channel_is_routable(&chs, &cache, &binding.channel_id)
+                    };
+                    if !routable {
                         continue;
                     }
                     let upstream = binding

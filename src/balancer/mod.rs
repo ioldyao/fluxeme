@@ -101,6 +101,11 @@ impl CircuitBreaker {
         self.inner.read().unwrap_or_else(|e| e.into_inner()).enabled
     }
 
+    pub fn is_healthy(&self) -> bool {
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        inner.enabled && inner.status == BreakerStatus::Closed
+    }
+
     pub fn set_enabled(&self, enabled: bool) {
         let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
         if enabled && !inner.enabled {
@@ -131,6 +136,45 @@ impl CircuitBreaker {
         inner.half_open_in_flight = false;
         if inner.status == BreakerStatus::HalfOpen || inner.failure_count >= self.threshold {
             inner.status = BreakerStatus::Open;
+        }
+    }
+
+    /// Claim an explicit recovery probe. Business traffic never calls this;
+    /// unlike `is_available`, it only admits an Open endpoint after cooldown.
+    pub fn claim_probe(&self) -> bool {
+        let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        if !inner.enabled || inner.half_open_in_flight {
+            return false;
+        }
+        match inner.status {
+            BreakerStatus::Open
+                if inner
+                    .last_failure
+                    .is_some_and(|last| last.elapsed().as_secs() >= self.cooldown_secs) =>
+            {
+                inner.status = BreakerStatus::HalfOpen;
+                inner.half_open_in_flight = true;
+                true
+            }
+            BreakerStatus::HalfOpen => {
+                inner.half_open_in_flight = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn preserve_runtime_state_from(&self, old: &Self, enabled: bool) {
+        let old = old.inner.read().unwrap_or_else(|e| e.into_inner());
+        let mut current = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        current.enabled = enabled;
+        if enabled && old.enabled {
+            current.status = old.status;
+            current.failure_count = old.failure_count;
+            current.last_failure = old.last_failure;
+            // Never carry an in-flight claim across a config rebuild. The
+            // next probe/request must explicitly claim a fresh lease.
+            current.half_open_in_flight = false;
         }
     }
 }
@@ -209,6 +253,65 @@ impl HealthAwareBalancer {
             .any(|breaker| breaker.is_available_readonly())
     }
 
+    /// Whether a closed, healthy endpoint is available for business traffic.
+    /// Open breakers are never promoted by this check; recovery is owned by the
+    /// explicit probe lease path.
+    pub fn has_healthy_endpoint(&self) -> bool {
+        self.breakers.iter().any(|breaker| breaker.is_healthy())
+    }
+
+    /// Select only closed endpoints. Unlike `select`, this never claims a
+    /// half-open trial for business traffic.
+    pub fn select_healthy(&self) -> Option<(usize, &EndpointConfig)> {
+        self.select_healthy_excluding(&std::collections::HashSet::new())
+    }
+
+    pub fn select_healthy_excluding(
+        &self,
+        excluded_endpoint_ids: &std::collections::HashSet<i64>,
+    ) -> Option<(usize, &EndpointConfig)> {
+        let available: Vec<usize> = (0..self.endpoints.len())
+            .filter(|&i| {
+                self.breakers[i].is_healthy()
+                    && self.endpoints[i]
+                        .id
+                        .is_none_or(|id| !excluded_endpoint_ids.contains(&id))
+            })
+            .collect();
+        if available.is_empty() {
+            return None;
+        }
+        let idx = self.pick_index(&available);
+        Some((available[idx], &self.endpoints[available[idx]]))
+    }
+
+    pub fn claim_probe_endpoint(&self, idx: usize) -> Option<(usize, &EndpointConfig)> {
+        self.breakers
+            .get(idx)
+            .filter(|breaker| breaker.claim_probe())
+            .and_then(|_| self.endpoints.get(idx).map(|endpoint| (idx, endpoint)))
+    }
+
+    /// Build a new descriptor view while retaining breaker state for endpoints
+    /// with the same database id (or stable URL identity when no id exists).
+    pub fn rebuild_preserving_state(&self, endpoints: &EndpointGroup) -> Self {
+        let rebuilt = Self::new(endpoints);
+        for (new_idx, endpoint) in endpoints.iter().enumerate() {
+            let old_idx = self
+                .endpoints
+                .iter()
+                .position(|old| match (old.id, endpoint.id) {
+                    (Some(old_id), Some(new_id)) => old_id == new_id,
+                    _ => old.url == endpoint.url && old.full_url == endpoint.full_url,
+                });
+            if let Some(old_idx) = old_idx {
+                rebuilt.breakers[new_idx]
+                    .preserve_runtime_state_from(&self.breakers[old_idx], endpoint.enabled);
+            }
+        }
+        rebuilt
+    }
+
     fn pick_index(&self, candidates: &[usize]) -> usize {
         match &self.strategy {
             Strategy::RoundRobin => self.counter.fetch_add(1, Ordering::Relaxed) % candidates.len(),
@@ -270,6 +373,12 @@ impl LoadBalancer {
     pub fn new(endpoints: &EndpointGroup) -> Self {
         Self {
             inner: HealthAwareBalancer::new(endpoints),
+        }
+    }
+
+    pub fn rebuild_preserving_state(&self, endpoints: &EndpointGroup) -> Self {
+        Self {
+            inner: self.inner.rebuild_preserving_state(endpoints),
         }
     }
 

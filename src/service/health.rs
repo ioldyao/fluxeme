@@ -69,7 +69,7 @@ impl HealthService {
 
         let mut ep_results = Vec::new();
         for ep in &ch.endpoints {
-            if ep.full_url {
+            if !ep.enabled || ep.full_url {
                 continue;
             }
             let base = ep.url.trim_end_matches('/').trim_end_matches("/v1");
@@ -160,7 +160,7 @@ impl HealthService {
         let mut seen: std::collections::HashMap<String, Option<i64>> =
             std::collections::HashMap::new();
         for ep in &ch.endpoints {
-            if ep.full_url {
+            if !ep.enabled || ep.full_url {
                 continue;
             }
             let base = ep.url.trim_end_matches('/').trim_end_matches("/v1");

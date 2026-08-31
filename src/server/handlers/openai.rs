@@ -457,7 +457,7 @@ pub async fn chat_completions(
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
-    let mut route = resolve_route(&state, &channel_id)?;
+    let mut route = resolve_route_for_model(&state, &resolved_model, &channel_id)?;
 
     let is_streaming = body
         .get("stream")

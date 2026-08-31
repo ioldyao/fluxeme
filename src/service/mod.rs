@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod endpoint_pool;
 pub mod health;
 pub mod health_probe;
 pub mod moderation;
