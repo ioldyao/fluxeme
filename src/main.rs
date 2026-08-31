@@ -441,6 +441,8 @@ async fn main() {
         providers.clone(),
         routing.clone(),
         Some(ch.clone()),
+        cache.clone(),
+        instance_id.clone(),
     ));
 
     // Automatic model health probes: probe all channel endpoints of every

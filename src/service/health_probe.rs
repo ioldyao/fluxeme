@@ -1,7 +1,8 @@
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use futures::stream::{self, StreamExt};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::balancer::LoadBalancer;
@@ -13,6 +14,7 @@ use crate::provider::{
 use crate::service::routing::RoutingService;
 
 const MAX_CONCURRENT_ENDPOINT_PROBES: usize = 8;
+const PROBE_LEASE_TTL_SECS: u64 = 120;
 
 struct ProbeJob {
     binding_order: usize,
@@ -25,8 +27,10 @@ struct ProbeJob {
     balancer: Arc<LoadBalancer>,
     endpoint: EndpointConfig,
     stream: bool,
-    /// Token for an explicit recovery probe claim, when this is auto recovery.
-    probe_token: Option<u64>,
+    /// Whether this is an automatic recovery probe.
+    automatic: bool,
+    cache: Arc<crate::cache::RedisCache>,
+    instance_id: String,
 }
 
 struct OrderedProbeRow {
@@ -47,6 +51,9 @@ pub struct HealthProbeService {
     /// ClickHouse backend — probe results are observability data and live
     /// in CH. Falls back to PostgreSQL when CH is not configured.
     ch: Option<std::sync::Arc<crate::ch_backend::ClickHouseBackend>>,
+    /// Redis coordinates automatic probes across gateway instances.
+    cache: Arc<crate::cache::RedisCache>,
+    instance_id: String,
 }
 
 impl HealthProbeService {
@@ -55,12 +62,16 @@ impl HealthProbeService {
         providers: Arc<ProviderRegistry>,
         routing: Arc<RoutingService>,
         ch: Option<std::sync::Arc<crate::ch_backend::ClickHouseBackend>>,
+        cache: Arc<crate::cache::RedisCache>,
+        instance_id: impl Into<String>,
     ) -> Self {
         Self {
             db,
             providers,
             routing,
             ch,
+            cache,
+            instance_id: instance_id.into(),
         }
     }
 
@@ -183,7 +194,9 @@ impl HealthProbeService {
                     balancer: probe_balancer.clone(),
                     endpoint,
                     stream,
-                    probe_token: None,
+                    automatic: false,
+                    cache: self.cache.clone(),
+                    instance_id: self.instance_id.clone(),
                 });
             }
         }
@@ -256,12 +269,6 @@ impl HealthProbeService {
                     if !endpoint.enabled || endpoint.full_url {
                         continue;
                     }
-                    let Some((_, endpoint, probe_token)) = balancer
-                        .as_health_aware()
-                        .claim_probe_endpoint(endpoint_order)
-                    else {
-                        continue;
-                    };
                     jobs.push(ProbeJob {
                         binding_order: jobs.len(),
                         endpoint_order,
@@ -273,7 +280,9 @@ impl HealthProbeService {
                         balancer: balancer.clone(),
                         endpoint: endpoint.clone(),
                         stream: false,
-                        probe_token: Some(probe_token),
+                        automatic: true,
+                        cache: self.cache.clone(),
+                        instance_id: self.instance_id.clone(),
                     });
                 }
             }
@@ -319,12 +328,82 @@ impl HealthProbeService {
             balancer,
             endpoint,
             stream,
-            probe_token,
+            automatic,
+            cache,
+            instance_id,
         } = job;
 
         let start = Instant::now();
-        let result =
-            Self::probe_endpoint(&provider_name, &adapter, &endpoint, &upstream_name, stream).await;
+        let (lease_key, lease_owner, probe_token) = if automatic {
+            let lease_key = format!(
+                "routing:probe-lease:{}:{}:{}",
+                model_id,
+                channel_id,
+                endpoint.id.map_or_else(
+                    || {
+                        let digest = Sha256::digest(endpoint.url.as_bytes());
+                        hex::encode(digest)
+                    },
+                    |id| id.to_string(),
+                )
+            );
+            let lease_owner = format!("{}:{}", instance_id, Uuid::new_v4());
+            let acquired = cache
+                .probe_try_acquire(&lease_key, &lease_owner, PROBE_LEASE_TTL_SECS)
+                .await
+                .unwrap_or(false);
+            if !acquired {
+                return OrderedProbeRow {
+                    binding_order,
+                    endpoint_order,
+                    row: Self::make_row(
+                        &channel_id,
+                        &model_id,
+                        false,
+                        0,
+                        Some("Probe lease unavailable"),
+                        Some(endpoint.url.clone()),
+                    ),
+                };
+            }
+            let Some((_, _, token)) = balancer
+                .as_health_aware()
+                .claim_probe_endpoint(endpoint_order)
+            else {
+                let _ = cache.probe_release(&lease_key, &lease_owner).await;
+                return OrderedProbeRow {
+                    binding_order,
+                    endpoint_order,
+                    row: Self::make_row(
+                        &channel_id,
+                        &model_id,
+                        false,
+                        0,
+                        Some("Probe already claimed"),
+                        Some(endpoint.url.clone()),
+                    ),
+                };
+            };
+            (Some(lease_key), Some(lease_owner), Some(token))
+        } else {
+            (None, None, None)
+        };
+        let result = if automatic {
+            match tokio::time::timeout(
+                Duration::from_secs(PROBE_LEASE_TTL_SECS.saturating_sub(1)),
+                Self::probe_endpoint(&provider_name, &adapter, &endpoint, &upstream_name, stream),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => Err(ProviderError::new(
+                    "Probe lease expired",
+                    ErrorKind::Timeout,
+                )),
+            }
+        } else {
+            Self::probe_endpoint(&provider_name, &adapter, &endpoint, &upstream_name, stream).await
+        };
         let latency_ms = start.elapsed().as_millis() as u64;
 
         let row = match result {
@@ -335,6 +414,9 @@ impl HealthProbeService {
                         .probe_success(endpoint_order, token);
                 } else {
                     balancer.as_health_aware().record_success(endpoint_order);
+                }
+                if let (Some(key), Some(owner)) = (lease_key.as_ref(), lease_owner.as_ref()) {
+                    let _ = cache.probe_release(key, owner).await;
                 }
                 Self::make_row(
                     &channel_id,
@@ -362,6 +444,9 @@ impl HealthProbeService {
                     balancer
                         .as_health_aware()
                         .probe_release(endpoint_order, token);
+                }
+                if let (Some(key), Some(owner)) = (lease_key.as_ref(), lease_owner.as_ref()) {
+                    let _ = cache.probe_release(key, owner).await;
                 }
                 Self::make_row(
                     &channel_id,

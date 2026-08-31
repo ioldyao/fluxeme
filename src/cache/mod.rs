@@ -321,6 +321,45 @@ impl RedisCache {
         self.default_ttl_secs
     }
 
+    /// Acquire a short-lived distributed lease for an automatic endpoint probe.
+    /// SET NX + EX is atomic, so multiple gateway instances cannot probe the same
+    /// binding endpoint at the same time.
+    pub async fn probe_try_acquire(
+        &self,
+        key: &str,
+        owner: &str,
+        ttl_secs: u64,
+    ) -> Result<bool, String> {
+        let mut con = self.con.clone();
+        let result: Option<String> = redis::cmd("SET")
+            .arg(key)
+            .arg(owner)
+            .arg("NX")
+            .arg("EX")
+            .arg(ttl_secs.max(1))
+            .query_async(&mut con)
+            .await
+            .map_err(|e| format!("Redis probe lease acquire error: {e}"))?;
+        Ok(result.is_some())
+    }
+
+    /// Release a probe lease only when the stored owner matches.
+    pub async fn probe_release(&self, key: &str, owner: &str) -> Result<bool, String> {
+        let mut con = self.con.clone();
+        let deleted: i64 = redis::Script::new(
+            "if redis.call('GET', KEYS[1]) == ARGV[1] then\n\
+             return redis.call('DEL', KEYS[1])\n\
+             end\n\
+             return 0",
+        )
+        .key(key)
+        .arg(owner)
+        .invoke_async(&mut con)
+        .await
+        .map_err(|e| format!("Redis probe lease release error: {e}"))?;
+        Ok(deleted > 0)
+    }
+
     // ── Billing gate status ─────────────────────────────────────────
 
     /// Read the gate status for a user from Redis.
