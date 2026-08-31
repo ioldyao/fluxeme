@@ -139,6 +139,17 @@ impl CircuitBreaker {
         }
     }
 
+    /// Release a recovery probe without marking the endpoint healthy.
+    /// Non-liveness probe errors (for example model/auth errors) must not
+    /// erase an existing Open state.
+    pub fn release_probe(&self) {
+        let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        if inner.status == BreakerStatus::HalfOpen {
+            inner.status = BreakerStatus::Open;
+        }
+        inner.half_open_in_flight = false;
+    }
+
     /// Claim an explicit recovery probe. Business traffic never calls this;
     /// unlike `is_available`, it only admits an Open endpoint after cooldown.
     pub fn claim_probe(&self) -> bool {
@@ -350,6 +361,12 @@ impl HealthAwareBalancer {
         }
     }
 
+    pub fn release_probe(&self, idx: usize) {
+        if let Some(b) = self.breakers.get(idx) {
+            b.release_probe();
+        }
+    }
+
     #[allow(dead_code)]
     pub fn endpoint(&self, idx: usize) -> Option<&EndpointConfig> {
         self.endpoints.get(idx)
@@ -456,6 +473,29 @@ mod tests {
         assert!(breaker.is_available_readonly());
         assert!(breaker.is_available());
         assert!(!breaker.is_available());
+    }
+
+    #[test]
+    fn healthy_selection_never_promotes_open_endpoint() {
+        let endpoints = vec![endpoint(1, true), endpoint(2, true)];
+        let balancer = HealthAwareBalancer::new(&endpoints);
+        for _ in 0..3 {
+            balancer.record_failure(0);
+        }
+
+        for _ in 0..8 {
+            let (idx, _) = balancer.select_healthy().expect("healthy peer remains");
+            assert_eq!(idx, 1);
+        }
+        assert_eq!(balancer.breakers()[0].status(), BreakerStatus::Open);
+    }
+
+    #[test]
+    fn probe_claim_is_not_available_before_cooldown() {
+        let breaker = CircuitBreaker::new(true, 1, 30);
+        breaker.record_failure();
+        assert!(!breaker.claim_probe());
+        assert_eq!(breaker.status(), BreakerStatus::Open);
     }
 
     #[test]

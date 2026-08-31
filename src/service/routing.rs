@@ -266,7 +266,7 @@ impl RoutingService {
             .unwrap_or_else(|e| e.into_inner())
             .get(channel_id)
             .is_some_and(|channel| channel.enabled);
-        let (model_cfg, balancer) = models
+        let (_model_cfg, balancer) = models
             .iter()
             .filter(|configured| {
                 configured.name == model
@@ -334,7 +334,7 @@ impl RoutingService {
                             (
                                 id,
                                 balancer.breakers()[i].is_enabled(),
-                                balancer.breakers()[i].is_available_readonly(),
+                                balancer.breakers()[i].is_healthy(),
                             )
                         })
                     })

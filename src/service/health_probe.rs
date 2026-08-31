@@ -25,6 +25,8 @@ struct ProbeJob {
     balancer: Arc<LoadBalancer>,
     endpoint: EndpointConfig,
     stream: bool,
+    /// Whether this job owns an explicit recovery probe claim.
+    probe_claimed: bool,
 }
 
 struct OrderedProbeRow {
@@ -181,6 +183,7 @@ impl HealthProbeService {
                     balancer: probe_balancer.clone(),
                     endpoint,
                     stream,
+                    probe_claimed: false,
                 });
             }
         }
@@ -226,7 +229,7 @@ impl HealthProbeService {
                 let Some(channel) = self.routing.get_channel(&binding.channel_id) else {
                     continue;
                 };
-                if !channel.enabled {
+                if !channel.enabled || !model.published {
                     continue;
                 }
                 let Some(route) = self.routing.get_route(&binding.channel_id) else {
@@ -270,6 +273,7 @@ impl HealthProbeService {
                         balancer: balancer.clone(),
                         endpoint: endpoint.clone(),
                         stream: false,
+                        probe_claimed: true,
                     });
                 }
             }
@@ -315,6 +319,7 @@ impl HealthProbeService {
             balancer,
             endpoint,
             stream,
+            probe_claimed,
         } = job;
 
         let start = Instant::now();
@@ -339,10 +344,10 @@ impl HealthProbeService {
                     || is_retryable_error(&error)
                 {
                     balancer.as_health_aware().record_failure(endpoint_order);
-                } else {
+                } else if probe_claimed {
                     // Authentication, model, and request errors describe the
                     // probe input/upstream contract, not endpoint liveness.
-                    balancer.as_health_aware().record_success(endpoint_order);
+                    balancer.as_health_aware().release_probe(endpoint_order);
                 }
                 Self::make_row(
                     &channel_id,
