@@ -174,10 +174,27 @@ async fn handle_responses_non_streaming(
         .flow_tracker
         .mark_upstream_started(&request_id, Utc::now().to_rfc3339());
 
-    let result = route
-        .adapter
-        .relay(&route.endpoint, "/v1/responses", body.clone())
-        .await;
+    let max_retries = state.gateway_config.read().unwrap().max_retries;
+    let mut retries = 0u32;
+    let result = loop {
+        let result = route
+            .adapter
+            .relay(&route.endpoint, "/v1/responses", body.clone())
+            .await;
+        match result {
+            Err(error)
+                if error.kind() == ErrorKind::ConnectFailed
+                    || is_retryable_error(&error) =>
+            {
+                route.report_failure();
+                if retries >= max_retries || !route.retry_next() {
+                    break Err(error);
+                }
+                retries += 1;
+            }
+            result => break result,
+        }
+    };
 
     match result {
         Ok(resp) => {
@@ -247,7 +264,6 @@ async fn handle_responses_non_streaming(
             Ok(Json(resp).into_response())
         }
         Err(e) if e.kind() == ErrorKind::ConnectFailed => {
-            route.report_failure();
             if let Some(reservation) = &reservation {
                 reservation.release("responses upstream connect failed");
             }
@@ -291,7 +307,6 @@ async fn handle_responses_non_streaming(
             Err(GatewayError::Upstream(e.0))
         }
         Err(e) if is_retryable_error(&e) => {
-            route.report_failure();
             if let Some(reservation) = &reservation {
                 reservation.release("responses upstream retryable failure");
             }
@@ -411,10 +426,27 @@ async fn handle_responses_streaming(
         .flow_tracker
         .mark_upstream_started(&request_id, Utc::now().to_rfc3339());
 
-    let stream_result = route
-        .adapter
-        .responses_stream(&route.endpoint, body.clone())
-        .await;
+    let max_retries = state.gateway_config.read().unwrap().max_retries;
+    let mut retries = 0u32;
+    let stream_result = loop {
+        let result = route
+            .adapter
+            .responses_stream(&route.endpoint, body.clone())
+            .await;
+        match result {
+            Err(error)
+                if error.kind() == ErrorKind::ConnectFailed
+                    || is_retryable_error(&error) =>
+            {
+                route.report_failure();
+                if retries >= max_retries || !route.retry_next() {
+                    break Err(error);
+                }
+                retries += 1;
+            }
+            result => break result,
+        }
+    };
 
     match stream_result {
         Ok(stream) => {
@@ -575,7 +607,6 @@ async fn handle_responses_streaming(
                 .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
         }
         Err(e) => {
-            route.report_failure();
             if let Some(reservation) = &reservation {
                 reservation.release("responses stream upstream failed");
             }

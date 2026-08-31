@@ -151,17 +151,6 @@ impl CircuitBreaker {
         }
     }
 
-    /// Release a recovery probe without marking the endpoint healthy.
-    /// Non-liveness probe errors (for example model/auth errors) must not
-    /// erase an existing Open state.
-    pub fn release_probe(&self) {
-        let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
-        if inner.status == BreakerStatus::HalfOpen {
-            inner.status = BreakerStatus::Open;
-        }
-        inner.half_open_in_flight = false;
-    }
-
     /// Claim an explicit recovery probe. Business traffic never calls this;
     /// unlike `is_available`, it only admits an Open endpoint after cooldown.
     pub fn claim_probe(&self) -> Option<u64> {
@@ -456,12 +445,6 @@ impl HealthAwareBalancer {
     pub fn record_failure(&self, idx: usize) {
         if let Some(b) = self.breakers.get(idx) {
             b.record_failure();
-        }
-    }
-
-    pub fn release_probe(&self, idx: usize) {
-        if let Some(b) = self.breakers.get(idx) {
-            b.release_probe();
         }
     }
 
