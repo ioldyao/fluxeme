@@ -162,7 +162,7 @@ pub async fn responses_input_tokens(
         body["model"] = Value::String(id.clone());
     }
 
-    let mut route = resolve_route_for_model(&state, &resolved_model, &channel_id)?;
+    let mut route = resolve_route_for_model(&state, &resolved_model, &channel_id, upstream_model.as_deref())?;
 
     state.event_bus.route_decided(RouteDecided {
         event_type: "route_decided".to_string(),

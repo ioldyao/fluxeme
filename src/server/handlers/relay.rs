@@ -44,7 +44,7 @@ async fn relay_to_upstream(
     if let Some(ref id) = upstream_model {
         body["model"] = Value::String(id.clone());
     }
-    let mut route = resolve_route_for_model(state, &resolved_model, &channel_id)?;
+    let mut route = resolve_route_for_model(state, &resolved_model, &channel_id, upstream_model.as_deref())?;
 
     // Broadcast route-decision event so the admin UI shows
     // the request as "in-flight" before the upstream call completes.

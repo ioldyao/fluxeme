@@ -397,11 +397,17 @@ fn resolve_route_for_model(
     state: &AppState,
     model: &str,
     channel_id: &str,
+    upstream_model: Option<&str>,
 ) -> Result<RouteTarget, GatewayError> {
     if state.routing.has_model_binding(model, channel_id) {
         let plan = state
             .routing
-            .route_model_binding_for_channel(model, channel_id, &[])
+            .route_model_binding_for_channel_and_upstream(
+                model,
+                channel_id,
+                upstream_model,
+                &[],
+            )
             .map_err(GatewayError::from)?;
         let provider_name = state
             .routing

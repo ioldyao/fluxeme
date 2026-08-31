@@ -111,6 +111,7 @@ impl RoutingService {
             .into_iter()
             .map(|c| (c.id.clone(), Arc::new(c)))
             .collect();
+        let previous_cache = self.cache.read().unwrap_or_else(|e| e.into_inner()).clone();
 
         let mut cache_map = HashMap::new();
         for (id, ch) in channel_map.iter() {
@@ -135,10 +136,11 @@ impl RoutingService {
                         })
                     })
                     .collect::<Result<Vec<_>, String>>()?;
-            cache_map.insert(
-                id.clone(),
-                (ch.provider.clone(), Arc::new(LoadBalancer::new(&endpoints))),
-            );
+            let balancer = previous_cache
+                .get(id)
+                .map(|(_, previous)| previous.rebuild_preserving_state(&endpoints))
+                .unwrap_or_else(|| LoadBalancer::new(&endpoints));
+            cache_map.insert(id.clone(), (ch.provider.clone(), Arc::new(balancer)));
         }
 
         let model_list = self
@@ -259,6 +261,16 @@ impl RoutingService {
         channel_id: &str,
         attempted: &[(String, i64)],
     ) -> Result<RoutePlan, RouteError> {
+        self.route_model_binding_for_channel_and_upstream(model, channel_id, None, attempted)
+    }
+
+    pub fn route_model_binding_for_channel_and_upstream(
+        &self,
+        model: &str,
+        channel_id: &str,
+        upstream_model: Option<&str>,
+        attempted: &[(String, i64)],
+    ) -> Result<RoutePlan, RouteError> {
         let models = self.models.read().unwrap_or_else(|e| e.into_inner());
         let channel_enabled = self
             .channels
@@ -272,10 +284,16 @@ impl RoutingService {
                 configured.name == model
                     && configured.published
                     && channel_enabled
-                    && configured
-                        .channels
-                        .iter()
-                        .any(|binding| binding.channel_id == channel_id)
+                    && configured.channels.iter().any(|binding| {
+                        binding.channel_id == channel_id
+                            && upstream_model.is_none_or(|expected| {
+                                binding
+                                    .upstream_model
+                                    .as_deref()
+                                    .unwrap_or(&configured.name)
+                                    == expected
+                            })
+                    })
             })
             .find_map(|configured| {
                 self.binding_pool
