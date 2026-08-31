@@ -281,9 +281,21 @@ impl HealthAwareBalancer {
         &self,
         excluded_endpoint_ids: &std::collections::HashSet<i64>,
     ) -> Option<(usize, &EndpointConfig)> {
+        self.select_healthy_excluding_indexes(
+            excluded_endpoint_ids,
+            &std::collections::HashSet::new(),
+        )
+    }
+
+    pub fn select_healthy_excluding_indexes(
+        &self,
+        excluded_endpoint_ids: &std::collections::HashSet<i64>,
+        excluded_indexes: &std::collections::HashSet<usize>,
+    ) -> Option<(usize, &EndpointConfig)> {
         let available: Vec<usize> = (0..self.endpoints.len())
             .filter(|&i| {
                 self.breakers[i].is_healthy()
+                    && !excluded_indexes.contains(&i)
                     && self.endpoints[i]
                         .id
                         .is_none_or(|id| !excluded_endpoint_ids.contains(&id))

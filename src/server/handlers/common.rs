@@ -322,6 +322,7 @@ struct RouteTarget {
     /// Endpoint identities already attempted by this request. A retry must
     /// never immediately revisit the same binding endpoint.
     attempted_endpoint_ids: std::collections::HashSet<i64>,
+    attempted_endpoint_indexes: std::collections::HashSet<usize>,
 }
 
 impl RouteTarget {
@@ -331,10 +332,14 @@ impl RouteTarget {
         if let Some(id) = self.endpoint.id {
             self.attempted_endpoint_ids.insert(id);
         }
+        self.attempted_endpoint_indexes.insert(self.endpoint_idx);
         if let Some((idx, ep)) = self
             .balancer
             .as_health_aware()
-            .select_healthy_excluding(&self.attempted_endpoint_ids)
+            .select_healthy_excluding_indexes(
+                &self.attempted_endpoint_ids,
+                &self.attempted_endpoint_indexes,
+            )
         {
             self.endpoint_idx = idx;
             self.endpoint = ep.clone();
@@ -382,6 +387,7 @@ fn resolve_route(state: &AppState, channel_id: &str) -> Result<RouteTarget, Gate
         adapter,
         balancer,
         attempted_endpoint_ids: std::collections::HashSet::new(),
+        attempted_endpoint_indexes: std::collections::HashSet::new(),
     })
 }
 
@@ -413,6 +419,7 @@ fn resolve_route_for_model(
             adapter,
             balancer: plan.balancer,
             attempted_endpoint_ids: std::collections::HashSet::new(),
+            attempted_endpoint_indexes: std::collections::HashSet::new(),
         });
     }
 
@@ -435,6 +442,7 @@ fn resolve_route_for_model(
         adapter,
         balancer,
         attempted_endpoint_ids: std::collections::HashSet::new(),
+        attempted_endpoint_indexes: std::collections::HashSet::new(),
     })
 }
 
