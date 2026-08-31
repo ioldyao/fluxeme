@@ -368,7 +368,7 @@ impl HealthProbeService {
             }
             let Some((_, _, token)) = balancer
                 .as_health_aware()
-                .claim_probe_endpoint(endpoint_order)
+                .begin_probe_endpoint(endpoint_order)
             else {
                 let _ = cache.probe_release(&lease_key, &lease_owner).await;
                 return OrderedProbeRow {
@@ -384,7 +384,7 @@ impl HealthProbeService {
                     ),
                 };
             };
-            (Some(lease_key), Some(lease_owner), Some(token))
+            (Some(lease_key), Some(lease_owner), token)
         } else {
             (None, None, None)
         };

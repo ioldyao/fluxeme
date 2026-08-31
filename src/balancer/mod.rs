@@ -58,55 +58,19 @@ impl CircuitBreaker {
         }
     }
 
-    /// Whether this endpoint can receive traffic.
+    /// Whether this endpoint can receive business traffic.
     ///
-    /// An Open breaker may grant exactly one trial request after its cooldown.
-    /// The claim is made while holding the write lock so concurrent requests
-    /// cannot all pass through the HalfOpen state.
+    /// Only Closed breakers are eligible. Recovery of Open endpoints is owned
+    /// exclusively by the automatic/manual probe path.
     pub fn is_available(&self) -> bool {
-        let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
-        if !inner.enabled {
-            return false;
-        }
-        match inner.status {
-            BreakerStatus::Closed => true,
-            BreakerStatus::HalfOpen => {
-                if inner.half_open_in_flight {
-                    false
-                } else {
-                    inner.half_open_in_flight = true;
-                    true
-                }
-            }
-            BreakerStatus::Open => {
-                if inner
-                    .last_failure
-                    .is_some_and(|t| t.elapsed().as_secs() >= self.cooldown_secs)
-                {
-                    inner.status = BreakerStatus::HalfOpen;
-                    inner.failure_count = 0;
-                    inner.half_open_in_flight = true;
-                    true
-                } else {
-                    false
-                }
-            }
-        }
+        self.is_healthy()
     }
 
-    /// Check availability without claiming a HalfOpen trial.
+    /// Check business availability without claiming a probe lease.
+    /// Open endpoints remain unavailable even after cooldown; only the probe
+    /// manager may transition them back to Closed.
     pub fn is_available_readonly(&self) -> bool {
-        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
-        if !inner.enabled {
-            return false;
-        }
-        match inner.status {
-            BreakerStatus::Closed => true,
-            BreakerStatus::HalfOpen => !inner.half_open_in_flight,
-            BreakerStatus::Open => inner
-                .last_failure
-                .is_some_and(|t| t.elapsed().as_secs() >= self.cooldown_secs),
-        }
+        self.is_healthy()
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -115,7 +79,7 @@ impl CircuitBreaker {
 
     pub fn is_healthy(&self) -> bool {
         let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
-        inner.enabled && inner.status == BreakerStatus::Closed
+        inner.enabled && inner.status == BreakerStatus::Closed && inner.probe_lease.is_none()
     }
 
     pub fn set_enabled(&self, enabled: bool) {
@@ -148,6 +112,48 @@ impl CircuitBreaker {
         inner.half_open_in_flight = false;
         if inner.status == BreakerStatus::HalfOpen || inner.failure_count >= self.threshold {
             inner.status = BreakerStatus::Open;
+        }
+    }
+
+    /// Begin an automatic liveness probe.
+    ///
+    /// `Some(None)` means the endpoint was already Closed and can be checked;
+    /// `Some(Some(token))` means an Open endpoint was promoted to a leased
+    /// recovery probe. `None` means disabled, still cooling down, or already
+    /// being probed.
+    pub fn begin_probe(&self) -> Option<Option<u64>> {
+        let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        if inner
+            .probe_lease
+            .is_some_and(|lease| lease.expires_at <= now)
+        {
+            inner.probe_lease = None;
+            inner.half_open_in_flight = false;
+            if inner.status == BreakerStatus::HalfOpen {
+                inner.status = BreakerStatus::Open;
+            }
+        }
+        if !inner.enabled || inner.half_open_in_flight {
+            return None;
+        }
+        match inner.status {
+            BreakerStatus::Closed => Some(None),
+            BreakerStatus::Open
+                if inner
+                    .last_failure
+                    .is_some_and(|last| last.elapsed().as_secs() >= self.cooldown_secs) =>
+            {
+                let token = self.next_probe_token.fetch_add(1, Ordering::Relaxed);
+                inner.status = BreakerStatus::HalfOpen;
+                inner.half_open_in_flight = true;
+                inner.probe_lease = Some(ProbeLease {
+                    token,
+                    expires_at: now + Duration::from_secs(PROBE_LEASE_SECS),
+                });
+                Some(Some(token))
+            }
+            _ => None,
         }
     }
 
@@ -365,6 +371,16 @@ impl HealthAwareBalancer {
         Some((available[idx], &self.endpoints[available[idx]]))
     }
 
+    pub fn begin_probe_endpoint(
+        &self,
+        idx: usize,
+    ) -> Option<(usize, &EndpointConfig, Option<u64>)> {
+        let token = self.breakers.get(idx)?.begin_probe()?;
+        self.endpoints
+            .get(idx)
+            .map(|endpoint| (idx, endpoint, token))
+    }
+
     pub fn claim_probe_endpoint(&self, idx: usize) -> Option<(usize, &EndpointConfig, u64)> {
         let token = self.breakers.get(idx)?.claim_probe()?;
         self.endpoints
@@ -547,13 +563,19 @@ mod tests {
     }
 
     #[test]
-    fn readonly_health_check_does_not_consume_half_open_trial() {
+    fn business_availability_never_claims_open_probe() {
         let breaker = CircuitBreaker::new(true, 1, 0);
         breaker.record_failure();
 
-        assert!(breaker.is_available_readonly());
-        assert!(breaker.is_available());
+        assert!(!breaker.is_available_readonly());
         assert!(!breaker.is_available());
+        let token = breaker
+            .begin_probe()
+            .expect("probe may claim after cooldown")
+            .expect("open endpoint gets token");
+        assert!(!breaker.is_available());
+        assert!(breaker.probe_success(token));
+        assert!(breaker.is_available());
     }
 
     #[test]
