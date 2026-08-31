@@ -25,8 +25,8 @@ struct ProbeJob {
     balancer: Arc<LoadBalancer>,
     endpoint: EndpointConfig,
     stream: bool,
-    /// Whether this job owns an explicit recovery probe claim.
-    probe_claimed: bool,
+    /// Token for an explicit recovery probe claim, when this is auto recovery.
+    probe_token: Option<u64>,
 }
 
 struct OrderedProbeRow {
@@ -183,7 +183,7 @@ impl HealthProbeService {
                     balancer: probe_balancer.clone(),
                     endpoint,
                     stream,
-                    probe_claimed: false,
+                    probe_token: None,
                 });
             }
         }
@@ -256,7 +256,7 @@ impl HealthProbeService {
                     if !endpoint.enabled || endpoint.full_url {
                         continue;
                     }
-                    let Some((_, endpoint)) = balancer
+                    let Some((_, endpoint, probe_token)) = balancer
                         .as_health_aware()
                         .claim_probe_endpoint(endpoint_order)
                     else {
@@ -273,7 +273,7 @@ impl HealthProbeService {
                         balancer: balancer.clone(),
                         endpoint: endpoint.clone(),
                         stream: false,
-                        probe_claimed: true,
+                        probe_token: Some(probe_token),
                     });
                 }
             }
@@ -319,7 +319,7 @@ impl HealthProbeService {
             balancer,
             endpoint,
             stream,
-            probe_claimed,
+            probe_token,
         } = job;
 
         let start = Instant::now();
@@ -329,7 +329,13 @@ impl HealthProbeService {
 
         let row = match result {
             Ok(()) => {
-                balancer.as_health_aware().record_success(endpoint_order);
+                if let Some(token) = probe_token {
+                    balancer
+                        .as_health_aware()
+                        .probe_success(endpoint_order, token);
+                } else {
+                    balancer.as_health_aware().record_success(endpoint_order);
+                }
                 Self::make_row(
                     &channel_id,
                     &model_id,
@@ -343,11 +349,19 @@ impl HealthProbeService {
                 if matches!(error.kind(), ErrorKind::ConnectFailed | ErrorKind::Timeout)
                     || is_retryable_error(&error)
                 {
-                    balancer.as_health_aware().record_failure(endpoint_order);
-                } else if probe_claimed {
+                    if let Some(token) = probe_token {
+                        balancer
+                            .as_health_aware()
+                            .probe_failure(endpoint_order, token);
+                    } else {
+                        balancer.as_health_aware().record_failure(endpoint_order);
+                    }
+                } else if let Some(token) = probe_token {
                     // Authentication, model, and request errors describe the
                     // probe input/upstream contract, not endpoint liveness.
-                    balancer.as_health_aware().release_probe(endpoint_order);
+                    balancer
+                        .as_health_aware()
+                        .probe_release(endpoint_order, token);
                 }
                 Self::make_row(
                     &channel_id,

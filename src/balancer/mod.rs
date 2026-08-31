@@ -1,6 +1,8 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+const PROBE_LEASE_SECS: u64 = 120;
 
 use crate::config::types::EndpointConfig;
 
@@ -22,6 +24,13 @@ struct BreakerInner {
     failure_count: u32,
     last_failure: Option<Instant>,
     half_open_in_flight: bool,
+    probe_lease: Option<ProbeLease>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ProbeLease {
+    token: u64,
+    expires_at: Instant,
 }
 
 #[derive(Debug)]
@@ -29,6 +38,7 @@ pub struct CircuitBreaker {
     inner: Arc<RwLock<BreakerInner>>,
     threshold: u32,
     cooldown_secs: u64,
+    next_probe_token: AtomicU64,
 }
 
 impl CircuitBreaker {
@@ -40,9 +50,11 @@ impl CircuitBreaker {
                 failure_count: 0,
                 last_failure: None,
                 half_open_in_flight: false,
+                probe_lease: None,
             })),
             threshold,
             cooldown_secs,
+            next_probe_token: AtomicU64::new(1),
         }
     }
 
@@ -152,10 +164,21 @@ impl CircuitBreaker {
 
     /// Claim an explicit recovery probe. Business traffic never calls this;
     /// unlike `is_available`, it only admits an Open endpoint after cooldown.
-    pub fn claim_probe(&self) -> bool {
+    pub fn claim_probe(&self) -> Option<u64> {
         let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        if inner
+            .probe_lease
+            .is_some_and(|lease| lease.expires_at <= now)
+        {
+            inner.probe_lease = None;
+            inner.half_open_in_flight = false;
+            if inner.status == BreakerStatus::HalfOpen {
+                inner.status = BreakerStatus::Open;
+            }
+        }
         if !inner.enabled || inner.half_open_in_flight {
-            return false;
+            return None;
         }
         match inner.status {
             BreakerStatus::Open
@@ -163,16 +186,61 @@ impl CircuitBreaker {
                     .last_failure
                     .is_some_and(|last| last.elapsed().as_secs() >= self.cooldown_secs) =>
             {
+                let token = self.next_probe_token.fetch_add(1, Ordering::Relaxed);
                 inner.status = BreakerStatus::HalfOpen;
                 inner.half_open_in_flight = true;
-                true
+                inner.probe_lease = Some(ProbeLease {
+                    token,
+                    expires_at: now + Duration::from_secs(PROBE_LEASE_SECS),
+                });
+                Some(token)
             }
-            BreakerStatus::HalfOpen => {
-                inner.half_open_in_flight = true;
-                true
-            }
-            _ => false,
+            _ => None,
         }
+    }
+
+    fn finish_probe(&self, token: u64, success: bool) -> bool {
+        let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        let Some(lease) = inner.probe_lease else {
+            return false;
+        };
+        if lease.token != token || lease.expires_at <= Instant::now() {
+            return false;
+        }
+        inner.probe_lease = None;
+        inner.half_open_in_flight = false;
+        if success {
+            inner.failure_count = 0;
+            inner.status = BreakerStatus::Closed;
+        } else {
+            inner.last_failure = Some(Instant::now());
+            inner.status = BreakerStatus::Open;
+        }
+        true
+    }
+
+    pub fn probe_success(&self, token: u64) -> bool {
+        self.finish_probe(token, true)
+    }
+
+    pub fn probe_failure(&self, token: u64) -> bool {
+        self.finish_probe(token, false)
+    }
+
+    pub fn probe_release(&self, token: u64) -> bool {
+        let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        let Some(lease) = inner.probe_lease else {
+            return false;
+        };
+        if lease.token != token {
+            return false;
+        }
+        inner.probe_lease = None;
+        inner.half_open_in_flight = false;
+        if inner.status == BreakerStatus::HalfOpen {
+            inner.status = BreakerStatus::Open;
+        }
+        true
     }
 
     fn preserve_runtime_state_from(&self, old: &Self, enabled: bool) {
@@ -308,11 +376,29 @@ impl HealthAwareBalancer {
         Some((available[idx], &self.endpoints[available[idx]]))
     }
 
-    pub fn claim_probe_endpoint(&self, idx: usize) -> Option<(usize, &EndpointConfig)> {
+    pub fn claim_probe_endpoint(&self, idx: usize) -> Option<(usize, &EndpointConfig, u64)> {
+        let token = self.breakers.get(idx)?.claim_probe()?;
+        self.endpoints
+            .get(idx)
+            .map(|endpoint| (idx, endpoint, token))
+    }
+
+    pub fn probe_success(&self, idx: usize, token: u64) -> bool {
         self.breakers
             .get(idx)
-            .filter(|breaker| breaker.claim_probe())
-            .and_then(|_| self.endpoints.get(idx).map(|endpoint| (idx, endpoint)))
+            .is_some_and(|breaker| breaker.probe_success(token))
+    }
+
+    pub fn probe_failure(&self, idx: usize, token: u64) -> bool {
+        self.breakers
+            .get(idx)
+            .is_some_and(|breaker| breaker.probe_failure(token))
+    }
+
+    pub fn probe_release(&self, idx: usize, token: u64) -> bool {
+        self.breakers
+            .get(idx)
+            .is_some_and(|breaker| breaker.probe_release(token))
     }
 
     /// Build a new descriptor view while retaining breaker state for endpoints
@@ -506,8 +592,19 @@ mod tests {
     fn probe_claim_is_not_available_before_cooldown() {
         let breaker = CircuitBreaker::new(true, 1, 30);
         breaker.record_failure();
-        assert!(!breaker.claim_probe());
+        assert!(breaker.claim_probe().is_none());
         assert_eq!(breaker.status(), BreakerStatus::Open);
+    }
+
+    #[test]
+    fn probe_token_must_match_before_state_changes() {
+        let breaker = CircuitBreaker::new(true, 1, 0);
+        breaker.record_failure();
+        let token = breaker.claim_probe().expect("cooldown has elapsed");
+        assert!(!breaker.probe_success(token + 1));
+        assert_eq!(breaker.status(), BreakerStatus::HalfOpen);
+        assert!(breaker.probe_success(token));
+        assert_eq!(breaker.status(), BreakerStatus::Closed);
     }
 
     #[test]
