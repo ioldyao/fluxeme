@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   usePublishedSkills,
-  useSkillRuntimeStatuses,
 } from '@fluxeme/shared/src/api/skills';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
 import { EmptyState } from '@fluxeme/shared/src/components/EmptyState';
@@ -20,26 +19,12 @@ const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   published: { label: 'skillHub.status.published', cls: 'bg-emerald-100 text-emerald-700' },
 };
 
-const RUNTIME_BADGE: Record<string, { label: string; cls: string }> = {
-  pending: { label: 'skillHub.runtime.pending', cls: 'bg-muted text-muted-foreground' },
-  ready: { label: 'skillHub.runtime.ready', cls: 'bg-emerald-100 text-emerald-700' },
-  failed: { label: 'skillHub.runtime.failed', cls: 'bg-red-100 text-red-700' },
-  disabled: { label: 'skillHub.runtime.disabled', cls: 'bg-muted text-muted-foreground' },
-};
-
 export default function SkillHub() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { data: skills, isLoading, isError, refetch } = usePublishedSkills();
-  const { data: runtimeStatuses } = useSkillRuntimeStatuses();
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<string | null>(null);
-
-  const runtimeBySlug = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const s of runtimeStatuses ?? []) m.set(s.slug, s.state);
-    return m;
-  }, [runtimeStatuses]);
 
   const categories = useMemo(() => {
     if (!skills) return [];
@@ -132,9 +117,6 @@ export default function SkillHub() {
                   <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
                     <Badge variant="outline">{s.category}</Badge>
                     <span className="font-mono">v{s.version}</span>
-                    <Badge className={RUNTIME_BADGE[runtimeBySlug.get(s.slug) ?? 'pending']?.cls}>
-                      {t(RUNTIME_BADGE[runtimeBySlug.get(s.slug) ?? 'pending']?.label)}
-                    </Badge>
                   </div>
                 </CardContent>
               </Card>

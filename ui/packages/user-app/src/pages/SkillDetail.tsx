@@ -1,10 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   usePublishedSkill,
   usePublishedSkillVersions,
-  useSkillRuntimeStatuses,
   skillInstallCommand,
   skillDownloadUrl,
 } from '@fluxeme/shared/src/api/skills';
@@ -23,13 +22,6 @@ const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   published: { label: 'skillHub.status.published', cls: 'bg-emerald-100 text-emerald-700' },
 };
 
-const RUNTIME_BADGE: Record<string, { label: string; cls: string }> = {
-  pending: { label: 'skillHub.runtime.pending', cls: 'bg-muted text-muted-foreground' },
-  ready: { label: 'skillHub.runtime.ready', cls: 'bg-emerald-100 text-emerald-700' },
-  failed: { label: 'skillHub.runtime.failed', cls: 'bg-red-100 text-red-700' },
-  disabled: { label: 'skillHub.runtime.disabled', cls: 'bg-muted text-muted-foreground' },
-};
-
 type TabKey = 'skillmd' | 'versions';
 
 export default function SkillDetail() {
@@ -37,14 +29,8 @@ export default function SkillDetail() {
   const { t } = useTranslation();
   const { data: skill, isLoading, isError } = usePublishedSkill(slug);
   const { data: versions } = usePublishedSkillVersions(slug);
-  const { data: runtimeStatuses } = useSkillRuntimeStatuses();
   const [tab, setTab] = useState<TabKey>('skillmd');
   const [copied, setCopied] = useState(false);
-
-  const runtime = useMemo(
-    () => runtimeStatuses?.find((s) => s.slug === slug)?.state ?? 'pending',
-    [runtimeStatuses, slug]
-  );
 
   if (isLoading) {
     return <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>;
@@ -59,8 +45,6 @@ export default function SkillDetail() {
   }
 
   const statusBadge = STATUS_BADGE[skill.status] ?? STATUS_BADGE.draft;
-  const runtimeBadge = RUNTIME_BADGE[runtime] ?? RUNTIME_BADGE.pending;
-
   const copyCommand = () => {
     navigator.clipboard.writeText(skillInstallCommand(skill.slug)).then(() => {
       setCopied(true);
@@ -90,7 +74,6 @@ export default function SkillDetail() {
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-2xl font-bold tracking-tight">{skill.name}</h1>
                 <Badge className={statusBadge.cls}>{t(statusBadge.label)}</Badge>
-                <Badge className={runtimeBadge.cls}>{t(runtimeBadge.label)}</Badge>
               </div>
               <div className="mt-1 font-mono text-sm text-muted-foreground">@{skill.slug}</div>
               <p className="mt-3 max-w-2xl text-sm text-muted-foreground leading-relaxed">
@@ -111,11 +94,10 @@ export default function SkillDetail() {
           </div>
 
           {/* 信息行 */}
-          <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
             {[
               { label: t('skillHub.version'), value: `v${skill.version}` },
               { label: t('skillHub.category'), value: skill.category },
-              { label: t('skillHub.runtimeStatus'), value: t(runtimeBadge.label) },
               { label: t('skillHub.updatedAt'), value: formatTimestamp(skill.updated_at) },
             ].map((it) => (
               <div key={it.label} className="rounded-lg border bg-muted/30 p-3">
