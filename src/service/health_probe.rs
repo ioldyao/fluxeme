@@ -151,22 +151,16 @@ impl HealthProbeService {
                 .get_binding_route(model_id, &binding.channel_id)
                 .unwrap_or_else(|| route.1.clone());
             let endpoints = probe_balancer.as_health_aware().endpoints();
+            // Model liveness probes exercise the configured chat operation.
+            // Full URLs are valid here: provider URL resolution preserves them
+            // verbatim, so they must not be mistaken for discovery endpoints.
             let endpoint_jobs: Vec<_> = endpoints
                 .iter()
                 .cloned()
                 .enumerate()
-                .filter(|(_, endpoint)| endpoint.enabled && !endpoint.full_url)
+                .filter(|(_, endpoint)| endpoint.enabled)
                 .collect();
             if endpoint_jobs.is_empty() {
-                // A complete operation URL cannot be used to derive a safe
-                // health-check or model-discovery URL. Skip such endpoints
-                // instead of manufacturing a false failure result.
-                if endpoints
-                    .iter()
-                    .any(|endpoint| endpoint.enabled && endpoint.full_url)
-                {
-                    continue;
-                }
                 ordered_results.push(OrderedProbeRow {
                     binding_order,
                     endpoint_order: 0,
@@ -230,9 +224,9 @@ impl HealthProbeService {
         Ok(rows)
     }
 
-    /// Probe only binding endpoints whose breaker is Open and whose cooldown
-    /// has elapsed. A probe claim is separate from business traffic, so a
-    /// recovering endpoint cannot re-enter routing until this request succeeds.
+    /// Probe binding endpoints through the same model-aware provider operation
+    /// used by business traffic. A probe claim is separate from business
+    /// traffic, so a recovering endpoint cannot re-enter routing until success.
     pub async fn probe_open_bindings(&self) -> Result<Vec<ProbeResultRow>, String> {
         let models = self.db.list_models().await.map_err(|e| e.0)?;
         let mut jobs = Vec::new();
@@ -266,7 +260,7 @@ impl HealthProbeService {
                     let Some(endpoint) = balancer.as_health_aware().endpoint(endpoint_order) else {
                         continue;
                     };
-                    if !endpoint.enabled || endpoint.full_url {
+                    if !endpoint.enabled {
                         continue;
                     }
                     jobs.push(ProbeJob {

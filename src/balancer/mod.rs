@@ -89,6 +89,7 @@ impl CircuitBreaker {
             inner.failure_count = 0;
             inner.last_failure = None;
             inner.half_open_in_flight = false;
+            inner.probe_lease = None;
         }
         inner.enabled = enabled;
     }
@@ -243,12 +244,19 @@ impl CircuitBreaker {
         let mut current = self.inner.write().unwrap_or_else(|e| e.into_inner());
         current.enabled = enabled;
         if enabled && old.enabled {
-            current.status = old.status;
+            // A reload cannot carry an in-flight probe lease. If the old
+            // snapshot was HalfOpen, put it back into Open so the next
+            // automatic probe can claim a fresh token instead of leaving the
+            // endpoint permanently unavailable.
+            current.status = if old.status == BreakerStatus::HalfOpen {
+                BreakerStatus::Open
+            } else {
+                old.status
+            };
             current.failure_count = old.failure_count;
             current.last_failure = old.last_failure;
-            // Never carry an in-flight claim across a config rebuild. The
-            // next probe/request must explicitly claim a fresh lease.
             current.half_open_in_flight = false;
+            current.probe_lease = None;
         }
     }
 }

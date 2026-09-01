@@ -233,11 +233,23 @@ pub async fn resolve_endpoint_url(
 ) -> Result<String, ProviderError> {
     validate_endpoint_url(&endpoint.url).await?;
     if endpoint.full_url {
-        Ok(endpoint.url.clone())
-    } else {
-        let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
-        Ok(format!("{base}{suffix}"))
+        return Ok(endpoint.url.clone());
     }
+
+    // Be tolerant of legacy records where a complete operation URL was saved
+    // before the full_url flag existed or was persisted. Never append a second
+    // chat/completions path to an already complete operation URL.
+    let parsed = Url::parse(&endpoint.url)
+        .map_err(|_| ProviderError::new("Invalid endpoint URL format", ErrorKind::Other))?;
+    let path = parsed.path().trim_end_matches('/');
+    let suffix_path = suffix.trim_end_matches('/');
+    let operation_path = suffix_path.strip_prefix("/v1").unwrap_or(suffix_path);
+    if path.ends_with(operation_path) || path.ends_with(suffix_path) {
+        return Ok(endpoint.url.clone());
+    }
+
+    let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
+    Ok(format!("{base}{suffix}"))
 }
 
 /// Validate that an endpoint URL has a safe absolute HTTP(S) form and, when
@@ -315,6 +327,47 @@ fn is_private_ip(ip: &IpAddr) -> bool {
                     .to_ipv4_mapped()
                     .is_some_and(|v4| v4.is_private() || v4.is_loopback())
         }
+    }
+}
+
+#[cfg(test)]
+mod endpoint_url_tests {
+    use super::*;
+
+    fn endpoint(url: &str, full_url: bool) -> EndpointConfig {
+        EndpointConfig {
+            id: None,
+            url: url.to_string(),
+            api_key: String::new(),
+            weight: 1,
+            timeout_secs: None,
+            enabled: true,
+            full_url,
+        }
+    }
+
+    #[tokio::test]
+    async fn preserves_explicit_full_operation_url() {
+        let ep = endpoint(
+            "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
+            true,
+        );
+        let resolved = resolve_endpoint_url(&ep, "/v1/chat/completions")
+            .await
+            .expect("valid full URL");
+        assert_eq!(resolved, ep.url);
+    }
+
+    #[tokio::test]
+    async fn avoids_duplicate_chat_completion_suffix_for_legacy_rows() {
+        let ep = endpoint(
+            "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
+            false,
+        );
+        let resolved = resolve_endpoint_url(&ep, "/v1/chat/completions")
+            .await
+            .expect("valid operation URL");
+        assert_eq!(resolved, ep.url);
     }
 }
 

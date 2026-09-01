@@ -17,6 +17,7 @@ use crate::service::endpoint_pool::BindingStatePool;
 #[derive(Clone)]
 pub struct RoutePlan {
     pub channel_id: String,
+    pub provider_name: String,
     pub endpoint_idx: usize,
     pub endpoint: EndpointConfig,
     pub balancer: Arc<LoadBalancer>,
@@ -34,7 +35,9 @@ pub struct RoutingService {
     enc_key: String,
     /// Atomic counter for round-robin channel selection across same-named models.
     zone_counter: AtomicU64,
-    /// Public routing is disabled while a snapshot reload is in progress or failed.
+    /// Serializes snapshot swaps with route reads and endpoint toggles.
+    snapshot_lock: RwLock<()>,
+    /// Public routing is disabled before the first complete snapshot is loaded.
     public_snapshot_valid: AtomicBool,
 }
 
@@ -84,40 +87,6 @@ fn models_for_display(models: &[Model]) -> Vec<serde_json::Value> {
         .collect()
 }
 
-fn models_for_display_routable(
-    models: &[Model],
-    channels: &HashMap<String, Arc<Channel>>,
-    binding_pool: &BindingStatePool,
-) -> Vec<serde_json::Value> {
-    let mut seen: HashSet<String> = HashSet::new();
-    models
-        .iter()
-        .filter(|model| {
-            model.published
-                && model.channels.iter().any(|binding| {
-                    channels
-                        .get(&binding.channel_id)
-                        .is_some_and(|channel| channel.enabled)
-                        && binding_pool.has_healthy(&model.id, &binding.channel_id)
-                })
-                && seen.insert(model.name.clone())
-        })
-        .map(|model| {
-            serde_json::json!({
-                "id": model.name,
-                "type": "model",
-                "display_name": model.name,
-                "created_at": "2026-01-01T00:00:00Z",
-                "max_input_tokens": model.context_length.unwrap_or(0),
-                "max_tokens": model.context_length.unwrap_or(0),
-                "capabilities": {},
-                "upstream_id": model.id,
-                "category": model.category,
-            })
-        })
-        .collect()
-}
-
 impl RoutingService {
     pub async fn new(db: Arc<Database>, enc_key: &str) -> Result<Self, String> {
         let svc = Self {
@@ -129,6 +98,7 @@ impl RoutingService {
             binding_pool: Arc::new(BindingStatePool::new()),
             enc_key: enc_key.to_string(),
             zone_counter: AtomicU64::new(0),
+            snapshot_lock: RwLock::new(()),
             public_snapshot_valid: AtomicBool::new(false),
         };
         svc.reload().await?;
@@ -136,7 +106,7 @@ impl RoutingService {
     }
 
     pub async fn reload(&self) -> Result<(), String> {
-        self.public_snapshot_valid.store(false, Ordering::Release);
+        // Build the complete replacement before changing the live routing data.
         let chs = self
             .db
             .list_channels()
@@ -189,6 +159,10 @@ impl RoutingService {
             .await
             .map_err(|e| format!("Failed to load routing rules: {}", e))?;
 
+        let _snapshot_guard = self
+            .snapshot_lock
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         self.binding_pool.reconcile(&model_list, &cache_map);
         *self.channels.write().unwrap_or_else(|e| e.into_inner()) = channel_map;
         *self.cache.write().unwrap_or_else(|e| e.into_inner()) = cache_map;
@@ -260,10 +234,12 @@ impl RoutingService {
     }
 
     pub fn get_route(&self, channel_id: &str) -> Option<RouteCacheEntry> {
+        let _snapshot_guard = self.snapshot_lock.read().unwrap_or_else(|e| e.into_inner());
         self.cache.read().ok()?.get(channel_id).cloned()
     }
 
     pub fn get_binding_route(&self, model_id: &str, channel_id: &str) -> Option<Arc<LoadBalancer>> {
+        let _snapshot_guard = self.snapshot_lock.read().unwrap_or_else(|e| e.into_inner());
         self.binding_pool.get(model_id, channel_id)
     }
 
@@ -280,6 +256,7 @@ impl RoutingService {
         channel_id: &str,
         upstream_model: Option<&str>,
     ) -> bool {
+        let _snapshot_guard = self.snapshot_lock.read().unwrap_or_else(|e| e.into_inner());
         self.models
             .read()
             .unwrap_or_else(|e| e.into_inner())
@@ -324,6 +301,99 @@ impl RoutingService {
         self.route_model_binding_for_channel_and_upstream(model, channel_id, None, attempted)
     }
 
+    /// Select a healthy model-binding endpoint across all eligible channels.
+    /// This is used when a channel selected by a routing rule becomes unhealthy
+    /// between channel selection and endpoint resolution.
+    pub fn route_model_binding_for_model(
+        &self,
+        model: &str,
+        upstream_model: Option<&str>,
+        attempted: &[(String, i64)],
+    ) -> Result<RoutePlan, RouteError> {
+        self.route_model_binding_for_model_excluding_channels(
+            model,
+            upstream_model,
+            attempted,
+            &HashSet::new(),
+        )
+    }
+
+    pub fn route_model_binding_for_model_excluding_channels(
+        &self,
+        model: &str,
+        upstream_model: Option<&str>,
+        attempted: &[(String, i64)],
+        excluded_channels: &HashSet<String>,
+    ) -> Result<RoutePlan, RouteError> {
+        let _snapshot_guard = self.snapshot_lock.read().unwrap_or_else(|e| e.into_inner());
+        let models = self.models.read().unwrap_or_else(|e| e.into_inner());
+        let channels = self.channels.read().unwrap_or_else(|e| e.into_inner());
+        let mut candidates: Vec<(i32, String, String, Arc<LoadBalancer>)> = models
+            .iter()
+            .filter(|configured| configured.name == model && configured.published)
+            .flat_map(|configured| {
+                configured.channels.iter().filter_map(|binding| {
+                    let channel_enabled = !excluded_channels.contains(&binding.channel_id)
+                        && channels
+                            .get(&binding.channel_id)
+                            .is_some_and(|channel| channel.enabled);
+                    let upstream_matches = upstream_model.is_none_or(|expected| {
+                        binding
+                            .upstream_model
+                            .as_deref()
+                            .unwrap_or(&configured.name)
+                            == expected
+                    });
+                    if !channel_enabled || !upstream_matches {
+                        return None;
+                    }
+                    self.binding_pool
+                        .get(&configured.id, &binding.channel_id)
+                        .filter(|balancer| balancer.as_health_aware().has_healthy_endpoint())
+                        .and_then(|balancer| {
+                            Some((
+                                binding.priority,
+                                binding.channel_id.clone(),
+                                channels.get(&binding.channel_id)?.provider.clone(),
+                                balancer,
+                            ))
+                        })
+                })
+            })
+            .collect();
+        candidates.sort_by_key(|(priority, _, _, _)| *priority);
+        let Some(best_priority) = candidates.first().map(|(priority, _, _, _)| *priority) else {
+            return Err(RouteError(format!("No route found for model '{}'", model)));
+        };
+        let same_priority: Vec<_> = candidates
+            .into_iter()
+            .filter(|(priority, _, _, _)| *priority == best_priority)
+            .collect();
+        let start = self.zone_counter.fetch_add(1, Ordering::Relaxed) as usize;
+        for offset in 0..same_priority.len() {
+            let (_, channel_id, provider_name, balancer) =
+                &same_priority[(start + offset) % same_priority.len()];
+            let excluded: HashSet<i64> = attempted
+                .iter()
+                .filter(|(attempted_channel, _)| attempted_channel == channel_id)
+                .map(|(_, endpoint_id)| *endpoint_id)
+                .collect();
+            if let Some((endpoint_idx, endpoint)) = balancer
+                .as_health_aware()
+                .select_healthy_excluding(&excluded)
+            {
+                return Ok(RoutePlan {
+                    channel_id: channel_id.clone(),
+                    provider_name: provider_name.clone(),
+                    endpoint_idx,
+                    endpoint: endpoint.clone(),
+                    balancer: balancer.clone(),
+                });
+            }
+        }
+        Err(RouteError(format!("No route found for model '{}'", model)))
+    }
+
     pub fn route_model_binding_for_channel_and_upstream(
         &self,
         model: &str,
@@ -331,6 +401,7 @@ impl RoutingService {
         upstream_model: Option<&str>,
         attempted: &[(String, i64)],
     ) -> Result<RoutePlan, RouteError> {
+        let _snapshot_guard = self.snapshot_lock.read().unwrap_or_else(|e| e.into_inner());
         let models = self.models.read().unwrap_or_else(|e| e.into_inner());
         let channel_enabled = self
             .channels
@@ -338,7 +409,7 @@ impl RoutingService {
             .unwrap_or_else(|e| e.into_inner())
             .get(channel_id)
             .is_some_and(|channel| channel.enabled);
-        let (_model_cfg, balancer) = models
+        let (model_cfg, balancer) = models
             .iter()
             .filter(|configured| {
                 configured.name == model
@@ -371,8 +442,14 @@ impl RoutingService {
             .as_health_aware()
             .select_healthy_excluding(&excluded)
             .ok_or_else(|| RouteError("No available endpoints".into()))?;
+        let binding = model_cfg
+            .channels
+            .iter()
+            .find(|binding| binding.channel_id == channel_id)
+            .expect("binding was checked above");
         Ok(RoutePlan {
             channel_id: channel_id.to_string(),
+            provider_name: binding.provider.clone(),
             endpoint_idx,
             endpoint: endpoint.clone(),
             balancer,
@@ -381,6 +458,7 @@ impl RoutingService {
 
     /// Find an endpoint by DB id and update its enabled state in the circuit breaker.
     pub fn set_endpoint_enabled(&self, endpoint_id: i64, enabled: bool) {
+        let _snapshot_guard = self.snapshot_lock.read().unwrap_or_else(|e| e.into_inner());
         let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
         let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
         self.binding_pool.set_endpoint_enabled(endpoint_id, enabled);
@@ -398,6 +476,7 @@ impl RoutingService {
 
     /// Collect health status for all endpoints in a channel.
     pub fn channel_health(&self, channel_id: &str) -> Vec<(i64, bool, bool)> {
+        let _snapshot_guard = self.snapshot_lock.read().unwrap_or_else(|e| e.into_inner());
         let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
         let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
         if let Some(ch) = chs.get(channel_id) {
@@ -436,7 +515,6 @@ impl RoutingService {
             return Vec::new();
         }
         let models = self.models.read().unwrap_or_else(|e| e.into_inner());
-        let channels = self.channels.read().unwrap_or_else(|e| e.into_inner());
         if !self.public_snapshot_valid.load(Ordering::Acquire) {
             return Vec::new();
         }
@@ -447,7 +525,7 @@ impl RoutingService {
             })
             .cloned()
             .collect();
-        models_for_display_routable(&filtered, &channels, &self.binding_pool)
+        models_for_display(&filtered)
     }
 
     /// Route a public data-plane request. Only published logical models may be used.
@@ -496,6 +574,7 @@ impl RoutingService {
         team_id: Option<&str>,
         visibility: RouteVisibility,
     ) -> Result<(String, String, Option<String>), RouteError> {
+        let _snapshot_guard = self.snapshot_lock.read().unwrap_or_else(|e| e.into_inner());
         let mut model_name = model.to_string();
         let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
         let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
@@ -591,6 +670,12 @@ impl RoutingService {
                                     && self
                                         .binding_pool
                                         .has_healthy(&model_cfg.id, &rule.channel_id)
+                                    && (rule.upstream_model.is_empty()
+                                        || binding
+                                            .upstream_model
+                                            .as_deref()
+                                            .unwrap_or(&model_cfg.name)
+                                            == rule.upstream_model)
                             })
                     })
                 } else {
@@ -599,10 +684,24 @@ impl RoutingService {
                 if !rule_routable {
                     continue;
                 }
+                // A system rule may pin only the channel. In that case keep
+                // the binding's upstream model instead of silently sending the
+                // logical display name to an upstream that expects an alias.
                 let upstream = if !rule.upstream_model.is_empty() {
                     Some(rule.upstream_model.clone())
                 } else {
-                    None
+                    models.iter().find_map(|model_cfg| {
+                        if model_cfg.name != model_name || !model_cfg.published {
+                            return None;
+                        }
+                        model_cfg.channels.iter().find_map(|binding| {
+                            if binding.channel_id == rule.channel_id {
+                                binding.upstream_model.clone()
+                            } else {
+                                None
+                            }
+                        })
+                    })
                 };
                 tracing::info!(
                     user_id,
@@ -684,6 +783,42 @@ impl RoutingService {
             }
         }
 
+        let binding_count = models
+            .iter()
+            .filter(|configured| configured.name == model_name)
+            .map(|configured| configured.channels.len())
+            .sum::<usize>();
+        let enabled_binding_count = models
+            .iter()
+            .filter(|configured| configured.name == model_name)
+            .flat_map(|configured| configured.channels.iter())
+            .filter(|binding| {
+                chs.get(&binding.channel_id)
+                    .is_some_and(|channel| channel.enabled)
+            })
+            .count();
+        let healthy_binding_count = models
+            .iter()
+            .filter(|configured| configured.name == model_name)
+            .flat_map(|configured| {
+                configured
+                    .channels
+                    .iter()
+                    .map(move |binding| (configured.id.as_str(), binding))
+            })
+            .filter(|(model_id, binding)| {
+                self.binding_pool.has_healthy(model_id, &binding.channel_id)
+            })
+            .count();
+        tracing::warn!(
+            user_id,
+            requested_model = model,
+            resolved_model = %model_name,
+            binding_count,
+            enabled_binding_count,
+            healthy_binding_count,
+            "No routable model binding"
+        );
         Err(RouteError(format!(
             "No route found for model '{}'",
             model_name

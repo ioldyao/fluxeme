@@ -319,10 +319,15 @@ struct RouteTarget {
     endpoint_idx: usize,
     adapter: Arc<dyn crate::provider::ProviderAdapter>,
     balancer: Arc<LoadBalancer>,
+    routing: Arc<crate::service::routing::RoutingService>,
+    providers: Arc<crate::provider::ProviderRegistry>,
+    model: String,
+    upstream_model: Option<String>,
     /// Endpoint identities already attempted by this request. A retry must
     /// never immediately revisit the same binding endpoint.
     attempted_endpoint_ids: std::collections::HashSet<i64>,
     attempted_endpoint_indexes: std::collections::HashSet<usize>,
+    attempted_channels: std::collections::HashSet<String>,
 }
 
 impl RouteTarget {
@@ -343,10 +348,32 @@ impl RouteTarget {
         {
             self.endpoint_idx = idx;
             self.endpoint = ep.clone();
-            true
-        } else {
-            false
+            return true;
         }
+        self.attempted_channels.insert(self.channel_id.clone());
+        let Ok(plan) = self.routing.route_model_binding_for_model_excluding_channels(
+            &self.model,
+            self.upstream_model.as_deref(),
+            &[],
+            &self.attempted_channels,
+        ) else {
+            return false;
+        };
+        let Some(provider_name) = self.routing.get_route(&plan.channel_id).map(|(name, _)| name)
+        else {
+            return false;
+        };
+        let Some(adapter) = self.providers.get(&provider_name) else {
+            return false;
+        };
+        self.channel_id = plan.channel_id;
+        self.endpoint_idx = plan.endpoint_idx;
+        self.endpoint = plan.endpoint;
+        self.balancer = plan.balancer;
+        self.adapter = adapter;
+        self.attempted_endpoint_ids.clear();
+        self.attempted_endpoint_indexes.clear();
+        true
     }
 
     /// Feed a successful upstream call into the circuit breaker (closes it).
@@ -386,8 +413,13 @@ fn resolve_route(state: &AppState, channel_id: &str) -> Result<RouteTarget, Gate
         endpoint_idx: idx,
         adapter,
         balancer,
+        routing: state.routing.clone(),
+        providers: state.providers.clone(),
+        model: String::new(),
+        upstream_model: None,
         attempted_endpoint_ids: std::collections::HashSet::new(),
         attempted_endpoint_indexes: std::collections::HashSet::new(),
+        attempted_channels: std::collections::HashSet::new(),
     })
 }
 
@@ -399,59 +431,31 @@ fn resolve_route_for_model(
     channel_id: &str,
     upstream_model: Option<&str>,
 ) -> Result<RouteTarget, GatewayError> {
-    if state
+    // Resolve from the model binding pool first. If a rule-selected binding
+    // has become unhealthy, choose another healthy binding for this request.
+    let plan = state
         .routing
-        .has_model_binding_for_upstream(model, channel_id, upstream_model)
-    {
-        let plan = state
-            .routing
-            .route_model_binding_for_channel_and_upstream(
-                model,
-                channel_id,
-                upstream_model,
-                &[],
-            )
-            .map_err(GatewayError::from)?;
-        let provider_name = state
-            .routing
-            .get_route(&plan.channel_id)
-            .map(|(provider, _)| provider)
-            .ok_or_else(|| GatewayError::Internal("Channel route unavailable".into()))?;
-        let adapter = state
-            .providers
-            .get(provider_name.as_str())
-            .ok_or_else(|| GatewayError::Internal("Provider not available".into()))?;
-        return Ok(RouteTarget {
-            channel_id: plan.channel_id,
-            endpoint: plan.endpoint,
-            endpoint_idx: plan.endpoint_idx,
-            adapter,
-            balancer: plan.balancer,
-            attempted_endpoint_ids: std::collections::HashSet::new(),
-            attempted_endpoint_indexes: std::collections::HashSet::new(),
-        });
-    }
-
-    let (provider_name, balancer) = state
-        .routing
-        .get_route(channel_id)
-        .ok_or_else(|| GatewayError::Internal("Channel route unavailable".into()))?;
+        .route_model_binding_for_channel_and_upstream(model, channel_id, upstream_model, &[])
+        .or_else(|_| state.routing.route_model_binding_for_model(model, upstream_model, &[]))
+        .map_err(GatewayError::from)?;
+    let provider_name = plan.provider_name.clone();
     let adapter = state
         .providers
         .get(provider_name.as_str())
         .ok_or_else(|| GatewayError::Internal("Provider not available".into()))?;
-    let (idx, endpoint) = balancer
-        .as_health_aware()
-        .select_healthy()
-        .ok_or_else(|| GatewayError::Route("No available endpoints".into()))?;
     Ok(RouteTarget {
-        channel_id: channel_id.to_string(),
-        endpoint: endpoint.clone(),
-        endpoint_idx: idx,
+        channel_id: plan.channel_id,
+        endpoint: plan.endpoint,
+        endpoint_idx: plan.endpoint_idx,
         adapter,
-        balancer,
+        balancer: plan.balancer,
+        routing: state.routing.clone(),
+        providers: state.providers.clone(),
+        model: model.to_string(),
+        upstream_model: upstream_model.map(str::to_string),
         attempted_endpoint_ids: std::collections::HashSet::new(),
         attempted_endpoint_indexes: std::collections::HashSet::new(),
+        attempted_channels: std::collections::HashSet::new(),
     })
 }
 
