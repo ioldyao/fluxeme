@@ -4,17 +4,19 @@
 //! `fluxeme_skillhub` 子系统。存储归属：目录/版本/安装为业务数据（PG），
 //! 技能包 zip 落盘（PG 行存路径），观测/计费不在本阶段。
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::{Multipart, Path, Query, State};
-use axum::http::{header, HeaderMap, HeaderValue, Method};
+use axum::http::{header, HeaderMap, HeaderValue, Method, Uri};
 use axum::response::Response;
 use axum::Json;
 use serde::Deserialize;
 
 use fluxeme_skillhub::domain::{
-    CreateSkill, PackageStatus, SkillRow, SkillVersionRow, UpdateSkill, Visibility,
+    CreateSkill, PackageStatus, SkillAccessContext, SkillRow, SkillVersionRow, UpdateSkill,
+    Visibility,
 };
 use fluxeme_skillhub::SkillHubError;
 
@@ -56,6 +58,8 @@ pub(crate) struct UpdateSkillInput {
 #[derive(Deserialize)]
 pub(crate) struct StatusInput {
     status: String,
+    #[serde(default)]
+    version_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -78,9 +82,18 @@ fn skillhub_err(e: SkillHubError) -> AdminError {
         SkillHubError::Invalid(m) => AdminError::bad_request(m),
         // AdminError 无 409 变体，冲突映射为 400
         SkillHubError::Conflict(m) => AdminError::bad_request(m),
-        SkillHubError::Storage(m) => AdminError::internal(m),
-        SkillHubError::Db(m) => AdminError::internal(m),
-        SkillHubError::Internal(m) => AdminError::internal(m),
+        SkillHubError::Storage(m) => {
+            tracing::error!(error = %m, "skillhub storage operation failed");
+            AdminError::internal("skill storage operation failed")
+        }
+        SkillHubError::Db(m) => {
+            tracing::error!(error = %m, "skillhub database operation failed");
+            AdminError::internal("skill database operation failed")
+        }
+        SkillHubError::Internal(m) => {
+            tracing::error!(error = %m, "skillhub internal operation failed");
+            AdminError::internal("skill operation failed")
+        }
     }
 }
 
@@ -108,7 +121,13 @@ pub(crate) async fn create_skill(
 ) -> Result<Json<SkillRow>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:skillhub").await?;
-    let visibility = Visibility::parse(&req.visibility).unwrap_or(Visibility::Internal);
+    let visibility = if req.visibility.trim().is_empty() {
+        Visibility::Internal
+    } else {
+        Visibility::parse(&req.visibility).ok_or_else(|| {
+            AdminError::bad_request(format!("invalid visibility '{}'", req.visibility))
+        })?
+    };
     let row = state
         .skillhub
         .create_skill(CreateSkill {
@@ -149,7 +168,13 @@ pub(crate) async fn update_skill(
 ) -> Result<Json<SkillRow>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:skillhub").await?;
-    let visibility = req.visibility.as_deref().and_then(Visibility::parse);
+    let visibility = match req.visibility.as_deref() {
+        Some(value) => Some(
+            Visibility::parse(value)
+                .ok_or_else(|| AdminError::bad_request(format!("invalid visibility '{value}'")))?,
+        ),
+        None => None,
+    };
     let row = state
         .skillhub
         .update_skill(
@@ -194,7 +219,7 @@ pub(crate) async fn set_skill_status(
         .ok_or_else(|| AdminError::bad_request(format!("invalid status '{}'", req.status)))?;
     let row = state
         .skillhub
-        .set_status(&id, status)
+        .set_status(&id, status, req.version_id.as_deref())
         .await
         .map_err(skillhub_err)?;
     Ok(Json(row))
@@ -229,12 +254,18 @@ pub(crate) async fn upload_artifact(
     let mut changelog: Option<String> = None;
     let mut file_bytes: Option<Vec<u8>> = None;
     let mut file_name: Option<String> = None;
+    let mut seen_fields = HashSet::new();
     while let Some(field) = multipart
         .next_field()
         .await
         .map_err(|e| AdminError::bad_request(format!("multipart: {e}")))?
     {
         match field.name() {
+            Some(name) if !seen_fields.insert(name.to_string()) && name != "changelog" => {
+                return Err(AdminError::bad_request(format!(
+                    "duplicate multipart field '{name}'"
+                )));
+            }
             Some("version") => {
                 let v = field
                     .text()
@@ -285,10 +316,14 @@ pub(crate) async fn list_published_skills(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<SkillRow>>, AdminError> {
-    let _session = require_session(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    let access = SkillAccessContext {
+        is_admin: session.role == "admin",
+        user_id: session.user_id,
+    };
     let items = state
         .skillhub
-        .list_published_skills()
+        .list_published_skills_for(Some(&access))
         .await
         .map_err(skillhub_err)?;
     Ok(Json(items))
@@ -299,10 +334,14 @@ pub(crate) async fn get_published_skill(
     headers: HeaderMap,
     Path(slug): Path<String>,
 ) -> Result<Json<SkillRow>, AdminError> {
-    let _session = require_session(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    let access = SkillAccessContext {
+        is_admin: session.role == "admin",
+        user_id: session.user_id,
+    };
     let row = state
         .skillhub
-        .get_published_skill(&slug)
+        .get_published_skill_for(&slug, Some(&access))
         .await
         .map_err(skillhub_err)?
         .ok_or_else(|| AdminError::not_found("Skill not found"))?;
@@ -315,28 +354,48 @@ pub(crate) async fn list_published_versions(
     headers: HeaderMap,
     Path(slug): Path<String>,
 ) -> Result<Json<Vec<SkillVersionRow>>, AdminError> {
-    let _session = require_session(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    let access = SkillAccessContext {
+        is_admin: session.role == "admin",
+        user_id: session.user_id,
+    };
     let items = state
         .skillhub
-        .list_published_versions(&slug)
+        .list_published_versions_for(&slug, Some(&access))
         .await
         .map_err(skillhub_err)?;
     Ok(Json(items))
 }
 
 /// 下载技能包 zip（attachment）。版本缺省 = 当前发布版本。
+/// 无认证请求仅允许 public 技能；internal/private 仍必须携带 session。
 pub(crate) async fn download_skill(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(slug): Path<String>,
     Query(q): Query<DownloadQuery>,
 ) -> Result<Response, AdminError> {
-    let _session = require_session(&state.admin, &headers).await?;
+    let access =
+        if headers.get(header::AUTHORIZATION).is_none() && headers.get(header::COOKIE).is_none() {
+            None
+        } else {
+            let session = require_session(&state.admin, &headers).await?;
+            Some(SkillAccessContext {
+                is_admin: session.role == "admin",
+                user_id: session.user_id,
+            })
+        };
     let payload = state
         .skillhub
-        .download(&slug, q.version.as_deref())
+        .download_for(&slug, q.version.as_deref(), access.as_ref())
         .await
         .map_err(skillhub_err)?;
+    skill_download_response(payload)
+}
+
+fn skill_download_response(
+    payload: fluxeme_skillhub::DownloadPayload,
+) -> Result<Response, AdminError> {
     let mut resp = Response::new(Body::from(payload.bytes));
     resp.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -361,10 +420,15 @@ pub(crate) async fn runtime_statuses(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<fluxeme_skill_backing::domain::SkillRuntimeStatus>>, AdminError> {
-    let _session = require_session(&state.admin, &headers).await?;
+    let session = require_session(&state.admin, &headers).await?;
+    let principal = fluxeme_contract::RuntimePrincipal {
+        user_id: session.user_id,
+        api_key_id: "session".to_string(),
+        is_admin: session.role == "admin",
+    };
     let items = state
         .skill_backing
-        .runtime_statuses()
+        .runtime_statuses_for(&principal)
         .await
         .map_err(|e| AdminError::internal(e.0))?;
     Ok(Json(items))
@@ -377,10 +441,11 @@ pub(crate) async fn runtime_proxy(
     Path(path): Path<fluxeme_skill_backing::RuntimePath>,
     method: Method,
     headers: HeaderMap,
+    uri: Uri,
     body: axum::body::Bytes,
 ) -> Response {
     state
         .skill_backing
-        .handle_runtime_request(&path.slug, &path.rest, &method, &headers, body)
+        .handle_runtime_request(&path.slug, &path.rest, uri.query(), &method, &headers, body)
         .await
 }

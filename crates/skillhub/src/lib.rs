@@ -25,13 +25,18 @@ use fluxeme_contract::{
 
 use crate::artifact::LocalArtifactStore;
 use crate::domain::{
-    CreateSkill, PackageStatus, RuntimeTaskRow, SkillRow, SkillVersionRow, UpdateSkill,
+    CreateSkill, PackageStatus, RuntimeTaskRow, SkillAccessContext, SkillRow, SkillVersionRow,
+    UpdateSkill, Visibility,
 };
 pub use crate::error::SkillHubError;
 use crate::repo::SkillRepository;
 
 /// 单个技能包上限（50 MB）。
 pub const MAX_ARTIFACT_BYTES: usize = 50 * 1024 * 1024;
+const MAX_ZIP_ENTRIES: usize = 256;
+const MAX_ZIP_UNCOMPRESSED_BYTES: u64 = 100 * 1024 * 1024;
+const MAX_SKILL_MARKDOWN_BYTES: usize = 512 * 1024;
+const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 
 /// 下载/安装 的结果载荷。
 pub struct DownloadPayload {
@@ -102,6 +107,7 @@ impl SkillHubModule {
             created_at: now.clone(),
             updated_at: now,
             download_count: 0,
+            published_version_id: None,
         };
         self.repo.insert_skill(&row).await?;
         Ok(row)
@@ -182,43 +188,89 @@ impl SkillHubModule {
         &self,
         id: &str,
         status: PackageStatus,
+        version_id: Option<&str>,
     ) -> Result<SkillRow, SkillHubError> {
         let skill = self
             .repo
             .get_skill_by_id(id)
             .await?
             .ok_or_else(|| SkillHubError::NotFound("skill".into()))?;
-        if skill.status == status.as_str() {
+        if skill.status == status.as_str() && version_id.is_none() {
             return Ok(skill);
         }
-        // 控制面门禁：无包不可发布（运行时可用性由 Skill Runtime 决定）。
-        if status == PackageStatus::Published && skill.artifact_path.is_none() {
-            return Err(SkillHubError::Invalid(
-                "cannot publish a skill without an uploaded artifact".into(),
-            ));
+        if !valid_status_transition(&skill.status, status) {
+            return Err(SkillHubError::Invalid(format!(
+                "invalid skill status transition: {} -> {}",
+                skill.status,
+                status.as_str()
+            )));
         }
         let now = chrono::Utc::now().to_rfc3339();
-        let published_at = match status {
-            PackageStatus::Published => Some(now.as_str()),
-            _ => None,
+        let selected_version = match version_id {
+            Some(id) => self.repo.get_version_by_id(id).await?,
+            None => self.repo.latest_version(&skill.id).await?,
         };
-        // 当前版本 id（发布/取消发布都需定位 Runtime 侧的部署版本）。
-        let current_version_id = self
-            .repo
-            .get_version(&skill.id, &skill.version)
-            .await?
-            .map(|v| v.id);
+        if let Some(candidate) = &selected_version {
+            if candidate.skill_id != skill.id {
+                return Err(SkillHubError::Invalid(
+                    "version does not belong to skill".into(),
+                ));
+            }
+        }
+        let published_version_id = if status == PackageStatus::Published {
+            let candidate = selected_version.as_ref().ok_or_else(|| {
+                SkillHubError::Invalid("publishing requires an uploaded version".into())
+            })?;
+            if candidate.artifact_path.is_none()
+                || !matches!(candidate.status.as_str(), "approved" | "published")
+            {
+                return Err(SkillHubError::Invalid(
+                    "version must be approved and have an artifact before publishing".into(),
+                ));
+            }
+            Some(candidate.id.clone())
+        } else {
+            None
+        };
+        let task_version_id = published_version_id
+            .clone()
+            .or_else(|| skill.published_version_id.clone());
         let task = match status {
-            PackageStatus::Published => current_version_id
-                .as_ref()
-                .map(|vid| self.build_task(&skill, vid, "skill_published")),
-            _ if skill.status == PackageStatus::Published.as_str() => current_version_id
-                .as_ref()
-                .map(|vid| self.build_task(&skill, vid, "skill_disabled")),
+            PackageStatus::Published => Some(self.build_task(
+                &skill,
+                task_version_id.as_deref().ok_or_else(|| {
+                    SkillHubError::Invalid("skill has no published version".into())
+                })?,
+                "skill_published",
+            )),
+            PackageStatus::Disabled if skill.status == PackageStatus::Published.as_str() => {
+                Some(self.build_task(
+                    &skill,
+                    task_version_id.as_deref().ok_or_else(|| {
+                        SkillHubError::Invalid("skill has no published version".into())
+                    })?,
+                    "skill_disabled",
+                ))
+            }
             _ => None,
         };
         self.repo
-            .set_status_with_task(id, status.as_str(), published_at, task.as_ref())
+            .set_status_with_task(
+                id,
+                status.as_str(),
+                if status == PackageStatus::Published {
+                    Some(now.as_str())
+                } else {
+                    None
+                },
+                published_version_id.as_deref(),
+                if matches!(status, PackageStatus::Reviewing | PackageStatus::Approved) {
+                    selected_version.as_ref().map(|v| v.id.as_str())
+                } else {
+                    None
+                },
+                task.as_ref(),
+            )
             .await?;
         self.repo
             .get_skill_by_id(id)
@@ -234,7 +286,8 @@ impl SkillHubModule {
     }
 
     /// 上传技能包 zip：校验 zip（必须含根目录 SKILL.md）→ 落盘 →
-    /// 写版本行 + 更新技能当前版本 + outbox 任务（同事务）。
+    /// 写入草稿版本。上传候选版本不会改变当前发布版本，发布必须由显式
+    /// 的版本状态流转完成。
     pub async fn upload_artifact(
         &self,
         skill_id: &str,
@@ -251,7 +304,7 @@ impl SkillHubModule {
                 MAX_ARTIFACT_BYTES
             )));
         }
-        let skill = self
+        let _skill = self
             .repo
             .get_skill_by_id(skill_id)
             .await?
@@ -292,16 +345,9 @@ impl SkillHubModule {
             created_by: created_by.to_string(),
             created_at: now,
         };
-        // 已发布技能上新版本 → 同事务发 skill_version_deployed 任务，
-        // 让 Runtime 重部署端点（发布一致性：任务与版本写原子提交）。
-        let task = if skill.status == PackageStatus::Published.as_str() {
-            Some(self.build_task(&skill, &vrow.id, "skill_version_deployed"))
-        } else {
-            None
-        };
-        self.repo
-            .upload_artifact_with_task(&vrow, task.as_ref())
-            .await?;
+        // 版本上传只创建候选草稿。即使技能当前已发布，也必须先经过
+        // reviewing/approved，再由显式发布动作切换对外版本。
+        self.repo.upload_artifact_with_task(&vrow, None).await?;
         Ok(vrow)
     }
 
@@ -327,15 +373,35 @@ impl SkillHubModule {
 
     // ── 用户端：目录 / 安装 / 下载 ─────────────────────────────────────
 
-    /// 发布态目录（门禁：status=published）。阶段 1 不含 runtime_ready 判断。
+    /// 发布态目录（门禁：status=published 且 visibility=public）。
+    /// internal/private 访问需要显式的主体上下文，不能由登录状态默认放行。
     pub async fn list_published_skills(&self) -> Result<Vec<SkillRow>, SkillHubError> {
-        self.repo.list_skills(Some("published"), None).await
+        self.list_published_skills_for(None).await
     }
 
-    /// 发布态详情（非 published 对用户端表现为不存在）。
+    pub async fn list_published_skills_for(
+        &self,
+        access: Option<&SkillAccessContext>,
+    ) -> Result<Vec<SkillRow>, SkillHubError> {
+        let skills = self.repo.list_skills(Some("published"), None).await?;
+        Ok(skills
+            .into_iter()
+            .filter(|skill| can_view_skill(skill, access))
+            .collect())
+    }
+
+    /// 发布态详情（根据 visibility/ACL 过滤）。
     pub async fn get_published_skill(&self, slug: &str) -> Result<Option<SkillRow>, SkillHubError> {
+        self.get_published_skill_for(slug, None).await
+    }
+
+    pub async fn get_published_skill_for(
+        &self,
+        slug: &str,
+        access: Option<&SkillAccessContext>,
+    ) -> Result<Option<SkillRow>, SkillHubError> {
         let skill = self.repo.get_skill_by_slug(slug).await?;
-        Ok(skill.filter(|s| s.status == "published"))
+        Ok(skill.filter(|s| can_view_skill(s, access)))
     }
 
     /// 发布态技能的版本列表（用户端详情页用，仅已发布技能可见）。
@@ -343,13 +409,28 @@ impl SkillHubModule {
         &self,
         slug: &str,
     ) -> Result<Vec<SkillVersionRow>, SkillHubError> {
+        self.list_published_versions_for(slug, None).await
+    }
+
+    pub async fn list_published_versions_for(
+        &self,
+        slug: &str,
+        access: Option<&SkillAccessContext>,
+    ) -> Result<Vec<SkillVersionRow>, SkillHubError> {
         let skill = self
             .repo
             .get_skill_by_slug(slug)
             .await?
-            .filter(|s| s.status == "published")
+            .filter(|s| can_view_skill(s, access))
             .ok_or_else(|| SkillHubError::NotFound("skill".into()))?;
-        self.repo.list_versions(&skill.id).await
+        let versions = self.repo.list_versions(&skill.id).await?;
+        Ok(versions
+            .into_iter()
+            .filter(|v| {
+                v.status == PackageStatus::Published.as_str()
+                    && skill.published_version_id.as_deref() == Some(v.id.as_str())
+            })
+            .collect())
     }
 
     /// 下载技能包。门禁：`published AND 包已上传`。
@@ -359,16 +440,35 @@ impl SkillHubModule {
         slug: &str,
         version: Option<&str>,
     ) -> Result<DownloadPayload, SkillHubError> {
+        self.download_for(slug, version, None).await
+    }
+
+    pub async fn download_for(
+        &self,
+        slug: &str,
+        version: Option<&str>,
+        access: Option<&SkillAccessContext>,
+    ) -> Result<DownloadPayload, SkillHubError> {
         let skill = self
-            .get_published_skill(slug)
+            .get_published_skill_for(slug, access)
             .await?
             .ok_or_else(|| SkillHubError::NotFound("skill".into()))?;
-        let version = version.unwrap_or(&skill.version).to_string();
+        let version_id = skill
+            .published_version_id
+            .as_deref()
+            .ok_or_else(|| SkillHubError::NotFound("published version".into()))?;
         let vrow = self
             .repo
-            .get_version(&skill.id, &version)
+            .get_version_by_id(version_id)
             .await?
             .ok_or_else(|| SkillHubError::NotFound("version".into()))?;
+        if version.is_some_and(|requested| requested != vrow.version) {
+            return Err(SkillHubError::NotFound("version".into()));
+        }
+        let version = vrow.version.clone();
+        if vrow.status != PackageStatus::Published.as_str() {
+            return Err(SkillHubError::NotFound("version".into()));
+        }
         let path = vrow
             .artifact_path
             .ok_or_else(|| SkillHubError::NotFound("artifact".into()))?;
@@ -401,23 +501,85 @@ impl SkillRuntimeCatalog for SkillHubModule {
             .get_skill_by_slug(&slug.0)
             .await
             .map_err(dberr_to_contract)?
-            .filter(|s| s.status == "published")
+            .filter(|s| {
+                s.status == PackageStatus::Published.as_str()
+                    && s.visibility == Visibility::Public.as_str()
+            })
             .ok_or_else(|| ContractError::NotFound(format!("skill {slug}")))?;
-        let version = if version.is_empty() {
-            &skill.version
+        let version_id = if version.is_empty() {
+            skill
+                .published_version_id
+                .as_deref()
+                .ok_or_else(|| ContractError::NotFound("published version".into()))?
         } else {
-            version
+            return Err(ContractError::Invalid(
+                "runtime resolution requires the current published version".into(),
+            ));
         };
         let vrow = self
             .repo
-            .get_version(&skill.id, version)
+            .get_version_by_id(version_id)
             .await
             .map_err(dberr_to_contract)?
-            .ok_or_else(|| ContractError::NotFound(format!("version {version}")))?;
+            .ok_or_else(|| ContractError::NotFound("published version".into()))?;
+        if vrow.skill_id != skill.id || vrow.status != PackageStatus::Published.as_str() {
+            return Err(ContractError::NotFound("published version".into()));
+        }
         Ok(RuntimeSkillManifest {
             skill: SkillId(skill.id.clone()),
             slug: slug.clone(),
             version: vrow.version,
+            version_id: Some(SkillVersionId(vrow.id.clone())),
+            source_markdown: vrow.source_markdown,
+            manifest_yaml: vrow.manifest_yaml,
+            artifact_path: vrow.artifact_path,
+        })
+    }
+
+    async fn resolve_for(
+        &self,
+        slug: &SkillSlug,
+        version: &str,
+        principal: &fluxeme_contract::RuntimePrincipal,
+    ) -> Result<RuntimeSkillManifest, ContractError> {
+        let skill = self
+            .repo
+            .get_skill_by_slug(&slug.0)
+            .await
+            .map_err(dberr_to_contract)?
+            .filter(|s| {
+                s.status == PackageStatus::Published.as_str()
+                    && (s.visibility == Visibility::Public.as_str()
+                        || s.author_id == principal.user_id
+                        || principal.is_admin)
+            })
+            .ok_or_else(|| ContractError::NotFound(format!("skill {slug}")))?;
+        let vrow = if version.is_empty() {
+            let version_id = skill
+                .published_version_id
+                .as_deref()
+                .ok_or_else(|| ContractError::NotFound("published version".into()))?;
+            self.repo
+                .get_version_by_id(version_id)
+                .await
+                .map_err(dberr_to_contract)?
+        } else {
+            self.repo
+                .get_version(&skill.id, version)
+                .await
+                .map_err(dberr_to_contract)?
+        };
+        let vrow = vrow
+            .filter(|v| {
+                v.status == PackageStatus::Published.as_str()
+                    && skill.published_version_id.as_deref() == Some(v.id.as_str())
+            })
+            .ok_or_else(|| ContractError::NotFound("published version".into()))?;
+        Ok(RuntimeSkillManifest {
+            skill: SkillId(skill.id),
+            slug: slug.clone(),
+            version: vrow.version,
+            version_id: Some(SkillVersionId(vrow.id.clone())),
             source_markdown: vrow.source_markdown,
             manifest_yaml: vrow.manifest_yaml,
             artifact_path: vrow.artifact_path,
@@ -443,11 +605,18 @@ impl SkillRuntimeCatalog for SkillHubModule {
             .get_skill_by_id(&skill.0)
             .await
             .map_err(dberr_to_contract)?
+            .filter(|s| s.status == PackageStatus::Published.as_str())
             .ok_or_else(|| ContractError::NotFound("skill".into()))?;
+        if sk.published_version_id.as_deref() != Some(&vrow.id)
+            || vrow.status != PackageStatus::Published.as_str()
+        {
+            return Err(ContractError::NotFound("published version".into()));
+        }
         Ok(RuntimeSkillManifest {
             skill: skill.clone(),
             slug: SkillSlug(sk.slug),
             version: vrow.version,
+            version_id: Some(SkillVersionId(vrow.id.clone())),
             source_markdown: vrow.source_markdown,
             manifest_yaml: vrow.manifest_yaml,
             artifact_path: vrow.artifact_path,
@@ -457,6 +626,31 @@ impl SkillRuntimeCatalog for SkillHubModule {
 
 fn dberr_to_contract(e: SkillHubError) -> ContractError {
     ContractError::Internal(e.to_string())
+}
+
+fn can_view_skill(skill: &SkillRow, access: Option<&SkillAccessContext>) -> bool {
+    if skill.status != PackageStatus::Published.as_str() {
+        return false;
+    }
+    match Visibility::parse(&skill.visibility) {
+        Some(Visibility::Public) => true,
+        Some(Visibility::Internal | Visibility::Private) => {
+            access.is_some_and(|ctx| ctx.is_admin || ctx.user_id == skill.author_id)
+        }
+        None => false,
+    }
+}
+
+fn valid_status_transition(current: &str, next: PackageStatus) -> bool {
+    matches!(
+        (current, next),
+        ("draft", PackageStatus::Reviewing)
+            | ("reviewing", PackageStatus::Approved)
+            | ("approved", PackageStatus::Published)
+            | ("published", PackageStatus::Disabled)
+            | ("disabled", PackageStatus::Published)
+            | ("published", PackageStatus::Published)
+    )
 }
 
 // ── 校验与解析 ─────────────────────────────────────────────────────────
@@ -551,7 +745,16 @@ fn extract_manifest_yaml(bytes: &[u8]) -> Result<Option<String>, SkillHubError> 
     let idx = find("fluxeme.yaml")
         .or_else(|| single_top_dir(&entries).and_then(|p| find(&format!("{p}/fluxeme.yaml"))));
     match idx {
-        Some(i) => Ok(Some(read_entry(&mut archive, i)?)),
+        Some(i) => {
+            let mut text = read_entry(&mut archive, i)?;
+            if text.len() > MAX_MANIFEST_BYTES {
+                return Err(SkillHubError::Invalid(
+                    "fluxeme.yaml exceeds the 256 KiB limit".into(),
+                ));
+            }
+            text.shrink_to_fit();
+            Ok(Some(text))
+        }
         None => Ok(None),
     }
 }
@@ -565,13 +768,35 @@ fn open_zip(bytes: &[u8]) -> Result<zip::ZipArchive<std::io::Cursor<&[u8]>>, Ski
 fn list_entries(
     archive: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>,
 ) -> Result<Vec<String>, SkillHubError> {
+    if archive.len() > MAX_ZIP_ENTRIES {
+        return Err(SkillHubError::Invalid(format!(
+            "zip contains too many entries (maximum {MAX_ZIP_ENTRIES})"
+        )));
+    }
     let mut names = Vec::with_capacity(archive.len());
+    let mut total_size = 0u64;
     for i in 0..archive.len() {
-        let name = archive
+        let entry = archive
             .by_index(i)
-            .map_err(|e| SkillHubError::Invalid(format!("zip 读取错误：{e}")))?
-            .name()
-            .to_string();
+            .map_err(|e| SkillHubError::Invalid(format!("zip 读取错误：{e}")))?;
+        let name = entry.name().to_string();
+        let path = std::path::Path::new(&name);
+        if path.is_absolute() || name.contains('\\') || name.split('/').any(|part| part == "..") {
+            return Err(SkillHubError::Invalid(
+                "zip contains an unsafe entry path".into(),
+            ));
+        }
+        if !names.iter().all(|existing| existing != &name) {
+            return Err(SkillHubError::Invalid(
+                "zip contains duplicate entries".into(),
+            ));
+        }
+        total_size = total_size.saturating_add(entry.size());
+        if total_size > MAX_ZIP_UNCOMPRESSED_BYTES {
+            return Err(SkillHubError::Invalid(
+                "zip uncompressed size exceeds limit".into(),
+            ));
+        }
         names.push(name);
     }
     Ok(names)
@@ -602,9 +827,19 @@ fn read_entry(
         .by_index(idx)
         .map_err(|e| SkillHubError::Invalid(format!("zip 读取错误：{e}")))?;
     let mut text = String::new();
+    if entry.size() > MAX_SKILL_MARKDOWN_BYTES as u64 {
+        return Err(SkillHubError::Invalid(
+            "SKILL.md exceeds the 512 KiB limit".into(),
+        ));
+    }
     entry
         .read_to_string(&mut text)
         .map_err(|e| SkillHubError::Invalid(format!("文件必须为 utf-8：{e}")))?;
+    if text.len() > MAX_SKILL_MARKDOWN_BYTES {
+        return Err(SkillHubError::Invalid(
+            "SKILL.md exceeds the 512 KiB limit".into(),
+        ));
+    }
     Ok(text)
 }
 

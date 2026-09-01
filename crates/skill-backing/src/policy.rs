@@ -59,7 +59,14 @@ fn blocked_v4(ip: &std::net::Ipv4Addr) -> bool {
 }
 
 fn blocked_v6(ip: &std::net::Ipv6Addr) -> bool {
-    ip.is_unspecified() || ip.is_loopback() || ip.is_unique_local()
+    ip.is_unspecified()
+        || ip.is_loopback()
+        || ip.is_unique_local()
+        || ip.is_unicast_link_local()
+        || ip.is_multicast()
+        || ip
+            .to_ipv4_mapped()
+            .is_some_and(|mapped| blocked_v4(&mapped))
 }
 
 impl UpstreamPolicy {
@@ -83,6 +90,11 @@ impl UpstreamPolicy {
                     self.max_timeout_ms
                 )));
             }
+        }
+        if u.username() != "" || u.password().is_some() {
+            return Err(PolicyError::Blocked(
+                "upstream URL credentials are not allowed".into(),
+            ));
         }
         let host = u
             .host_str()

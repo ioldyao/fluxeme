@@ -15,12 +15,13 @@ export interface SkillRow {
   artifact_path: string | null;
   artifact_size: number;
   source_markdown: string | null;
-  visibility: string;
-  status: string;
+  visibility: SkillVisibility;
+  status: PackageStatus;
   published_at: string | null;
   created_at: string;
   updated_at: string;
   download_count: number;
+  published_version_id: string | null;
 }
 
 export interface SkillVersionRow {
@@ -31,6 +32,7 @@ export interface SkillVersionRow {
   artifact_path: string | null;
   artifact_size: number;
   source_markdown: string | null;
+  manifest_yaml: string | null;
   status: string;
   created_by: string;
   created_at: string;
@@ -107,10 +109,10 @@ export function useDeleteSkill() {
 export function useSetSkillStatus() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, status }: { id: string; status: string }) =>
+    mutationFn: ({ id, status, versionId }: { id: string; status: PackageStatus; versionId?: string }) =>
       api<SkillRow>(`/admin/skills/${encodeURIComponent(id)}/status`, {
         method: 'POST',
-        body: { status },
+        body: { status, ...(versionId ? { version_id: versionId } : {}) },
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin-skills'] });
@@ -149,6 +151,7 @@ export function useUploadSkillArtifact() {
       const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
       return fetch(`${API_BASE}/api/admin/skills/${encodeURIComponent(skillId)}/versions/upload`, {
         method: 'POST',
+        credentials: 'include',
         body: fd,
       }).then(async (res) => {
         if (!res.ok) {
@@ -195,31 +198,41 @@ export function usePublishedSkillVersions(slug: string | null) {
   });
 }
 
-/** 下载/一键安装用的完整 URL（带登录 cookie 可直链）。 */
+function apiOrigin(): string {
+  const configured = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '');
+  const withoutApi = configured.replace(/\/api\/?$/, '');
+  return withoutApi || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080');
+}
+
+/** 下载/一键安装用的完整 URL（浏览器同源时可携带登录 cookie）。 */
 export function skillDownloadUrl(slug: string, version?: string) {
-  const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
-  return `${API_BASE}/api/skills/${encodeURIComponent(slug)}/download${
+  return `${apiOrigin()}/api/skills/${encodeURIComponent(slug)}/download${
     version ? `?version=${encodeURIComponent(version)}` : ''
   }`;
 }
 
-/** 一键安装命令（curl + unzip 到 ~/.claude/skills/<slug>）。
- * 命令在用户本地机器执行，URL 必须是绝对地址（相对路径 curl 无法解析）。
+/**
+ * 生成 CLI 安装命令。命令不嵌入浏览器 session/API key；它仅适用于 public
+ * 技能。curl 显式检查 HTTP 状态，避免把 JSON/HTML 错误响应当 ZIP 解压。
  */
-export function skillInstallCommand(slug: string) {
-  const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080';
-  const url = `${API_BASE || origin}/api/skills/${encodeURIComponent(slug)}/download`;
-  return `mkdir -p ~/.claude/skills/${slug} && curl -sL "${url}" -o /tmp/${slug}.zip && unzip -o /tmp/${slug}.zip -d ~/.claude/skills/${slug} && rm /tmp/${slug}.zip`;
+export function skillInstallCommand(slug: string, version?: string) {
+  const safeSlug = slug.replace(/[^A-Za-z0-9._-]/g, '_');
+  const versionArg = version ? `?version=${encodeURIComponent(version)}` : '';
+  const downloadUrl = `${apiOrigin()}/api/skills/${encodeURIComponent(slug)}/download${versionArg}`;
+  return `set -eu; tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT; curl --fail-with-body -sSL "${downloadUrl}" -o "$tmp"; unzip -tq "$tmp" >/dev/null; mkdir -p "$HOME/.claude/skills/${safeSlug}"; unzip -o "$tmp" -d "$HOME/.claude/skills/${safeSlug}"`;
 }
 
 // ── 运行状态 & API Key Scope（阶段 2：Skill Runtime） ─────────────────────
+
+export type SkillVisibility = 'public' | 'internal' | 'private';
+export type PackageStatus = 'draft' | 'reviewing' | 'approved' | 'published' | 'disabled';
+export type RuntimeState = 'pending' | 'ready' | 'failed' | 'disabled' | 'not_required';
 
 export interface SkillRuntimeStatusRow {
   skill_id: string;
   slug: string;
   version: string;
-  state: string; // pending / ready / failed / disabled
+  state: RuntimeState;
 }
 
 /** 技能级运行状态（Skill Runtime 聚合，10s 轮询）。 */

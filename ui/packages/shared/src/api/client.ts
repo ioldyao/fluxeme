@@ -24,6 +24,7 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
 
   const response = await fetch(`${API_BASE}/api${path}`, {
     ...fetchOpts,
+    credentials: 'include',
     headers,
     body: fetchBody,
   });

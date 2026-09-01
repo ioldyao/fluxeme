@@ -17,7 +17,7 @@
 /// 0.2.0（破坏性）：EndpointDecl 增加 upstream/timeout_ms；RuntimeSkillManifest
 /// 改为携带原始 SKILL.md + fluxeme.yaml（解释权移交 Runtime）；新增
 /// ApiKeyAuthorizer / RuntimeMeter Port；SkillRuntimeCatalog 增加 resolve_by_id。
-pub const CONTRACT_VERSION: &str = "0.2.0";
+pub const CONTRACT_VERSION: &str = "0.2.1";
 
 use std::fmt;
 
@@ -121,6 +121,16 @@ pub trait SkillRuntimeCatalog: Send + Sync {
         version: &str,
     ) -> Result<RuntimeSkillManifest, ContractError>;
 
+    /// 按调用主体解析，必须同时执行技能 visibility/ACL 门禁。
+    async fn resolve_for(
+        &self,
+        slug: &SkillSlug,
+        version: &str,
+        _principal: &RuntimePrincipal,
+    ) -> Result<RuntimeSkillManifest, ContractError> {
+        self.resolve(slug, version).await
+    }
+
     /// 按内部 id 解析（部署流程用：outbox 任务里只有 skill_id/version_id）。
     async fn resolve_by_id(
         &self,
@@ -137,6 +147,9 @@ pub struct RuntimeSkillManifest {
     pub skill: SkillId,
     pub slug: SkillSlug,
     pub version: String,
+    /// 控制面当前发布版本的稳定 ID，runtime 查询 endpoint 时必须绑定此 ID。
+    #[serde(default)]
+    pub version_id: Option<SkillVersionId>,
     /// SKILL.md 原文（Agent Skill 标准正文）。
     pub source_markdown: Option<String>,
     /// fluxeme.yaml 原文（backing-api 声明）。SkillHub 不解释。
@@ -158,6 +171,9 @@ pub trait SkillArtifactStore: Send + Sync {
 pub struct RuntimePrincipal {
     pub user_id: String,
     pub api_key_id: String,
+    /// Whether the authenticated owner has administrative access to SkillHub.
+    #[serde(default)]
+    pub is_admin: bool,
 }
 
 /// Port：Skill Runtime 的请求鉴权（请求链 ③）。

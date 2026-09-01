@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAdminSkills, useCreateSkill, useUpdateSkill, useDeleteSkill, useSetSkillStatus, useSkillVersions, useUploadSkillArtifact, useSkillRuntimeStatuses } from '@fluxeme/shared/src/api/skills';
-import type { SkillRow } from '@fluxeme/shared/src/api/skills';
+import type { PackageStatus, SkillRow } from '@fluxeme/shared/src/api/skills';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
 import { EmptyState } from '@fluxeme/shared/src/components/EmptyState';
 import { Button } from '@fluxeme/shared/src/components/ui/button';
@@ -27,7 +27,13 @@ const RUNTIME: Record<string, { label: string; cls: string }> = {
   failed: { label: 'skillHub.runtime.failed', cls: 'bg-red-100 text-red-700' },
   disabled: { label: 'skillHub.runtime.disabled', cls: 'bg-muted text-muted-foreground' },
 };
-const NEXT: Record<string, string> = { draft: 'reviewing', reviewing: 'approved', approved: 'published', published: 'draft' };
+const NEXT: Partial<Record<PackageStatus, PackageStatus>> = {
+  draft: 'reviewing',
+  reviewing: 'approved',
+  approved: 'published',
+  published: 'disabled',
+  disabled: 'published',
+};
 type Tab = 'basic' | 'package' | 'preview' | 'versions';
 
 const count = (n: number) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
@@ -50,7 +56,17 @@ export default function SkillHubAdmin() {
   const submitCreate = () => { if (!slug.trim() || !name.trim()) return toast.error(t('skillHub.formRequired')); create.mutate({ slug: slug.trim(), name: name.trim(), description: desc.trim(), category: category.trim() || 'general', tags: tags.split(',').map((v) => v.trim()).filter(Boolean), visibility: vis as 'public' | 'internal' | 'private' }, { onSuccess: () => { setCreateOpen(false); toast.success(t('skillHub.created')); }, onError: (e: Error) => toast.error(e.message) }); };
   const submitUpdate = () => { if (!editing) return; update.mutate({ id: editing.id, data: { name: name.trim(), description: desc.trim(), category: category.trim() || 'general', tags: tags.split(',').map((v) => v.trim()).filter(Boolean), visibility: vis as 'public' | 'internal' | 'private' } }, { onSuccess: () => { setEditing(null); toast.success(t('skillHub.saved')); }, onError: (e: Error) => toast.error(e.message) }); };
   const submitUpload = () => { if (!editing || !version.trim() || !file) return; upload.mutate({ skillId: editing.id, version: version.trim(), changelog: changelog.trim(), file }, { onSuccess: () => { setVersion(''); setChangelog(''); setFile(null); toast.success(t('skillHub.uploaded')); }, onError: (e: Error) => toast.error(e.message) }); };
-  const advance = (skill: SkillRow) => { const next = NEXT[skill.status]; if (!next) return; setStatus.mutate({ id: skill.id, status: next }, { onSuccess: () => toast.success(t('skillHub.saved')), onError: (e: Error) => toast.error(e.message) }); };
+  const advance = (skill: SkillRow) => {
+    const next = NEXT[skill.status];
+    if (!next) return;
+    setStatus.mutate(
+      { id: skill.id, status: next },
+      {
+        onSuccess: () => toast.success(t('skillHub.saved')),
+        onError: (e: Error) => toast.error(e.message),
+      },
+    );
+  };
   const deleteSkill = (skill: SkillRow) => { if (!window.confirm(`${t('skillHub.confirmDelete')}${skill.name}${t('confirm.suffix')}`)) return; remove.mutate(skill.id, { onSuccess: () => toast.success(t('skillHub.deleted')), onError: (e: Error) => toast.error(e.message) }); };
 
   return <div className="space-y-5 animate-fade-in">

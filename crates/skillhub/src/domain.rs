@@ -17,6 +17,7 @@ pub enum PackageStatus {
     Reviewing,
     Approved,
     Published,
+    Disabled,
 }
 
 impl PackageStatus {
@@ -26,6 +27,7 @@ impl PackageStatus {
             PackageStatus::Reviewing => "reviewing",
             PackageStatus::Approved => "approved",
             PackageStatus::Published => "published",
+            PackageStatus::Disabled => "disabled",
         }
     }
 
@@ -35,6 +37,7 @@ impl PackageStatus {
             "reviewing" => Some(Self::Reviewing),
             "approved" => Some(Self::Approved),
             "published" => Some(Self::Published),
+            "disabled" => Some(Self::Disabled),
             _ => None,
         }
     }
@@ -47,6 +50,14 @@ pub enum Visibility {
     Public,
     Internal,
     Private,
+}
+
+/// 用户端访问上下文。团队 ACL 接入前，作者和管理员是 internal/private 的
+/// 最小安全可见范围；public 仍可按目录策略访问。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillAccessContext {
+    pub user_id: String,
+    pub is_admin: bool,
 }
 
 impl Visibility {
@@ -91,6 +102,8 @@ pub struct SkillRow {
     pub updated_at: String,
     /// 累计下载次数（download 成功后自增，管理端展示）。
     pub download_count: i64,
+    /// 当前对外发布的版本 ID；与旧 `version` 字段兼容并逐步取代它。
+    pub published_version_id: Option<String>,
 }
 
 /// `agent_skill_versions` 行（版本历史，独立于 skill 当前版本）。

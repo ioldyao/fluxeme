@@ -79,9 +79,30 @@ impl SkillBackingModule {
         self.policy = policy;
     }
 
-    /// 技能级运行状态汇总（UI 展示）。
+    /// 技能级运行状态汇总（管理端展示）。
     pub async fn runtime_statuses(&self) -> Result<Vec<SkillRuntimeStatus>, BackingError> {
         self.repo.runtime_statuses().await
+    }
+
+    /// 返回调用主体可访问的运行状态，避免 internal/private 技能状态泄露。
+    pub async fn runtime_statuses_for(
+        &self,
+        principal: &fluxeme_contract::RuntimePrincipal,
+    ) -> Result<Vec<SkillRuntimeStatus>, BackingError> {
+        let statuses = self.repo.runtime_statuses().await?;
+        let mut visible = Vec::with_capacity(statuses.len());
+        for status in statuses {
+            if principal.is_admin
+                || self
+                    .catalog
+                    .resolve_for(&SkillSlug(status.slug.clone()), "", principal)
+                    .await
+                    .is_ok()
+            {
+                visible.push(status);
+            }
+        }
+        Ok(visible)
     }
 
     // ── Outbox poller ───────────────────────────────────────────────────
@@ -97,6 +118,7 @@ impl SkillBackingModule {
     }
 
     async fn poll_once(&self) -> Result<(), BackingError> {
+        self.repo.reclaim_stale_tasks(300).await?;
         let tasks = self.repo.claim_pending_tasks(10).await?;
         for t in tasks {
             self.process_task(&t).await;
@@ -196,8 +218,21 @@ impl SkillBackingModule {
                 updated_at: now.clone(),
             });
         }
+        // 只有全部 endpoint 策略校验通过才替换；失败时保留既有版本端点。
+        if blocked.is_some() {
+            self.repo
+                .insert_event(
+                    &task.skill_id,
+                    Some(&task.version_id),
+                    "endpoint_deploy_failed",
+                    blocked.as_deref(),
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            return Err(blocked.unwrap_or_else(|| "endpoint deployment failed".to_string()));
+        }
         self.repo
-            .replace_endpoints(&rows)
+            .replace_endpoints(&task.skill_id, &task.version_id, &rows)
             .await
             .map_err(|e| e.to_string())?;
         self.repo
@@ -227,6 +262,7 @@ impl SkillBackingModule {
         &self,
         slug: &str,
         rest_path: &str,
+        query: Option<&str>,
         method: &Method,
         headers: &HeaderMap,
         body: axum::body::Bytes,
@@ -258,8 +294,12 @@ impl SkillBackingModule {
             }
         };
 
-        // ② resolve 发布态技能（空版本 = 当前发布版本）
-        let manifest = match self.catalog.resolve(&SkillSlug(slug.to_string()), "").await {
+        // ② resolve 发布态技能，并重复执行 visibility/ACL 门禁。
+        let manifest = match self
+            .catalog
+            .resolve_for(&SkillSlug(slug.to_string()), "", &principal)
+            .await
+        {
             Ok(m) => m,
             Err(_) => {
                 return json_error(
@@ -276,9 +316,13 @@ impl SkillBackingModule {
         } else {
             format!("/{rest_path}")
         };
+        let version_id = match manifest.version_id.as_ref() {
+            Some(version_id) => &version_id.0,
+            None => return json_error(StatusCode::NOT_FOUND, "runtime version unavailable", slug),
+        };
         let endpoint = match self
             .repo
-            .find_endpoint(&manifest.skill.0, method.as_str(), &path)
+            .find_endpoint(&manifest.skill.0, version_id, method.as_str(), &path)
             .await
         {
             Ok(Some(e)) => e,
@@ -286,14 +330,24 @@ impl SkillBackingModule {
         };
 
         if let Err(e) = self.policy.check_body(body.len()) {
-            return json_error(StatusCode::PAYLOAD_TOO_LARGE, &e.to_string(), slug);
+            tracing::warn!(skill = %slug, error = %e, "skill runtime request body rejected");
+            return json_error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request body exceeds the skill limit",
+                slug,
+            );
         }
 
         // ⑤ 代理（禁重定向防 SSRF 绕过；超时取端点声明）
         let timeout = std::time::Duration::from_millis(endpoint.timeout_ms.max(1) as u64);
+        let mut upstream_url = endpoint.upstream_url.clone();
+        if let Some(query) = query.filter(|value| !value.is_empty()) {
+            upstream_url.push('?');
+            upstream_url.push_str(query);
+        }
         let mut req = self
             .client
-            .request(method.clone(), &endpoint.upstream_url)
+            .request(method.clone(), &upstream_url)
             .timeout(timeout)
             .body(body);
         for (name, value) in headers.iter() {
@@ -312,10 +366,14 @@ impl SkillBackingModule {
         let upstream = match req.send().await {
             Ok(r) => r,
             Err(e) => {
-                let msg = format!("upstream error: {e}");
+                tracing::warn!(skill = %slug, error = %e, "skill runtime upstream request failed");
                 self.meter(start, &manifest, method, &path, 502, &principal)
                     .await;
-                return json_error(StatusCode::BAD_GATEWAY, &msg, slug);
+                return json_error(
+                    StatusCode::BAD_GATEWAY,
+                    "skill upstream request failed",
+                    slug,
+                );
             }
         };
 

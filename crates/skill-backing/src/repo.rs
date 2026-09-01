@@ -219,7 +219,7 @@ impl BackingRepository {
     ) -> Result<(), BackingError> {
         self.exec(
             "UPDATE agent_skill_runtime_tasks SET status=$2, last_error=$3, processed_at=now()::text \
-             WHERE id=$1",
+             WHERE id=$1 AND status='processing'",
         )
         .bind(id)
         .bind(status)
@@ -229,21 +229,38 @@ impl BackingRepository {
         Ok(())
     }
 
+    /// 回收卡死的 processing 任务，避免实例崩溃后永久阻塞部署。
+    pub async fn reclaim_stale_tasks(&self, timeout_secs: i64) -> Result<u64, BackingError> {
+        let result = self
+            .exec(
+                "UPDATE agent_skill_runtime_tasks SET status='pending', processed_at=NULL \
+                 WHERE status='processing' AND processed_at::timestamptz < now() - ($1 * interval '1 second')",
+            )
+            .bind(timeout_secs)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
     // ── Endpoints ───────────────────────────────────────────────────────
 
     /// 幂等重部署：清掉该版本的旧端点再插入（同版本重放不重复）。
-    pub async fn replace_endpoints(&self, rows: &[EndpointRow]) -> Result<(), BackingError> {
+    /// `skill_id/version_id` 显式传入，以便空 manifest 也能清理旧候选端点。
+    pub async fn replace_endpoints(
+        &self,
+        skill_id: &str,
+        version_id: &str,
+        rows: &[EndpointRow],
+    ) -> Result<(), BackingError> {
         let mut tx = self.pool.begin().await?;
-        if let Some(first) = rows.first() {
-            sqlx_core::query::query(
-                "DELETE FROM agent_skill_endpoints \
-                 WHERE skill_id=$1 AND skill_version_id=$2",
-            )
-            .bind(&first.skill_id)
-            .bind(&first.skill_version_id)
-            .execute(&mut *tx)
-            .await?;
-        }
+        sqlx_core::query::query(
+            "DELETE FROM agent_skill_endpoints \
+             WHERE skill_id=$1 AND skill_version_id=$2",
+        )
+        .bind(skill_id)
+        .bind(version_id)
+        .execute(&mut *tx)
+        .await?;
         for e in rows {
             sqlx_core::query::query(
                 "INSERT INTO agent_skill_endpoints \
@@ -284,21 +301,22 @@ impl BackingRepository {
         Ok(())
     }
 
-    /// 请求链 ④：按当前已部署版本的 method+public_path 找端点。
+    /// 请求链 ④：按指定 active version 的 method+public_path 找端点。
     pub async fn find_endpoint(
         &self,
         skill_id: &str,
+        version_id: &str,
         method: &str,
         public_path: &str,
     ) -> Result<Option<EndpointRow>, BackingError> {
         let row = self
             .exec(&format!(
-                "SELECT {ENDPOINT_COLUMNS} FROM agent_skill_endpoints e \
-                 WHERE e.skill_id=$1 AND e.method=$2 AND e.public_path=$3 AND e.status='ready' \
-                 AND e.skill_version_id = (SELECT skill_version_id FROM agent_skill_endpoints e2 \
-                     WHERE e2.skill_id = e.skill_id ORDER BY e2.created_at DESC LIMIT 1)"
+                "SELECT {ENDPOINT_COLUMNS} FROM agent_skill_endpoints \
+                 WHERE skill_id=$1 AND skill_version_id=$2 AND method=$3 \
+                 AND public_path=$4 AND status='ready'"
             ))
             .bind(skill_id)
+            .bind(version_id)
             .bind(method)
             .bind(public_path)
             .fetch_optional(&self.pool)
@@ -332,8 +350,9 @@ impl BackingRepository {
                         count(*) AS n \
                  FROM agent_skill_endpoints e \
                  WHERE e.skill_version_id = (SELECT skill_version_id FROM agent_skill_endpoints e2 \
-                     WHERE e2.skill_id = e.skill_id ORDER BY e2.created_at DESC LIMIT 1) \
-                 GROUP BY e.skill_id, e.slug, e.version",
+                     WHERE e2.skill_id = e.skill_id ORDER BY e2.created_at DESC, e2.skill_version_id DESC LIMIT 1) \
+                 GROUP BY e.skill_id, e.slug, e.version \
+                 ORDER BY e.skill_id, e.version",
             )
             .fetch_all(&self.pool)
             .await?;

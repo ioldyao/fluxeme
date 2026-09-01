@@ -70,6 +70,7 @@ impl ApiKeyAuthorizer for SkillKeyAuthorizer {
             return Err(ContractError::NotFound("missing required scope".into()));
         }
         Ok(RuntimePrincipal {
+            is_admin: user.role == "admin",
             user_id: user.id,
             api_key_id: key.key,
         })

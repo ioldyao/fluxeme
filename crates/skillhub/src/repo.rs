@@ -28,6 +28,7 @@ fn map_skill_row(row: &PgRow) -> SkillRow {
         created_at: row.try_get::<String, _>(14).unwrap_or_default(),
         updated_at: row.try_get::<String, _>(15).unwrap_or_default(),
         download_count: row.try_get::<i64, _>(16).unwrap_or(0),
+        published_version_id: row.try_get::<Option<String>, _>(17).unwrap_or(None),
     }
 }
 
@@ -49,7 +50,7 @@ fn map_version_row(row: &PgRow) -> SkillVersionRow {
 
 const SKILL_COLUMNS: &str = "id, slug, name, description, category, tags, author_id, version, \
      artifact_path, artifact_size, source_markdown, visibility, status, \
-     published_at, created_at, updated_at, download_count";
+     published_at, created_at, updated_at, download_count, published_version_id";
 
 pub struct SkillRepository {
     pool: PgPool,
@@ -85,7 +86,8 @@ impl SkillRepository {
                 published_at    TEXT,
                 created_at      TEXT NOT NULL DEFAULT now(),
                 updated_at      TEXT NOT NULL DEFAULT now(),
-                download_count  BIGINT NOT NULL DEFAULT 0
+                download_count  BIGINT NOT NULL DEFAULT 0,
+                published_version_id TEXT
             )",
         )
         .execute(&self.pool)
@@ -209,6 +211,9 @@ impl SkillRepository {
             "ALTER TABLE agent_skill_runtime_tasks ALTER COLUMN processed_at TYPE TEXT USING processed_at::text",
             "ALTER TABLE agent_skill_installs ALTER COLUMN installed_at TYPE TEXT USING installed_at::text",
             "ALTER TABLE agent_skills ADD COLUMN IF NOT EXISTS download_count BIGINT NOT NULL DEFAULT 0",
+            "ALTER TABLE agent_skills ADD COLUMN IF NOT EXISTS published_version_id TEXT",
+            "UPDATE agent_skills s SET published_version_id = v.id FROM agent_skill_versions v WHERE s.published_version_id IS NULL AND s.status = 'published' AND v.skill_id = s.id AND v.version = s.version",
+            "UPDATE agent_skill_versions v SET status = 'published' WHERE v.status <> 'published' AND EXISTS (SELECT 1 FROM agent_skills s WHERE s.published_version_id = v.id AND s.status = 'published')",
         ] {
             self.exec(sql).execute(&self.pool).await?;
         }
@@ -224,8 +229,8 @@ impl SkillRepository {
             "INSERT INTO agent_skills \
              (id, slug, name, description, category, tags, author_id, version, \
               artifact_path, artifact_size, source_markdown, visibility, status, \
-              published_at, created_at, updated_at, download_count) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)",
+              published_at, created_at, updated_at, download_count, published_version_id) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)",
         )
         .bind(&s.id)
         .bind(&s.slug)
@@ -244,6 +249,7 @@ impl SkillRepository {
         .bind(&s.created_at)
         .bind(&s.updated_at)
         .bind(s.download_count)
+        .bind(&s.published_version_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -332,17 +338,48 @@ impl SkillRepository {
         id: &str,
         status: &str,
         published_at: Option<&str>,
+        published_version_id: Option<&str>,
+        version_status_id: Option<&str>,
         task: Option<&RuntimeTaskRow>,
     ) -> Result<(), SkillHubError> {
         let mut tx = self.pool.begin().await?;
         sqlx_core::query::query(
-            "UPDATE agent_skills SET status=$2, published_at=$3, updated_at=now()::text WHERE id=$1",
+            "UPDATE agent_skills SET status=$2, published_at=$3, \
+             published_version_id=COALESCE($4, published_version_id), updated_at=now()::text WHERE id=$1",
         )
         .bind(id)
         .bind(status)
         .bind(published_at)
+        .bind(published_version_id)
         .execute(&mut *tx)
         .await?;
+        if let Some(version_id) = published_version_id {
+            sqlx_core::query::query(
+                "UPDATE agent_skill_versions SET status='published' WHERE id=$1 AND skill_id=$2",
+            )
+            .bind(version_id)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+            sqlx_core::query::query(
+                "UPDATE agent_skills s SET version=v.version, artifact_path=v.artifact_path, \
+                 artifact_size=v.artifact_size, source_markdown=v.source_markdown \
+                 FROM agent_skill_versions v WHERE s.id=$1 AND v.id=$2 AND v.skill_id=s.id",
+            )
+            .bind(id)
+            .bind(version_id)
+            .execute(&mut *tx)
+            .await?;
+        } else if let Some(version_id) = version_status_id {
+            sqlx_core::query::query(
+                "UPDATE agent_skill_versions SET status=$2 WHERE id=$1 AND skill_id=$3",
+            )
+            .bind(version_id)
+            .bind(status)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        }
         if let Some(t) = task {
             Self::insert_task_tx(&mut tx, t).await?;
         }
@@ -396,7 +433,7 @@ impl SkillRepository {
 
     // ── Versions ──────────────────────────────────────────────────────
 
-    /// 上传：版本行 + 技能当前包 + outbox 任务同事务提交。
+    /// 上传：仅写入版本行；发布指针由状态流转事务更新。
     pub async fn upload_artifact_with_task(
         &self,
         v: &SkillVersionRow,
@@ -422,9 +459,11 @@ impl SkillRepository {
         .bind(&v.created_at)
         .execute(&mut *tx)
         .await?;
+        // 旧字段只在当前没有发布版本时初始化，不能让候选版本覆盖线上版本。
         sqlx_core::query::query(
             "UPDATE agent_skills SET version=$2, artifact_path=$3, artifact_size=$4, \
-             source_markdown=$5, updated_at=now()::text WHERE id=$1",
+             source_markdown=$5, updated_at=now()::text \
+             WHERE id=$1 AND published_version_id IS NULL AND version = '0.0.0'",
         )
         .bind(&v.skill_id)
         .bind(&v.version)
@@ -453,6 +492,22 @@ impl SkillRepository {
             )
             .bind(skill_id)
             .bind(version)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.as_ref().map(map_version_row))
+    }
+
+    pub async fn latest_version(
+        &self,
+        skill_id: &str,
+    ) -> Result<Option<SkillVersionRow>, SkillHubError> {
+        let row = self
+            .exec(
+                "SELECT id, skill_id, version, changelog, artifact_path, artifact_size, \
+                 source_markdown, manifest_yaml, status, created_by, created_at \
+                 FROM agent_skill_versions WHERE skill_id=$1 ORDER BY created_at DESC LIMIT 1",
+            )
+            .bind(skill_id)
             .fetch_optional(&self.pool)
             .await?;
         Ok(row.as_ref().map(map_version_row))
