@@ -14,6 +14,8 @@ import { Card, CardContent } from '@fluxeme/shared/src/components/ui/card';
 import { ArrowLeft, Download, Terminal, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatTimestamp } from '@fluxeme/shared/src/lib/date';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   draft: { label: 'skillHub.status.draft', cls: 'bg-muted text-muted-foreground' },
@@ -172,9 +174,9 @@ export default function SkillDetail() {
         <CardContent className="p-4">
           {tab === 'skillmd' ? (
             skill.source_markdown ? (
-              <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-lg bg-muted/50 p-4 font-mono text-xs leading-relaxed">
-                {skill.source_markdown}
-              </pre>
+              <article className="prose prose-sm dark:prose-invert max-w-none rounded-lg border bg-muted/30 p-4">
+                <Markdown remarkPlugins={[remarkGfm]}>{skill.source_markdown}</Markdown>
+              </article>
             ) : (
               <div className="p-6 text-center text-muted-foreground">{t('skillHub.empty')}</div>
             )
