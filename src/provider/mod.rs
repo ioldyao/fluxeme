@@ -226,7 +226,13 @@ pub fn set_allow_private_ips(allow: bool) {
     );
 }
 
-/// Resolve a provider operation URL while preserving legacy suffix behavior.
+/// Resolve a provider operation URL.
+///
+/// When `full_url` is set the URL is used verbatim. Otherwise the trailing `/`
+/// is stripped from the admin-provided base URL and only the operation path is
+/// appended — the `/v1` prefix on `suffix` is dropped (e.g. `/v1/chat/completions`
+/// → `/chat/completions`). If the admin wants `/v1` in the final URL, they
+/// include it in the base URL themselves.
 pub async fn resolve_endpoint_url(
     endpoint: &EndpointConfig,
     suffix: &str,
@@ -236,20 +242,10 @@ pub async fn resolve_endpoint_url(
         return Ok(endpoint.url.clone());
     }
 
-    // Be tolerant of legacy records where a complete operation URL was saved
-    // before the full_url flag existed or was persisted. Never append a second
-    // chat/completions path to an already complete operation URL.
-    let parsed = Url::parse(&endpoint.url)
-        .map_err(|_| ProviderError::new("Invalid endpoint URL format", ErrorKind::Other))?;
-    let path = parsed.path().trim_end_matches('/');
-    let suffix_path = suffix.trim_end_matches('/');
-    let operation_path = suffix_path.strip_prefix("/v1").unwrap_or(suffix_path);
-    if path.ends_with(operation_path) || path.ends_with(suffix_path) {
-        return Ok(endpoint.url.clone());
-    }
-
-    let base = endpoint.url.trim_end_matches('/').trim_end_matches("/v1");
-    Ok(format!("{base}{suffix}"))
+    let suffix = suffix.trim_end_matches('/');
+    let operation_path = suffix.strip_prefix("/v1").unwrap_or(suffix);
+    let base = endpoint.url.trim_end_matches('/');
+    Ok(format!("{base}{operation_path}"))
 }
 
 /// Validate that an endpoint URL has a safe absolute HTTP(S) form and, when
@@ -359,15 +355,31 @@ mod endpoint_url_tests {
     }
 
     #[tokio::test]
-    async fn avoids_duplicate_chat_completion_suffix_for_legacy_rows() {
-        let ep = endpoint(
-            "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
-            false,
-        );
+    async fn appends_only_operation_path_without_v1_prefix() {
+        // The gateway does not append /v1; the admin includes it in the base URL.
+        let ep = endpoint("https://api.example.com/api/v1", false);
         let resolved = resolve_endpoint_url(&ep, "/v1/chat/completions")
             .await
             .expect("valid operation URL");
-        assert_eq!(resolved, ep.url);
+        assert_eq!(resolved, "https://api.example.com/api/v1/chat/completions");
+    }
+
+    #[tokio::test]
+    async fn strips_trailing_slash_before_appending() {
+        let ep = endpoint("https://api.example.com/api/v1/", false);
+        let resolved = resolve_endpoint_url(&ep, "/v1/chat/completions")
+            .await
+            .expect("valid operation URL");
+        assert_eq!(resolved, "https://api.example.com/api/v1/chat/completions");
+    }
+
+    #[tokio::test]
+    async fn appends_response_operation_path_without_v1() {
+        let ep = endpoint("https://api.example.com/api/v1", false);
+        let resolved = resolve_endpoint_url(&ep, "/v1/responses")
+            .await
+            .expect("valid operation URL");
+        assert_eq!(resolved, "https://api.example.com/api/v1/responses");
     }
 }
 
