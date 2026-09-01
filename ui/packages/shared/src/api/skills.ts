@@ -198,6 +198,21 @@ export function usePublishedSkillVersions(slug: string | null) {
   });
 }
 
+export type SkillAgent = 'claude-code' | 'codex' | 'cursor' | 'gemini-cli' | 'opencode' | 'hermes';
+
+export const SKILL_AGENTS: ReadonlyArray<{
+  key: SkillAgent;
+  label: string;
+  directory: string;
+}> = [
+  { key: 'claude-code', label: 'Claude Code', directory: '$HOME/.claude/skills' },
+  { key: 'codex', label: 'Codex', directory: '$HOME/.agents/skills' },
+  { key: 'cursor', label: 'Cursor', directory: '$HOME/.cursor/skills' },
+  { key: 'gemini-cli', label: 'Gemini CLI', directory: '$HOME/.gemini/skills' },
+  { key: 'opencode', label: 'OpenCode', directory: '$HOME/.config/opencode/skills' },
+  { key: 'hermes', label: 'Hermes', directory: '$HOME/.hermes/skills' },
+];
+
 function apiOrigin(): string {
   const configured = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '');
   const withoutApi = configured.replace(/\/api\/?$/, '');
@@ -215,11 +230,17 @@ export function skillDownloadUrl(slug: string, version?: string) {
  * 生成 CLI 安装命令。命令不嵌入浏览器 session/API key；它仅适用于 public
  * 技能。curl 显式检查 HTTP 状态，避免把 JSON/HTML 错误响应当 ZIP 解压。
  */
-export function skillInstallCommand(slug: string, version?: string) {
+export function skillInstallCommand(
+  slug: string,
+  version?: string,
+  agent: SkillAgent = 'claude-code',
+): string {
+  const target = SKILL_AGENTS.find((item) => item.key === agent) ?? SKILL_AGENTS[0];
   const safeSlug = slug.replace(/[^A-Za-z0-9._-]/g, '_');
   const versionArg = version ? `?version=${encodeURIComponent(version)}` : '';
   const downloadUrl = `${apiOrigin()}/api/skills/${encodeURIComponent(slug)}/download${versionArg}`;
-  return `set -eu; tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT; curl --fail-with-body -sSL "${downloadUrl}" -o "$tmp"; unzip -tq "$tmp" >/dev/null; mkdir -p "$HOME/.claude/skills/${safeSlug}"; unzip -o "$tmp" -d "$HOME/.claude/skills/${safeSlug}"`;
+  const targetDir = `${target.directory}/${safeSlug}`;
+  return `set -eu; tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT; curl --fail-with-body -sSL "${downloadUrl}" -o "$tmp"; unzip -tq "$tmp" >/dev/null; mkdir -p "${targetDir}"; unzip -o "$tmp" -d "${targetDir}"`;
 }
 
 // ── 运行状态 & API Key Scope（阶段 2：Skill Runtime） ─────────────────────

@@ -6,6 +6,8 @@ import {
   usePublishedSkillVersions,
   skillInstallCommand,
   skillDownloadUrl,
+  SKILL_AGENTS,
+  type SkillAgent,
 } from '@fluxeme/shared/src/api/skills';
 import { Button } from '@fluxeme/shared/src/components/ui/button';
 import { Badge } from '@fluxeme/shared/src/components/ui/badge';
@@ -14,6 +16,7 @@ import { ArrowLeft, Download, Terminal, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatTimestamp } from '@fluxeme/shared/src/lib/date';
 import { SkillMarkdown } from '@fluxeme/shared/src/components/SkillMarkdown';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@fluxeme/shared/src/components/ui/tabs';
 
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   draft: { label: 'skillHub.status.draft', cls: 'bg-muted text-muted-foreground' },
@@ -30,6 +33,7 @@ export default function SkillDetail() {
   const { data: skill, isLoading, isError } = usePublishedSkill(slug);
   const { data: versions } = usePublishedSkillVersions(slug);
   const [tab, setTab] = useState<TabKey>('skillmd');
+  const [installAgent, setInstallAgent] = useState<SkillAgent>('claude-code');
   const [copied, setCopied] = useState(false);
 
   if (isLoading) {
@@ -45,8 +49,12 @@ export default function SkillDetail() {
   }
 
   const statusBadge = STATUS_BADGE[skill.status] ?? STATUS_BADGE.draft;
+  const selectedAgent = SKILL_AGENTS.find((agent) => agent.key === installAgent) ?? SKILL_AGENTS[0];
+  const selectedAgentLabel = selectedAgent.label;
+  const installCommand = skillInstallCommand(skill.slug, undefined, installAgent);
+
   const copyCommand = () => {
-    navigator.clipboard.writeText(skillInstallCommand(skill.slug)).then(() => {
+    navigator.clipboard.writeText(installCommand).then(() => {
       setCopied(true);
       toast.success(t('skillHub.copied'));
       setTimeout(() => setCopied(false), 1500);
@@ -110,21 +118,45 @@ export default function SkillDetail() {
           {/* 一键安装命令 */}
           <div className="mt-5">
             <div className="mb-2 text-sm font-semibold">{t('skillHub.installCommand')}</div>
-            <div className="relative">
-              <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-muted p-3 pr-12 font-mono text-xs">
-                {skillInstallCommand(skill.slug)}
-              </pre>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute right-2 top-2 size-8"
-                onClick={copyCommand}
-                title={t('skillHub.copy')}
+            <Tabs
+              value={installAgent}
+              onValueChange={(value) => {
+                if (SKILL_AGENTS.some((agent) => agent.key === value)) {
+                  setInstallAgent(value as SkillAgent);
+                  setCopied(false);
+                }
+              }}
+            >
+              <TabsList
+                variant="line"
+                aria-label={t('skillHub.installAgentTabs')}
+                className="h-10 min-h-10 max-w-full justify-start overflow-x-auto overflow-y-hidden overscroll-y-none [scrollbar-width:none] [&::-webkit-scrollbar]:h-0 [&::-webkit-scrollbar]:w-0"
               >
-                {copied ? <Check className="size-4 text-emerald-600" /> : <Terminal className="size-4" />}
-              </Button>
-            </div>
-            <p className="mt-1.5 text-xs text-muted-foreground">{t('skillHub.installHint')}</p>
+                {SKILL_AGENTS.map((agent) => (
+                  <TabsTrigger key={agent.key} value={agent.key} className="flex-none px-3">
+                    {agent.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              <TabsContent value={installAgent} className="relative mt-2">
+                <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-muted p-3 pr-12 font-mono text-xs">
+                  {installCommand}
+                </pre>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-2 top-2 size-8"
+                  onClick={copyCommand}
+                  title={t('skillHub.copy')}
+                  aria-label={t('skillHub.copyAgentCommand', { agent: selectedAgentLabel })}
+                >
+                  {copied ? <Check className="size-4 text-emerald-600" /> : <Terminal className="size-4" />}
+                </Button>
+              </TabsContent>
+            </Tabs>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              {t('skillHub.installTargetHint', { agent: selectedAgent.label, directory: selectedAgent.directory })}
+            </p>
           </div>
         </CardContent>
       </Card>
