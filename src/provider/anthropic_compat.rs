@@ -221,9 +221,10 @@ pub fn anthropic_to_openai(body: &Value) -> Value {
         "messages": messages,
     });
 
-    // shared parameters
+    // Shared parameters. `max_tokens` is intentionally excluded here: it is
+    // an Anthropic field and must be translated to the OpenAI field below,
+    // never forwarded alongside it.
     for key in &[
-        "max_tokens",
         "temperature",
         "top_p",
         "top_k",
@@ -242,9 +243,14 @@ pub fn anthropic_to_openai(body: &Value) -> Value {
         openai["stop"] = v.clone();
     }
 
-    // max_tokens → max_completion_tokens (newer OpenAI API)
-    if body.get("max_tokens").is_some() {
-        openai["max_completion_tokens"] = body["max_tokens"].clone();
+    // Translate to the OpenAI-compatible field. Do not preserve the
+    // Anthropic spelling: upstream OpenAI APIs reject both fields together.
+    if let Some(v) = body
+        .get("max_completion_tokens")
+        .cloned()
+        .or_else(|| body.get("max_tokens").cloned())
+    {
+        openai["max_completion_tokens"] = v;
     }
 
     // Anthropic tools → OpenAI function tools. Claude Code sends `tools`;
@@ -926,6 +932,32 @@ mod tests {
         assert_eq!(msgs[2]["content"], "a.txt\nb.txt");
     }
 
+    #[test]
+    fn translates_anthropic_max_tokens_to_openai_only() {
+        let body = json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 4096,
+        });
+        let openai = anthropic_to_openai(&body);
+        assert_eq!(openai["max_completion_tokens"], 4096);
+        assert!(openai.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn prefers_existing_openai_completion_token_field() {
+        let body = json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 4096,
+            "max_completion_tokens": 2048,
+        });
+        let openai = anthropic_to_openai(&body);
+        assert_eq!(openai["max_completion_tokens"], 2048);
+        assert!(openai.get("max_tokens").is_none());
+    }
+
+    #[test]
     fn forwards_tools_to_openai() {
         let body = json!({
             "model": "m",
