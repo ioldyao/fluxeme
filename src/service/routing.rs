@@ -84,6 +84,40 @@ fn models_for_display(models: &[Model]) -> Vec<serde_json::Value> {
         .collect()
 }
 
+fn models_for_display_routable(
+    models: &[Model],
+    channels: &HashMap<String, Arc<Channel>>,
+    binding_pool: &BindingStatePool,
+) -> Vec<serde_json::Value> {
+    let mut seen: HashSet<String> = HashSet::new();
+    models
+        .iter()
+        .filter(|model| {
+            model.published
+                && model.channels.iter().any(|binding| {
+                    channels
+                        .get(&binding.channel_id)
+                        .is_some_and(|channel| channel.enabled)
+                        && binding_pool.has_healthy(&model.id, &binding.channel_id)
+                })
+                && seen.insert(model.name.clone())
+        })
+        .map(|model| {
+            serde_json::json!({
+                "id": model.name,
+                "type": "model",
+                "display_name": model.name,
+                "created_at": "2026-01-01T00:00:00Z",
+                "max_input_tokens": model.context_length.unwrap_or(0),
+                "max_tokens": model.context_length.unwrap_or(0),
+                "capabilities": {},
+                "upstream_id": model.id,
+                "category": model.category,
+            })
+        })
+        .collect()
+}
+
 impl RoutingService {
     pub async fn new(db: Arc<Database>, enc_key: &str) -> Result<Self, String> {
         let svc = Self {
@@ -102,6 +136,7 @@ impl RoutingService {
     }
 
     pub async fn reload(&self) -> Result<(), String> {
+        self.public_snapshot_valid.store(false, Ordering::Release);
         let chs = self
             .db
             .list_channels()
@@ -237,6 +272,31 @@ impl RoutingService {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+    }
+
+    pub fn has_model_binding_for_upstream(
+        &self,
+        model: &str,
+        channel_id: &str,
+        upstream_model: Option<&str>,
+    ) -> bool {
+        self.models
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|configured| {
+                configured.name == model
+                    && configured.channels.iter().any(|binding| {
+                        binding.channel_id == channel_id
+                            && upstream_model.is_none_or(|expected| {
+                                binding
+                                    .upstream_model
+                                    .as_deref()
+                                    .unwrap_or(&configured.name)
+                                    == expected
+                            })
+                    })
+            })
     }
 
     pub fn has_model_binding(&self, model: &str, channel_id: &str) -> bool {
@@ -376,6 +436,7 @@ impl RoutingService {
             return Vec::new();
         }
         let models = self.models.read().unwrap_or_else(|e| e.into_inner());
+        let channels = self.channels.read().unwrap_or_else(|e| e.into_inner());
         if !self.public_snapshot_valid.load(Ordering::Acquire) {
             return Vec::new();
         }
@@ -386,7 +447,7 @@ impl RoutingService {
             })
             .cloned()
             .collect();
-        models_for_display(&filtered)
+        models_for_display_routable(&filtered, &channels, &self.binding_pool)
     }
 
     /// Route a public data-plane request. Only published logical models may be used.
