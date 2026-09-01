@@ -14,8 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Check, FileArchive, MoreHorizontal, Package, Pencil, Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatTimestamp } from '@fluxeme/shared/src/lib/date';
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { SkillMarkdown } from '@fluxeme/shared/src/components/SkillMarkdown';
 
 const STATUS: Record<string, { label: string; cls: string }> = {
   draft: { label: 'skillHub.status.draft', cls: 'bg-muted text-muted-foreground' },
@@ -92,7 +91,7 @@ function MarkdownPane({ content }: { content: string | null }) {
   if (!content) return <EmptyState message={t('skillHub.empty')} />;
   return (
     <article className="prose prose-sm dark:prose-invert max-w-none rounded-xl border bg-muted/20 p-5">
-      <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
+      <SkillMarkdown content={content} />
     </article>
   );
 }
