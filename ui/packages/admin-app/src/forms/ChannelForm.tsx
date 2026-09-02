@@ -15,7 +15,8 @@ import { PROVIDERS, PROVIDER_DISPLAY } from "@fluxeme/shared/src/constants/provi
 
 const FIXED_BASE_URLS: Record<string, string> = {
   deepseek: 'https://api.deepseek.com',
-  // DashScope: URL is auto-generated from region + workspaceId (backend auto-detects mode)
+  // DashScope: URL is auto-generated from region + workspaceId (pure domain; backend
+  // appends /apps/anthropic or /compatible-mode/v1 per request kind)
   dashscope: '',
   zhipu: 'https://open.bigmodel.cn/api/paas/v4',
   minimax: 'https://api.minimaxi.com/v1',
@@ -59,7 +60,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
   const isDashScope = provider === 'dashscope';
   const dashscopeBaseUrl = isDashScope
     ? dashscopeWorkspaceId
-      ? `https://${dashscopeWorkspaceId}.${dashscopeRegion}.maas.aliyuncs.com/compatible-mode/v1`
+      ? `https://${dashscopeWorkspaceId}.${dashscopeRegion}.maas.aliyuncs.com`
       : ''
     : '';
   const fixedBaseUrl = isDashScope ? dashscopeBaseUrl : FIXED_BASE_URLS[provider] || '';

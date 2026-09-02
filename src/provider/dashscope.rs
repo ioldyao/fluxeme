@@ -1,12 +1,14 @@
-/// DashScope (阿里云百炼 Bailian) provider adapter.
-///
-/// Supports two compatible modes auto-detected from endpoint URL:
-/// - **OpenAI Compatible**: URL contains `/compatible-mode` → `base/compatible-mode/v1/chat/completions` with `Authorization: Bearer`
-/// - **Anthropic Compatible**: URL contains `/apps/anthropic` → `base/apps/anthropic/v1/messages` with `x-api-key` or `Authorization: Bearer`
-///
-/// Routing (no format conversion):
-/// - Client `/v1/chat/completions` → DashScope OpenAI Compatible
-/// - Client `/v1/messages` → DashScope Anthropic Compatible
+//! DashScope (阿里云百炼 Bailian) provider adapter.
+//!
+//! Channel endpoint URL is the **pure domain** (auto-generated from region +
+//! workspaceId): `https://{WorkspaceId}.{region}.maas.aliyuncs.com`.
+//! The adapter builds the full upstream path from the request kind:
+//! - `/v1/messages` (Anthropic) → `{domain}/apps/anthropic/v1/messages` (x-api-key)
+//! - `/v1/chat/completions` (OpenAI) → `{domain}/compatible-mode/v1/chat/completions` (Bearer)
+//! - `/v1/responses` (OpenAI Responses) → `{domain}/compatible-mode/v1/responses...` (Bearer)
+//!
+//! Legacy bases containing `/compatible-mode/v1` or `/apps/anthropic` are
+//! normalized back to the pure domain (`domain_base`), so old configs keep working.
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,10 +27,37 @@ use crate::provider::shared_client;
 
 pub struct DashScopeAdapter;
 
-#[derive(Debug)]
-enum DashScopeMode {
-    OpenAI,
-    Anthropic,
+/// Upstream endpoint kind; decides the path and auth header style.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum UrlKind {
+    Messages,
+    ChatCompletions,
+    CountTokens,
+    Responses,
+    ResponsesInputTokens,
+    /// `/compatible-mode/v1/responses/{id}`
+    ResponsesRetrieve,
+    /// `/compatible-mode/v1/responses/{id}/input_items`
+    ResponsesInputItems,
+}
+
+impl UrlKind {
+    fn path(self) -> &'static str {
+        match self {
+            UrlKind::Messages => "/apps/anthropic/v1/messages",
+            UrlKind::ChatCompletions => "/compatible-mode/v1/chat/completions",
+            UrlKind::CountTokens => "/apps/anthropic/v1/messages/count_tokens",
+            UrlKind::Responses => "/compatible-mode/v1/responses",
+            UrlKind::ResponsesInputTokens => "/compatible-mode/v1/responses/input_tokens",
+            UrlKind::ResponsesRetrieve => "/compatible-mode/v1/responses/{id}",
+            UrlKind::ResponsesInputItems => "/compatible-mode/v1/responses/{id}/input_items",
+        }
+    }
+
+    /// Anthropic-compatible endpoints use `x-api-key` + `anthropic-version`.
+    fn is_anthropic(self) -> bool {
+        matches!(self, UrlKind::Messages | UrlKind::CountTokens)
+    }
 }
 
 impl DashScopeAdapter {
@@ -36,89 +65,49 @@ impl DashScopeAdapter {
         Self
     }
 
-    fn detect_mode(endpoint: &EndpointConfig) -> Result<DashScopeMode, ProviderError> {
+    /// Strip any legacy path suffix, leaving the pure domain base.
+    fn domain_base(endpoint: &EndpointConfig) -> String {
+        let base = endpoint.url.trim_end_matches('/');
+        base.strip_suffix("/compatible-mode/v1")
+            .or_else(|| base.strip_suffix("/compatible-mode"))
+            .or_else(|| base.strip_suffix("/apps/anthropic/v1"))
+            .or_else(|| base.strip_suffix("/apps/anthropic"))
+            .unwrap_or(base)
+            .to_string()
+    }
+
+    /// Build the full upstream URL for the given request kind.
+    async fn build_url(endpoint: &EndpointConfig, kind: UrlKind) -> Result<String, ProviderError> {
         if endpoint.full_url {
-            return Ok(DashScopeMode::OpenAI);
-        }
-        let url = &endpoint.url;
-        if url.contains("/apps/anthropic") {
-            Ok(DashScopeMode::Anthropic)
-        } else if url.contains("/compatible-mode") {
-            Ok(DashScopeMode::OpenAI)
-        } else {
-            Err(ProviderError::new(
-                format!(
-                    "Unsupported DashScope URL: {}. Expected URL to contain '/apps/anthropic' \
-                     (Anthropic compatible) or '/compatible-mode' (OpenAI compatible). \
-                     Examples: https://{{WorkspaceId}}.cn-beijing.maas.aliyuncs.com/apps/anthropic \
-                     or https://{{WorkspaceId}}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-                    url
-                ),
-                ErrorKind::Other,
-            ))
-        }
-    }
-
-    fn build_headers(
-        endpoint: &EndpointConfig,
-        mode: &DashScopeMode,
-    ) -> Result<HeaderMap, ProviderError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
-        match mode {
-            DashScopeMode::OpenAI => {
-                headers.insert(
-                    AUTHORIZATION,
-                    HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key)).map_err(
-                        |e| ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other),
-                    )?,
-                );
-            }
-            DashScopeMode::Anthropic => {
-                headers.insert(
-                    "x-api-key",
-                    HeaderValue::from_str(&endpoint.api_key).map_err(|e| {
-                        ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other)
-                    })?,
-                );
-                headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
-            }
-        }
-
-        Ok(headers)
-    }
-
-    async fn build_chat_completions_url(
-        endpoint: &EndpointConfig,
-    ) -> Result<String, ProviderError> {
-        super::resolve_endpoint_url(endpoint, "/v1/chat/completions").await
-    }
-
-    async fn build_messages_url(endpoint: &EndpointConfig) -> Result<String, ProviderError> {
-        if endpoint.full_url {
-            return super::resolve_endpoint_url(endpoint, "").await;
+            // 完整 URL 直接用（兼容老配置：用户自己填了完整端点）。
+            return Ok(endpoint.url.clone());
         }
         super::validate_endpoint_url(&endpoint.url).await?;
-        let base = endpoint.url.trim_end_matches('/');
-        if base.ends_with("/apps/anthropic") {
-            Ok(format!("{}/v1/messages", base))
-        } else if base.ends_with("/compatible-mode") {
-            // If user configured OpenAI URL but sends /v1/messages, that's a mismatch
-            // We still route to OpenAI chat completions as fallback
-            Ok(format!("{}/v1/chat/completions", base))
-        } else {
-            // Fallback: assume Anthropic compatible at base URL
-            Ok(format!("{}/apps/anthropic/v1/messages", base))
-        }
+        let domain = Self::domain_base(endpoint);
+        Ok(format!("{domain}{}", kind.path()))
     }
 
-    async fn build_count_tokens_url(endpoint: &EndpointConfig) -> Result<String, ProviderError> {
-        if endpoint.full_url {
-            return super::resolve_endpoint_url(endpoint, "").await;
+    /// Build headers for a given kind: Anthropic vs OpenAI-compatible.
+    fn build_headers(endpoint: &EndpointConfig, kind: UrlKind) -> Result<HeaderMap, ProviderError> {
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        if kind.is_anthropic() {
+            headers.insert(
+                "x-api-key",
+                HeaderValue::from_str(&endpoint.api_key).map_err(|e| {
+                    ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other)
+                })?,
+            );
+            headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
+        } else {
+            headers.insert(
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {}", endpoint.api_key)).map_err(|e| {
+                    ProviderError::new(format!("Invalid API key: {}", e), ErrorKind::Other)
+                })?,
+            );
         }
-        let messages_url = Self::build_messages_url(endpoint).await?;
-        Ok(format!("{}count_tokens", messages_url))
+        Ok(headers)
     }
 
     async fn do_send(
@@ -240,9 +229,8 @@ impl ProviderAdapter for DashScopeAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<Value, ProviderError> {
-        let mode = Self::detect_mode(endpoint)?;
-        let url = Self::build_chat_completions_url(endpoint).await?;
-        let headers = Self::build_headers(endpoint, &mode)?;
+        let url = Self::build_url(endpoint, UrlKind::ChatCompletions).await?;
+        let headers = Self::build_headers(endpoint, UrlKind::ChatCompletions)?;
         let timeout = request_timeout(
             &RequestKind::Unary {
                 body_size: body.to_string().len(),
@@ -250,7 +238,7 @@ impl ProviderAdapter for DashScopeAdapter {
             endpoint,
             &default_config(),
         );
-        tracing::info!(endpoint = %endpoint.url, mode = ?mode, "DashScope chat_completions → {}", url);
+        tracing::info!(endpoint = %endpoint.url, "DashScope chat_completions → {}", url);
         Self::do_send(shared_client(), &url, headers, &body, timeout).await
     }
 
@@ -259,11 +247,10 @@ impl ProviderAdapter for DashScopeAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<StreamResult, ProviderError> {
-        let mode = Self::detect_mode(endpoint)?;
-        let url = Self::build_chat_completions_url(endpoint).await?;
-        let headers = Self::build_headers(endpoint, &mode)?;
+        let url = Self::build_url(endpoint, UrlKind::ChatCompletions).await?;
+        let headers = Self::build_headers(endpoint, UrlKind::ChatCompletions)?;
         let timeout = request_timeout(&RequestKind::Streaming, endpoint, &default_config());
-        tracing::info!(endpoint = %endpoint.url, mode = ?mode, "DashScope chat_completions_stream → {}", url);
+        tracing::info!(endpoint = %endpoint.url, "DashScope chat_completions_stream → {}", url);
         Self::do_send_stream(shared_client(), &url, headers, &body, timeout).await
     }
 
@@ -272,9 +259,8 @@ impl ProviderAdapter for DashScopeAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<Value, ProviderError> {
-        let mode = Self::detect_mode(endpoint)?;
-        let url = Self::build_messages_url(endpoint).await?;
-        let headers = Self::build_headers(endpoint, &mode)?;
+        let url = Self::build_url(endpoint, UrlKind::Messages).await?;
+        let headers = Self::build_headers(endpoint, UrlKind::Messages)?;
         let timeout = request_timeout(
             &RequestKind::Unary {
                 body_size: body.to_string().len(),
@@ -282,7 +268,7 @@ impl ProviderAdapter for DashScopeAdapter {
             endpoint,
             &default_config(),
         );
-        tracing::info!(endpoint = %endpoint.url, mode = ?mode, "DashScope messages → {}", url);
+        tracing::info!(endpoint = %endpoint.url, "DashScope messages → {}", url);
         Self::do_send(shared_client(), &url, headers, &body, timeout).await
     }
 
@@ -291,11 +277,10 @@ impl ProviderAdapter for DashScopeAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<StreamResult, ProviderError> {
-        let mode = Self::detect_mode(endpoint)?;
-        let url = Self::build_messages_url(endpoint).await?;
-        let headers = Self::build_headers(endpoint, &mode)?;
+        let url = Self::build_url(endpoint, UrlKind::Messages).await?;
+        let headers = Self::build_headers(endpoint, UrlKind::Messages)?;
         let timeout = request_timeout(&RequestKind::Streaming, endpoint, &default_config());
-        tracing::info!(endpoint = %endpoint.url, mode = ?mode, "DashScope messages_stream → {}", url);
+        tracing::info!(endpoint = %endpoint.url, "DashScope messages_stream → {}", url);
         Self::do_send_stream(shared_client(), &url, headers, &body, timeout).await
     }
 
@@ -304,9 +289,8 @@ impl ProviderAdapter for DashScopeAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<Value, ProviderError> {
-        let mode = Self::detect_mode(endpoint)?;
-        let url = Self::build_count_tokens_url(endpoint).await?;
-        let headers = Self::build_headers(endpoint, &mode)?;
+        let url = Self::build_url(endpoint, UrlKind::CountTokens).await?;
+        let headers = Self::build_headers(endpoint, UrlKind::CountTokens)?;
         let timeout = request_timeout(
             &RequestKind::Unary {
                 body_size: body.to_string().len(),
@@ -314,7 +298,185 @@ impl ProviderAdapter for DashScopeAdapter {
             endpoint,
             &default_config(),
         );
-        tracing::info!(endpoint = %endpoint.url, mode = ?mode, "DashScope count_tokens → {}", url);
+        tracing::info!(endpoint = %endpoint.url, "DashScope count_tokens → {}", url);
         Self::do_send(shared_client(), &url, headers, &body, timeout).await
+    }
+
+    async fn responses_input_tokens(
+        &self,
+        endpoint: &EndpointConfig,
+        body: Value,
+    ) -> Result<Value, ProviderError> {
+        let url = Self::build_url(endpoint, UrlKind::ResponsesInputTokens).await?;
+        let headers = Self::build_headers(endpoint, UrlKind::ResponsesInputTokens)?;
+        let timeout = request_timeout(
+            &RequestKind::Unary {
+                body_size: body.to_string().len(),
+            },
+            endpoint,
+            &default_config(),
+        );
+        tracing::info!(endpoint = %endpoint.url, "DashScope responses_input_tokens → {}", url);
+        Self::do_send(shared_client(), &url, headers, &body, timeout).await
+    }
+
+    async fn responses_stream(
+        &self,
+        endpoint: &EndpointConfig,
+        body: Value,
+    ) -> Result<StreamResult, ProviderError> {
+        let url = Self::build_url(endpoint, UrlKind::Responses).await?;
+        let headers = Self::build_headers(endpoint, UrlKind::Responses)?;
+        let timeout = request_timeout(&RequestKind::Streaming, endpoint, &default_config());
+        tracing::info!(endpoint = %endpoint.url, "DashScope responses_stream → {}", url);
+        Self::do_send_stream(shared_client(), &url, headers, &body, timeout).await
+    }
+
+    async fn relay(
+        &self,
+        endpoint: &EndpointConfig,
+        path: &str,
+        body: Value,
+    ) -> Result<Value, ProviderError> {
+        // 非流式 /v1/responses → /compatible-mode/v1/responses
+        let path = path.trim_end_matches('/');
+        let url = if path == "/v1/responses" {
+            Self::build_url(endpoint, UrlKind::Responses).await?
+        } else if let Some(id) = extract_response_id(path, "/input_items") {
+            let mut url = Self::build_url(endpoint, UrlKind::ResponsesInputItems).await?;
+            url = url.replacen("{id}", &id, 1);
+            url
+        } else if let Some(id) = extract_response_id(path, "") {
+            let mut url = Self::build_url(endpoint, UrlKind::ResponsesRetrieve).await?;
+            url = url.replacen("{id}", &id, 1);
+            url
+        } else {
+            // 其它路径：domain + 剥掉 /v1 前缀的剩余路径（兼容通用转发）。
+            let domain = Self::domain_base(endpoint);
+            let rest = path.strip_prefix("/v1").unwrap_or(path);
+            format!("{domain}{rest}")
+        };
+        let headers = Self::build_headers(endpoint, UrlKind::Responses)?;
+        let timeout = request_timeout(
+            &RequestKind::Unary { body_size: 0 },
+            endpoint,
+            &default_config(),
+        );
+        tracing::info!(endpoint = %endpoint.url, "DashScope relay → {}", url);
+        Self::do_send(shared_client(), &url, headers, &body, timeout).await
+    }
+}
+
+/// Extract a response id from a path like `/v1/responses/{id}/input_items`
+/// (suffix is `/input_items` or empty for the plain retrieve path).
+fn extract_response_id(path: &str, suffix: &str) -> Option<String> {
+    let rest = path.strip_prefix("/v1/responses/")?;
+    let rest = rest.strip_suffix(suffix).unwrap_or(rest);
+    if rest.is_empty() || rest.contains('/') {
+        return None;
+    }
+    Some(rest.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ep(url: &str, full_url: bool) -> EndpointConfig {
+        EndpointConfig {
+            id: None,
+            url: url.to_string(),
+            api_key: "sk-test-synthetic".to_string(),
+            weight: 1,
+            timeout_secs: None,
+            enabled: true,
+            full_url,
+        }
+    }
+
+    #[tokio::test]
+    async fn messages_builds_anthropic_path_on_pure_domain() {
+        let e = ep("https://token-plan.cn-beijing.maas.aliyuncs.com", false);
+        assert_eq!(
+            DashScopeAdapter::build_url(&e, UrlKind::Messages)
+                .await
+                .unwrap(),
+            "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages"
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_builds_compatible_mode_path() {
+        let e = ep("https://token-plan.cn-beijing.maas.aliyuncs.com", false);
+        assert_eq!(
+            DashScopeAdapter::build_url(&e, UrlKind::ChatCompletions)
+                .await
+                .unwrap(),
+            "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
+        );
+    }
+
+    #[tokio::test]
+    async fn responses_builds_compatible_mode_path() {
+        let e = ep("https://token-plan.cn-beijing.maas.aliyuncs.com", false);
+        assert_eq!(
+            DashScopeAdapter::build_url(&e, UrlKind::Responses)
+                .await
+                .unwrap(),
+            "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/responses"
+        );
+        assert_eq!(
+            DashScopeAdapter::build_url(&e, UrlKind::ResponsesInputTokens)
+                .await
+                .unwrap(),
+            "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/responses/input_tokens"
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_compatible_mode_base_is_normalized() {
+        let e = ep(
+            "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+            false,
+        );
+        assert_eq!(
+            DashScopeAdapter::build_url(&e, UrlKind::Messages)
+                .await
+                .unwrap(),
+            "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages"
+        );
+    }
+
+    #[tokio::test]
+    async fn full_url_is_used_verbatim() {
+        let e = ep("https://example.com/custom/path", true);
+        assert_eq!(
+            DashScopeAdapter::build_url(&e, UrlKind::Messages)
+                .await
+                .unwrap(),
+            "https://example.com/custom/path"
+        );
+    }
+
+    #[test]
+    fn extracts_response_ids() {
+        assert_eq!(
+            extract_response_id("/v1/responses/resp_123/input_items", "/input_items"),
+            Some("resp_123".to_string())
+        );
+        assert_eq!(
+            extract_response_id("/v1/responses/resp_123", ""),
+            Some("resp_123".to_string())
+        );
+        assert_eq!(extract_response_id("/v1/responses", ""), None);
+        assert_eq!(extract_response_id("/v1/responses/a/b", ""), None);
+    }
+
+    #[test]
+    fn anthropic_kinds_use_x_api_key_style() {
+        assert!(UrlKind::Messages.is_anthropic());
+        assert!(UrlKind::CountTokens.is_anthropic());
+        assert!(!UrlKind::ChatCompletions.is_anthropic());
+        assert!(!UrlKind::Responses.is_anthropic());
     }
 }
