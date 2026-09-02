@@ -217,15 +217,15 @@ async fn relay_to_upstream(
                 return Ok(Json(resp).into_response());
             }
             Err(e) if e.kind() == ErrorKind::ConnectFailed => {
-                route.report_failure();
                 if !route.retry_next() {
+                    route.report_failure();
                     break e.0;
                 }
                 continue;
             }
             Err(e) if is_retryable_error(&e) => {
-                route.report_failure();
                 if retry_count >= gw_cfg.max_retries {
+                    route.report_failure();
                     if let Some(reservation) = &reservation_finalizer {
                         reservation.release("relay retries exhausted");
                     }
@@ -233,6 +233,7 @@ async fn relay_to_upstream(
                 }
                 retry_count += 1;
                 if !route.retry_next() {
+                    route.report_failure();
                     break e.0;
                 }
             }

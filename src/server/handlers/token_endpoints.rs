@@ -31,19 +31,20 @@ async fn handle_messages_count_tokens(
                 return Ok(resp);
             }
             Err(e) if e.kind() == ErrorKind::ConnectFailed => {
-                route.report_failure();
                 if !route.retry_next() {
+                    route.report_failure();
                     break e.0;
                 }
                 continue;
             }
             Err(e) if is_retryable_error(&e) => {
-                route.report_failure();
                 if retry_count >= max_retries {
+                    route.report_failure();
                     break e.0;
                 }
                 retry_count += 1;
                 if !route.retry_next() {
+                    route.report_failure();
                     break e.0;
                 }
             }
@@ -82,19 +83,20 @@ async fn handle_responses_input_tokens(
                 return Ok(resp);
             }
             Err(e) if e.kind() == ErrorKind::ConnectFailed => {
-                route.report_failure();
                 if !route.retry_next() {
+                    route.report_failure();
                     break e.0;
                 }
                 continue;
             }
             Err(e) if is_retryable_error(&e) => {
-                route.report_failure();
                 if retry_count >= max_retries {
+                    route.report_failure();
                     break e.0;
                 }
                 retry_count += 1;
                 if !route.retry_next() {
+                    route.report_failure();
                     break e.0;
                 }
             }

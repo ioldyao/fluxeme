@@ -282,21 +282,22 @@ async fn handle_non_streaming(
             }
             Err(e) if e.kind() == ErrorKind::ConnectFailed => {
                 // Connect failure: try next endpoint without consuming
-                // retry budget, but feed the failure into the circuit
-                // breaker so endpoint health reflects live traffic.
-                route.report_failure();
+                // retry budget. Only feed the breaker when the request
+                // ultimately fails (no more endpoints to try).
                 if !route.retry_next() {
+                    route.report_failure();
                     break e.0;
                 }
                 continue;
             }
             Err(e) if is_retryable_error(&e) => {
-                route.report_failure();
                 if retry_count >= max_retries {
+                    route.report_failure();
                     break e.0;
                 }
                 retry_count += 1;
                 if !route.retry_next() {
+                    route.report_failure();
                     break e.0;
                 }
             }

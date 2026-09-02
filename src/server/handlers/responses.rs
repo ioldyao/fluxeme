@@ -186,8 +186,8 @@ async fn handle_responses_non_streaming(
                 if error.kind() == ErrorKind::ConnectFailed
                     || is_retryable_error(&error) =>
             {
-                route.report_failure();
                 if retries >= max_retries || !route.retry_next() {
+                    route.report_failure();
                     break Err(error);
                 }
                 retries += 1;
@@ -438,8 +438,8 @@ async fn handle_responses_streaming(
                 if error.kind() == ErrorKind::ConnectFailed
                     || is_retryable_error(&error) =>
             {
-                route.report_failure();
                 if retries >= max_retries || !route.retry_next() {
+                    route.report_failure();
                     break Err(error);
                 }
                 retries += 1;
