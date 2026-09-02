@@ -1052,7 +1052,7 @@ impl CoreBackend for PgBackend {
                 timeout_ms BIGINT NOT NULL DEFAULT 30000,
                 enabled BOOLEAN NOT NULL DEFAULT true,
                 preserve_query BOOLEAN NOT NULL DEFAULT true,
-                strip_prefix BOOLEAN NOT NULL DEFAULT true,
+                strip_prefix BOOLEAN NOT NULL DEFAULT false,
                 upstream_headers TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT '',
@@ -1063,6 +1063,13 @@ impl CoreBackend for PgBackend {
         .await
         .map_err(|e| DbError(format!("Migration create gateway_routes: {e}")))?;
         tracing::info!("gateway_routes table ready");
+
+        // 网关鉴权并入 skill scope，删除历史遗留的独立 gateway scope 行。
+        raw_sql("DELETE FROM api_key_scopes WHERE resource_type='gateway'")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError(format!("Migration cleanup gateway scopes: {e}")))?;
+        tracing::info!("legacy gateway scopes cleaned up");
 
         Ok(())
     }

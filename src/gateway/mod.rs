@@ -45,7 +45,8 @@ pub struct GatewayRouteRequest {
     pub enabled: bool,
     #[serde(default = "default_true")]
     pub preserve_query: bool,
-    #[serde(default = "default_true")]
+    /// 默认 false：保留 path_prefix（上游路径的一部分），只剥网关入口 /apigw。
+    #[serde(default)]
     pub strip_prefix: bool,
     #[serde(default)]
     pub upstream_headers: HashMap<String, String>,
@@ -311,17 +312,22 @@ pub async fn delete_route(
 }
 
 fn path_matches(prefix: &str, path: &str) -> bool {
-    prefix == "/"
-        || path == prefix
+    // 规范化：去掉尾随 `/*`（通配匹配该前缀下任意路径），保留其它字面量。
+    let base = prefix.strip_suffix("/*").unwrap_or(prefix);
+    if base.is_empty() || base == "/" {
+        return true; // 根路由匹配一切
+    }
+    path == base
         || path
-            .strip_prefix(prefix)
+            .strip_prefix(base)
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
 fn join_upstream(base: &str, prefix: &str, path: &str, strip: bool) -> Result<String, String> {
     let mut url = url::Url::parse(base).map_err(|_| "invalid upstream")?;
+    let prefix_base = prefix.strip_suffix("/*").unwrap_or(prefix);
     let suffix = if strip {
-        path.strip_prefix(prefix).unwrap_or("")
+        path.strip_prefix(prefix_base).unwrap_or("")
     } else {
         path
     };
@@ -390,17 +396,13 @@ pub async fn gateway_proxy(
             Err(_) => return json_error(StatusCode::UNAUTHORIZED, "invalid API key"),
         }
     }
-    // scope 校验用通配符查询（`*`），具体路由匹配放在鉴权全部通过之后。
+    // Skills 权限即包含 API 网关转发能力：脚本通过 /apigw 转发上游时，
+    // 只要 Key 具备 `skill` scope 即放行，无需独立 gateway scope。
     let has_scope = state
         .db
-        .api_key_has_resource_scope(&key.key, "gateway", "*", "invoke")
+        .api_key_has_resource_scope(&key.key, "skill", "*", "invoke")
         .await
-        .unwrap_or(false)
-        || state
-            .db
-            .api_key_has_resource_scope(&key.key, "gateway", &path, "invoke")
-            .await
-            .unwrap_or(false);
+        .unwrap_or(false);
     if !has_scope {
         return json_error(
             StatusCode::UNAUTHORIZED,

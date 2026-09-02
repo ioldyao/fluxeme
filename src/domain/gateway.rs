@@ -25,8 +25,10 @@ pub struct GatewayRoute {
     /// 代理时透传原始 query string。
     #[serde(default = "default_true")]
     pub preserve_query: bool,
-    /// 代理时去掉 path_prefix（`/weather/current` → 上游 `/current`）。
-    #[serde(default = "default_true")]
+    /// 代理时是否去掉 path_prefix。默认 false：path_prefix 只用于匹配路由，
+    /// 是上游路径的一部分，应原样透传（`/apigw/api/jobs` → 上游 `/api/jobs`）。
+    /// 仅网关固定入口前缀 `/apigw` 始终被剥离。
+    #[serde(default)]
     pub strip_prefix: bool,
     /// 加密的 JSON 对象：代理时注入上游请求头（值不返回给前端）。
     #[serde(default)]

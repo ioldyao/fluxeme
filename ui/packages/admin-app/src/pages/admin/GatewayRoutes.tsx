@@ -18,7 +18,7 @@ import {
 const DEFAULT_METHODS = 'GET,POST,PUT,PATCH,DELETE';
 const makeEmptyForm = (): GatewayRouteInput => ({
   name: '', path_prefix: '', upstream_url: '', methods: DEFAULT_METHODS,
-  timeout_ms: 30000, enabled: true, preserve_query: true, strip_prefix: true, upstream_headers: {},
+  timeout_ms: 30000, enabled: true, preserve_query: true, strip_prefix: false, upstream_headers: {},
 });
 
 function routeInput(route: GatewayRoute): GatewayRouteInput { return { ...route, upstream_headers: {} }; }
@@ -75,7 +75,7 @@ export default function GatewayRoutes() {
   });
   const previewPath = form.path_prefix.trim() || '/your-prefix';
   const previewUpstream = form.upstream_url.trim().replace(/\/+$/, '') || 'https://upstream.example.com';
-  const previewSuffix = form.strip_prefix ? '/current' : `${previewPath}/current`;
+  const previewSuffix = form.strip_prefix ? '/jobs' : `${previewPath}/jobs`;
   const saving = create.isPending || update.isPending;
   const addHeaderLine = () => {
     const name = newHeaderName.trim();
@@ -117,7 +117,7 @@ export default function GatewayRoutes() {
             <h4 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground"><Globe className="size-3.5" />基本信息</h4>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5"><Label htmlFor="gateway-name" className="text-xs">名称</Label><Input id="gateway-name" value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="例如：天气 API" className="h-9" /></div>
-              <div className="space-y-1.5"><Label htmlFor="gateway-prefix" className="text-xs">路径前缀</Label><div className="flex h-9 items-center rounded-md border border-input bg-muted/40 px-2.5 text-xs text-muted-foreground"><span className="font-mono">/apigw</span><input id="gateway-prefix" required value={form.path_prefix} onChange={(e) => set('path_prefix', e.target.value)} placeholder="/weather" className="h-full w-full bg-transparent pl-1 font-mono text-sm text-foreground outline-none" /></div></div>
+              <div className="space-y-1.5"><Label htmlFor="gateway-prefix" className="text-xs">路径前缀</Label><div className="flex h-9 items-center rounded-md border border-input bg-muted/40 px-2.5 text-xs text-muted-foreground"><span className="font-mono">/apigw</span><input id="gateway-prefix" required value={form.path_prefix} onChange={(e) => set('path_prefix', e.target.value)} placeholder="/api" className="h-full w-full bg-transparent pl-1 font-mono text-sm text-foreground outline-none" /></div><p className="text-[11px] text-muted-foreground">前缀是上游路径的一部分，默认原样转发。仅入口前缀 /apigw 会被剥离。</p></div>
             </div>
             <div className="space-y-1.5"><Label htmlFor="gateway-upstream" className="text-xs">上游 URL</Label><Input id="gateway-upstream" required type="url" value={form.upstream_url} onChange={(e) => set('upstream_url', e.target.value)} placeholder="https://api.example.com" className="h-9 font-mono text-sm" /><p className="text-[11px] text-muted-foreground">仅允许 HTTP(S)；私网与回环地址会被 SSRF 策略拦截。</p></div>
           </section>
@@ -131,7 +131,7 @@ export default function GatewayRoutes() {
             </div>
             <div className="space-y-1.5"><Label htmlFor="gateway-timeout" className="text-xs">超时（毫秒）</Label><Input id="gateway-timeout" type="number" min={1} max={60000} required value={form.timeout_ms} onChange={(e) => set('timeout_ms', Number(e.target.value))} className="h-9" /></div>
             <div className="grid gap-2 rounded-xl border border-border/70 bg-muted/20 p-1.5 sm:grid-cols-3">
-              {([['enabled', '启用路由', '启用后立即生效'], ['preserve_query', '透传 Query', '转发查询参数'], ['strip_prefix', '去掉路径前缀', '只发剩余路径']] as const).map(([key, label, hint]) => (
+              {([['enabled', '启用路由', '启用后立即生效'], ['preserve_query', '透传 Query', '转发查询参数'], ['strip_prefix', '剥掉路径前缀', '通常关闭：/api 是上游路径，应原样转发']] as const).map(([key, label, hint]) => (
                 <label key={key} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 transition-colors hover:bg-background/60"><Switch aria-label={label} checked={form[key]} onCheckedChange={(v) => set(key, v)} /><span className="leading-tight"><span className="block text-xs font-medium">{label}</span><span className="block text-[10px] text-muted-foreground">{hint}</span></span></label>
               ))}
             </div>

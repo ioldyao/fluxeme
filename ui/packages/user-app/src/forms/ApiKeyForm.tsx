@@ -136,7 +136,7 @@ export function ApiKeyForm({ open, onOpenChange, onSubmit, createdKey, editKey, 
             <div className="space-y-2">
               <Label>{t('keyScope.scopeLabel')}</Label>
               <div className="flex flex-col gap-2 rounded-lg border p-3">
-                {(['model', 'skill', 'mcp', 'gateway'] as const).map((s) => (
+                {(['model', 'skill', 'mcp'] as const).map((s) => (
                   <label key={s} className="flex items-center gap-2 text-sm">
                     <Checkbox checked={scopes.includes(s)} onCheckedChange={() => toggleScope(s)} />
                     {t(`keyScope.${s}`)}
