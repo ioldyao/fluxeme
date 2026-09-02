@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Area,
   AreaChart,
@@ -80,12 +81,12 @@ type CompareRow = {
   selected: boolean;
 };
 
-const RANGE_OPTIONS: Array<{ key: RangeKey; short: string; long: string; label: string }> = [
-  { key: '5m', short: '5M', long: '5 分钟', label: '5 分钟' },
-  { key: '15m', short: '15M', long: '15 分钟', label: '15 分钟' },
-  { key: '1h', short: '1H', long: '1 小时', label: '1 小时' },
-  { key: '6h', short: '6H', long: '6 小时', label: '6 小时' },
-  { key: '24h', short: '24H', long: '24 小时', label: '24 小时' },
+const RANGE_OPTIONS: Array<{ key: RangeKey; short: string; i18n: string }> = [
+  { key: '5m', short: '5M', i18n: 'flowControl.range5m' },
+  { key: '15m', short: '15M', i18n: 'flowControl.range15m' },
+  { key: '1h', short: '1H', i18n: 'flowControl.range1h' },
+  { key: '6h', short: '6H', i18n: 'flowControl.range6h' },
+  { key: '24h', short: '24H', i18n: 'flowControl.range24h' },
 ];
 
 const RANGE_MINUTES: Record<RangeKey, number> = {
@@ -96,10 +97,10 @@ const RANGE_MINUTES: Record<RangeKey, number> = {
   '24h': 1440,
 };
 
-const FLOW_TABS: Array<{ key: FlowTabKey; label: string }> = [
-  { key: 'flow', label: '请求流' },
-  { key: 'endpoint', label: '端点状态' },
-  { key: 'compare', label: '模型对比' },
+const FLOW_TABS: Array<{ key: FlowTabKey; i18n: string }> = [
+  { key: 'flow', i18n: 'flowControl.tabFlow' },
+  { key: 'endpoint', i18n: 'flowControl.tabEndpoint' },
+  { key: 'compare', i18n: 'flowControl.tabCompare' },
 ];
 
 function formatNumber(value: number | null | undefined) {
@@ -125,15 +126,15 @@ function formatIpRows(rows: FlowMetricsClientIp[]) {
   }));
 }
 
-function formatTrendBucket(bucket: string, unit: 'minute' | 'hour') {
+function formatTrendBucket(bucket: string, unit: 'minute' | 'hour', locale = 'zh-CN') {
   const date = new Date(bucket);
   if (Number.isNaN(date.getTime())) {
     return bucket;
   }
   if (unit === 'minute') {
-    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false });
   }
-  return date.toLocaleString('zh-CN', {
+  return date.toLocaleString(locale, {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
@@ -150,17 +151,17 @@ function formatRangeBounds(range: RangeKey, nowMs = Date.now()) {
   };
 }
 
-function inferRangeLabel(start?: string, end?: string) {
-  if (!start || !end) return '当前区间';
+function inferRangeLabel(start: string | undefined, end: string | undefined, t: (key: string) => string, locale: string) {
+  if (!start || !end) return t('flowControl.currentRange');
   const startDate = new Date(start);
   const endDate = new Date(end);
-  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return '当前区间';
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return t('flowControl.currentRange');
   const minutes = Math.round((endDate.getTime() - startDate.getTime()) / 60_000);
   const preset = Object.entries(RANGE_MINUTES).find(([, value]) => value === minutes)?.[0] as RangeKey | undefined;
   if (preset) {
-    return RANGE_OPTIONS.find((option) => option.key === preset)?.long ?? '当前区间';
+    return t(RANGE_OPTIONS.find((option) => option.key === preset)?.i18n ?? 'flowControl.currentRange');
   }
-  return `${startDate.toLocaleString('zh-CN', { hour12: false })} ~ ${endDate.toLocaleString('zh-CN', { hour12: false })}`;
+  return `${startDate.toLocaleString(locale, { hour12: false })} ~ ${endDate.toLocaleString(locale, { hour12: false })}`;
 }
 
 function formatContextLength(value: number | null | undefined) {
@@ -170,34 +171,34 @@ function formatContextLength(value: number | null | undefined) {
   return formatNumber(value);
 }
 
-function formatDateTime(value?: string | null) {
+function formatDateTime(value?: string | null, locale = 'zh-CN') {
   if (!value) return '—';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString('zh-CN', { hour12: false });
+  return date.toLocaleString(locale, { hour12: false });
 }
 
-function endpointRoutingLabel(row: EndpointStatusRow) {
-  if (!row.routingObserved) return '未观测';
-  return row.routingAvailable ? '可路由' : '不可路由';
+function endpointRoutingLabel(row: EndpointStatusRow, t: (key: string) => string) {
+  if (!row.routingObserved) return t('flowControl.unobserved');
+  return row.routingAvailable ? t('flowControl.routable') : t('flowControl.notRoutable');
 }
 
-function endpointProbeLabel(probe: ProbeResult | null) {
-  if (!probe) return '未探测';
-  if (probe.success) return `成功 · ${formatNumber(probe.latency_ms)}ms`;
-  return '失败';
+function endpointProbeLabel(probe: ProbeResult | null, t: (key: string, options?: Record<string, unknown>) => string) {
+  if (!probe) return t('flowControl.unprobed');
+  if (probe.success) return `${t('flowControl.success')} · ${formatNumber(probe.latency_ms)}ms`;
+  return t('flowControl.failed');
 }
 
-function modelHealthPresentation(status: ModelHealthStatus) {
+function modelHealthPresentation(status: ModelHealthStatus, t: (key: string) => string) {
   switch (status) {
     case 'healthy':
-      return { label: '可路由', dot: 'bg-chart-2', badge: 'bg-chart-2/15 text-chart-2' };
+      return { label: t('flowControl.healthy'), dot: 'bg-chart-2', badge: 'bg-chart-2/15 text-chart-2' };
     case 'degraded':
-      return { label: '部分降级', dot: 'bg-sidebar-primary', badge: 'bg-sidebar-primary/15 text-sidebar-primary' };
+      return { label: t('flowControl.degraded'), dot: 'bg-sidebar-primary', badge: 'bg-sidebar-primary/15 text-sidebar-primary' };
     case 'unavailable':
-      return { label: '不可用', dot: 'bg-destructive', badge: 'bg-destructive/15 text-destructive' };
+      return { label: t('flowControl.unavailable'), dot: 'bg-destructive', badge: 'bg-destructive/15 text-destructive' };
     case 'unknown':
-      return { label: '健康未知', dot: 'bg-muted-foreground', badge: 'bg-muted text-muted-foreground' };
+      return { label: t('flowControl.unknownHealth'), dot: 'bg-muted-foreground', badge: 'bg-muted text-muted-foreground' };
   }
 }
 
@@ -374,11 +375,13 @@ function PercentileBlock({
   status,
   tone,
   metrics,
+  sampleLabel,
 }: {
   title: string;
   status: string;
   tone: 'orange' | 'cyan';
   metrics: FlowMetricsPercentiles;
+  sampleLabel: string;
 }) {
   const toneClass = tone === 'orange' ? 'text-sidebar-primary' : 'text-chart-1';
 
@@ -400,7 +403,7 @@ function PercentileBlock({
           </div>
         ))}
       </div>
-      <div className="mt-3 text-[10px] text-muted-foreground">样本数：{formatNumber(metrics.sample_count)}</div>
+      <div className="mt-3 text-[10px] text-muted-foreground">{sampleLabel}: {formatNumber(metrics.sample_count)}</div>
     </div>
   );
 }
@@ -419,6 +422,8 @@ function MetricList({ rows }: { rows: MetricRow[] }) {
 }
 
 export default function FlowTowerContent() {
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US';
   const [selectedRange, setSelectedRange] = useState<RangeKey>('15m');
   const [selectedModelId, setSelectedModelId] = useState('all');
   const [modelSearch, setModelSearch] = useState('');
@@ -511,8 +516,8 @@ export default function FlowTowerContent() {
   const realtime = effectiveFlowMetricsData?.realtime;
   const displayedRange = effectiveFlowMetricsData?.range;
   const displayedRangeModel = displayedRange?.model ?? null;
-  const displayedRangeLabel = inferRangeLabel(displayedRange?.start, displayedRange?.end);
-  const displayedModelLabel = displayedRangeModel ?? '全部模型';
+  const displayedRangeLabel = inferRangeLabel(displayedRange?.start, displayedRange?.end, t, locale);
+  const displayedModelLabel = displayedRangeModel ?? t('flowControl.allModels');
   const totalCompleted = historical?.total_completed ?? 0;
   const successRate = totalCompleted > 0
     ? (historical?.success_completed ?? 0) / totalCompleted * 100
@@ -524,8 +529,8 @@ export default function FlowTowerContent() {
   const queueUnavailable = realtime?.queue.count == null;
   const queueValue = queueUnavailable ? '—' : formatNumber(realtime?.queue.count);
   const queueSubtext = queueUnavailable
-    ? `当前不可用 · ${realtime?.queue.reason ?? '待后端支持'}`
-    : `状态：${realtime?.queue.status}`;
+    ? t('flowControl.unavailableReason', { reason: realtime?.queue.reason ?? t('flowControl.pendingBackend') })
+    : t('flowControl.status', { status: realtime?.queue.status });
 
   const publishedModelNames = useMemo(
     () => new Set(catalogModels.map((model) => model.config.name)),
@@ -542,20 +547,20 @@ export default function FlowTowerContent() {
     if (!trend) return [];
     return trend.buckets.map((bucket, index) => ({
       bucket,
-      label: formatTrendBucket(bucket, trend.bucket_unit),
+      label: formatTrendBucket(bucket, trend.bucket_unit, locale),
       success_completed: trend.success_completed[index] ?? 0,
       failed_completed: trend.failed_completed[index] ?? 0,
     }));
   }, [historical?.trend]);
 
   const historicalInspectorRows: MetricRow[] = [
-    { label: '统计区间', value: displayedRangeLabel },
-    { label: '筛选模型', value: displayedModelLabel },
-    { label: '完成请求', value: formatNumber(totalCompleted) },
-    { label: '成功完成', value: formatNumber(historical?.success_completed) },
-    { label: '失败完成', value: formatNumber(historical?.failed_completed) },
-    { label: '成功率', value: formatPercent(successRate) },
-    { label: 'P99 延迟', value: historical?.latency_ms.p99 != null ? `${formatPercentile(historical.latency_ms.p99)} ms` : '—' },
+    { label: t('flowControl.rangeLabel'), value: displayedRangeLabel },
+    { label: t('flowControl.modelFilter'), value: displayedModelLabel },
+    { label: t('flowControl.completed'), value: formatNumber(totalCompleted) },
+    { label: t('flowControl.successCompleted'), value: formatNumber(historical?.success_completed) },
+    { label: t('flowControl.failedCompleted'), value: formatNumber(historical?.failed_completed) },
+    { label: t('flowControl.successRate'), value: formatPercent(successRate) },
+    { label: t('flowControl.p99Latency'), value: historical?.latency_ms.p99 != null ? `${formatPercentile(historical.latency_ms.p99)} ms` : '—' },
     { label: 'TTFT P99', value: historical?.ttft_ms.p99 != null ? `${formatPercentile(historical.ttft_ms.p99)} ms` : '—' },
   ];
 
@@ -606,12 +611,12 @@ export default function FlowTowerContent() {
     const probeUnknown = endpointRows.filter((row) => !row.probe).length;
 
     return [
-      { label: '已启用端点', value: formatNumber(enabled) },
-      { label: '已观测端点', value: formatNumber(observed) },
-      { label: '当前可路由', value: formatNumber(available) },
-      { label: '探测成功', value: formatNumber(probeSuccess) },
-      { label: '探测失败', value: formatNumber(probeFail) },
-      { label: '未探测', value: formatNumber(probeUnknown) },
+      { label: t('flowControl.enabledEndpoints'), value: formatNumber(enabled) },
+      { label: t('flowControl.observedEndpoints'), value: formatNumber(observed) },
+      { label: t('flowControl.availableEndpoints'), value: formatNumber(available) },
+      { label: t('flowControl.probeSuccess'), value: formatNumber(probeSuccess) },
+      { label: t('flowControl.probeFail'), value: formatNumber(probeFail) },
+      { label: t('flowControl.probeUnknown'), value: formatNumber(probeUnknown) },
     ];
   }, [endpointRows]);
 
@@ -629,7 +634,7 @@ export default function FlowTowerContent() {
   const compareRows = useMemo(() => {
     const rangeMetricsAvailable = !compareMetricsQuery.isError && compareMetricsQuery.data != null;
     return catalogModels.map((model) => {
-      const health = modelHealthPresentation(model.status);
+      const health = modelHealthPresentation(model.status, t);
       const compareShare = compareModelShareMap.get(model.config.name);
       return {
         id: model.config.id,
@@ -660,15 +665,15 @@ export default function FlowTowerContent() {
       <section className="overflow-hidden rounded-2xl border border-border bg-[linear-gradient(180deg,var(--card)_0%,var(--muted)_100%)] shadow-sm">
         <div className="flex flex-col gap-4 border-b border-border px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-foreground">模型监控</h2>
-            <p className="mt-1 text-sm text-muted-foreground">实时请求态势、模型流量、端点健康与异常定位</p>
+            <h2 className="text-lg font-semibold text-foreground">{t('flowControl.title')}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{t('flowControl.subtitle')}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <div className="inline-flex h-9 items-center rounded-lg border border-border bg-background px-3 text-muted-foreground">
-              自动刷新 · 30s
+              {t('flowControl.autoRefresh')}
             </div>
             <div className="inline-flex h-9 items-center rounded-lg border border-border bg-background px-3 text-muted-foreground">
-              最近更新 · {lastUpdatedLabel}
+              {t('flowControl.lastUpdated', { time: lastUpdatedLabel })}
             </div>
           </div>
         </div>
@@ -691,12 +696,12 @@ export default function FlowTowerContent() {
                         : 'text-muted-foreground hover:text-foreground'
                     }`}
                   >
-                    {option.label}
+                    {t(option.i18n)}
                   </button>
                 ))}
               </div>
               <select
-                aria-label="模型筛选"
+                aria-label={t('flowControl.modelFilterAria')}
                 className="h-9 rounded-lg border border-border bg-background px-3 text-xs text-muted-foreground"
                 value={selectedModelId}
                 onChange={(event) => {
@@ -704,7 +709,7 @@ export default function FlowTowerContent() {
                   setQueryNowMs(Date.now());
                 }}
               >
-                <option value="all">全部模型</option>
+                <option value="all">{t('flowControl.allModels')}</option>
                 {catalogModels.map((model) => (
                   <option key={model.config.id} value={model.config.id}>
                     {model.config.name}
@@ -714,73 +719,73 @@ export default function FlowTowerContent() {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <select
-                aria-label="渠道筛选"
+                aria-label={t('flowControl.channelFilterAria')}
                 className="h-9 rounded-lg border border-border bg-muted px-3 text-xs text-muted-foreground"
                 value="pending"
                 disabled
               >
-                <option value="pending">渠道筛选（待接口支持）</option>
+                <option value="pending">{t('flowControl.channelPending')}</option>
               </select>
               <button
                 type="button"
                 onClick={() => setQueryNowMs(Date.now())}
                 className="inline-flex h-9 items-center rounded-lg border border-border bg-background px-3 text-xs text-muted-foreground transition hover:bg-muted"
               >
-                ↻ 刷新
+                ↻ {t('flowControl.refresh')}
               </button>
             </div>
           </div>
 
           <section className="grid gap-3 md:grid-cols-2 2xl:grid-cols-6">
             <KpiCard
-              label="当前在途请求数"
+              label={t('flowControl.inFlight')}
               badge="LIVE"
               value={formatNumber(realtime?.in_flight)}
               tone="blue"
-              subtext="当前正在处理的请求数"
+              subtext={t('flowControl.inFlightSub')}
             />
             <KpiCard
-              label="上游生成中"
+              label={t('flowControl.generating')}
               badge="LIVE"
               value={formatNumber(realtime?.upstream_generating)}
               tone="cyan"
-              subtext="尚未收到首字节的上游请求数"
+              subtext={t('flowControl.generatingSub')}
             />
             <KpiCard
-              label="上游输出中"
+              label={t('flowControl.outputting')}
               badge="LIVE"
               value={formatNumber(realtime?.upstream_outputting)}
               tone="green"
-              subtext="已经开始返回内容的上游请求数"
+              subtext={t('flowControl.outputtingSub')}
             />
             <KpiCard
-              label="排队请求数"
+              label={t('flowControl.queued')}
               badge="PENDING"
               value={queueValue}
               tone="yellow"
               subtext={queueSubtext}
             />
             <KpiCard
-              label="成功完成"
+              label={t('flowControl.successCompleted')}
               badge={displayedRangeLabel}
               value={formatNumber(historical?.success_completed)}
               tone="green"
-              subtext={<>成功率 <span className="font-semibold text-chart-2">{formatPercent(successRate)}</span></>}
+              subtext={<>{t('flowControl.successRate')} <span className="font-semibold text-chart-2">{formatPercent(successRate)}</span></>}
             />
             <KpiCard
-              label="失败完成"
+              label={t('flowControl.failedCompleted')}
               badge={displayedRangeLabel}
               value={formatNumber(historical?.failed_completed)}
               tone="red"
-              subtext={<>错误率 <span className="font-semibold text-destructive">{formatPercent(failureRate)}</span></>}
+              subtext={<>{t('flowControl.errorRate')} <span className="font-semibold text-destructive">{formatPercent(failureRate)}</span></>}
             />
           </section>
 
           <section className="grid gap-4 2xl:grid-cols-[minmax(0,1.2fr)_minmax(380px,0.8fr)]">
             <div className="grid gap-4">
               <Panel
-                title="成功 / 失败完成量趋势"
-                subtitle={`最近 ${displayedRangeLabel} · ${historical?.trend.bucket_unit === 'minute' ? '按分钟聚合' : '按小时聚合'}`}
+                title={t('flowControl.trendTitle')}
+                subtitle={t('flowControl.rangeTrend', { range: displayedRangeLabel, unit: historical?.trend.bucket_unit === 'minute' ? t('flowControl.byMinute') : t('flowControl.byHour') })}
               >
                 {trendData.length > 0 ? (
                   <div className="h-[260px] w-full">
@@ -791,7 +796,7 @@ export default function FlowTowerContent() {
                         <YAxis tick={{ fill: 'var(--muted-foreground)', fontSize: 10 }} allowDecimals={false} />
                         <RechartsTooltip
                           contentStyle={{ borderRadius: 12, border: '1px solid var(--border)', fontSize: 12 }}
-                          formatter={(value, name) => [formatNumber(Number(value)), name === 'success_completed' ? '成功完成' : '失败完成']}
+                          formatter={(value, name) => [formatNumber(Number(value)), name === 'success_completed' ? t('flowControl.completionSeries') : t('flowControl.failureSeries')]}
                           labelFormatter={(label) => String(label ?? '')}
                         />
                         <Area type="monotone" dataKey="success_completed" stroke="var(--chart-2)" fill="var(--chart-2)" fillOpacity={0.25} />
@@ -805,11 +810,11 @@ export default function FlowTowerContent() {
               </Panel>
 
               <Panel
-                title="客户端 IP Top N"
-                subtitle={`请求来源排行 · 最近 ${displayedRangeLabel}`}
+                title={t('flowControl.clientIpTitle')}
+                subtitle={t('flowControl.requestSources', { range: displayedRangeLabel })}
                 right={
                   <div className="inline-flex h-7 items-center rounded-md border border-border bg-background px-2.5 text-[11px] text-muted-foreground">
-                    按请求数
+                    {t('flowControl.byRequestCount')}
                   </div>
                 }
               >
@@ -818,9 +823,9 @@ export default function FlowTowerContent() {
                     <table className="w-full min-w-[520px] border-collapse">
                       <thead>
                         <tr>
-                          <th className="pb-2 text-left text-[10px] font-semibold text-muted-foreground">客户端 IP</th>
-                          <th className="pb-2 text-left text-[10px] font-semibold text-muted-foreground">请求占比</th>
-                          <th className="pb-2 text-right text-[10px] font-semibold text-muted-foreground">请求</th>
+                          <th className="pb-2 text-left text-[10px] font-semibold text-muted-foreground">{t('flowControl.clientIp')}</th>
+                          <th className="pb-2 text-left text-[10px] font-semibold text-muted-foreground">{t('flowControl.requestShare')}</th>
+                          <th className="pb-2 text-right text-[10px] font-semibold text-muted-foreground">{t('flowControl.requests')}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -842,15 +847,15 @@ export default function FlowTowerContent() {
                     </table>
                   </div>
                 ) : (
-                  <PlaceholderCard title="暂无客户端 IP 数据" description="当前区间内没有可用的 client_ip 统计，或观测数据尚未写入。" />
+                  <PlaceholderCard title={t('flowControl.noClientData')} description={t('flowControl.noClientDataDesc')} />
                 )}
               </Panel>
             </div>
 
             <div className="grid gap-4">
               <Panel
-                title="模型请求占比"
-                subtitle={`成功 + 失败请求总量 · 最近 ${displayedRangeLabel}`}
+                title={t('flowControl.modelShareTitle')}
+                subtitle={t('flowControl.modelShareRange', { range: displayedRangeLabel })}
                 right={<div className="text-[11px] text-muted-foreground">{formatNumber(totalCompleted)} requests</div>}
               >
                 {shareRows.length > 0 ? (
@@ -869,13 +874,13 @@ export default function FlowTowerContent() {
                     ))}
                   </div>
                 ) : (
-                  <PlaceholderCard title="暂无模型占比数据" description="当前区间内没有模型完成请求统计，暂时无法生成模型请求占比。" />
+                  <PlaceholderCard title={t('flowControl.noModelShareData')} description={t('flowControl.noModelShareDataDesc')} />
                 )}
               </Panel>
 
               <Panel
-                title="延迟 / TTFT 分位数"
-                subtitle={`全模型汇总 · 最近 ${displayedRangeLabel}`}
+                title={t('flowControl.latencyTitle')}
+                subtitle={t('flowControl.allModelSummary', { range: displayedRangeLabel })}
                 right={
                   <div className="inline-flex h-7 items-center rounded-md border border-border bg-background px-2.5 text-[11px] text-muted-foreground">
                     ms
@@ -884,16 +889,18 @@ export default function FlowTowerContent() {
               >
                 <div className="grid gap-3">
                   <PercentileBlock
-                    title="请求延迟"
-                    status="来自 ClickHouse usage_events"
+                    title={t('flowControl.requestLatency')}
+                    status={t('flowControl.usageEvents')}
                     tone="orange"
                     metrics={historical?.latency_ms ?? { p50: null, p90: null, p99: null, sample_count: 0 }}
+                    sampleLabel={t('flowControl.sampleCountLabel')}
                   />
                   <PercentileBlock
                     title="TTFT"
-                    status="仅统计已有首字节观测样本"
+                    status={t('flowControl.ttftSamples')}
                     tone="cyan"
                     metrics={historical?.ttft_ms ?? { p50: null, p90: null, p99: null, sample_count: 0 }}
+                    sampleLabel={t('flowControl.sampleCountLabel')}
                   />
                 </div>
               </Panel>
@@ -902,18 +909,18 @@ export default function FlowTowerContent() {
 
           <section className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)] 2xl:grid-cols-[240px_minmax(0,1fr)_310px]">
             <Panel
-              title="模型目录"
-              subtitle={`${formatNumber(catalogModels.length)} 个已配置模型 · 结合 24h routing health`}
+              title={t('flowControl.catalogTitle')}
+              subtitle={t('flowControl.catalogSummary', { count: catalogModels.length })}
               className="min-h-[580px]"
-              right={routingHealthQuery.isFetching ? <span className="text-[10px] text-muted-foreground">更新中…</span> : null}
+              right={routingHealthQuery.isFetching ? <span className="text-[10px] text-muted-foreground">{t('flowControl.updating')}</span> : null}
             >
               <div className="-mt-1">
                 <div className="mb-3">
                   <input
-                    aria-label="搜索模型"
+                    aria-label={t('flowControl.searchModel')}
                     value={modelSearch}
                     onChange={(event) => setModelSearch(event.target.value)}
-                    placeholder="搜索模型、ID 或渠道"
+                    placeholder={t('flowControl.searchPlaceholder')}
                     className="h-9 w-full rounded-lg border border-border bg-muted px-3 text-[11px] text-muted-foreground outline-none placeholder:text-muted-foreground"
                   />
                 </div>
@@ -923,7 +930,7 @@ export default function FlowTowerContent() {
                     onClick={() => void routingHealthQuery.refetch()}
                     className="mb-3 w-full rounded-lg border border-dashed border-border px-3 py-2 text-[10px] text-muted-foreground hover:bg-muted"
                   >
-                    路由健康数据加载失败，点击重试
+                    {t('flowControl.retryRouting')}
                   </button>
                 ) : null}
                 <div className="space-y-1">
@@ -939,12 +946,12 @@ export default function FlowTowerContent() {
                         : 'border-transparent hover:bg-muted'
                     }`}
                   >
-                    <div className="text-[11px] font-semibold text-muted-foreground">全部模型</div>
-                    <div className="mt-2 text-[10px] text-muted-foreground">查看当前范围聚合与全局实时快照</div>
+                    <div className="text-[11px] font-semibold text-muted-foreground">{t('flowControl.allModels')}</div>
+                    <div className="mt-2 text-[10px] text-muted-foreground">{t('flowControl.catalogSnapshot')}</div>
                   </button>
                   {visibleModels.length > 0 ? (
                     visibleModels.map((model) => {
-                      const health = modelHealthPresentation(model.status);
+                      const health = modelHealthPresentation(model.status, t);
                       return (
                         <button
                           key={model.config.id}
@@ -969,7 +976,7 @@ export default function FlowTowerContent() {
                           <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
                             <span>{model.config.channels.length} configured channels</span>
                             {model.routedRequests24h == null ? (
-                              <span>暂无路由健康数据</span>
+                              <span>{t('flowControl.noRoutingData')}</span>
                             ) : (
                               <>
                                 <span>{formatNumber(model.routedRequests24h)} req / 24h</span>
@@ -982,7 +989,7 @@ export default function FlowTowerContent() {
                     })
                   ) : modelsQuery.isLoading ? (
                     <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-[11px] text-muted-foreground">
-                      正在加载模型列表…
+                      {t('flowControl.loadingModelList')}
                     </div>
                   ) : modelsQuery.isError ? (
                     <button
@@ -990,11 +997,11 @@ export default function FlowTowerContent() {
                       onClick={() => void modelsQuery.refetch()}
                       className="w-full rounded-xl border border-dashed border-border px-3 py-6 text-center text-[11px] text-muted-foreground hover:bg-muted"
                     >
-                      模型列表加载失败，点击重试
+                      {t('flowControl.modelListFailed')}
                     </button>
                   ) : (
                     <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-[11px] text-muted-foreground">
-                      没有匹配的模型
+                      {t('flowControl.noModelsMatched')}
                     </div>
                   )}
                 </div>
@@ -1002,7 +1009,7 @@ export default function FlowTowerContent() {
             </Panel>
 
             <article className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-              <div className="flex gap-4 border-b border-border px-4 pt-3" role="tablist" aria-label="流控台详情标签页">
+              <div className="flex gap-4 border-b border-border px-4 pt-3" role="tablist" aria-label={t('flowControl.detailTabs')}>
                 {FLOW_TABS.map((tab) => (
                   <button
                     key={tab.key}
@@ -1018,7 +1025,7 @@ export default function FlowTowerContent() {
                         : 'border-transparent text-muted-foreground hover:text-accent-foreground'
                     }`}
                   >
-                    {tab.label}
+                    {t(tab.i18n)}
                   </button>
                 ))}
               </div>
@@ -1027,8 +1034,8 @@ export default function FlowTowerContent() {
                 <div id="flowtower-panel-flow" role="tabpanel" aria-labelledby="flowtower-tab-flow" className="space-y-5 p-4">
                   {!selectedCatalogModel ? (
                     <PlaceholderCard
-                      title="请选择模型查看请求流"
-                      description="请求流按单个模型展示，先在左侧选择一个模型。"
+                      title={t('flowControl.selectModelFlow')}
+                      description={t('flowControl.selectModelFlowDesc')}
                     />
                   ) : (
                     <RoutingFlow embedded modelName={selectedCatalogModel.config.name} />
@@ -1040,8 +1047,8 @@ export default function FlowTowerContent() {
                 <div id="flowtower-panel-endpoint" role="tabpanel" aria-labelledby="flowtower-tab-endpoint" className="space-y-5 p-4">
                   {!selectedCatalogModel ? (
                     <PlaceholderCard
-                      title="请选择模型查看端点状态"
-                      description="端点状态按单个模型聚合展示，先在左侧选择一个模型。"
+                      title={t('flowControl.selectModelEndpoint')}
+                      description={t('flowControl.selectModelEndpointDesc')}
                     />
                   ) : channelsQuery.isError ? (
                     <button
@@ -1049,12 +1056,12 @@ export default function FlowTowerContent() {
                       onClick={() => void channelsQuery.refetch()}
                       className="w-full rounded-xl border border-dashed border-border px-4 py-6 text-center text-[11px] text-muted-foreground hover:bg-muted"
                     >
-                      端点配置加载失败，点击重试
+                      {t('flowControl.endpointLoadFailed')}
                     </button>
                   ) : endpointRows.length === 0 ? (
                     <PlaceholderCard
-                      title="该模型绑定渠道下没有已启用端点"
-                      description="请先检查该模型的渠道绑定和 endpoint 配置。"
+                      title={t('flowControl.noEnabledEndpoint')}
+                      description={t('flowControl.noEnabledEndpointDesc')}
                     />
                   ) : (
                     <>
@@ -1069,13 +1076,13 @@ export default function FlowTowerContent() {
 
                       {routingHealthQuery.isError ? (
                         <div className="rounded-xl border border-dashed border-border px-4 py-3 text-[10.5px] text-muted-foreground">
-                          路由健康数据加载失败，当前只展示配置与探测结果。
+                          {t('flowControl.healthDataFailed')}
                         </div>
                       ) : null}
 
                       {probeResultsQuery.isError ? (
                         <div className="rounded-xl border border-dashed border-border px-4 py-3 text-[10.5px] text-muted-foreground">
-                          探测结果加载失败，当前只展示配置与路由状态。
+                          {t('flowControl.probeDataFailed')}
                         </div>
                       ) : null}
 
@@ -1083,16 +1090,16 @@ export default function FlowTowerContent() {
                         <table className="w-full min-w-[980px] border-collapse">
                           <thead>
                             <tr>
-                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">渠道</th>
-                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">端点</th>
-                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">配置</th>
-                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">路由状态</th>
-                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">最近探测</th>
-                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">最近探测时间</th>
-                              <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">24h 请求</th>
-                              <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">24h 成功率</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.channel')}</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.endpoint')}</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.configuration')}</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.routingStatus')}</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.latestProbe')}</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.latestProbeTime')}</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.requests24h')}</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.successRate24h')}</th>
                               <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">24h P95</th>
-                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">熔断</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.circuit')}</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1107,16 +1114,16 @@ export default function FlowTowerContent() {
                                   <div className="text-[10px] text-muted-foreground">ID: {row.endpointId ?? '—'}</div>
                                 </td>
                                 <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">
-                                  <div>{row.endpointEnabled ? '已启用' : '已禁用'}</div>
+                                  <div>{row.endpointEnabled ? t('flowControl.enabled') : t('flowControl.disabled')}</div>
                                   <div className="text-[10px] text-muted-foreground">weight {row.endpointWeight}{row.endpointTimeoutSecs != null ? ` · ${row.endpointTimeoutSecs}s` : ''}</div>
                                 </td>
-                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">{endpointRoutingLabel(row)}</td>
-                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">{endpointProbeLabel(row.probe)}</td>
-                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">{formatDateTime(row.probe?.probed_at)}</td>
+                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">{endpointRoutingLabel(row, t)}</td>
+                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">{endpointProbeLabel(row.probe, t)}</td>
+                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">{formatDateTime(row.probe?.probed_at, locale)}</td>
                                 <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{formatNumber(row.channelRequests24h)}</td>
                                 <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{formatPercent(row.channelSuccessRate24h)}</td>
                                 <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{row.channelP95Latency24h == null ? '—' : `${formatNumber(Math.round(row.channelP95Latency24h))} ms`}</td>
-                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">{row.circuitEnabled ? (row.circuitOk ? '正常' : '熔断中') : '未启用'}</td>
+                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">{row.circuitEnabled ? (row.circuitOk ? t('flowControl.normal') : t('flowControl.circuitOpen')) : t('flowControl.notEnabled')}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1130,21 +1137,21 @@ export default function FlowTowerContent() {
               {activeTab === 'compare' ? (
                 <div id="flowtower-panel-compare" role="tabpanel" aria-labelledby="flowtower-tab-compare" className="space-y-5 p-4">
                   <div className="rounded-xl border border-dashed border-border px-4 py-3 text-[10.5px] text-muted-foreground">
-                    左侧列为当前选择区间的完成请求；右侧列为最近 24 小时运行情况。
+                    {t('flowControl.compareHint')}
                   </div>
                   {compareMetricsQuery.isError ? (
                     <div className="rounded-xl border border-dashed border-border px-4 py-3 text-[10.5px] text-muted-foreground">
-                      当前区间请求数据加载失败，已保留其他模型信息。
+                      {t('flowControl.rangeDataFailed')}
                     </div>
                   ) : null}
                   {routingHealthQuery.isError ? (
                     <div className="rounded-xl border border-dashed border-border px-4 py-3 text-[10.5px] text-muted-foreground">
-                      24 小时运行情况加载失败，相关列暂不可用。
+                      {t('flowControl.healthDataFailed')}
                     </div>
                   ) : null}
                   {unmatchedCompareModels.length > 0 ? (
                     <div className="rounded-xl border border-dashed border-border px-4 py-3 text-[10.5px] text-muted-foreground">
-                      当前区间有 {formatNumber(unmatchedCompareModels.length)} 个未匹配到目录配置的模型请求记录。
+                      {t('flowControl.unmatchedModels', { count: unmatchedCompareModels.length })}
                     </div>
                   ) : null}
                   {compareRows.length > 0 ? (
@@ -1152,17 +1159,17 @@ export default function FlowTowerContent() {
                       <table className="w-full min-w-[980px] border-collapse">
                         <thead>
                           <tr>
-                            <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">模型</th>
-                            <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">当前状态</th>
-                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">区间请求数</th>
-                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">区间占比</th>
-                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">24h 路由请求</th>
-                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">24h 路由成功率</th>
-                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">24h 平均延迟</th>
-                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">24h 最高 P95</th>
-                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">可用端点</th>
-                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">熔断通道</th>
-                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">配置通道</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.model')}</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.currentStatus')}</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.rangeRequests')}</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.rangeShare')}</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.routeRequests24h')}</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.routeSuccess24h')}</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.avgLatency24h')}</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.maxP9524h')}</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.availableEndpoint')}</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.brokenChannels')}</th>
+                            <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.configuredChannels')}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1170,7 +1177,7 @@ export default function FlowTowerContent() {
                             <tr key={row.id} className={row.selected ? 'bg-accent' : ''}>
                               <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">
                                 <div className="font-semibold">{row.name}</div>
-                                <div className="text-[10px] text-muted-foreground">{row.selected ? '当前选中' : '—'}</div>
+                                <div className="text-[10px] text-muted-foreground">{row.selected ? t('flowControl.selected') : '—'}</div>
                               </td>
                               <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">
                                 <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${row.statusBadge}`}>{row.status}</span>
@@ -1191,8 +1198,8 @@ export default function FlowTowerContent() {
                     </div>
                   ) : (
                     <PlaceholderCard
-                      title="暂无可对比模型"
-                      description="当前没有可用于对比的模型配置或统计数据。"
+                      title={t('flowControl.noCompareModels')}
+                      description={t('flowControl.noCompareModelsDesc')}
                     />
                   )}
                 </div>
@@ -1200,22 +1207,22 @@ export default function FlowTowerContent() {
             </article>
 
             <Panel
-              title="模型检查器"
-              subtitle={selectedCatalogModel ? '模型配置、24h routing health 与选定区间历史指标' : '当前范围聚合指标与全局实时快照'}
+              title={t('flowControl.inspector')}
+              subtitle={selectedCatalogModel ? t('flowControl.inspectorSelected') : t('flowControl.inspectorAll')}
               className="min-h-[580px]"
             >
               {selectedCatalogModel ? (() => {
-                const health = modelHealthPresentation(selectedCatalogModel.status);
+                const health = modelHealthPresentation(selectedCatalogModel.status, t);
                 const categories = selectedCatalogModel.config.category?.split(',').map((item) => item.trim()).filter(Boolean) ?? [];
                 const routingRows: MetricRow[] = [
-                  { label: '路由状态', value: health.label },
-                  { label: '可用端点', value: `${selectedCatalogModel.availableEndpoints} / ${selectedCatalogModel.enabledEndpoints}` },
-                  { label: '健康观测端点', value: `${selectedCatalogModel.observedEndpoints} / ${selectedCatalogModel.enabledEndpoints}` },
-                  { label: '24h 路由请求', value: selectedCatalogModel.routedRequests24h == null ? '—' : formatNumber(selectedCatalogModel.routedRequests24h) },
-                  { label: '24h 成功率', value: formatPercent(selectedCatalogModel.successRate24h == null ? null : selectedCatalogModel.successRate24h * 100) },
-                  { label: '24h 平均延迟', value: selectedCatalogModel.averageLatency24h == null ? '—' : `${formatNumber(Math.round(selectedCatalogModel.averageLatency24h))} ms` },
-                  { label: '最高 channel P95', value: selectedCatalogModel.highestChannelP95 == null ? '—' : `${formatNumber(Math.round(selectedCatalogModel.highestChannelP95))} ms` },
-                  { label: '熔断通道', value: String(selectedCatalogModel.brokenCircuitChannels) },
+                  { label: t('flowControl.routingStatus'), value: health.label },
+                  { label: t('flowControl.availableEndpoint'), value: `${selectedCatalogModel.availableEndpoints} / ${selectedCatalogModel.enabledEndpoints}` },
+                  { label: t('flowControl.observedEndpoints'), value: `${selectedCatalogModel.observedEndpoints} / ${selectedCatalogModel.enabledEndpoints}` },
+                  { label: t('flowControl.routeRequests24h'), value: selectedCatalogModel.routedRequests24h == null ? '—' : formatNumber(selectedCatalogModel.routedRequests24h) },
+                  { label: t('flowControl.successRate24h'), value: formatPercent(selectedCatalogModel.successRate24h == null ? null : selectedCatalogModel.successRate24h * 100) },
+                  { label: t('flowControl.avgLatency24h'), value: selectedCatalogModel.averageLatency24h == null ? '—' : `${formatNumber(Math.round(selectedCatalogModel.averageLatency24h))} ms` },
+                  { label: t('flowControl.maxP9524h'), value: selectedCatalogModel.highestChannelP95 == null ? '—' : `${formatNumber(Math.round(selectedCatalogModel.highestChannelP95))} ms` },
+                  { label: t('flowControl.brokenChannels'), value: String(selectedCatalogModel.brokenCircuitChannels) },
                 ];
                 return (
                   <div className="space-y-4">
@@ -1228,33 +1235,33 @@ export default function FlowTowerContent() {
                         <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${health.badge}`}>{health.label}</span>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-1.5">
-                        <span className="rounded bg-card px-2 py-1 text-[10px] text-muted-foreground">{selectedCatalogModel.config.published ? '已发布' : '未发布'}</span>
+                        <span className="rounded bg-card px-2 py-1 text-[10px] text-muted-foreground">{selectedCatalogModel.config.published ? t('flowControl.published') : t('flowControl.unpublished')}</span>
                         {categories.map((category) => <span key={category} className="rounded bg-card px-2 py-1 text-[10px] text-muted-foreground">{category}</span>)}
                       </div>
                       <div className="mt-4 grid grid-cols-[1fr_auto] gap-x-4 gap-y-2 text-[10.5px]">
-                        <span className="text-muted-foreground">模型 Pattern</span><span className="max-w-[180px] truncate text-right text-muted-foreground">{selectedCatalogModel.config.model_pattern}</span>
-                        <span className="text-muted-foreground">上下文长度</span><span className="text-right text-muted-foreground">{formatContextLength(selectedCatalogModel.config.context_length)}</span>
-                        <span className="text-muted-foreground">配置通道</span><span className="text-right text-muted-foreground">{selectedCatalogModel.config.channels.length}</span>
+                        <span className="text-muted-foreground">{t('flowControl.modelPattern')}</span><span className="max-w-[180px] truncate text-right text-muted-foreground">{selectedCatalogModel.config.model_pattern}</span>
+                        <span className="text-muted-foreground">{t('flowControl.contextLength')}</span><span className="text-right text-muted-foreground">{formatContextLength(selectedCatalogModel.config.context_length)}</span>
+                        <span className="text-muted-foreground">{t('flowControl.configuredChannels')}</span><span className="text-right text-muted-foreground">{selectedCatalogModel.config.channels.length}</span>
                       </div>
                     </div>
 
                     <div className="rounded-xl border border-secondary bg-card p-4">
                       <div className="mb-3 flex items-center justify-between gap-2">
-                        <div className="text-[11px] font-semibold text-muted-foreground">Routing Health · 最近 24h</div>
-                        {routingHealthQuery.isFetching ? <span className="text-[10px] text-muted-foreground">更新中…</span> : null}
+                        <div className="text-[11px] font-semibold text-muted-foreground">{t('flowControl.health24h')}</div>
+                        {routingHealthQuery.isFetching ? <span className="text-[10px] text-muted-foreground">{t('flowControl.updating')}</span> : null}
                       </div>
                       {routingHealthQuery.isError ? (
                         <button type="button" onClick={() => void routingHealthQuery.refetch()} className="text-[10.5px] text-muted-foreground underline">
-                          路由健康数据加载失败，点击重试
+                          {t('flowControl.retryRouting')}
                         </button>
                       ) : selectedCatalogModel.health ? (
                         <MetricList rows={routingRows} />
                       ) : (
-                        <p className="text-[10.5px] leading-5 text-muted-foreground">该已配置模型当前没有可用的 routing health 记录；这不等于故障，可能是无流量或没有启用端点。</p>
+                        <p className="text-[10.5px] leading-5 text-muted-foreground">{t('flowControl.noHealthDetail')}</p>
                       )}
                       {selectedCatalogModel.config.channels.length > 0 ? (
                         <div className="mt-3 border-t border-secondary pt-3">
-                          <div className="mb-2 text-[10px] text-muted-foreground">配置通道绑定</div>
+                          <div className="mb-2 text-[10px] text-muted-foreground">{t('flowControl.channelBindings')}</div>
                           <div className="space-y-1.5">
                             {selectedCatalogModel.config.channels.map((channel) => (
                               <div key={`${channel.channel_id}-${channel.priority}`} className="flex justify-between gap-3 text-[10px] text-muted-foreground">
@@ -1268,7 +1275,7 @@ export default function FlowTowerContent() {
                     </div>
 
                     <div className="rounded-xl border border-secondary bg-card p-4">
-                      <div className="mb-3 text-[11px] font-semibold text-muted-foreground">Flow Metrics · 当前选择区间</div>
+                      <div className="mb-3 text-[11px] font-semibold text-muted-foreground">{t('flowControl.metricsRange')}</div>
                       <MetricList rows={historicalInspectorRows} />
                     </div>
                   </div>
@@ -1277,19 +1284,19 @@ export default function FlowTowerContent() {
                 <div className="space-y-4">
                   <div className="rounded-xl border border-border bg-accent p-4">
                     <div className="flex items-center justify-between gap-2">
-                      <strong className="text-sm text-foreground">全部模型</strong>
-                      <span className="rounded-md bg-accent px-2 py-1 text-[10px] font-semibold text-accent-foreground">聚合视图</span>
+                      <strong className="text-sm text-foreground">{t('flowControl.allModels')}</strong>
+                      <span className="rounded-md bg-accent px-2 py-1 text-[10px] font-semibold text-accent-foreground">{t('flowControl.aggregateView')}</span>
                     </div>
                     <div className="mt-4"><MetricList rows={historicalInspectorRows} /></div>
                   </div>
-                  <p className="rounded-xl border border-dashed border-border bg-muted px-4 py-3 text-[10.5px] leading-5 text-muted-foreground">选择左侧具体模型后，可查看模型配置、最近 24 小时运行状态和端点可用性。</p>
+                  <p className="rounded-xl border border-dashed border-border bg-muted px-4 py-3 text-[10.5px] leading-5 text-muted-foreground">{t('flowControl.selectModelHint')}</p>
                 </div>
               )}
 
               <div className="mt-4 border-t border-border pt-4">
                 <PlaceholderCard
-                  title="异常事件待后端聚合接口"
-                  description="当前仓库里还没有统一的 incidents feed 用于支撑“最近 30 分钟异常事件”。等后端补充事件聚合接口后，再把这个区域切成 real。"
+                  title={t('flowControl.incidentsPending')}
+                  description={t('flowControl.incidentsPendingDesc')}
                 />
               </div>
             </Panel>

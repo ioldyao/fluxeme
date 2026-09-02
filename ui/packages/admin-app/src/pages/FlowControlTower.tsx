@@ -18,7 +18,7 @@ export default function FlowControlTower() {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      <div className="flex items-center gap-1 border-b pb-0" role="tablist" aria-label="流控台主标签页">
+      <div className="flex items-center gap-1 border-b pb-0" role="tablist" aria-label={t('flowControl.mainTabs')}>
         {TAB_KEYS.map((tk) => (
           <button
             key={tk.key}
