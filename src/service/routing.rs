@@ -663,11 +663,6 @@ impl RoutingService {
             }
             if !rule.target_model.is_empty() && match_pattern(&model_name, &rule.source_model) {
                 model_name = rule.target_model.clone();
-                if matches!(visibility, RouteVisibility::Public)
-                    && !is_published_model(&models, &model_name)
-                {
-                    return Err(RouteError::not_found(format!("No route found for model '{}'", model)));
-                }
                 tracing::info!(
                     user_id,
                     original = model,
@@ -675,7 +670,6 @@ impl RoutingService {
                     rule = rule.name,
                     "User routing rule applied"
                 );
-                break; // first matching user rule wins
             }
         }
 
