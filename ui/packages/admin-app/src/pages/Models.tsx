@@ -89,10 +89,26 @@ export default function Models() {
       if (effectiveRows.length === 0) {
         return null;
       }
+      // Only consider the latest probe result per endpoint URL so that a
+      // historically failed probe (since recovered) does not keep the dot
+      // red forever.
+      const latestPerUrl = new Map<string, ProbeResult>();
+      let channelProbe: ProbeResult | null = null;
+      for (const row of effectiveRows) {
+        if (row.endpoint_url) {
+          const existing = latestPerUrl.get(row.endpoint_url);
+          if (!existing || new Date(row.probed_at) > new Date(existing.probed_at)) {
+            latestPerUrl.set(row.endpoint_url, row);
+          }
+        } else if (!channelProbe || new Date(row.probed_at) > new Date(channelProbe.probed_at)) {
+          channelProbe = row;
+        }
+      }
+      const latestRows = [...latestPerUrl.values(), ...(channelProbe ? [channelProbe] : [])];
       return {
-        success: effectiveRows.every((row) => row.success),
-        latency_ms: Math.max(...effectiveRows.map((row) => row.latency_ms)),
-        rows: effectiveRows,
+        success: latestRows.every((row) => row.success),
+        latency_ms: Math.max(...latestRows.map((row) => row.latency_ms)),
+        rows: latestRows,
       };
     },
     [channelProbeRows],

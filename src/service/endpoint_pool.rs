@@ -87,6 +87,24 @@ impl BindingStatePool {
             }
         }
     }
+
+    /// Record a probe outcome on every binding balancer containing the endpoint
+    /// (matched by DB id). Used after manual/automatic probes so the model
+    /// binding pool reflects the real endpoint status.
+    pub fn record_endpoint_health(&self, endpoint_id: i64, success: bool) {
+        let bindings = self.bindings.read().unwrap_or_else(|e| e.into_inner());
+        for balancer in bindings.values() {
+            for (index, endpoint) in balancer.as_health_aware().endpoints().iter().enumerate() {
+                if endpoint.id == Some(endpoint_id) {
+                    if success {
+                        balancer.as_health_aware().record_success(index);
+                    } else {
+                        balancer.as_health_aware().record_failure(index);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

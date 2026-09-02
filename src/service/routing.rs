@@ -494,6 +494,43 @@ impl RoutingService {
         }
     }
 
+    /// Mirror a probe result to both the binding pool and the per-channel cache
+    /// balancer for the given endpoint, identified by DB id (preferred) or URL.
+    /// Used after manual/automatic probes so that `channel_health()` (read by
+    /// the model console health dot) reflects the real endpoint status.
+    pub fn record_endpoint_health(
+        &self,
+        endpoint_id: Option<i64>,
+        channel_id: &str,
+        endpoint_url: &str,
+        success: bool,
+    ) {
+        let _snapshot_guard = self.snapshot_lock.read().unwrap_or_else(|e| e.into_inner());
+        let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
+        let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
+
+        // Binding pool by endpoint_id.
+        if let Some(eid) = endpoint_id {
+            self.binding_pool.record_endpoint_health(eid, success);
+        }
+
+        // Channel cache — try endpoint_id first, then URL.
+        if let Some(ch) = chs.get(channel_id) {
+            if let Some((_, balancer)) = cache.get(channel_id) {
+                if let Some(idx) = ch.endpoints.iter().position(|ep| {
+                    endpoint_id.is_some_and(|eid| ep.id == Some(eid))
+                        || (endpoint_id.is_none() && ep.url == endpoint_url)
+                }) {
+                    if success {
+                        balancer.as_health_aware().record_success(idx);
+                    } else {
+                        balancer.as_health_aware().record_failure(idx);
+                    }
+                }
+            }
+        }
+    }
+
     /// Collect health status for all endpoints in a channel.
     pub fn channel_health(&self, channel_id: &str) -> Vec<(i64, bool, bool)> {
         let _snapshot_guard = self.snapshot_lock.read().unwrap_or_else(|e| e.into_inner());
