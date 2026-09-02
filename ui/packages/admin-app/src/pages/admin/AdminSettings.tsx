@@ -21,6 +21,10 @@ import type { GatewayRuntimeConfig } from '@fluxeme/shared/src/types';
 
 const PROBE_INTERVAL_MIN = 10;
 const PROBE_INTERVAL_MAX = 3600;
+const BREAKER_THRESHOLD_MIN = 1;
+const BREAKER_THRESHOLD_MAX = 100;
+const BREAKER_COOLDOWN_MIN = 0;
+const BREAKER_COOLDOWN_MAX = 3600;
 
 export default function AdminSettings() {
   const { t } = useTranslation();
@@ -36,6 +40,10 @@ export default function AdminSettings() {
   const [gatewaySaving, setGatewaySaving] = useState(false);
   const [allowPrivateIps, setAllowPrivateIps] = useState(true);
   const [privateIpsLoading, setPrivateIpsLoading] = useState(true);
+  const [breakerThreshold, setBreakerThreshold] = useState(3);
+  const [breakerCooldown, setBreakerCooldown] = useState(30);
+  const [breakerLoading, setBreakerLoading] = useState(true);
+  const [breakerSaving, setBreakerSaving] = useState(false);
 
   useEffect(() => {
     api<{ interval_secs: number }>('/settings/probe-interval')
@@ -50,6 +58,10 @@ export default function AdminSettings() {
       .then((r) => setAllowPrivateIps(r.enabled))
       .catch(() => {})
       .finally(() => setPrivateIpsLoading(false));
+    api<{ threshold: number; cooldown_secs: number }>('/settings/breaker')
+      .then((r) => { setBreakerThreshold(r.threshold); setBreakerCooldown(r.cooldown_secs); })
+      .catch(() => {})
+      .finally(() => setBreakerLoading(false));
   }, []);
 
   useEffect(() => {
@@ -82,6 +94,38 @@ export default function AdminSettings() {
       toast.error(e instanceof Error ? e.message : t('settings.saveFailed'));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveBreaker = async () => {
+    const threshold = Math.round(breakerThreshold);
+    const cooldown = Math.round(breakerCooldown);
+    if (
+      Number.isNaN(threshold) || Number.isNaN(cooldown) ||
+      threshold < BREAKER_THRESHOLD_MIN || threshold > BREAKER_THRESHOLD_MAX ||
+      cooldown < BREAKER_COOLDOWN_MIN || cooldown > BREAKER_COOLDOWN_MAX
+    ) {
+      toast.error(
+        t('settings.breakerInvalid', {
+          thMin: BREAKER_THRESHOLD_MIN, thMax: BREAKER_THRESHOLD_MAX,
+          cdMin: BREAKER_COOLDOWN_MIN, cdMax: BREAKER_COOLDOWN_MAX,
+        }),
+      );
+      return;
+    }
+    setBreakerSaving(true);
+    try {
+      const r = await api<{ threshold: number; cooldown_secs: number }>('/settings/breaker', {
+        method: 'PUT',
+        body: { threshold, cooldown_secs: cooldown },
+      });
+      setBreakerThreshold(r.threshold);
+      setBreakerCooldown(r.cooldown_secs);
+      toast.success(t('settings.breakerSaved'));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t('settings.saveFailed'));
+    } finally {
+      setBreakerSaving(false);
     }
   };
 
@@ -345,6 +389,64 @@ export default function AdminSettings() {
           </div>
           <p className="text-xs text-muted-foreground leading-relaxed">
             {t('settings.probeIntervalCostHint')}
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{t('settings.breakerParams')}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-end gap-3 flex-wrap">
+            <div className="flex-1 min-w-[220px]">
+              <Label htmlFor="breaker-threshold" className="text-sm">
+                {t('settings.breakerThreshold')}
+              </Label>
+              <p className="text-xs text-muted-foreground mt-0.5 mb-2">
+                {t('settings.breakerThresholdHint', {
+                  min: BREAKER_THRESHOLD_MIN,
+                  max: BREAKER_THRESHOLD_MAX,
+                })}
+              </p>
+              <Input
+                id="breaker-threshold"
+                type="number"
+                min={BREAKER_THRESHOLD_MIN}
+                max={BREAKER_THRESHOLD_MAX}
+                value={Number.isNaN(breakerThreshold) ? '' : breakerThreshold}
+                onChange={(e) => setBreakerThreshold(Number(e.target.value))}
+                disabled={breakerLoading}
+                className="max-w-[180px]"
+              />
+            </div>
+            <div className="flex-1 min-w-[220px]">
+              <Label htmlFor="breaker-cooldown" className="text-sm">
+                {t('settings.breakerCooldown')}
+              </Label>
+              <p className="text-xs text-muted-foreground mt-0.5 mb-2">
+                {t('settings.breakerCooldownHint', {
+                  min: BREAKER_COOLDOWN_MIN,
+                  max: BREAKER_COOLDOWN_MAX,
+                })}
+              </p>
+              <Input
+                id="breaker-cooldown"
+                type="number"
+                min={BREAKER_COOLDOWN_MIN}
+                max={BREAKER_COOLDOWN_MAX}
+                value={Number.isNaN(breakerCooldown) ? '' : breakerCooldown}
+                onChange={(e) => setBreakerCooldown(Number(e.target.value))}
+                disabled={breakerLoading}
+                className="max-w-[180px]"
+              />
+            </div>
+            <Button onClick={saveBreaker} disabled={breakerLoading || breakerSaving}>
+              {t('common.save')}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            {t('settings.breakerCostHint')}
           </p>
         </CardContent>
       </Card>

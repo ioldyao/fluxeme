@@ -195,6 +195,90 @@ pub(crate) async fn set_probe_interval(
     ))
 }
 
+// ── Circuit breaker parameters ────────────────────────────────────
+
+/// GET /api/settings/breaker — current circuit breaker params.
+/// Returns persisted values if set, otherwise the process defaults.
+pub(crate) async fn get_breaker_params(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:settings").await?;
+    let threshold = state
+        .db
+        .get_setting("breaker_threshold")
+        .await
+        .map_err(db_err)?
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(crate::balancer::BREAKER_THRESHOLD_DEFAULT);
+    let cooldown_secs = state
+        .db
+        .get_setting("breaker_cooldown_secs")
+        .await
+        .map_err(db_err)?
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(crate::balancer::BREAKER_COOLDOWN_DEFAULT);
+    Ok(Json(serde_json::json!({
+        "threshold": threshold,
+        "cooldown_secs": cooldown_secs,
+    })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct BreakerParamsReq {
+    threshold: u32,
+    cooldown_secs: u64,
+}
+
+/// PUT /api/settings/breaker — persist and apply circuit breaker params.
+/// Applied to newly rebuilt balancers; existing breakers keep state until the
+/// next routing reload.
+pub(crate) async fn set_breaker_params(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<BreakerParamsReq>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:settings").await?;
+    if !(crate::balancer::BREAKER_THRESHOLD_MIN..=crate::balancer::BREAKER_THRESHOLD_MAX)
+        .contains(&req.threshold)
+    {
+        return Err(AdminError::bad_request(format!(
+            "threshold must be between {} and {}",
+            crate::balancer::BREAKER_THRESHOLD_MIN,
+            crate::balancer::BREAKER_THRESHOLD_MAX
+        )));
+    }
+    if !(crate::balancer::BREAKER_COOLDOWN_MIN..=crate::balancer::BREAKER_COOLDOWN_MAX)
+        .contains(&req.cooldown_secs)
+    {
+        return Err(AdminError::bad_request(format!(
+            "cooldown_secs must be between {} and {}",
+            crate::balancer::BREAKER_COOLDOWN_MIN,
+            crate::balancer::BREAKER_COOLDOWN_MAX
+        )));
+    }
+    state
+        .db
+        .set_setting("breaker_threshold", &req.threshold.to_string())
+        .await
+        .map_err(db_err)?;
+    state
+        .db
+        .set_setting("breaker_cooldown_secs", &req.cooldown_secs.to_string())
+        .await
+        .map_err(db_err)?;
+    crate::balancer::set_breaker_params(Some(req.threshold), Some(req.cooldown_secs));
+    // Rebuild channel balancers so new params apply to live breakers.
+    state.routing.reload().await.map_err(AdminError::internal)?;
+    notify_config_changed(&state).await;
+    Ok(Json(serde_json::json!({
+        "threshold": req.threshold,
+        "cooldown_secs": req.cooldown_secs,
+    })))
+}
+
 // ── Gateway Config ──────────────────────────────────────────────────
 
 pub(crate) async fn get_gateway_config_handler(

@@ -106,6 +106,26 @@ impl RoutingService {
     }
 
     pub async fn reload(&self) -> Result<(), String> {
+        // Load circuit breaker params from settings before rebuilding the
+        // channel balancers, so a settings change takes effect on reload.
+        {
+            let threshold = self
+                .db
+                .get_setting("breaker_threshold")
+                .await
+                .ok()
+                .flatten()
+                .and_then(|v| v.parse::<u32>().ok());
+            let cooldown = self
+                .db
+                .get_setting("breaker_cooldown_secs")
+                .await
+                .ok()
+                .flatten()
+                .and_then(|v| v.parse::<u64>().ok());
+            crate::balancer::set_breaker_params(threshold, cooldown);
+        }
+
         // Build the complete replacement before changing the live routing data.
         let chs = self
             .db

@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -7,6 +7,37 @@ const PROBE_LEASE_SECS: u64 = 120;
 use crate::config::types::EndpointConfig;
 
 pub type EndpointGroup = Vec<EndpointConfig>;
+
+// ── Global circuit breaker parameters ─────────────────────────────
+//
+// Defaults match the historical hardcoded values. Runtime overrides are
+// stored in the `balancer_settings` table (keys `breaker_threshold` /
+// `breaker_cooldown_secs`) and loaded into these atomics whenever the
+// RoutingService reloads. Newly constructed breakers (startup or reload)
+// read the current values; in-flight breakers keep their state until the
+// next rebuild.
+
+pub(crate) static BREAKER_THRESHOLD: AtomicU32 = AtomicU32::new(3);
+pub(crate) static BREAKER_COOLDOWN_SECS: AtomicU64 = AtomicU64::new(30);
+
+/// Default failure threshold before a breaker opens.
+pub(crate) const BREAKER_THRESHOLD_DEFAULT: u32 = 3;
+/// Default cooldown before an open breaker may be probed again.
+pub(crate) const BREAKER_COOLDOWN_DEFAULT: u64 = 30;
+pub(crate) const BREAKER_THRESHOLD_MIN: u32 = 1;
+pub(crate) const BREAKER_THRESHOLD_MAX: u32 = 100;
+pub(crate) const BREAKER_COOLDOWN_MIN: u64 = 0;
+pub(crate) const BREAKER_COOLDOWN_MAX: u64 = 3600;
+
+/// Overwrite the process-wide breaker parameters from persisted settings.
+pub(crate) fn set_breaker_params(threshold: Option<u32>, cooldown_secs: Option<u64>) {
+    if let Some(t) = threshold {
+        BREAKER_THRESHOLD.store(t.clamp(BREAKER_THRESHOLD_MIN, BREAKER_THRESHOLD_MAX), Ordering::Relaxed);
+    }
+    if let Some(c) = cooldown_secs {
+        BREAKER_COOLDOWN_SECS.store(c.clamp(BREAKER_COOLDOWN_MIN, BREAKER_COOLDOWN_MAX), Ordering::Relaxed);
+    }
+}
 
 // ── Circuit Breaker ────────────────────────────────────────────────
 
@@ -279,9 +310,11 @@ pub struct HealthAwareBalancer {
 
 impl HealthAwareBalancer {
     pub fn new(endpoints: &EndpointGroup) -> Self {
+        let threshold = BREAKER_THRESHOLD.load(Ordering::Relaxed);
+        let cooldown_secs = BREAKER_COOLDOWN_SECS.load(Ordering::Relaxed);
         let breakers: Vec<_> = endpoints
             .iter()
-            .map(|ep| Arc::new(CircuitBreaker::new(ep.enabled, 3, 30)))
+            .map(|ep| Arc::new(CircuitBreaker::new(ep.enabled, threshold, cooldown_secs)))
             .collect();
 
         let all_equal = endpoints
