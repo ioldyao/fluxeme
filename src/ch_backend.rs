@@ -565,18 +565,23 @@ impl ClickHouseBackend {
             endpoint_url: Option<String>,
             probed_at: u32,
         }
+        // Use ROW_NUMBER() with id as tiebreaker so that two probes for the
+        // same (model, channel, url) within the same second return exactly
+        // one row – the latest by probed_at then by id.
         let rows = self
             .client
             .query(
-                "SELECT p.id, p.channel_id, p.model_id, p.success, p.latency_ms, p.error, p.endpoint_url, toUInt32(p.probed_at) AS probed_at \
-                 FROM probe_results p \
-                 INNER JOIN ( \
-                     SELECT model_id, channel_id, COALESCE(endpoint_url, '') AS ek, MAX(probed_at) AS m \
-                     FROM probe_results GROUP BY model_id, channel_id, COALESCE(endpoint_url, '') \
-                 ) l \
-                   ON p.model_id = l.model_id AND p.channel_id = l.channel_id \
-                  AND COALESCE(p.endpoint_url, '') = l.ek AND p.probed_at = l.m \
-                 ORDER BY p.probed_at DESC",
+                "SELECT id, channel_id, model_id, success, latency_ms, error, endpoint_url, probed_at \
+                 FROM ( \
+                   SELECT id, channel_id, model_id, success, latency_ms, error, endpoint_url, \
+                          toUInt32(probed_at) AS probed_at, \
+                          ROW_NUMBER() OVER ( \
+                            PARTITION BY model_id, channel_id, COALESCE(endpoint_url, '') \
+                            ORDER BY probed_at DESC, id DESC \
+                          ) AS rn \
+                   FROM probe_results \
+                 ) WHERE rn = 1 \
+                 ORDER BY probed_at DESC",
             )
             .fetch_all::<Row>()
             .await

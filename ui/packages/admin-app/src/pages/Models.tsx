@@ -84,31 +84,19 @@ export default function Models() {
   const aggregateChannelProbe = useCallback(
     (modelId: string, channelId: string) => {
       const rows = channelProbeRows(modelId, channelId);
+      // rows from the backend are already latest-per-(model, channel, url)
       const endpointRows = rows.filter((row) => row.endpoint_url);
       const effectiveRows = endpointRows.length > 0 ? endpointRows : rows;
       if (effectiveRows.length === 0) {
         return null;
       }
-      // Only consider the latest probe result per endpoint URL so that a
-      // historically failed probe (since recovered) does not keep the dot
-      // red forever.
-      const latestPerUrl = new Map<string, ProbeResult>();
-      let channelProbe: ProbeResult | null = null;
-      for (const row of effectiveRows) {
-        if (row.endpoint_url) {
-          const existing = latestPerUrl.get(row.endpoint_url);
-          if (!existing || new Date(row.probed_at) > new Date(existing.probed_at)) {
-            latestPerUrl.set(row.endpoint_url, row);
-          }
-        } else if (!channelProbe || new Date(row.probed_at) > new Date(channelProbe.probed_at)) {
-          channelProbe = row;
-        }
-      }
-      const latestRows = [...latestPerUrl.values(), ...(channelProbe ? [channelProbe] : [])];
+      const allSuccess = effectiveRows.every((row) => row.success);
+      const allFailed = effectiveRows.every((row) => !row.success);
       return {
-        success: latestRows.every((row) => row.success),
-        latency_ms: Math.max(...latestRows.map((row) => row.latency_ms)),
-        rows: latestRows,
+        success: allSuccess,
+        degraded: !allSuccess && !allFailed,
+        latency_ms: Math.max(...effectiveRows.map((row) => row.latency_ms)),
+        rows: effectiveRows,
       };
     },
     [channelProbeRows],
@@ -228,13 +216,15 @@ export default function Models() {
           <div className="flex items-center gap-1.5">{m.channels.map((b) => {
             const hc = aggregateChannelProbe(m.id, b.channel_id);
             const ok = hc?.success;
+            const degraded = hc?.degraded;
             const lat = hc?.latency_ms;
+            const dotClass = hc ? (ok ? 'bg-chart-2' : degraded ? 'bg-sidebar-primary' : 'bg-destructive') : 'bg-muted-foreground/40';
             return (
               <div key={b.channel_id} className="group relative inline-flex">
-                <span className={cn('inline-block w-2.5 h-2.5 rounded-full cursor-help', hc ? (ok ? 'bg-chart-2' : 'bg-destructive') : 'bg-muted-foreground/40')} />
+                <span className={cn('inline-block w-2.5 h-2.5 rounded-full cursor-help', dotClass)} />
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-10">
                   <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg px-3 py-2 text-xs whitespace-nowrap space-y-1">
-                    <div className="flex items-center gap-1.5"><span className={cn('inline-block w-2 h-2 rounded-full', hc ? (ok ? 'bg-chart-2' : 'bg-destructive') : 'bg-muted-foreground/40')} /><span className="font-semibold">{channelName(b.channel_id)}</span></div>
+                    <div className="flex items-center gap-1.5"><span className={cn('inline-block w-2 h-2 rounded-full', dotClass)} /><span className="font-semibold">{channelName(b.channel_id)}</span></div>
                     <div className="text-muted-foreground font-mono">{b.channel_id}</div>
                     {hc?.rows?.map((row) => (
                       <div key={`${b.channel_id}-${row.endpoint_url ?? row.id}`} className="flex items-center justify-between gap-3 font-mono">
