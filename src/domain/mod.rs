@@ -1,5 +1,6 @@
 pub mod billing_group;
 pub mod channel;
+pub mod gateway;
 pub mod model;
 pub mod moderation;
 pub mod routing;

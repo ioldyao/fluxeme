@@ -11,6 +11,7 @@ use crate::db::backend::*;
 use crate::db::{AnnouncementRow, DbError, ManagementApiKey, RechargeKeyRow, WalletTransactionRow};
 use crate::domain::billing_group::{BillingGroupRow, BillingPaymentMode};
 use crate::domain::channel::{Channel, Endpoint};
+use crate::domain::gateway::GatewayRoute;
 use crate::domain::model::{Model, ModelChannel, Pricing};
 use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;

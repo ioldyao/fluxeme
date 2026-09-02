@@ -4,6 +4,7 @@ use rust_decimal::Decimal;
 use crate::db::ManagementApiKey;
 use crate::domain::billing_group::{BillingGroupRow, BillingPaymentMode};
 use crate::domain::channel::{Channel, Endpoint};
+use crate::domain::gateway::GatewayRoute;
 use crate::domain::model::{Model, Pricing};
 use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
@@ -135,6 +136,16 @@ pub trait AccessBackend: Send + Sync {
         resource_id: &str,
         action: &str,
     ) -> Result<bool, DbError>;
+}
+
+/// API Gateway 路由持久化（纯 API 网关业务配置，PG 侧）。
+#[async_trait]
+pub trait GatewayBackend: Send + Sync {
+    async fn list_gateway_routes(&self) -> Result<Vec<GatewayRoute>, DbError>;
+    async fn get_gateway_route(&self, id: &str) -> Result<Option<GatewayRoute>, DbError>;
+    async fn create_gateway_route(&self, route: &GatewayRoute) -> Result<(), DbError>;
+    async fn update_gateway_route(&self, route: &GatewayRoute) -> Result<(), DbError>;
+    async fn delete_gateway_route(&self, id: &str) -> Result<(), DbError>;
 }
 
 #[async_trait]
@@ -766,6 +777,7 @@ pub trait DbBackend:
     + SystemBackend
     + TokenBillingBackend
     + TeamsSsoBackend
+    + GatewayBackend
 {
 }
 
@@ -779,5 +791,6 @@ impl<T> DbBackend for T where
         + SystemBackend
         + TokenBillingBackend
         + TeamsSsoBackend
+        + GatewayBackend
 {
 }

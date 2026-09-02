@@ -122,6 +122,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             axum::routing::post(handlers::chat_completions),
         )
         .route("/v1/messages", axum::routing::post(handlers::messages))
+        .route(
+            "/apigw/{*rest}",
+            axum::routing::get(crate::gateway::gateway_proxy)
+                .post(crate::gateway::gateway_proxy)
+                .put(crate::gateway::gateway_proxy)
+                .patch(crate::gateway::gateway_proxy)
+                .delete(crate::gateway::gateway_proxy)
+                .head(crate::gateway::gateway_proxy)
+                .options(crate::gateway::gateway_proxy),
+        )
         // Importers/callers: this router is the public HTTP entrypoint for gateway APIs.
         // Affected API: adds POST /v1/messages/count_tokens. Data schema: Anthropic
         // request body and response shape {"input_tokens": number}. User instruction:

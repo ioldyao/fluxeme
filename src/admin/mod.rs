@@ -139,6 +139,11 @@ impl AdminModule {
             token_version: data.claims.ver,
         })
     }
+
+    /// Encryption key used for persisted upstream credentials.
+    pub(crate) fn encryption_key(&self) -> &str {
+        &self.encryption_key
+    }
 }
 
 impl Clone for AdminModule {
@@ -1079,6 +1084,14 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             "/api/gateway/config",
             axum::routing::get(settings::get_gateway_config_handler)
                 .put(settings::set_gateway_config_handler),
+        )
+        .route(
+            "/api/gateway/routes",
+            axum::routing::get(crate::gateway::list_routes).post(crate::gateway::create_route),
+        )
+        .route(
+            "/api/gateway/routes/{id}",
+            axum::routing::put(crate::gateway::update_route).delete(crate::gateway::delete_route),
         )
         .route(
             "/api/settings/currency",

@@ -7,6 +7,7 @@ mod config;
 mod crypto;
 mod db;
 mod domain;
+mod gateway;
 mod management;
 mod observability;
 mod provider;

@@ -52,10 +52,26 @@ export interface ApiKey {
   allowed_models?: string[] | null;
   /** Team scope. Present when this is a team-shared key. */
   team_id?: string | null;
-  /** 访问范围 = 资源类型（model / skill / mcp）。 */
+  /** 访问范围 = 资源类型（model / skill / mcp / gateway）。 */
   scopes?: string[] | null;
   billing_group_id: string;
   billing_payment_mode: BillingPaymentMode;
+}
+
+export interface GatewayRoute {
+  id: string;
+  name: string;
+  path_prefix: string;
+  upstream_url: string;
+  methods: string;
+  timeout_ms: number;
+  enabled: boolean;
+  preserve_query: boolean;
+  strip_prefix: boolean;
+  /** Header names only; values are never returned by the API. */
+  upstream_headers: string[];
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ManagementApiKey {
@@ -356,7 +372,7 @@ export interface CreateKeyReq {
   expires_at?: string | null;
   spend_limit?: number | null;
   allowed_models?: string[] | null;
-  /** 访问范围 = 资源类型（model / skill / mcp）。 */
+  /** 访问范围 = 资源类型（model / skill / mcp / gateway）。 */
   scopes?: string[] | null;
   billing_group_id?: string | null;
 }

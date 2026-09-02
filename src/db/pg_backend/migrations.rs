@@ -1039,6 +1039,31 @@ impl CoreBackend for PgBackend {
         .map_err(|e| DbError(format!("Migration create sso_user_orgs: {e}")))?;
         tracing::info!("sso_user_orgs table ready");
 
+        // ── API Gateway routes（纯 API 网关业务配置，类似 Kong/APISIX）────
+        // 数据面访问入口：/apigw/{path_prefix 剩余路径}。upstream_headers 存
+        // 加密 JSON（代理时注入上游请求头），upstream_url 不允许含凭据。
+        let _ = raw_sql(
+            "CREATE TABLE IF NOT EXISTS gateway_routes (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                path_prefix TEXT NOT NULL,
+                upstream_url TEXT NOT NULL,
+                methods TEXT NOT NULL DEFAULT 'GET,POST,PUT,PATCH,DELETE',
+                timeout_ms BIGINT NOT NULL DEFAULT 30000,
+                enabled BOOLEAN NOT NULL DEFAULT true,
+                preserve_query BOOLEAN NOT NULL DEFAULT true,
+                strip_prefix BOOLEAN NOT NULL DEFAULT true,
+                upstream_headers TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT '',
+                UNIQUE (path_prefix)
+            )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DbError(format!("Migration create gateway_routes: {e}")))?;
+        tracing::info!("gateway_routes table ready");
+
         Ok(())
     }
 

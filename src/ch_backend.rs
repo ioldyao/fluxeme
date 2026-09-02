@@ -77,6 +77,24 @@ pub struct SkillRuntimeCall {
     pub api_key_id: String,
 }
 
+/// Row type for the `gateway_calls` ClickHouse table.
+/// API 网关（纯 API 网关数据面）每次调用的可观测记录（高吞吐 append-only → CH）。
+/// 财务事实不在此表；业务配置在 PG `gateway_routes`。
+#[derive(Debug, Clone, Serialize, Row)]
+pub struct GatewayCall {
+    pub timestamp: u32,
+    pub request_id: String,
+    pub route_id: String,
+    pub method: String,
+    pub path: String,
+    pub status_code: u16,
+    pub latency_ms: u64,
+    pub bytes_in: u64,
+    pub bytes_out: u64,
+    pub user_id: String,
+    pub api_key_id: String,
+}
+
 pub struct ClickHouseBackend {
     client: Client,
 }
@@ -403,6 +421,27 @@ impl ClickHouseBackend {
         SETTINGS index_granularity = 8192\
     ";
 
+    /// API 网关数据面调用观测（纯 API 网关，非 AI 流量）。
+    const CREATE_GATEWAY_CALLS: &'static str = "\
+        CREATE TABLE IF NOT EXISTS gateway_calls (\
+            timestamp DateTime,\
+            request_id String,\
+            route_id String,\
+            method String,\
+            path String,\
+            status_code UInt16,\
+            latency_ms UInt64,\
+            bytes_in UInt64,\
+            bytes_out UInt64,\
+            user_id String,\
+            api_key_id String\
+        ) ENGINE = MergeTree()\
+        PARTITION BY toYYYYMM(timestamp)\
+        ORDER BY (route_id, timestamp)\
+        TTL toDateTime(timestamp) + INTERVAL 90 DAY \
+        SETTINGS index_granularity = 8192\
+    ";
+
     pub async fn migrate(&self, retention_days: u32) -> Result<(), String> {
         self.client
             .query(Self::CREATE_USAGE_EVENTS)
@@ -446,6 +485,12 @@ impl ClickHouseBackend {
             .execute()
             .await
             .map_err(|e| format!("CH migration skill_runtime_calls: {e}"))?;
+
+        self.client
+            .query(Self::CREATE_GATEWAY_CALLS)
+            .execute()
+            .await
+            .map_err(|e| format!("CH migration gateway_calls: {e}"))?;
 
         // Update TTL to match config
         let ttl_sql = format!(
@@ -630,6 +675,27 @@ impl ClickHouseBackend {
         let mut inserter = self
             .client
             .insert::<SkillRuntimeCall>("skill_runtime_calls")
+            .map_err(|e| format!("CH inserter: {e}"))?;
+        for row in rows {
+            inserter
+                .write(row)
+                .await
+                .map_err(|e| format!("CH insert row: {e}"))?;
+        }
+        inserter
+            .end()
+            .await
+            .map_err(|e| format!("CH insert batch end: {e}"))
+    }
+
+    /// Batch insert API-gateway call records (observability → ClickHouse).
+    pub async fn insert_gateway_calls(&self, rows: &[GatewayCall]) -> Result<(), String> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let mut inserter = self
+            .client
+            .insert::<GatewayCall>("gateway_calls")
             .map_err(|e| format!("CH inserter: {e}"))?;
         for row in rows {
             inserter

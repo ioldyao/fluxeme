@@ -1,7 +1,7 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-pub const API_KEY_SCOPES: [&str; 3] = ["model", "skill", "mcp"];
+pub const API_KEY_SCOPES: [&str; 4] = ["model", "skill", "mcp", "gateway"];
 
 pub fn normalize_api_key_scopes(scopes: Option<Vec<String>>) -> Result<Vec<String>, String> {
     let requested = scopes.unwrap_or_else(|| vec!["model".to_string(), "skill".to_string()]);

@@ -8,6 +8,7 @@ use crate::config::types::GatewayRuntimeConfig;
 use crate::db::backend::DbBackend;
 use crate::domain::billing_group::{BillingGroupRow, BillingPaymentMode};
 use crate::domain::channel::{Channel, Endpoint};
+use crate::domain::gateway::GatewayRoute;
 use crate::domain::model::{Model, Pricing};
 use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
@@ -449,6 +450,23 @@ impl Database {
         self.backend
             .api_key_has_resource_scope(api_key_id, resource_type, resource_id, action)
             .await
+    }
+
+    // ── API Gateway routes（纯 API 网关业务配置，PG 侧） ──────────────────
+    pub async fn list_gateway_routes(&self) -> Result<Vec<GatewayRoute>, DbError> {
+        self.backend.list_gateway_routes().await
+    }
+    pub async fn get_gateway_route(&self, id: &str) -> Result<Option<GatewayRoute>, DbError> {
+        self.backend.get_gateway_route(id).await
+    }
+    pub async fn create_gateway_route(&self, route: &GatewayRoute) -> Result<(), DbError> {
+        self.backend.create_gateway_route(route).await
+    }
+    pub async fn update_gateway_route(&self, route: &GatewayRoute) -> Result<(), DbError> {
+        self.backend.update_gateway_route(route).await
+    }
+    pub async fn delete_gateway_route(&self, id: &str) -> Result<(), DbError> {
+        self.backend.delete_gateway_route(id).await
     }
 
     // ── Channels & Endpoints ─────────────────────────────────────────────

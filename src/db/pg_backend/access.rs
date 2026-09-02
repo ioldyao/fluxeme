@@ -552,3 +552,104 @@ impl AccessBackend for PgBackend {
         Ok(())
     }
 }
+
+#[async_trait]
+impl GatewayBackend for PgBackend {
+    // ── API Gateway routes（纯 API 网关业务配置） ────────────────────────
+
+    async fn list_gateway_routes(&self) -> Result<Vec<GatewayRoute>, DbError> {
+        let rows = query(
+            "SELECT id, name, path_prefix, upstream_url, methods, timeout_ms, enabled, \
+             preserve_query, strip_prefix, upstream_headers, created_at, updated_at \
+             FROM gateway_routes ORDER BY path_prefix, id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(map_gateway_route_row).collect())
+    }
+
+    async fn get_gateway_route(&self, id: &str) -> Result<Option<GatewayRoute>, DbError> {
+        let row = query(
+            "SELECT id, name, path_prefix, upstream_url, methods, timeout_ms, enabled, \
+             preserve_query, strip_prefix, upstream_headers, created_at, updated_at \
+             FROM gateway_routes WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.as_ref().map(map_gateway_route_row))
+    }
+
+    async fn create_gateway_route(&self, route: &GatewayRoute) -> Result<(), DbError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        query(
+            "INSERT INTO gateway_routes \
+             (id, name, path_prefix, upstream_url, methods, timeout_ms, enabled, \
+              preserve_query, strip_prefix, upstream_headers, created_at, updated_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+        )
+        .bind(&route.id)
+        .bind(&route.name)
+        .bind(&route.path_prefix)
+        .bind(&route.upstream_url)
+        .bind(&route.methods)
+        .bind(route.timeout_ms as i64)
+        .bind(route.enabled)
+        .bind(route.preserve_query)
+        .bind(route.strip_prefix)
+        .bind(&route.upstream_headers)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn update_gateway_route(&self, route: &GatewayRoute) -> Result<(), DbError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        query(
+            "UPDATE gateway_routes SET name=$1, path_prefix=$2, upstream_url=$3, methods=$4, \
+             timeout_ms=$5, enabled=$6, preserve_query=$7, strip_prefix=$8, upstream_headers=$9, \
+             updated_at=$10 WHERE id=$11",
+        )
+        .bind(&route.name)
+        .bind(&route.path_prefix)
+        .bind(&route.upstream_url)
+        .bind(&route.methods)
+        .bind(route.timeout_ms as i64)
+        .bind(route.enabled)
+        .bind(route.preserve_query)
+        .bind(route.strip_prefix)
+        .bind(&route.upstream_headers)
+        .bind(&now)
+        .bind(&route.id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_gateway_route(&self, id: &str) -> Result<(), DbError> {
+        query("DELETE FROM gateway_routes WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+}
+
+fn map_gateway_route_row(row: &PgRow) -> GatewayRoute {
+    GatewayRoute {
+        id: row.try_get::<String, _>(0).unwrap_or_default(),
+        name: row.try_get::<String, _>(1).unwrap_or_default(),
+        path_prefix: row.try_get::<String, _>(2).unwrap_or_default(),
+        upstream_url: row.try_get::<String, _>(3).unwrap_or_default(),
+        methods: row.try_get::<String, _>(4).unwrap_or_default(),
+        timeout_ms: row.try_get::<i64, _>(5).unwrap_or(30_000) as u64,
+        enabled: row.try_get::<bool, _>(6).unwrap_or(true),
+        preserve_query: row.try_get::<bool, _>(7).unwrap_or(true),
+        strip_prefix: row.try_get::<bool, _>(8).unwrap_or(true),
+        upstream_headers: row.try_get::<String, _>(9).unwrap_or_default(),
+        created_at: row.try_get::<String, _>(10).unwrap_or_default(),
+        updated_at: row.try_get::<String, _>(11).unwrap_or_default(),
+    }
+}
