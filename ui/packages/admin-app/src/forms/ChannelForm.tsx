@@ -55,13 +55,17 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
   // DashScope-specific fields
   const [dashscopeRegion, setDashscopeRegion] = useState('cn-beijing');
   const [dashscopeWorkspaceId, setDashscopeWorkspaceId] = useState('');
+  const [dashscopeType, setDashscopeType] = useState<'dashscope' | 'token_plan'>('dashscope');
 
-  // DashScope URL construction (auto based on region + workspaceId)
+  // DashScope URL construction (auto based on type + region; Token Plan has a
+  // fixed `token-plan` prefix, DashScope uses the workspace id)
   const isDashScope = provider === 'dashscope';
   const dashscopeBaseUrl = isDashScope
-    ? dashscopeWorkspaceId
-      ? `https://${dashscopeWorkspaceId}.${dashscopeRegion}.maas.aliyuncs.com`
-      : ''
+    ? dashscopeType === 'token_plan'
+      ? `https://token-plan.${dashscopeRegion}.maas.aliyuncs.com`
+      : dashscopeWorkspaceId
+        ? `https://${dashscopeWorkspaceId}.${dashscopeRegion}.maas.aliyuncs.com`
+        : ''
     : '';
   const fixedBaseUrl = isDashScope ? dashscopeBaseUrl : FIXED_BASE_URLS[provider] || '';
 
@@ -75,11 +79,14 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       // Load DashScope-specific config from channel
       if (channel.provider === 'dashscope') {
         const existingUrl = channel.endpoints[0]?.url || '';
-        const match = existingUrl.match(/https:\/\/([^\.]+)\.([^.]+)\.maas\.aliyuncs\.com/);
+        const match = existingUrl.match(/https:\/\/([^.]+)\.([^.]+)\.maas\.aliyuncs\.com/);
         if (match) {
-          setDashscopeWorkspaceId(match[1]);
+          const isTokenPlan = match[1] === 'token-plan';
+          setDashscopeType(isTokenPlan ? 'token_plan' : 'dashscope');
+          setDashscopeWorkspaceId(isTokenPlan ? '' : match[1]);
           setDashscopeRegion(match[2]);
         } else {
+          setDashscopeType('dashscope');
           setDashscopeWorkspaceId('');
           setDashscopeRegion('cn-beijing');
         }
@@ -89,6 +96,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       setName(''); setProvider(''); setPriority('0'); setEnabled(true); setAnthropicCompat(false);
       setDashscopeRegion('cn-beijing');
       setDashscopeWorkspaceId('');
+      setDashscopeType('dashscope');
       setEndpoints([emptyEp()]);
     }
   }, [channel, open]);
@@ -140,15 +148,14 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
     // DashScope-specific config
     if (provider === 'dashscope') {
       (data as Record<string, unknown>).dashscope_region = dashscopeRegion;
-      (data as Record<string, unknown>).dashscope_workspace_id = dashscopeWorkspaceId;
-      // Use auto-generated URL (user fills workspaceId and region, backend auto-detects mode from URL)
-      const finalUrl = dashscopeWorkspaceId
-        ? `https://${dashscopeWorkspaceId}.${dashscopeRegion}.maas.aliyuncs.com/compatible-mode/v1`
-        : '';
+      (data as Record<string, unknown>).dashscope_workspace_id = dashscopeType === 'token_plan' ? 'token-plan' : dashscopeWorkspaceId;
+      // Use auto-generated URL (pure domain; backend appends /apps/anthropic or
+      // /compatible-mode/v1 per request kind)
+      const finalUrl = dashscopeBaseUrl;
       // Update endpoints with the final URL
       (data as Record<string, unknown>).endpoints = (data.endpoints as Endpoint[]).map((ep: Endpoint) => ({
         ...ep,
-        url: ep.full_url ? ep.url : finalUrl || ep.url,
+        url: ep.full_url ? ep.url : finalUrl,
       }));
     }
 
@@ -222,6 +229,19 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
               {isDashScope && (
                 <div className="space-y-3 pt-2 border-t border-muted/30 mt-2">
                   <div className="space-y-1.5">
+                    <Label className="text-sm font-medium">{t('dashscope.type')}</Label>
+                    <Select value={dashscopeType} onValueChange={(v) => { const next = (v ?? 'dashscope') as 'dashscope' | 'token_plan'; setDashscopeType(next); if (next === 'token_plan') setDashscopeWorkspaceId(''); }}>
+                      <SelectTrigger className="h-9 bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="dashscope">{t('dashscope.typeDashscope')}</SelectItem>
+                        <SelectItem value="token_plan">{t('dashscope.typeTokenPlan')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
                     <Label className="text-sm font-medium">{t('dashscope.region')}</Label>
                     <Select value={dashscopeRegion} onValueChange={(v) => setDashscopeRegion(v ?? 'cn-beijing')}>
                       <SelectTrigger className="h-9 bg-background">
@@ -237,22 +257,30 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                     </Select>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label className="text-sm font-medium">{t('dashscope.workspaceId')}</Label>
-                    <Input
-                      className="h-9 bg-background"
-                      placeholder="例如：ws-xxxxxx"
-                      value={dashscopeWorkspaceId}
-                      onChange={(e) => setDashscopeWorkspaceId(e.target.value)}
-                    />
-                    <p className="text-[10px] text-muted-foreground leading-tight">
-                      {t('dashscope.workspaceIdDesc')}
-                    </p>
-                  </div>
+                  {dashscopeType === 'token_plan' ? (
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] text-muted-foreground leading-tight">
+                        {t('dashscope.tokenPlanDesc')}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium">{t('dashscope.workspaceId')}</Label>
+                      <Input
+                        className="h-9 bg-background"
+                        placeholder="例如：ws-xxxxxx"
+                        value={dashscopeWorkspaceId}
+                        onChange={(e) => setDashscopeWorkspaceId(e.target.value)}
+                      />
+                      <p className="text-[10px] text-muted-foreground leading-tight">
+                        {t('dashscope.workspaceIdDesc')}
+                      </p>
+                    </div>
+                  )}
 
                   <div className="space-y-1.5">
                     <p className="text-[10px] text-muted-foreground leading-tight">
-                      后端自动根据 URL 中的 /compatible-mode 或 /apps/anthropic 判断兼容模式
+                      后端自动根据请求类型拼接 /apps/anthropic 或 /compatible-mode/v1
                     </p>
                   </div>
                 </div>

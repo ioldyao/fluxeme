@@ -1026,6 +1026,13 @@ const en: Record<string, string> = {
   'ssoSettings.confirmDeleteDetail': 'Users will no longer be able to authenticate via this SSO provider.',
   'ssoSettings.noConfigs': 'No SSO configurations yet',
   'ssoSettings.noConfigsDesc': 'Add your first SSO configuration to enable single sign-on.',
+  'dashscope.type': 'Type',
+  'dashscope.typeDashscope': 'DashScope',
+  'dashscope.typeTokenPlan': 'Token Plan',
+  'dashscope.region': 'Region',
+  'dashscope.workspaceId': 'Workspace ID',
+  'dashscope.workspaceIdDesc': 'Aliyun Bailian workspace id (WorkspaceId)',
+  'dashscope.tokenPlanDesc': 'Token Plan plan-specific address with a fixed token-plan prefix; no workspace id needed.',
 };
 
 export default en;

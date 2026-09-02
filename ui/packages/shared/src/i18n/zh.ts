@@ -1026,5 +1026,12 @@ const zh: Record<string, string> = {
   'ssoSettings.confirmDeleteDetail': '用户将无法再通过此 SSO 提供商进行认证。',
   'ssoSettings.noConfigs': '暂无 SSO 配置',
   'ssoSettings.noConfigsDesc': '添加您的第一个 SSO 配置以启用单点登录。',
+  'dashscope.type': '类型',
+  'dashscope.typeDashscope': 'DashScope',
+  'dashscope.typeTokenPlan': 'Token Plan',
+  'dashscope.region': '地域',
+  'dashscope.workspaceId': '业务空间 ID',
+  'dashscope.workspaceIdDesc': '阿里云百炼业务空间 ID（WorkspaceId）',
+  'dashscope.tokenPlanDesc': 'Token Plan 套餐专属地址，前缀固定为 token-plan，无需填写业务空间 ID。',
 };
 export default zh;
