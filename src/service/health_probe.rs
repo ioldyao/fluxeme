@@ -16,6 +16,40 @@ use crate::service::routing::RoutingService;
 const MAX_CONCURRENT_ENDPOINT_PROBES: usize = 8;
 const PROBE_LEASE_TTL_SECS: u64 = 120;
 
+/// Breaker action to mirror onto a channel-level cache balancer.
+enum BreakerAction {
+    Success,
+    Failure,
+}
+
+/// Mirror a probe outcome from the binding-pool balancer onto the
+/// channel-level cache balancer. The two balancers are separate instances, so
+/// without this the model console health dot (`channel_health()`) never sees
+/// probe-driven recovery. The endpoint is located by DB id first, then URL.
+fn sync_breaker(
+    balancer: &crate::balancer::HealthAwareBalancer,
+    endpoint: &EndpointConfig,
+    action: BreakerAction,
+) {
+    let idx = balancer
+        .endpoints()
+        .iter()
+        .position(|ep| {
+            if let (Some(a), Some(b)) = (ep.id, endpoint.id) {
+                a == b
+            } else {
+                ep.url == endpoint.url
+            }
+        });
+    let Some(idx) = idx else {
+        return;
+    };
+    match action {
+        BreakerAction::Success => balancer.record_success(idx),
+        BreakerAction::Failure => balancer.record_failure(idx),
+    }
+}
+
 struct ProbeJob {
     binding_order: usize,
     endpoint_order: usize,
@@ -25,6 +59,12 @@ struct ProbeJob {
     upstream_name: String,
     adapter: Arc<dyn ProviderAdapter>,
     balancer: Arc<LoadBalancer>,
+    /// Channel-level cache balancer (same endpoints as `balancer` but lives in
+    /// the per-channel cache, not the binding pool).  When a probe succeeds or
+    /// fails, we sync the circuit breaker state back to this balancer so that
+    /// `channel_health()` (read by the model console dot) reflects the real
+    /// endpoint status immediately.
+    channel_balancer: Option<Arc<LoadBalancer>>,
     endpoint: EndpointConfig,
     stream: bool,
     /// Whether this is an automatic recovery probe.
@@ -150,6 +190,7 @@ impl HealthProbeService {
                 .routing
                 .get_binding_route(model_id, &binding.channel_id)
                 .unwrap_or_else(|| route.1.clone());
+            let channel_balancer = route.1.clone();
             let endpoints = probe_balancer.as_health_aware().endpoints();
             // Model liveness probes exercise the configured chat operation.
             // Full URLs are valid here: provider URL resolution preserves them
@@ -186,6 +227,7 @@ impl HealthProbeService {
                     upstream_name: upstream_name.clone(),
                     adapter: adapter.clone(),
                     balancer: probe_balancer.clone(),
+                    channel_balancer: Some(channel_balancer.clone()),
                     endpoint,
                     stream,
                     automatic: false,
@@ -248,6 +290,7 @@ impl HealthProbeService {
                 else {
                     continue;
                 };
+                let channel_balancer = self.routing.get_route(&binding.channel_id).map(|r| r.1);
                 let provider_name = route.0.clone();
                 let Some(adapter) = self.providers.get(&provider_name) else {
                     continue;
@@ -272,6 +315,7 @@ impl HealthProbeService {
                         upstream_name: upstream_name.clone(),
                         adapter: adapter.clone(),
                         balancer: balancer.clone(),
+                        channel_balancer: channel_balancer.clone(),
                         endpoint: endpoint.clone(),
                         stream: false,
                         automatic: true,
@@ -320,6 +364,7 @@ impl HealthProbeService {
             upstream_name,
             adapter,
             balancer,
+            channel_balancer,
             endpoint,
             stream,
             automatic,
@@ -409,6 +454,11 @@ impl HealthProbeService {
                 } else {
                     balancer.as_health_aware().record_success(endpoint_order);
                 }
+                // Sync to channel-level cache balancer so the model console
+                // health dot (read via `channel_health()`) reflects success.
+                if let Some(ref cb) = channel_balancer {
+                    sync_breaker(cb.as_health_aware(), &endpoint, BreakerAction::Success);
+                }
                 if let (Some(key), Some(owner)) = (lease_key.as_ref(), lease_owner.as_ref()) {
                     let _ = cache.probe_release(key, owner).await;
                 }
@@ -431,6 +481,10 @@ impl HealthProbeService {
                             .probe_failure(endpoint_order, token);
                     } else {
                         balancer.as_health_aware().record_failure(endpoint_order);
+                    }
+                    // Sync failure to channel cache balancer.
+                    if let Some(ref cb) = channel_balancer {
+                        sync_breaker(cb.as_health_aware(), &endpoint, BreakerAction::Failure);
                     }
                 } else if let Some(token) = probe_token {
                     // Authentication, model, and request errors describe the

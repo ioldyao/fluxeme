@@ -10,6 +10,10 @@ pub enum GatewayError {
     Upstream(String),
     Internal(String),
     PaymentRequired(String),
+    /// Model exists but is currently unavailable (circuit open, no healthy
+    /// endpoint) — mapped to 503 so clients retry instead of concluding the
+    /// model doesn't exist.
+    ServiceUnavailable(String),
 }
 
 impl GatewayError {
@@ -22,6 +26,7 @@ impl GatewayError {
             Self::Upstream(_) => StatusCode::BAD_GATEWAY,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::PaymentRequired(_) => StatusCode::PAYMENT_REQUIRED,
+            Self::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 
@@ -32,7 +37,8 @@ impl GatewayError {
             | Self::Route(m)
             | Self::BadRequest(m)
             | Self::Upstream(m)
-            | Self::PaymentRequired(m) => m,
+            | Self::PaymentRequired(m)
+            | Self::ServiceUnavailable(m) => m,
             Self::Internal(_) => "Internal server error",
         }
     }
@@ -58,7 +64,14 @@ impl From<crate::service::auth::AuthError> for GatewayError {
 
 impl From<crate::service::routing::RouteError> for GatewayError {
     fn from(e: crate::service::routing::RouteError) -> Self {
-        Self::Route(e.0)
+        use crate::service::routing::RouteErrorKind;
+        match e.kind {
+            // A model that exists but is currently unhealthy is *unavailable*
+            // (503), not missing (404). 404 makes clients like Claude Code
+            // conclude the model doesn't exist; 503 lets them retry.
+            RouteErrorKind::NotFound => Self::Route(e.message),
+            RouteErrorKind::Unavailable => Self::ServiceUnavailable(e.message),
+        }
     }
 }
 
