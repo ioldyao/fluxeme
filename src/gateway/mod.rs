@@ -122,7 +122,10 @@ async fn validate_route(req: &GatewayRouteRequest) -> Result<(), AdminError> {
             "timeout_ms is outside the allowed range",
         ));
     }
-    let policy = fluxeme_skill_backing::policy::UpstreamPolicy::default();
+    let policy = fluxeme_skill_backing::policy::UpstreamPolicy {
+        allow_private: crate::provider::allow_private_ips(),
+        ..Default::default()
+    };
     policy
         .validate(req.upstream_url.trim(), Some(req.timeout_ms))
         .await
@@ -423,7 +426,10 @@ pub async fn gateway_proxy(
         Some(r) => r,
         None => return json_error(StatusCode::NOT_FOUND, "gateway route not found"),
     };
-    let policy = fluxeme_skill_backing::policy::UpstreamPolicy::default();
+    let policy = fluxeme_skill_backing::policy::UpstreamPolicy {
+        allow_private: crate::provider::allow_private_ips(),
+        ..Default::default()
+    };
     if policy
         .validate(&route.upstream_url, Some(route.timeout_ms))
         .await

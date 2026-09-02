@@ -123,6 +123,11 @@ impl UpstreamPolicy {
     }
 
     fn check_ip(&self, ip: &std::net::IpAddr) -> Result<(), PolicyError> {
+        // `allow_private` 开启时跳过私网/保留地址拦截（供网关跟随全局
+        // allow-private-ips 开关代理内网上游）。
+        if self.allow_private {
+            return Ok(());
+        }
         match ip {
             std::net::IpAddr::V4(v4) if blocked_v4(v4) => Err(PolicyError::Blocked(format!(
                 "upstream IP {ip} is a reserved/private/loopback address"

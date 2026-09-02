@@ -226,6 +226,11 @@ pub fn set_allow_private_ips(allow: bool) {
     );
 }
 
+/// Whether private IPs are currently allowed (SSRF protection off/on).
+pub fn allow_private_ips() -> bool {
+    ALLOW_PRIVATE_IPS.load(Ordering::Relaxed)
+}
+
 /// Resolve a provider operation URL.
 ///
 /// When `full_url` is set the URL is used verbatim. Otherwise the trailing `/`
