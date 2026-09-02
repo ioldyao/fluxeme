@@ -415,6 +415,8 @@ export interface ProbeResult {
   latency_ms: number;
   error?: string | null;
   probed_at: string;
+  /** Endpoint primary key in the channel config table. NULL for legacy rows. */
+  endpoint_id?: number | null;
   endpoint_url?: string | null;
 }
 

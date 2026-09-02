@@ -127,6 +127,7 @@ impl HealthProbeService {
                             0,
                             Some("Route not available"),
                             None,
+                            None,
                         ),
                     });
                     continue;
@@ -145,6 +146,7 @@ impl HealthProbeService {
                             false,
                             0,
                             Some("Provider adapter not found"),
+                            None,
                             None,
                         ),
                     });
@@ -176,6 +178,7 @@ impl HealthProbeService {
                         false,
                         0,
                         Some("No enabled endpoints"),
+                        None,
                         None,
                     ),
                 });
@@ -365,6 +368,7 @@ impl HealthProbeService {
                         false,
                         0,
                         Some("Probe lease unavailable"),
+                        endpoint.id,
                         Some(endpoint.url.clone()),
                     ),
                 };
@@ -383,6 +387,7 @@ impl HealthProbeService {
                         false,
                         0,
                         Some("Probe already claimed"),
+                        endpoint.id,
                         Some(endpoint.url.clone()),
                     ),
                 };
@@ -437,6 +442,7 @@ impl HealthProbeService {
                     true,
                     latency_ms,
                     None,
+                    endpoint.id,
                     Some(endpoint.url.clone()),
                 )
             }
@@ -476,6 +482,7 @@ impl HealthProbeService {
                     false,
                     latency_ms,
                     Some(&error.0),
+                    endpoint.id,
                     Some(endpoint.url.clone()),
                 )
             }
@@ -545,6 +552,7 @@ impl HealthProbeService {
         success: bool,
         latency_ms: u64,
         error: Option<&str>,
+        endpoint_id: Option<i64>,
         endpoint_url: Option<String>,
     ) -> ProbeResultRow {
         ProbeResultRow {
@@ -555,6 +563,7 @@ impl HealthProbeService {
             latency_ms,
             error: error.map(|text| text.to_string()),
             probed_at: chrono::Utc::now().to_rfc3339(),
+            endpoint_id,
             endpoint_url,
         }
     }

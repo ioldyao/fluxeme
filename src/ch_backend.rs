@@ -392,6 +392,7 @@ impl ClickHouseBackend {
             success UInt8,\
             latency_ms UInt64,\
             error Nullable(String),\
+            endpoint_id Nullable(Int64),\
             endpoint_url Nullable(String),\
             probed_at DateTime\
         ) ENGINE = MergeTree()\
@@ -480,6 +481,14 @@ impl ClickHouseBackend {
             .await
             .map_err(|e| format!("CH migration probe_results: {e}"))?;
 
+        // Backfill endpoint_id for existing probe_results rows (old rows keep
+        // NULL; new rows carry the endpoint's config primary key).
+        self.client
+            .query("ALTER TABLE probe_results ADD COLUMN IF NOT EXISTS endpoint_id Nullable(Int64)")
+            .execute()
+            .await
+            .map_err(|e| format!("CH migration probe_results endpoint_id: {e}"))?;
+
         self.client
             .query(Self::CREATE_SKILL_RUNTIME_CALLS)
             .execute()
@@ -521,6 +530,7 @@ impl ClickHouseBackend {
             success: u8,
             latency_ms: u64,
             error: Option<String>,
+            endpoint_id: Option<i64>,
             endpoint_url: Option<String>,
             probed_at: u32,
         }
@@ -540,6 +550,7 @@ impl ClickHouseBackend {
                     success: if r.success { 1 } else { 0 },
                     latency_ms: r.latency_ms,
                     error: r.error.clone(),
+                    endpoint_id: r.endpoint_id,
                     endpoint_url: r.endpoint_url.clone(),
                     probed_at: ts,
                 })
@@ -562,6 +573,7 @@ impl ClickHouseBackend {
             success: u8,
             latency_ms: u64,
             error: Option<String>,
+            endpoint_id: Option<i64>,
             endpoint_url: Option<String>,
             probed_at: u32,
         }
@@ -571,9 +583,9 @@ impl ClickHouseBackend {
         let rows = self
             .client
             .query(
-                "SELECT id, channel_id, model_id, success, latency_ms, error, endpoint_url, probed_at \
+                "SELECT id, channel_id, model_id, success, latency_ms, error, endpoint_id, endpoint_url, probed_at \
                  FROM ( \
-                   SELECT id, channel_id, model_id, success, latency_ms, error, endpoint_url, \
+                   SELECT id, channel_id, model_id, success, latency_ms, error, endpoint_id, endpoint_url, \
                           toUInt32(probed_at) AS probed_at, \
                           ROW_NUMBER() OVER ( \
                             PARTITION BY model_id, channel_id, COALESCE(endpoint_url, '') \
@@ -598,6 +610,7 @@ impl ClickHouseBackend {
                 probed_at: chrono::DateTime::from_timestamp(r.probed_at as i64, 0)
                     .map(|d| d.to_rfc3339())
                     .unwrap_or_default(),
+                endpoint_id: r.endpoint_id,
                 endpoint_url: r.endpoint_url,
             })
             .collect())
@@ -616,13 +629,14 @@ impl ClickHouseBackend {
             success: u8,
             latency_ms: u64,
             error: Option<String>,
+            endpoint_id: Option<i64>,
             endpoint_url: Option<String>,
             probed_at: u32,
         }
         let rows = self
             .client
             .query(
-                "SELECT id, channel_id, model_id, success, latency_ms, error, endpoint_url, toUInt32(probed_at) AS probed_at \
+                "SELECT id, channel_id, model_id, success, latency_ms, error, endpoint_id, endpoint_url, toUInt32(probed_at) AS probed_at \
                  FROM probe_results \
                  WHERE probed_at >= now() - INTERVAL ? MINUTE \
                  ORDER BY probed_at DESC LIMIT 1000",
@@ -643,6 +657,7 @@ impl ClickHouseBackend {
                 probed_at: chrono::DateTime::from_timestamp(r.probed_at as i64, 0)
                     .map(|d| d.to_rfc3339())
                     .unwrap_or_default(),
+                endpoint_id: r.endpoint_id,
                 endpoint_url: r.endpoint_url,
             })
             .collect())

@@ -186,6 +186,11 @@ pub struct ProbeResultRow {
     pub latency_ms: u64,
     pub error: Option<String>,
     pub probed_at: String,
+    /// Endpoint's primary key in the channel config table. NULL for legacy
+    /// rows written before this column existed. Frontend filters current
+    /// status by this ID, not by URL.
+    #[serde(default)]
+    pub endpoint_id: Option<i64>,
     #[serde(default)]
     pub endpoint_url: Option<String>,
 }

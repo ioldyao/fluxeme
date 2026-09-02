@@ -81,14 +81,28 @@ export default function Models() {
       probeResults?.filter((row) => row.model_id === modelId && row.channel_id === channelId) ?? [],
     [probeResults],
   );
+  // 只看"当前配置里仍然存在的端点"——按 endpoint_id 比对（稳定、唯一、无需猜
+  // URL 拼接规则）。端点被删/URL 改了，其历史探测记录自动不参与状态判定。
   const aggregateChannelProbe = useCallback(
     (modelId: string, channelId: string) => {
-      const rows = channelProbeRows(modelId, channelId);
-      // rows from the backend are already latest-per-(model, channel, url)
-      const endpointRows = rows.filter((row) => row.endpoint_url);
-      const effectiveRows = endpointRows.length > 0 ? endpointRows : rows;
+      const configuredIds = new Set(
+        channelEndpoints(channelId)
+          .filter((e) => e.enabled !== false)
+          .map((e) => e.id)
+          .filter((id): id is number => id != null),
+      );
+      const allRows = channelProbeRows(modelId, channelId);
+      // 只有携带当前配置端点 ID 的记录才参与状态判定
+      const currentRows = allRows.filter(
+        (row) => row.endpoint_id != null && configuredIds.has(row.endpoint_id),
+      );
+      // 兜底：老数据（endpoint_id 全 NULL）且当前配置端点也全无 ID 时，退回 URL 匹配
+      const legacyRows = configuredIds.size === 0
+        ? allRows.filter((r) => r.endpoint_url && channelEndpoints(channelId).some((e) => e.url === r.endpoint_url))
+        : [];
+      const effectiveRows = currentRows.length > 0 ? currentRows : legacyRows;
       if (effectiveRows.length === 0) {
-        return null;
+        return null; // 当前配置端点从未被探测过 → 待探测
       }
       const allSuccess = effectiveRows.every((row) => row.success);
       const allFailed = effectiveRows.every((row) => !row.success);
@@ -99,7 +113,7 @@ export default function Models() {
         rows: effectiveRows,
       };
     },
-    [channelProbeRows],
+    [channelProbeRows, channelEndpoints],
   );
 
   const filteredModels = useMemo(() => {
@@ -218,7 +232,8 @@ export default function Models() {
             const ok = hc?.success;
             const degraded = hc?.degraded;
             const lat = hc?.latency_ms;
-            const dotClass = hc ? (ok ? 'bg-chart-2' : degraded ? 'bg-sidebar-primary' : 'bg-destructive') : 'bg-muted-foreground/40';
+            // 待探测 = 当前配置的端点一条探测记录都没有 → 明确空心/灰，不跟"故障"混为一谈
+            const dotClass = hc ? (ok ? 'bg-chart-2' : degraded ? 'bg-sidebar-primary' : 'bg-destructive') : 'bg-muted-foreground/40 ring-1 ring-inset ring-muted-foreground/50';
             return (
               <div key={b.channel_id} className="group relative inline-flex">
                 <span className={cn('inline-block w-2.5 h-2.5 rounded-full cursor-help', dotClass)} />
@@ -226,16 +241,25 @@ export default function Models() {
                   <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg px-3 py-2 text-xs whitespace-nowrap space-y-1">
                     <div className="flex items-center gap-1.5"><span className={cn('inline-block w-2 h-2 rounded-full', dotClass)} /><span className="font-semibold">{channelName(b.channel_id)}</span></div>
                     <div className="text-muted-foreground font-mono">{b.channel_id}</div>
-                    {hc?.rows?.map((row) => (
-                      <div key={`${b.channel_id}-${row.endpoint_url ?? row.id}`} className="flex items-center justify-between gap-3 font-mono">
-                        <span className="text-muted-foreground max-w-[220px] truncate">{row.endpoint_url ?? 'channel'}</span>
-                        <span className={cn(row.success ? 'text-chart-2' : 'text-destructive')}>
-                          {row.success ? `${row.latency_ms}ms` : '失败'}
-                        </span>
-                      </div>
-                    ))}
-                    {!hc && <div className="text-muted-foreground">未测试</div>}
-                    {lat != null && <div className={cn('font-mono', lat > 5000 ? 'text-destructive' : 'text-muted-foreground')}>聚合 {lat}ms</div>}
+                    {hc ? (
+                      hc.rows.length > 0 ? (
+                        <>
+                          {hc.rows.map((row) => (
+                            <div key={`${b.channel_id}-${row.endpoint_url ?? row.id}`} className="flex items-center justify-between gap-3 font-mono">
+                              <span className="text-muted-foreground max-w-[220px] truncate">{row.endpoint_url ?? 'channel'}</span>
+                              <span className={cn(row.success ? 'text-chart-2' : 'text-destructive')}>
+                                {row.success ? `${row.latency_ms}ms` : '失败'}
+                              </span>
+                            </div>
+                          ))}
+                          {lat != null && <div className={cn('font-mono', lat > 5000 ? 'text-destructive' : 'text-muted-foreground')}>聚合 {lat}ms</div>}
+                        </>
+                      ) : (
+                        <div className="text-muted-foreground">待探测（当前配置端点暂无探测记录）</div>
+                      )
+                    ) : (
+                      <div className="text-muted-foreground">待探测（当前配置端点暂无探测记录）</div>
+                    )}
                   </div>
                 </div>
               </div>
