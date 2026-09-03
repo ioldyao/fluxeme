@@ -486,6 +486,7 @@ const en: Record<string, string> = {
   'usage.personalKey': 'Personal Key',
   'usage.teamKey': 'Team Key',
   'usage.apiFormat': 'API Format',
+  'usage.channelNameId': 'Channel Name ID',
   'usage.filter': 'Filter',
   'usage.filterModel': 'Filter model...',
   'usage.filterApiKey': 'Filter API Key...',

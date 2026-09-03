@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { formatTimestamp } from '@fluxeme/shared/src/lib/date';
 import { useUsage, useAdminUsageBilling } from '@fluxeme/shared/src/api/usage';
+import { useChannels } from '@fluxeme/shared/src/api/channels';
 import { useCurrency } from '@fluxeme/shared/src/store/currency';
 import { UsageLogDetail } from '../components/UsageLogDetail';
 import { PageHeader } from '@fluxeme/shared/src/components/PageHeader';
@@ -81,6 +82,20 @@ export default function UsageLog() {
     () => new Map((billingRows ?? []).map((row) => [row.request_id, row])),
     [billingRows],
   );
+  // Channel id → display name map, reused by the "Channel Name ID" column.
+  // Channel list is react-query cached, so no per-row fetch is needed.
+  const { data: channelsList } = useChannels();
+  const channelNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const ch of channelsList ?? []) {
+      map.set(ch.id, ch.name);
+    }
+    return map;
+  }, [channelsList]);
+  const channelLabel = (id: string) => {
+    const name = channelNameById.get(id);
+    return name ? `${name} ${id}` : id;
+  };
   const { currency } = useCurrency();
   const total = usage?.total ?? 0;
   const page = offset / limit + 1;
@@ -205,7 +220,8 @@ export default function UsageLog() {
                 <colgroup>
                   <col className="w-[130px]" /><col className="w-[160px]" /><col className="w-[160px]" />
                   <col className="w-[110px]" /><col className="w-[230px]" /><col className="w-[90px]" />
-                  <col className="w-[100px]" /><col className="w-[100px]" /><col className="w-[90px]" />
+                  <col className="w-[200px]" /><col className="w-[100px]" /><col className="w-[100px]" />
+                  <col className="w-[90px]" />
                   <col className="w-[100px]" /><col className="w-[130px]" /><col className="w-[140px]" />
                   <col className="w-[110px]" /><col className="w-[70px]" />
                 </colgroup>
@@ -217,6 +233,7 @@ export default function UsageLog() {
                     <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.billingMode')}</th>
                     <th className="whitespace-nowrap px-3 py-3 text-left">{t('table.model')}</th>
                     <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.apiFormat')}</th>
+                    <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.channelNameId')}</th>
                     <th className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{t('usage.uncachedInput')}</th>
                     <th className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{t('usage.cachedInput')}</th>
                     <th className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{t('dash.completion')}</th>
@@ -238,6 +255,7 @@ export default function UsageLog() {
                       <td className="whitespace-nowrap px-3 py-3"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${r.billing_payment_mode === 'prepaid' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{r.billing_payment_mode === 'prepaid' ? t('usage.prepaid') : t('usage.metered')}</span></td>
                       <td className="max-w-[230px] truncate whitespace-nowrap px-3 py-3" title={r.model}>{r.model}</td>
                       <td className="whitespace-nowrap px-3 py-3 font-mono text-xs">{r.api_format ?? '—'}</td>
+                      <td className="max-w-[200px] truncate whitespace-nowrap px-3 py-3" title={channelLabel(r.channel_id)}>{channelLabel(r.channel_id)}</td>
                       <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{r.prompt_tokens.toLocaleString()}</td>
                       <td className="whitespace-nowrap px-3 py-3 text-right text-muted-foreground tabular-nums">{r.cache_hit_input_tokens > 0 ? r.cache_hit_input_tokens.toLocaleString() : '—'}</td>
                       <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{r.completion_tokens.toLocaleString()}</td>
