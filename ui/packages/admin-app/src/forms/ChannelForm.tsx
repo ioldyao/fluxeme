@@ -244,7 +244,20 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
 
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium">{t('form.provider')}</Label>
-                <Select value={provider} onValueChange={(v) => setProvider(v ?? '')} required>
+                <Select
+                  value={provider}
+                  onValueChange={(v) => {
+                    setProvider(v ?? '');
+                    // 切换提供商时重置所有 provider 专属状态，避免残留：
+                    // 例如 OpenAI 的「兼容 Anthropic」开关在 provider 不再是
+                    // openai 时 UI 隐藏但 state 保留，提交时仍会带上旧值。
+                    setAnthropicCompat(false);
+                    setDashscopeType('dashscope');
+                    setQianfanType('qianfan');
+                    setVolcesType('ark');
+                  }}
+                  required
+                >
                   <SelectTrigger className="h-9 bg-background"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {PROVIDERS.filter((p) => p !== 'qianfan_token_plan' && p !== 'volces_agent_plan' && p !== 'volces_coding_plan').map((p) => (
