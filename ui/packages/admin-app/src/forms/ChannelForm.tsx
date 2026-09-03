@@ -58,6 +58,8 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
   const [dashscopeType, setDashscopeType] = useState<'dashscope' | 'token_plan'>('dashscope');
   // Qianfan-specific fields: 千帆大模型 类型（普通 千帆大模型 / Token Plan）
   const [qianfanType, setQianfanType] = useState<'qianfan' | 'token_plan'>('qianfan');
+  // Volces-specific fields: 火山方舟类型
+  const [volcesType, setVolcesType] = useState<'ark' | 'agent_plan' | 'coding_plan'>('ark');
 
   // DashScope URL construction (auto based on type + region; Token Plan has a
   // fixed `token-plan` prefix, DashScope uses the workspace id)
@@ -75,9 +77,14 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
     provider === 'qianfan' && qianfanType === 'token_plan'
       ? 'https://qianfan.baidubce.com'
       : '';
+  // Volces Agent/Coding Plan 固定域名；后端自动拼接 /api/plan/v3/... 或 /api/coding/v3/...
+  const volcesPlanBaseUrl =
+    provider === 'volces_ark' && volcesType !== 'ark'
+      ? 'https://ark.cn-beijing.volces.com'
+      : '';
   const fixedBaseUrl = isDashScope
     ? dashscopeBaseUrl
-    : qianfanFixedBaseUrl || FIXED_BASE_URLS[provider] || '';
+    : qianfanFixedBaseUrl || volcesPlanBaseUrl || FIXED_BASE_URLS[provider] || '';
 
   useEffect(() => {
     if (channel) {
@@ -87,9 +94,16 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       if (channel.provider === 'qianfan_token_plan') {
         setProvider('qianfan');
         setQianfanType('token_plan');
+      } else if (channel.provider === 'volces_agent_plan') {
+        setProvider('volces_ark');
+        setVolcesType('agent_plan');
+      } else if (channel.provider === 'volces_coding_plan') {
+        setProvider('volces_ark');
+        setVolcesType('coding_plan');
       } else {
         setProvider(channel.provider);
         setQianfanType('qianfan');
+        setVolcesType('ark');
       }
       setPriority(String(channel.priority));
       setEnabled(channel.enabled);
@@ -116,6 +130,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       setDashscopeWorkspaceId('');
       setDashscopeType('dashscope');
       setQianfanType('qianfan');
+      setVolcesType('ark');
       setEndpoints([emptyEp()]);
     }
   }, [channel, open]);
@@ -152,7 +167,10 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
     e.preventDefault();
     // 千帆大模型类型 → provider qianfan；Token Plan → provider qianfan_token_plan
     const effectiveProvider =
-      provider === 'qianfan' && qianfanType === 'token_plan' ? 'qianfan_token_plan' : provider;
+      provider === 'qianfan' && qianfanType === 'token_plan' ? 'qianfan_token_plan'
+      : provider === 'volces_ark' && volcesType === 'agent_plan' ? 'volces_agent_plan'
+      : provider === 'volces_ark' && volcesType === 'coding_plan' ? 'volces_coding_plan'
+      : provider;
     const data: Record<string, unknown> = {
       name,
       provider: effectiveProvider,
@@ -190,6 +208,15 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       }));
     }
 
+    // Volces Agent/Coding Plan: URL 固定为 https://ark.cn-beijing.volces.com，
+    // 后端自动拼接 /api/plan/v3/... 或 /api/coding/v3/...。
+    if (provider === 'volces_ark' && volcesType !== 'ark') {
+      (data as Record<string, unknown>).endpoints = (data.endpoints as Endpoint[]).map((ep: Endpoint) => ({
+        ...ep,
+        url: ep.full_url ? ep.url : 'https://ark.cn-beijing.volces.com',
+      }));
+    }
+
     onSubmit(data);
   };
 
@@ -220,7 +247,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                 <Select value={provider} onValueChange={(v) => setProvider(v ?? '')} required>
                   <SelectTrigger className="h-9 bg-background"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {PROVIDERS.filter((p) => p !== 'qianfan_token_plan').map((p) => (
+                    {PROVIDERS.filter((p) => p !== 'qianfan_token_plan' && !p.startsWith('volces_')).map((p) => (
                       <SelectItem key={p} value={p}>{PROVIDER_DISPLAY[p] || p}</SelectItem>
                     ))}
                   </SelectContent>
@@ -348,6 +375,35 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                       </p>
                     </div>
                   )}
+                </div>
+              )}
+
+              {provider === 'volces_ark' && (
+                <div className="space-y-3 pt-2 border-t border-muted/30 mt-2">
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium">{t('volces.type')}</Label>
+                    <Select
+                      value={volcesType}
+                      onValueChange={(v) => setVolcesType((v ?? 'ark') as 'ark' | 'agent_plan' | 'coding_plan')}
+                    >
+                      <SelectTrigger className="h-9 bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ark">{t('volces.typeArk')}</SelectItem>
+                        <SelectItem value="agent_plan">{t('volces.typeAgentPlan')}</SelectItem>
+                        <SelectItem value="coding_plan">{t('volces.typeCodingPlan')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <p className="text-[10px] text-muted-foreground leading-tight">
+                    {volcesType === 'ark'
+                      ? t('volces.normalDesc')
+                      : volcesType === 'agent_plan'
+                        ? t('volces.agentPlanDesc')
+                        : t('volces.codingPlanDesc')}
+                  </p>
                 </div>
               )}
             </div>

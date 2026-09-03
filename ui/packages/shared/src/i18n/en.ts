@@ -1258,6 +1258,13 @@ const en: Record<string, string> = {
   'qianfan.typeTokenPlan': 'Token Plan',
   'qianfan.tokenPlanDesc': 'Token Plan fixed URL https://qianfan.baidubce.com; backend auto-appends /v2/tokenplan/personal (OpenAI) or /anthropic/tokenplan/personal (Anthropic).',
   'qianfan.normalDesc': 'Enter the full URL for the Qianfan channel.',
+  'volces.type': 'Type',
+  'volces.typeArk': 'Volces Ark',
+  'volces.typeAgentPlan': 'Agent Plan',
+  'volces.typeCodingPlan': 'Coding Plan',
+  'volces.normalDesc': 'Enter the full URL for the Volces Ark channel, e.g. https://ark.cn-beijing.volces.com/api/v3.',
+  'volces.agentPlanDesc': 'Agent Plan fixed URL https://ark.cn-beijing.volces.com; backend auto-appends /api/plan/v3 (OpenAI) or /api/plan/v1/messages (Anthropic).',
+  'volces.codingPlanDesc': 'Coding Plan fixed URL https://ark.cn-beijing.volces.com; backend auto-appends /api/coding/v3 (OpenAI) or /api/coding/v1/messages (Anthropic).',
 };
 
 export default en;

@@ -88,6 +88,17 @@ impl GenericAdapter {
             anthropic_path: "/v1/messages",
         }
     }
+
+    pub fn volces_ark() -> Self {
+        Self {
+            name: "volces_ark",
+            display_name: "Volces Ark",
+            // 普通火山方舟渠道用户在 URL 中填 https://ark.cn-beijing.volces.com/api/v3，
+            // GenericAdapter 追加 /v1/chat/completions 时会剥掉 /v1 前缀，
+            // 因此最终 = /api/v3/chat/completions，符合预期。
+            anthropic_path: "/v1/messages",
+        }
+    }
 }
 
 #[async_trait::async_trait]

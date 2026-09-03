@@ -1258,5 +1258,12 @@ const zh: Record<string, string> = {
   'qianfan.typeTokenPlan': 'Token Plan',
   'qianfan.tokenPlanDesc': 'Token Plan 专属地址，URL 固定为 https://qianfan.baidubce.com，后端根据请求类型自动拼接 /v2/tokenplan/personal（OpenAI）或 /anthropic/tokenplan/personal（Anthropic）。',
   'qianfan.normalDesc': '千帆大模型渠道请填写完整 URL。',
+  'volces.type': '类型',
+  'volces.typeArk': '火山方舟',
+  'volces.typeAgentPlan': 'Agent Plan',
+  'volces.typeCodingPlan': 'Coding Plan',
+  'volces.normalDesc': '火山方舟渠道请填写完整 URL，例如 https://ark.cn-beijing.volces.com/api/v3。',
+  'volces.agentPlanDesc': 'Agent Plan 专属地址，URL 固定为 https://ark.cn-beijing.volces.com，后端根据请求类型自动拼接 /api/plan/v3（OpenAI）或 /api/plan/v1/messages（Anthropic）。',
+  'volces.codingPlanDesc': 'Coding Plan 专属地址，URL 固定为 https://ark.cn-beijing.volces.com，后端根据请求类型自动拼接 /api/coding/v3（OpenAI）或 /api/coding/v1/messages（Anthropic）。',
 };
 export default zh;

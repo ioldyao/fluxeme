@@ -5,6 +5,7 @@ pub mod generic;
 pub mod openai;
 pub mod qianfan;
 pub mod vllm;
+pub mod volces;
 
 use std::net::IpAddr;
 use std::pin::Pin;
@@ -526,6 +527,9 @@ pub struct ProviderRegistry {
     qianfan_token_plan: Arc<qianfan::QianfanTokenPlanAdapter>,
     zhipu: Arc<generic::GenericAdapter>,
     minimax: Arc<generic::GenericAdapter>,
+    volces_ark: Arc<generic::GenericAdapter>,
+    volces_agent_plan: Arc<volces::VolcesPlanAdapter>,
+    volces_coding_plan: Arc<volces::VolcesPlanAdapter>,
 }
 
 impl ProviderRegistry {
@@ -541,6 +545,9 @@ impl ProviderRegistry {
             qianfan_token_plan: Arc::new(qianfan::QianfanTokenPlanAdapter::new()),
             zhipu: Arc::new(generic::GenericAdapter::zhipu()),
             minimax: Arc::new(generic::GenericAdapter::minimax()),
+            volces_ark: Arc::new(generic::GenericAdapter::volces_ark()),
+            volces_agent_plan: Arc::new(volces::VolcesPlanAdapter::agent_plan()),
+            volces_coding_plan: Arc::new(volces::VolcesPlanAdapter::coding_plan()),
         }
     }
 
@@ -556,6 +563,9 @@ impl ProviderRegistry {
             "qianfan_token_plan" => Some(self.qianfan_token_plan.clone()),
             "zhipu" => Some(self.zhipu.clone()),
             "minimax" => Some(self.minimax.clone()),
+            "volces_ark" => Some(self.volces_ark.clone()),
+            "volces_agent_plan" => Some(self.volces_agent_plan.clone()),
+            "volces_coding_plan" => Some(self.volces_coding_plan.clone()),
             "azure" | "ollama" => Some(self.openai.clone()),
             _ => None,
         }
