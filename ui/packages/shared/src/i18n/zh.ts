@@ -487,6 +487,7 @@ const zh: Record<string, string> = {
   'usage.teamKey': '团队 Key',
   'usage.apiFormat': '请求格式',
   'usage.channelNameId': '渠道名称 ID',
+  'usage.endpointId': '端点 ID',
   'usage.filter': '筛选',
   'usage.filterModel': '筛选模型...',
   'usage.filterApiKey': '筛选 API Key...',

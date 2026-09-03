@@ -213,6 +213,8 @@ export interface UsageRecord {
   /** Team scope. Null means the request used a personal API key. */
   team_id?: string | null;
   billing_payment_mode?: 'metered' | 'prepaid' | null;
+  /** Endpoint that served the request. Null when no endpoint matched. */
+  endpoint_id?: number | null;
 }
 
 export interface DashboardStats {

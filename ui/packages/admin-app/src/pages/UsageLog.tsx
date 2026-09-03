@@ -220,7 +220,8 @@ export default function UsageLog() {
                 <colgroup>
                   <col className="w-[130px]" /><col className="w-[160px]" /><col className="w-[160px]" />
                   <col className="w-[110px]" /><col className="w-[230px]" /><col className="w-[90px]" />
-                  <col className="w-[200px]" /><col className="w-[100px]" /><col className="w-[100px]" />
+                  <col className="w-[200px]" /><col className="w-[90px]" /><col className="w-[100px]" />
+                  <col className="w-[100px]" />
                   <col className="w-[90px]" />
                   <col className="w-[100px]" /><col className="w-[130px]" /><col className="w-[140px]" />
                   <col className="w-[110px]" /><col className="w-[70px]" />
@@ -234,6 +235,7 @@ export default function UsageLog() {
                     <th className="whitespace-nowrap px-3 py-3 text-left">{t('table.model')}</th>
                     <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.apiFormat')}</th>
                     <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.channelNameId')}</th>
+                    <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.endpointId')}</th>
                     <th className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{t('usage.uncachedInput')}</th>
                     <th className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{t('usage.cachedInput')}</th>
                     <th className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{t('dash.completion')}</th>
@@ -256,6 +258,7 @@ export default function UsageLog() {
                       <td className="max-w-[230px] truncate whitespace-nowrap px-3 py-3" title={r.model}>{r.model}</td>
                       <td className="whitespace-nowrap px-3 py-3 font-mono text-xs">{r.api_format ?? '—'}</td>
                       <td className="max-w-[200px] truncate whitespace-nowrap px-3 py-3" title={channelLabel(r.channel_id)}>{channelLabel(r.channel_id)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 font-mono text-xs">{r.endpoint_id ?? '—'}</td>
                       <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{r.prompt_tokens.toLocaleString()}</td>
                       <td className="whitespace-nowrap px-3 py-3 text-right text-muted-foreground tabular-nums">{r.cache_hit_input_tokens > 0 ? r.cache_hit_input_tokens.toLocaleString() : '—'}</td>
                       <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{r.completion_tokens.toLocaleString()}</td>
