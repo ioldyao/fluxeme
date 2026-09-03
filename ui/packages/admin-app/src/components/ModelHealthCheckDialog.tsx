@@ -54,16 +54,35 @@ export function ModelHealthCheckDialog({ model, open, onOpenChange, channelName,
     if (!model || channelIds.length === 0) return;
     try {
       const response = await healthCheck.mutateAsync({ modelId: model.id, channelIds, stream });
-      setResult(response);
+      // 合并结果：只替换本次检测到的渠道，保留其他渠道已有的状态，
+      // 这样单测一个渠道不会清空其他渠道。
+      setResult((prev) => {
+        if (!prev) return response;
+        const newChannels = new Set(response.channel_results.map((r) => r.channel_id));
+        return {
+          ...response,
+          channel_results: [
+            ...prev.channel_results.filter((old) => !newChannels.has(old.channel_id)),
+            ...response.channel_results,
+          ],
+        };
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '健康检测失败');
     }
   };
 
-  const resultsForChannel = (channelId: string): ProbeResult[] =>
-    result?.channel_results.filter((item) => item.channel_id === channelId) ?? [];
-  const resultForEndpoint = (channelId: string, url: string) =>
-    result?.channel_results.find((item) => item.channel_id === channelId && item.endpoint_url === url);
+  // 同一渠道可能绑定多个上游模型名（方案 1），探测结果用 upstream_model 区分，
+  // 这样每个绑定只看到它自己触发的探测结果，不会互相串。
+  const resultsForBinding = (binding: { channel_id: string; upstream_model?: string | null }): ProbeResult[] =>
+    result?.channel_results.filter((item) => {
+      if (item.channel_id !== binding.channel_id) return false;
+      const bound = binding.upstream_model || undefined;
+      const actual = item.upstream_model || undefined;
+      return bound === actual;
+    }) ?? [];
+  const resultForEndpoint = (binding: { channel_id: string; upstream_model?: string | null }, url: string) =>
+    resultsForBinding(binding).find((item) => item.endpoint_url === url);
   const summarizeChannel = (items: ProbeResult[], endpoints: Endpoint[]) => {
     if (items.length === 0) {
       return { label: endpoints.length > 0 ? '未测试' : '无可用结果', success: undefined as boolean | undefined };
@@ -133,10 +152,10 @@ export function ModelHealthCheckDialog({ model, open, onOpenChange, channelName,
               <div className="py-10 text-center text-sm text-muted-foreground">没有可检测的绑定渠道</div>
             ) : bindings.map((binding) => {
               const endpoints = channelEndpoints(binding.channel_id);
-              const channelResults = resultsForChannel(binding.channel_id);
+              const channelResults = resultsForBinding(binding);
               const summary = summarizeChannel(channelResults, endpoints);
               return (
-                <div key={binding.channel_id} className="border-b last:border-b-0">
+                <div key={`${binding.channel_id}-${binding.upstream_model ?? ''}`} className="border-b last:border-b-0">
                 <div className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(160px,1fr)_120px_90px] items-center px-3 py-3 text-sm">
                   <Checkbox checked={selected.has(binding.channel_id)} onCheckedChange={() => toggle(binding.channel_id)} disabled={healthCheck.isPending} />
                   <div className="min-w-0"><div className="font-medium truncate">{channelName(binding.channel_id)}</div><div className="text-xs text-muted-foreground truncate">{binding.channel_id}</div></div>
@@ -150,7 +169,7 @@ export function ModelHealthCheckDialog({ model, open, onOpenChange, channelName,
                   </div>
                   <div className="text-right"><Button variant="ghost" size="sm" title="仅检测此渠道的全部端点" disabled={healthCheck.isPending} onClick={() => run([binding.channel_id])}><Activity className="size-4" /></Button></div>
                 </div>
-                {endpoints.map((endpoint, index) => { const item = resultForEndpoint(binding.channel_id, endpoint.url); return <div key={endpoint.id ?? `${endpoint.url}-${index}`} className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(160px,1fr)_120px_90px] items-center bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span /><span className="pl-4">↳ 端点{index + 1}<span className="block truncate">{endpoint.url}</span></span><span /><span>{!item ? '未测试' : item.success ? <span className="inline-flex items-center gap-1 text-chart-2"><CheckCircle2 className="size-4" />{item.latency_ms}ms</span> : <span className="inline-flex items-center gap-1 text-destructive" title={item.error ?? undefined}><XCircle className="size-4" />失败</span>}</span><span /></div>; })}
+                {endpoints.map((endpoint, index) => { const item = resultForEndpoint(binding, endpoint.url); return <div key={endpoint.id ?? `${endpoint.url}-${index}`} className="grid grid-cols-[40px_minmax(180px,1fr)_minmax(160px,1fr)_120px_90px] items-center bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span /><span className="pl-4">↳ 端点{index + 1}<span className="block truncate">{endpoint.url}</span></span><span /><span>{!item ? '未测试' : item.success ? <span className="inline-flex items-center gap-1 text-chart-2"><CheckCircle2 className="size-4" />{item.latency_ms}ms</span> : <span className="inline-flex items-center gap-1 text-destructive" title={item.error ?? undefined}><XCircle className="size-4" />失败</span>}</span><span /></div>; })}
                 </div>
               );
             })}

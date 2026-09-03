@@ -31,6 +31,9 @@ struct ProbeJob {
     /// serialized by proxy lease and the caller does not wait for results, so
     /// there is no caller-side sync step.
     routing: Option<Arc<RoutingService>>,
+    /// The upstream model name this probe should test with. Written to CH
+    /// so the frontend can match results to the specific binding.
+    upstream_model: String,
     endpoint: EndpointConfig,
     stream: bool,
     /// Whether this is an automatic recovery probe.
@@ -128,6 +131,7 @@ impl HealthProbeService {
                             Some("Route not available"),
                             None,
                             None,
+                            None,
                         ),
                     });
                     continue;
@@ -146,6 +150,7 @@ impl HealthProbeService {
                             false,
                             0,
                             Some("Provider adapter not found"),
+                            None,
                             None,
                             None,
                         ),
@@ -180,6 +185,7 @@ impl HealthProbeService {
                         Some("No enabled endpoints"),
                         None,
                         None,
+                        None,
                     ),
                 });
                 continue;
@@ -193,6 +199,7 @@ impl HealthProbeService {
                     model_id: model_id.to_string(),
                     provider_name: provider_name.clone(),
                     upstream_name: upstream_name.clone(),
+                    upstream_model: upstream_name.clone(),
                     adapter: adapter.clone(),
                     balancer: probe_balancer.clone(),
                     routing: Some(self.routing.clone()),
@@ -280,6 +287,7 @@ impl HealthProbeService {
                         model_id: model.id.clone(),
                         provider_name: provider_name.clone(),
                         upstream_name: upstream_name.clone(),
+                        upstream_model: upstream_name.clone(),
                         adapter: adapter.clone(),
                         balancer: balancer.clone(),
                         routing: None,
@@ -329,6 +337,7 @@ impl HealthProbeService {
             model_id,
             provider_name,
             upstream_name,
+            upstream_model,
             adapter,
             balancer,
             routing,
@@ -369,6 +378,7 @@ impl HealthProbeService {
                         0,
                         Some("Probe lease unavailable"),
                         endpoint.id,
+                        None,
                         Some(endpoint.url.clone()),
                     ),
                 };
@@ -388,6 +398,7 @@ impl HealthProbeService {
                         0,
                         Some("Probe already claimed"),
                         endpoint.id,
+                        None,
                         Some(endpoint.url.clone()),
                     ),
                 };
@@ -443,6 +454,7 @@ impl HealthProbeService {
                     latency_ms,
                     None,
                     endpoint.id,
+                    Some(upstream_model.clone()),
                     Some(endpoint.url.clone()),
                 )
             }
@@ -483,6 +495,7 @@ impl HealthProbeService {
                     latency_ms,
                     Some(&error.0),
                     endpoint.id,
+                    Some(upstream_model.clone()),
                     Some(endpoint.url.clone()),
                 )
             }
@@ -553,6 +566,7 @@ impl HealthProbeService {
         latency_ms: u64,
         error: Option<&str>,
         endpoint_id: Option<i64>,
+        upstream_model: Option<String>,
         endpoint_url: Option<String>,
     ) -> ProbeResultRow {
         ProbeResultRow {
@@ -564,6 +578,7 @@ impl HealthProbeService {
             error: error.map(|text| text.to_string()),
             probed_at: chrono::Utc::now().to_rfc3339(),
             endpoint_id,
+            upstream_model,
             endpoint_url,
         }
     }

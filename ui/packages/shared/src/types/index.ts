@@ -417,6 +417,8 @@ export interface ProbeResult {
   probed_at: string;
   /** Endpoint primary key in the channel config table. NULL for legacy rows. */
   endpoint_id?: number | null;
+  /** The upstream model name used when probing (from the binding). */
+  upstream_model?: string | null;
   endpoint_url?: string | null;
 }
 

@@ -393,6 +393,7 @@ impl ClickHouseBackend {
             latency_ms UInt64,\
             error Nullable(String),\
             endpoint_id Nullable(Int64),\
+            upstream_model Nullable(String),\
             endpoint_url Nullable(String),\
             probed_at DateTime\
         ) ENGINE = MergeTree()\
@@ -490,6 +491,12 @@ impl ClickHouseBackend {
             .map_err(|e| format!("CH migration probe_results endpoint_id: {e}"))?;
 
         self.client
+            .query("ALTER TABLE probe_results ADD COLUMN IF NOT EXISTS upstream_model Nullable(String)")
+            .execute()
+            .await
+            .map_err(|e| format!("CH migration probe_results upstream_model: {e}"))?;
+
+        self.client
             .query(Self::CREATE_SKILL_RUNTIME_CALLS)
             .execute()
             .await
@@ -531,6 +538,7 @@ impl ClickHouseBackend {
             latency_ms: u64,
             error: Option<String>,
             endpoint_id: Option<i64>,
+            upstream_model: Option<String>,
             endpoint_url: Option<String>,
             probed_at: u32,
         }
@@ -551,6 +559,7 @@ impl ClickHouseBackend {
                     latency_ms: r.latency_ms,
                     error: r.error.clone(),
                     endpoint_id: r.endpoint_id,
+                    upstream_model: r.upstream_model.clone(),
                     endpoint_url: r.endpoint_url.clone(),
                     probed_at: ts,
                 })
@@ -574,6 +583,7 @@ impl ClickHouseBackend {
             latency_ms: u64,
             error: Option<String>,
             endpoint_id: Option<i64>,
+            upstream_model: Option<String>,
             endpoint_url: Option<String>,
             probed_at: u32,
         }
@@ -583,9 +593,9 @@ impl ClickHouseBackend {
         let rows = self
             .client
             .query(
-                "SELECT id, channel_id, model_id, success, latency_ms, error, endpoint_id, endpoint_url, probed_at \
+                "SELECT id, channel_id, model_id, success, latency_ms, error, endpoint_id, upstream_model, endpoint_url, probed_at \
                  FROM ( \
-                   SELECT id, channel_id, model_id, success, latency_ms, error, endpoint_id, endpoint_url, \
+                   SELECT id, channel_id, model_id, success, latency_ms, error, endpoint_id, upstream_model, endpoint_url, \
                           toUInt32(probed_at) AS probed_at, \
                           ROW_NUMBER() OVER ( \
                             PARTITION BY model_id, channel_id, COALESCE(endpoint_url, '') \
@@ -611,6 +621,7 @@ impl ClickHouseBackend {
                     .map(|d| d.to_rfc3339())
                     .unwrap_or_default(),
                 endpoint_id: r.endpoint_id,
+                upstream_model: r.upstream_model,
                 endpoint_url: r.endpoint_url,
             })
             .collect())
@@ -630,13 +641,14 @@ impl ClickHouseBackend {
             latency_ms: u64,
             error: Option<String>,
             endpoint_id: Option<i64>,
+            upstream_model: Option<String>,
             endpoint_url: Option<String>,
             probed_at: u32,
         }
         let rows = self
             .client
             .query(
-                "SELECT id, channel_id, model_id, success, latency_ms, error, endpoint_id, endpoint_url, toUInt32(probed_at) AS probed_at \
+                "SELECT id, channel_id, model_id, success, latency_ms, error, endpoint_id, upstream_model, endpoint_url, toUInt32(probed_at) AS probed_at \
                  FROM probe_results \
                  WHERE probed_at >= now() - INTERVAL ? MINUTE \
                  ORDER BY probed_at DESC LIMIT 1000",
@@ -658,6 +670,7 @@ impl ClickHouseBackend {
                     .map(|d| d.to_rfc3339())
                     .unwrap_or_default(),
                 endpoint_id: r.endpoint_id,
+                upstream_model: r.upstream_model,
                 endpoint_url: r.endpoint_url,
             })
             .collect())

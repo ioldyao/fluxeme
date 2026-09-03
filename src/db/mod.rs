@@ -186,11 +186,13 @@ pub struct ProbeResultRow {
     pub latency_ms: u64,
     pub error: Option<String>,
     pub probed_at: String,
-    /// Endpoint's primary key in the channel config table. NULL for legacy
-    /// rows written before this column existed. Frontend filters current
-    /// status by this ID, not by URL.
     #[serde(default)]
     pub endpoint_id: Option<i64>,
+    /// The actual upstream model name used when probing (from the binding's
+    /// upstream_model). Frontend uses this to match probe results to the
+    /// specific binding that triggered them.
+    #[serde(default)]
+    pub upstream_model: Option<String>,
     #[serde(default)]
     pub endpoint_url: Option<String>,
 }
