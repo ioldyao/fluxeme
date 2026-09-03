@@ -29,3 +29,5 @@ scripts/
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+CLAUDE.md
+.mcp.json
