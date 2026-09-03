@@ -74,10 +74,12 @@ export function ModelHealthCheckDialog({ model, open, onOpenChange, channelName,
 
   // 同一渠道可能绑定多个上游模型名（方案 1），探测结果用 upstream_model 区分，
   // 这样每个绑定只看到它自己触发的探测结果，不会互相串。
+  // 当 binding 的 upstream_model 为空时，后端会回退到 model.name 进行探测，
+  // 此处也用 model.name 作为期望值来匹配。
   const resultsForBinding = (binding: { channel_id: string; upstream_model?: string | null }): ProbeResult[] =>
     result?.channel_results.filter((item) => {
       if (item.channel_id !== binding.channel_id) return false;
-      const bound = binding.upstream_model || undefined;
+      const bound = binding.upstream_model || model?.name || undefined;
       const actual = item.upstream_model || undefined;
       return bound === actual;
     }) ?? [];
