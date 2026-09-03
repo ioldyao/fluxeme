@@ -46,13 +46,22 @@ impl GatewayError {
 
 impl IntoResponse for GatewayError {
     fn into_response(self) -> Response {
+        let status = self.status();
+        let message = self.message();
+        // Safety net: any 5xx (upstream 502/503, internal 500, timeout) that
+        // reaches the response layer gets an error log with the real message,
+        // even if a specific handler branch forgot to log it. 4xx are normal
+        // business results and are intentionally not logged here.
+        if status.as_u16() >= 500 {
+            tracing::error!(%status, error = %message, "Gateway request failed");
+        }
         let body = serde_json::json!({
             "error": {
-                "message": self.message(),
+                "message": message,
                 "type": "gateway_error",
             }
         });
-        (self.status(), Json(body)).into_response()
+        (status, Json(body)).into_response()
     }
 }
 

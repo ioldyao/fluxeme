@@ -416,10 +416,7 @@ mod tests {
 
     #[tokio::test]
     async fn legacy_tokenplan_suffix_is_normalized() {
-        let e = ep(
-            "https://qianfan.baidubce.com/v2/tokenplan/personal",
-            false,
-        );
+        let e = ep("https://qianfan.baidubce.com/v2/tokenplan/personal", false);
         assert_eq!(
             QianfanTokenPlanAdapter::build_url(&e, UrlKind::Messages)
                 .await

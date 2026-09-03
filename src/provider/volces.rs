@@ -378,7 +378,9 @@ impl ProviderAdapter for VolcesPlanAdapter {
         endpoint: &EndpointConfig,
         body: Value,
     ) -> Result<Value, ProviderError> {
-        let url = self.build_url(endpoint, UrlKind::ResponsesInputTokens).await?;
+        let url = self
+            .build_url(endpoint, UrlKind::ResponsesInputTokens)
+            .await?;
         let headers = Self::build_headers(endpoint, UrlKind::ResponsesInputTokens)?;
         let timeout = request_timeout(
             &RequestKind::Unary {
@@ -413,7 +415,9 @@ impl ProviderAdapter for VolcesPlanAdapter {
         let url = if path == "/v1/responses" {
             self.build_url(endpoint, UrlKind::Responses).await?
         } else if let Some(id) = extract_response_id(path, "/input_items") {
-            let mut url = self.build_url(endpoint, UrlKind::ResponsesInputItems).await?;
+            let mut url = self
+                .build_url(endpoint, UrlKind::ResponsesInputItems)
+                .await?;
             url = url.replacen("{id}", &id, 1);
             url
         } else if let Some(id) = extract_response_id(path, "") {
@@ -465,7 +469,10 @@ mod tests {
     async fn agent_plan_chat_builds_plan_v3_path() {
         let adapter = VolcesPlanAdapter::agent_plan();
         let e = ep("https://ark.cn-beijing.volces.com", false);
-        let url = adapter.build_url(&e, UrlKind::ChatCompletions).await.unwrap();
+        let url = adapter
+            .build_url(&e, UrlKind::ChatCompletions)
+            .await
+            .unwrap();
         assert_eq!(
             url,
             "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions"
@@ -498,7 +505,10 @@ mod tests {
     async fn coding_plan_chat_builds_coding_v3_path() {
         let adapter = VolcesPlanAdapter::coding_plan();
         let e = ep("https://ark.cn-beijing.volces.com", false);
-        let url = adapter.build_url(&e, UrlKind::ChatCompletions).await.unwrap();
+        let url = adapter
+            .build_url(&e, UrlKind::ChatCompletions)
+            .await
+            .unwrap();
         assert_eq!(
             url,
             "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions"

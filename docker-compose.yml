@@ -11,6 +11,7 @@ services:
         soft: 1048576
         hard: 1048576
     volumes:
+      - /etc/hosts:/etc/hosts:ro
       - ./config:/app/config:ro
       # SkillHub 技能包落盘目录（本地持久化，重建容器不丢包）
       - ./data/skills:/app/data/skills

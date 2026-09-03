@@ -98,7 +98,11 @@ async fn main() {
 
     // Initialise tracing subscriber (fmt + optional OTLP layer).
     let _otlp_provider =
-        crate::observability::trace::init_subscriber("ai_gateway=info,tower_http=info", "fluxeme");
+        // Crate name is `fluxeme` (Cargo.toml). The old "ai_gateway=info" target
+        // matched no module, so all fluxeme::* info/warn logs were silently
+        // dropped and only ERROR-level events survived. Keep tower_http for the
+        // TraceLayer lines; RUST_LOG overrides everything when set.
+        crate::observability::trace::init_subscriber("fluxeme=info,tower_http=info", "fluxeme");
 
     let config_path =
         std::env::var("GATEWAY_CONFIG").unwrap_or_else(|_| "config/config.yaml".to_string());

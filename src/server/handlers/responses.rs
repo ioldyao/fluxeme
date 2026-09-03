@@ -607,6 +607,14 @@ async fn handle_responses_streaming(
                 .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
         }
         Err(e) => {
+            tracing::error!(
+                request_id = %request_id,
+                channel = %route.channel_id,
+                model = %model,
+                endpoint = %route.endpoint.url,
+                error = %e.0,
+                "Responses streaming upstream request failed",
+            );
             if let Some(reservation) = &reservation {
                 reservation.release("responses stream upstream failed");
             }

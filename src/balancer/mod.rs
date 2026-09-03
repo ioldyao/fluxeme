@@ -32,10 +32,16 @@ pub(crate) const BREAKER_COOLDOWN_MAX: u64 = 3600;
 /// Overwrite the process-wide breaker parameters from persisted settings.
 pub(crate) fn set_breaker_params(threshold: Option<u32>, cooldown_secs: Option<u64>) {
     if let Some(t) = threshold {
-        BREAKER_THRESHOLD.store(t.clamp(BREAKER_THRESHOLD_MIN, BREAKER_THRESHOLD_MAX), Ordering::Relaxed);
+        BREAKER_THRESHOLD.store(
+            t.clamp(BREAKER_THRESHOLD_MIN, BREAKER_THRESHOLD_MAX),
+            Ordering::Relaxed,
+        );
     }
     if let Some(c) = cooldown_secs {
-        BREAKER_COOLDOWN_SECS.store(c.clamp(BREAKER_COOLDOWN_MIN, BREAKER_COOLDOWN_MAX), Ordering::Relaxed);
+        BREAKER_COOLDOWN_SECS.store(
+            c.clamp(BREAKER_COOLDOWN_MIN, BREAKER_COOLDOWN_MAX),
+            Ordering::Relaxed,
+        );
     }
 }
 

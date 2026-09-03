@@ -84,6 +84,9 @@ fn default_true() -> bool {
 }
 
 fn json_error(status: StatusCode, message: &str) -> Response {
+    if status.as_u16() >= 500 {
+        tracing::error!(%status, error = %message, "Gateway proxy request failed");
+    }
     (
         status,
         Json(serde_json::json!({ "error": { "message": message, "type": "gateway_error" } })),

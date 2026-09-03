@@ -289,6 +289,15 @@ async fn relay_to_upstream(
         }
     };
 
+    tracing::error!(
+        request_id = %request_id,
+        channel = %route.channel_id,
+        model = %model,
+        endpoint = %route.endpoint.url,
+        error = %err_msg,
+        retries = retry_count,
+        "Relay upstream request retries exhausted",
+    );
     let latency_ms = start.elapsed().as_millis() as u64;
     let err_body = serde_json::json!({"error": {"message": &err_msg}}).to_string();
     state.usage.record(UsageRecord {

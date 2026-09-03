@@ -84,6 +84,14 @@ async fn handle_streaming(
                 reservation.release("stream upstream request failed");
             }
             balancer.as_health_aware().record_failure(endpoint_idx);
+            tracing::error!(
+                request_id = %request_id,
+                channel = %channel_id,
+                model = %model,
+                endpoint = %endpoint.url,
+                error = %e.0,
+                "Streaming upstream request failed",
+            );
             let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
             let latency_ms = start.elapsed().as_millis() as u64;
             let (p_tokens, c_tokens, cache_hit, cache_write) = parse_sse_usage("");
@@ -358,6 +366,15 @@ async fn handle_non_streaming(
     if let Some(reservation) = &reservation {
         reservation.release("upstream retries exhausted");
     }
+    tracing::error!(
+        request_id = %request_id,
+        channel = %channel_id,
+        model = %model,
+        endpoint = %route.endpoint.url,
+        error = %err_msg,
+        retries = retry_count,
+        "Upstream request retries exhausted",
+    );
     // All retry attempts exhausted without success
     let latency_ms = start.elapsed().as_millis() as u64;
     let err_body = serde_json::json!({"error": {"message": &err_msg}}).to_string();

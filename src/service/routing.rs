@@ -383,7 +383,10 @@ impl RoutingService {
             .collect();
         candidates.sort_by_key(|(priority, _, _, _)| *priority);
         let Some(best_priority) = candidates.first().map(|(priority, _, _, _)| *priority) else {
-            return Err(RouteError::unavailable(format!("No route found for model '{}'", model)));
+            return Err(RouteError::unavailable(format!(
+                "No route found for model '{}'",
+                model
+            )));
         };
         let same_priority: Vec<_> = candidates
             .into_iter()
@@ -411,7 +414,10 @@ impl RoutingService {
                 });
             }
         }
-        Err(RouteError::unavailable(format!("No route found for model '{}'", model)))
+        Err(RouteError::unavailable(format!(
+            "No route found for model '{}'",
+            model
+        )))
     }
 
     pub fn route_model_binding_for_channel_and_upstream(
@@ -452,7 +458,9 @@ impl RoutingService {
                     .filter(|balancer| balancer.as_health_aware().has_healthy_endpoint())
                     .map(|balancer| (configured, balancer))
             })
-            .ok_or_else(|| RouteError::not_found(format!("No route found for model '{}'", model)))?;
+            .ok_or_else(|| {
+                RouteError::not_found(format!("No route found for model '{}'", model))
+            })?;
         let excluded: HashSet<i64> = attempted
             .iter()
             .filter(|(channel, _)| channel == channel_id)
@@ -523,7 +531,8 @@ impl RoutingService {
         } else if let Some(eid) = endpoint_id {
             // Model-scoped failure: only the model under test is affected,
             // never other models sharing the endpoint.
-            self.binding_pool.record_endpoint_health_for_model(model_id, channel_id, eid, false);
+            self.binding_pool
+                .record_endpoint_health_for_model(model_id, channel_id, eid, false);
         }
 
         // Channel cache — try endpoint_id first, then URL. Only success is
@@ -605,7 +614,9 @@ impl RoutingService {
         team_id: Option<&str>,
     ) -> Result<(String, String, Option<String>), RouteError> {
         if !self.public_snapshot_valid.load(Ordering::Acquire) {
-            return Err(RouteError::unavailable("No route found for requested model"));
+            return Err(RouteError::unavailable(
+                "No route found for requested model",
+            ));
         }
         self.route_with_visibility(user_id, model, team_id, RouteVisibility::Public)
             .await
@@ -719,7 +730,10 @@ impl RoutingService {
                 if matches!(visibility, RouteVisibility::Public)
                     && !is_published_model(&models, &model_name)
                 {
-                    return Err(RouteError::not_found(format!("No route found for model '{}'", model)));
+                    return Err(RouteError::not_found(format!(
+                        "No route found for model '{}'",
+                        model
+                    )));
                 }
                 let rule_routable = if matches!(visibility, RouteVisibility::Public) {
                     models.iter().any(|model_cfg| {
@@ -783,7 +797,10 @@ impl RoutingService {
                     if matches!(visibility, RouteVisibility::Public)
                         && !is_published_model(&models, &model_name)
                     {
-                        return Err(RouteError::not_found(format!("No route found for model '{}'", model)));
+                        return Err(RouteError::not_found(format!(
+                            "No route found for model '{}'",
+                            model
+                        )));
                     }
                     tracing::info!(
                         user_id,
@@ -799,7 +816,10 @@ impl RoutingService {
         if matches!(visibility, RouteVisibility::Public)
             && !is_published_model(&models, &model_name)
         {
-            return Err(RouteError::not_found(format!("No route found for model '{}'", model)));
+            return Err(RouteError::not_found(format!(
+                "No route found for model '{}'",
+                model
+            )));
         }
 
         // Step 3: Model console — exact name match only (no glob matching)
@@ -938,7 +958,10 @@ pub struct RouteError {
 
 impl RouteError {
     pub fn new(message: impl Into<String>, kind: RouteErrorKind) -> Self {
-        Self { kind, message: message.into() }
+        Self {
+            kind,
+            message: message.into(),
+        }
     }
 
     pub fn not_found(message: impl Into<String>) -> Self {
