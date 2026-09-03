@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useModels, useCreateModel, useUpdateModel, useDeleteModel, usePublishModel } from '@fluxeme/shared/src/api/models';
@@ -222,8 +222,9 @@ export default function Models() {
   };
 
   // ── Row renderer ──────────────────────────────────────────────────
-  // Tooltip that flips direction based on viewport position so the first
-  // rows don't clip against the top of the page.
+  // Tooltip always points downward (top-full) since health dots are inside
+  // table rows — there is always more space below than above the dot.
+  // An upward-pointing tooltip would clip against the page header.
   function DotTip({ dotClass, title, channelId, rows, lat }: {
     dotClass: string;
     title: string;
@@ -231,23 +232,10 @@ export default function Models() {
     rows: ProbeResult[];
     lat?: number;
   }) {
-    const [up, setUp] = useState(true);
-    const ref = useRef<HTMLDivElement>(null);
     return (
-      <div
-        ref={ref}
-        className="group relative inline-flex"
-        onMouseEnter={() => {
-          const el = ref.current?.getBoundingClientRect();
-          // Flip to below when the dot is within ~180px of the viewport top
-          setUp(el ? el.top > 180 : true);
-        }}
-      >
+      <div className="group relative inline-flex">
         <span className={cn('inline-block w-2.5 h-2.5 rounded-full cursor-help', dotClass)} />
-        <div className={cn(
-          'absolute left-1/2 -translate-x-1/2 z-10 hidden group-hover:block',
-          up ? 'bottom-full mb-2' : 'top-full mt-2',
-        )}>
+        <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 z-20 hidden group-hover:block">
           <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg px-3 py-2 text-xs whitespace-nowrap space-y-1">
             <div className="flex items-center gap-1.5"><span className={cn('inline-block w-2 h-2 rounded-full', dotClass)} /><span className="font-semibold">{title}</span></div>
             <div className="text-muted-foreground font-mono">{channelId}</div>
