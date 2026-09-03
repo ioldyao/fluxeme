@@ -144,10 +144,85 @@ fn trim_model(body: &mut Value) -> Result<String, GatewayError> {
 }
 
 /// Move inline `role: "system"` messages to the top-level Anthropic `system`
-/// field. Claude Code occasionally sends system prompts as inline messages
-/// with role="system", which SGLang's /v1/messages rejects (only "user" and
+/// field, and normalize Claude-Code-style bodies into the plainest form that
+/// strict upstreams accept:
+///   - `system` may be a string OR a content-block array → collapse to string
+///   - `metadata` (always a JSON object from Claude Code) → drop it; some
+///     upstreams (e.g. aiionly's Java gateway) declare it as a non-object type
+///     and 500 with a Jackson parse error on the object form
+///   - a `content` array containing only text blocks → collapse to string
+/// Claude Code occasionally sends system prompts as inline messages with
+/// role="system", which SGLang's /v1/messages rejects (only "user" and
 /// "assistant" are allowed in the messages array).
 fn normalize_messages_body(body: &mut Value) {
+    // Top-level `system`: string or content-block array → plain string.
+    if let Some(sys) = body.get("system").cloned() {
+        let text = match &sys {
+            Value::String(s) => Some(s.clone()),
+            Value::Array(blocks) => {
+                let mut t = String::new();
+                for b in blocks {
+                    if b.get("type").and_then(|v| v.as_str()) == Some("text") {
+                        if let Some(s) = b.get("text").and_then(|v| v.as_str()) {
+                            if !t.is_empty() {
+                                t.push('\n');
+                            }
+                            t.push_str(s);
+                        }
+                    }
+                }
+                if t.is_empty() {
+                    None
+                } else {
+                    Some(t)
+                }
+            }
+            _ => None,
+        };
+        match text {
+            Some(t) => body["system"] = Value::String(t),
+            None => {
+                if let Some(obj) = body.as_object_mut() {
+                    obj.remove("system");
+                }
+            }
+        }
+    }
+
+    // `metadata` is always a JSON object from Claude Code. Some upstreams
+    // declare it as a String/other type and fail to parse the object form.
+    if let Some(obj) = body.as_object_mut() {
+        obj.remove("metadata");
+    }
+
+    // Collapse text-only content arrays to a plain string. Strict upstreams
+    // that declare `content` as String reject `[{type:"text",...}]` arrays.
+    if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        for msg in messages.iter_mut() {
+            let text_only = matches!(
+                msg.get("content"),
+                Some(Value::Array(blocks))
+                    if !blocks.is_empty()
+                        && blocks.iter().all(|b| b.get("type").and_then(|v| v.as_str())
+                            == Some("text"))
+            );
+            if text_only {
+                if let Some(Value::Array(blocks)) = msg.get("content").cloned() {
+                    let mut t = String::new();
+                    for b in &blocks {
+                        if let Some(s) = b.get("text").and_then(|v| v.as_str()) {
+                            if !t.is_empty() {
+                                t.push('\n');
+                            }
+                            t.push_str(s);
+                        }
+                    }
+                    msg["content"] = Value::String(t);
+                }
+            }
+        }
+    }
+
     let existing_system = body
         .get("system")
         .and_then(|v| v.as_str())
@@ -470,6 +545,155 @@ fn resolve_route_for_model(
         attempted_endpoint_indexes: std::collections::HashSet::new(),
         attempted_channels: std::collections::HashSet::new(),
     })
+}
+
+#[cfg(test)]
+mod normalize_tests {
+    use serde_json::json;
+
+    #[test]
+    fn trims_whitespace_from_model() {
+        let mut body = json!({"model": "  deepseek-v4-flash  ", "messages": []});
+        let result = super::trim_model(&mut body);
+        assert_eq!(result.unwrap(), "deepseek-v4-flash");
+        assert_eq!(body["model"], "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn keeps_string_system_unchanged() {
+        let mut body = json!({
+            "model": "m",
+            "system": "You are a helpful assistant.",
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        super::normalize_messages_body(&mut body);
+        assert_eq!(body["system"], "You are a helpful assistant.");
+        assert_eq!(body["messages"][0]["content"], "hi");
+    }
+
+    #[test]
+    fn collapses_system_array_to_string() {
+        let mut body = json!({
+            "model": "m",
+            "system": [
+                {"type": "text", "text": "First instruction"},
+                {"type": "text", "text": "Second instruction"}
+            ],
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        super::normalize_messages_body(&mut body);
+        assert_eq!(body["system"], "First instruction\nSecond instruction");
+    }
+
+    #[test]
+    fn drops_metadata_field() {
+        let mut body = json!({
+            "model": "m",
+            "metadata": {"user_id": "ezell", "other": "val"},
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        super::normalize_messages_body(&mut body);
+        assert!(body.get("metadata").is_none());
+    }
+
+    #[test]
+    fn collapses_text_only_content_array() {
+        let mut body = json!({
+            "model": "m",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "part one"},
+                        {"type": "text", "text": "part two"}
+                    ]
+                }
+            ]
+        });
+        super::normalize_messages_body(&mut body);
+        assert_eq!(body["messages"][0]["content"], "part one\npart two");
+    }
+
+    #[test]
+    fn preserves_non_text_content_array() {
+        let mut body = json!({
+            "model": "m",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "description"},
+                        {"type": "image_url", "image_url": {"url": "data:..."}}
+                    ]
+                }
+            ]
+        });
+        super::normalize_messages_body(&mut body);
+        // Image block should remain as-is (not collapsed)
+        assert!(body["messages"][0]["content"].is_array());
+        assert_eq!(body["messages"][0]["content"][0]["type"], "text");
+    }
+
+    #[test]
+    fn moves_inline_system_message_to_top_level() {
+        let mut body = json!({
+            "model": "m",
+            "messages": [
+                {"role": "system", "content": "Be concise."},
+                {"role": "user", "content": "hi"}
+            ]
+        });
+        super::normalize_messages_body(&mut body);
+        // The role=system message should be removed from messages,
+        // and a top-level "system" field should exist
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(body["system"], "Be concise.");
+    }
+
+    #[test]
+    fn merges_top_level_system_with_inline_system() {
+        let mut body = json!({
+            "model": "m",
+            "system": "Top system.",
+            "messages": [
+                {"role": "system", "content": "Inline system."},
+                {"role": "user", "content": "hi"}
+            ]
+        });
+        super::normalize_messages_body(&mut body);
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(body["system"], "Inline system.\nTop system.");
+    }
+
+    #[test]
+    fn preserves_tool_use_content() {
+        let mut body = json!({
+            "model": "m",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "Let me check..."},
+                        {"type": "tool_use", "id": "tu_1", "name": "bash", "input": {"cmd": "ls"}}
+                    ]
+                }
+            ]
+        });
+        super::normalize_messages_body(&mut body);
+        // Should remain an array (contains non-text block)
+        assert!(body["messages"][0]["content"].is_array());
+        assert_eq!(body["messages"][0]["content"][0]["type"], "text");
+    }
+
+    #[test]
+    fn handles_empty_body_gracefully() {
+        let mut body = json!({"model": "m"});
+        // Should not panic
+        super::normalize_messages_body(&mut body);
+        assert_eq!(body["model"], "m");
+    }
 }
 
 
