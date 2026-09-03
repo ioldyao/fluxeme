@@ -427,6 +427,7 @@ const zh: Record<string, string> = {
   'channel.baseUrl': '接口地址',
   'channel.anthropicCompat': '兼容 Anthropic',
   'channel.anthropicCompatDesc': '接受 Anthropic /v1/messages 格式并转换为 OpenAI 格式请求上游',
+  'channel.aiionlyDesc': 'AiOnly 会根据请求协议自动使用 /v1/chat/completions（OpenAI）或 /v1/messages（Anthropic）。',
   'apikey.title': 'API Key',
   'apikey.subtitle': '管理你的 API Key，用于 API 调用鉴权',
   'apikey.add': '新增 API Key',

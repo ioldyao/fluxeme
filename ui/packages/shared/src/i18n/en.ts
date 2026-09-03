@@ -427,6 +427,7 @@ const en: Record<string, string> = {
   'channel.baseUrl': 'Base URL',
   'channel.anthropicCompat': 'Anthropic Compat',
   'channel.anthropicCompatDesc': 'Accept Anthropic /v1/messages format and convert to OpenAI format upstream',
+  'channel.aiionlyDesc': 'AiOnly automatically uses /v1/chat/completions for OpenAI and /v1/messages for Anthropic requests.',
   'apikey.title': 'API Keys',
   'apikey.subtitle': 'Manage your personal API keys',
   'apikey.add': 'Add API Key',

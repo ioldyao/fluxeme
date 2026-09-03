@@ -1,3 +1,4 @@
+pub mod aiionly;
 pub mod anthropic;
 pub mod anthropic_compat;
 pub mod dashscope;
@@ -518,6 +519,7 @@ fn shared_client() -> Arc<reqwest::Client> {
 
 pub struct ProviderRegistry {
     openai: Arc<openai::OpenAIAdapter>,
+    aiionly: Arc<aiionly::AiOnlyAdapter>,
     anthropic: Arc<anthropic::AnthropicAdapter>,
     vllm: Arc<vllm::VllmAdapter>,
     sglang: Arc<generic::GenericAdapter>,
@@ -536,6 +538,7 @@ impl ProviderRegistry {
     pub fn new() -> Self {
         Self {
             openai: Arc::new(openai::OpenAIAdapter),
+            aiionly: Arc::new(aiionly::AiOnlyAdapter::new()),
             anthropic: Arc::new(anthropic::AnthropicAdapter),
             vllm: Arc::new(vllm::VllmAdapter),
             sglang: Arc::new(generic::GenericAdapter::sglang()),
@@ -554,6 +557,7 @@ impl ProviderRegistry {
     pub fn get(&self, name: &str) -> Option<Arc<dyn ProviderAdapter>> {
         match name {
             "openai" => Some(self.openai.clone()),
+            "aiionly" => Some(self.aiionly.clone()),
             "anthropic" => Some(self.anthropic.clone()),
             "vllm" => Some(self.vllm.clone()),
             "sglang" => Some(self.sglang.clone()),

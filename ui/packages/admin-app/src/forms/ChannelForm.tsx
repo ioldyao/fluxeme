@@ -18,6 +18,7 @@ const FIXED_BASE_URLS: Record<string, string> = {
   // DashScope: URL is auto-generated from region + workspaceId (pure domain; backend
   // appends /apps/anthropic or /compatible-mode/v1 per request kind)
   dashscope: '',
+  aiionly: 'https://llm.aiionly.com',
   zhipu: 'https://open.bigmodel.cn/api/paas/v4',
   minimax: 'https://api.minimaxi.com/v1',
 };
@@ -176,7 +177,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       provider: effectiveProvider,
       priority: Number(priority),
       enabled,
-      anthropic_compat: anthropicCompat,
+      anthropic_compat: provider === 'openai' ? anthropicCompat : false,
       ...(channel ? {} : { id: randomId() }),
       endpoints: endpoints.map((endpoint) => ({
         ...endpoint,
@@ -265,6 +266,9 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                     ))}
                   </SelectContent>
                 </Select>
+                {provider === 'aiionly' && (
+                  <p className="text-[11px] text-muted-foreground leading-tight">{t('channel.aiionlyDesc')}</p>
+                )}
               </div>
 
               <div className="space-y-1.5">

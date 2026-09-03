@@ -1,5 +1,6 @@
 export const PROVIDER_DISPLAY: Record<string, string> = {
   openai: 'OpenAI',
+  aiionly: 'AiOnly',
   anthropic: 'Anthropic',
   vllm: 'vLLM',
   sglang: 'SGLang',
