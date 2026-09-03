@@ -234,6 +234,22 @@ impl CoreBackend for PgBackend {
         add_col!("ALTER TABLE recharge_keys ADD COLUMN IF NOT EXISTS team_id TEXT REFERENCES teams(id) ON DELETE CASCADE");
         add_col!("ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS upstream_model TEXT");
 
+        // ── Allow duplicate channel bindings per model (same channel, multiple
+        //    upstream_model names) ──
+        // Old PK: (model_id, channel_id). New PK: surrogate id column, so the
+        // same (model_id, channel_id) pair can appear multiple times with
+        // different upstream_model. Idempotent.
+        add_col!("ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS id BIGSERIAL");
+        add_col!(
+            "DO $$ BEGIN \
+               IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'model_channels_pkey' \
+                          AND pg_get_constraintdef(oid) LIKE '%model_id, channel_id%') THEN \
+                 ALTER TABLE model_channels DROP CONSTRAINT model_channels_pkey; \
+                 ALTER TABLE model_channels ADD PRIMARY KEY (id); \
+               END IF; \
+             END $$"
+        );
+
         // ── Billing groups ───────────────────────────────────────────────
         raw_sql(
             "CREATE TABLE IF NOT EXISTS billing_groups (\
@@ -347,7 +363,7 @@ impl CoreBackend for PgBackend {
                      SELECT $1, mc.channel_id, mc.priority
                      FROM model_channels mc JOIN models m ON mc.model_id = m.id
                      WHERE LOWER(m.name) = $2 AND m.id != $1
-                     ON CONFLICT (model_id, channel_id) DO NOTHING",
+                     AND NOT EXISTS (SELECT 1 FROM model_channels WHERE model_id = $1 AND channel_id = mc.channel_id)",
                 )
                 .bind(winner_id)
                 .bind(name_lower)

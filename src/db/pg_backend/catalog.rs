@@ -375,7 +375,7 @@ impl CatalogBackend for PgBackend {
         for binding in &m.channels {
             query(
                 "INSERT INTO model_channels (model_id, channel_id, priority, upstream_model) \
-                 VALUES ($1, $2, $3, $4) ON CONFLICT (model_id, channel_id) DO UPDATE SET priority = EXCLUDED.priority, upstream_model = EXCLUDED.upstream_model",
+                 VALUES ($1, $2, $3, $4)",
             )
             .bind(&m.id)
             .bind(&binding.channel_id)
