@@ -247,7 +247,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                 <Select value={provider} onValueChange={(v) => setProvider(v ?? '')} required>
                   <SelectTrigger className="h-9 bg-background"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {PROVIDERS.filter((p) => p !== 'qianfan_token_plan' && !p.startsWith('volces_')).map((p) => (
+                    {PROVIDERS.filter((p) => p !== 'qianfan_token_plan' && p !== 'volces_agent_plan' && p !== 'volces_coding_plan').map((p) => (
                       <SelectItem key={p} value={p}>{PROVIDER_DISPLAY[p] || p}</SelectItem>
                     ))}
                   </SelectContent>
