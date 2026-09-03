@@ -1268,6 +1268,18 @@ const en: Record<string, string> = {
   'volces.normalDesc': 'Enter the full URL for the Volces Ark channel, e.g. https://ark.cn-beijing.volces.com/api/v3.',
   'volces.agentPlanDesc': 'Agent Plan fixed URL https://ark.cn-beijing.volces.com; backend auto-appends /api/plan/v3 (OpenAI) or /api/plan/v1/messages (Anthropic).',
   'volces.codingPlanDesc': 'Coding Plan fixed URL https://ark.cn-beijing.volces.com; backend auto-appends /api/coding/v3 (OpenAI) or /api/coding/v1/messages (Anthropic).',
+  'endpoint.id': 'Endpoint ID',
+  'endpoint.url': 'URL',
+  'endpoint.weight': 'Weight',
+  'endpoint.timeoutSecs': 'Timeout (s)',
+  'endpoint.status': 'Status',
+  'endpoint.statusHealthy': 'Healthy',
+  'endpoint.statusCircuitBroken': 'Circuit Broken',
+  'endpoint.statusDisabled': 'Disabled',
+  'endpoint.noEndpoints': 'No endpoints for this channel',
+  'endpoint.unknown': 'Unknown',
+  'common.expand': 'Expand',
+  'common.collapse': 'Collapse',
 };
 
 export default en;

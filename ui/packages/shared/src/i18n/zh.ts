@@ -1268,5 +1268,17 @@ const zh: Record<string, string> = {
   'volces.normalDesc': '火山方舟渠道请填写完整 URL，例如 https://ark.cn-beijing.volces.com/api/v3。',
   'volces.agentPlanDesc': 'Agent Plan 专属地址，URL 固定为 https://ark.cn-beijing.volces.com，后端根据请求类型自动拼接 /api/plan/v3（OpenAI）或 /api/plan/v1/messages（Anthropic）。',
   'volces.codingPlanDesc': 'Coding Plan 专属地址，URL 固定为 https://ark.cn-beijing.volces.com，后端根据请求类型自动拼接 /api/coding/v3（OpenAI）或 /api/coding/v1/messages（Anthropic）。',
+  'endpoint.id': '端点ID',
+  'endpoint.url': 'URL',
+  'endpoint.weight': '权重',
+  'endpoint.timeoutSecs': '超时(秒)',
+  'endpoint.status': '状态',
+  'endpoint.statusHealthy': '正常',
+  'endpoint.statusCircuitBroken': '熔断',
+  'endpoint.statusDisabled': '禁用',
+  'endpoint.noEndpoints': '该渠道暂无端点',
+  'endpoint.unknown': '未知',
+  'common.expand': '展开',
+  'common.collapse': '收起',
 };
 export default zh;
