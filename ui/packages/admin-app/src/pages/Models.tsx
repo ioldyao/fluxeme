@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useModels, useCreateModel, useUpdateModel, useDeleteModel, usePublishModel } from '@fluxeme/shared/src/api/models';
@@ -222,6 +222,56 @@ export default function Models() {
   };
 
   // ── Row renderer ──────────────────────────────────────────────────
+  // Tooltip that flips direction based on viewport position so the first
+  // rows don't clip against the top of the page.
+  function DotTip({ dotClass, title, channelId, rows, lat }: {
+    dotClass: string;
+    title: string;
+    channelId: string;
+    rows: ProbeResult[];
+    lat?: number;
+  }) {
+    const [up, setUp] = useState(true);
+    const ref = useRef<HTMLDivElement>(null);
+    return (
+      <div
+        ref={ref}
+        className="group relative inline-flex"
+        onMouseEnter={() => {
+          const el = ref.current?.getBoundingClientRect();
+          // Flip to below when the dot is within ~180px of the viewport top
+          setUp(el ? el.top > 180 : true);
+        }}
+      >
+        <span className={cn('inline-block w-2.5 h-2.5 rounded-full cursor-help', dotClass)} />
+        <div className={cn(
+          'absolute left-1/2 -translate-x-1/2 z-10 hidden group-hover:block',
+          up ? 'bottom-full mb-2' : 'top-full mt-2',
+        )}>
+          <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg px-3 py-2 text-xs whitespace-nowrap space-y-1">
+            <div className="flex items-center gap-1.5"><span className={cn('inline-block w-2 h-2 rounded-full', dotClass)} /><span className="font-semibold">{title}</span></div>
+            <div className="text-muted-foreground font-mono">{channelId}</div>
+            {rows.length > 0 ? (
+              <>
+                {rows.map((row) => (
+                  <div key={`${channelId}-${row.endpoint_url ?? row.id}`} className="flex items-center justify-between gap-3 font-mono">
+                    <span className="text-muted-foreground max-w-[220px] truncate">{row.endpoint_url ?? 'channel'}</span>
+                    <span className={cn(row.success ? 'text-chart-2' : 'text-destructive')}>
+                      {row.success ? `${row.latency_ms}ms` : '失败'}
+                    </span>
+                  </div>
+                ))}
+                {lat != null && <div className={cn('font-mono', lat > 5000 ? 'text-destructive' : 'text-muted-foreground')}>聚合 {lat}ms</div>}
+              </>
+            ) : (
+              <div className="text-muted-foreground">待探测（当前配置端点暂无探测记录）</div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const renderRow = (m: Model) => (
     <tr key={m.id} className="border-b last:border-0 hover:bg-muted/50 transition-colors">
       <td className="px-4 py-3"><span className="font-semibold text-foreground">{m.name}</span></td>
@@ -231,37 +281,17 @@ export default function Models() {
             const hc = aggregateChannelProbe(m.id, b.channel_id);
             const ok = hc?.success;
             const degraded = hc?.degraded;
-            const lat = hc?.latency_ms;
             // 待探测 = 当前配置的端点一条探测记录都没有 → 明确空心/灰，不跟"故障"混为一谈
             const dotClass = hc ? (ok ? 'bg-chart-2' : degraded ? 'bg-sidebar-primary' : 'bg-destructive') : 'bg-muted-foreground/40 ring-1 ring-inset ring-muted-foreground/50';
             return (
               <div key={b.channel_id} className="group relative inline-flex">
-                <span className={cn('inline-block w-2.5 h-2.5 rounded-full cursor-help', dotClass)} />
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-10">
-                  <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg px-3 py-2 text-xs whitespace-nowrap space-y-1">
-                    <div className="flex items-center gap-1.5"><span className={cn('inline-block w-2 h-2 rounded-full', dotClass)} /><span className="font-semibold">{channelName(b.channel_id)}</span></div>
-                    <div className="text-muted-foreground font-mono">{b.channel_id}</div>
-                    {hc ? (
-                      hc.rows.length > 0 ? (
-                        <>
-                          {hc.rows.map((row) => (
-                            <div key={`${b.channel_id}-${row.endpoint_url ?? row.id}`} className="flex items-center justify-between gap-3 font-mono">
-                              <span className="text-muted-foreground max-w-[220px] truncate">{row.endpoint_url ?? 'channel'}</span>
-                              <span className={cn(row.success ? 'text-chart-2' : 'text-destructive')}>
-                                {row.success ? `${row.latency_ms}ms` : '失败'}
-                              </span>
-                            </div>
-                          ))}
-                          {lat != null && <div className={cn('font-mono', lat > 5000 ? 'text-destructive' : 'text-muted-foreground')}>聚合 {lat}ms</div>}
-                        </>
-                      ) : (
-                        <div className="text-muted-foreground">待探测（当前配置端点暂无探测记录）</div>
-                      )
-                    ) : (
-                      <div className="text-muted-foreground">待探测（当前配置端点暂无探测记录）</div>
-                    )}
-                  </div>
-                </div>
+                <DotTip
+                  dotClass={dotClass}
+                  title={channelName(b.channel_id)}
+                  channelId={b.channel_id}
+                  rows={hc?.rows ?? []}
+                  lat={hc ? hc.latency_ms : undefined}
+                />
               </div>
             );
           })}</div>
