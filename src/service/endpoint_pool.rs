@@ -89,8 +89,9 @@ impl BindingStatePool {
     }
 
     /// Record a probe outcome on every binding balancer containing the endpoint
-    /// (matched by DB id). Used after manual/automatic probes so the model
-    /// binding pool reflects the real endpoint status.
+    /// (matched by DB id). Success is a physical fact about the endpoint, so it
+    /// may reset every model sharing it; used after a successful manual/auto
+    /// probe so the binding pool reflects the real endpoint status.
     pub fn record_endpoint_health(&self, endpoint_id: i64, success: bool) {
         let bindings = self.bindings.read().unwrap_or_else(|e| e.into_inner());
         for balancer in bindings.values() {
@@ -102,6 +103,34 @@ impl BindingStatePool {
                         balancer.as_health_aware().record_failure(index);
                     }
                 }
+            }
+        }
+    }
+
+    /// Record a probe outcome on only the given model binding's balancer.
+    ///
+    /// A manual probe tests one specific model; its failure may be model-scoped
+    /// (wrong upstream model name, auth contract, etc.) and must not open the
+    /// breaker for other models sharing the same endpoint.
+    pub fn record_endpoint_health_for_model(
+        &self,
+        model_id: &str,
+        channel_id: &str,
+        endpoint_id: i64,
+        success: bool,
+    ) {
+        let Some(balancer) = self.get(model_id, channel_id) else {
+            return;
+        };
+        let health = balancer.as_health_aware();
+        for (index, endpoint) in health.endpoints().iter().enumerate() {
+            if endpoint.id == Some(endpoint_id) {
+                if success {
+                    health.record_success(index);
+                } else {
+                    health.record_failure(index);
+                }
+                break;
             }
         }
     }

@@ -494,14 +494,20 @@ impl RoutingService {
         }
     }
 
-    /// Mirror a probe result to both the binding pool and the per-channel cache
+    /// Mirror a probe result to the binding pool and the per-channel cache
     /// balancer for the given endpoint, identified by DB id (preferred) or URL.
     /// Used after manual/automatic probes so that `channel_health()` (read by
     /// the model console health dot) reflects the real endpoint status.
+    ///
+    /// Success is a physical fact about the endpoint and resets every model
+    /// binding sharing it. Failure of a manual probe is model-scoped: it only
+    /// opens the breaker of the model under test, never other models that bind
+    /// the same endpoint, and never trips the shared channel breaker.
     pub fn record_endpoint_health(
         &self,
-        endpoint_id: Option<i64>,
+        model_id: &str,
         channel_id: &str,
+        endpoint_id: Option<i64>,
         endpoint_url: &str,
         success: bool,
     ) {
@@ -509,12 +515,20 @@ impl RoutingService {
         let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
         let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
 
-        // Binding pool by endpoint_id.
-        if let Some(eid) = endpoint_id {
-            self.binding_pool.record_endpoint_health(eid, success);
+        if success {
+            // Physical recovery: every model binding on this endpoint may reset.
+            if let Some(eid) = endpoint_id {
+                self.binding_pool.record_endpoint_health(eid, true);
+            }
+        } else if let Some(eid) = endpoint_id {
+            // Model-scoped failure: only the model under test is affected,
+            // never other models sharing the endpoint.
+            self.binding_pool.record_endpoint_health_for_model(model_id, channel_id, eid, false);
         }
 
-        // Channel cache — try endpoint_id first, then URL.
+        // Channel cache — try endpoint_id first, then URL. Only success is
+        // mirrored: a model-scoped probe failure must not trip the shared
+        // channel breaker for every model routed through it.
         if let Some(ch) = chs.get(channel_id) {
             if let Some((_, balancer)) = cache.get(channel_id) {
                 if let Some(idx) = ch.endpoints.iter().position(|ep| {
@@ -523,8 +537,6 @@ impl RoutingService {
                 }) {
                     if success {
                         balancer.as_health_aware().record_success(idx);
-                    } else {
-                        balancer.as_health_aware().record_failure(idx);
                     }
                 }
             }

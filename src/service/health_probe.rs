@@ -438,8 +438,9 @@ impl HealthProbeService {
                 // balancer so the model console health dot reflects success.
                 if let Some(ref routing) = routing {
                     routing.record_endpoint_health(
-                        endpoint.id,
+                        &model_id,
                         &channel_id,
+                        endpoint.id,
                         &endpoint.url,
                         true,
                     );
@@ -469,11 +470,13 @@ impl HealthProbeService {
                     } else {
                         balancer.as_health_aware().record_failure(endpoint_order);
                     }
-                    // Sync failure to both balancers.
+                    // Sync failure to the model-scoped binding only; never
+                    // broadcast to other models sharing this endpoint.
                     if let Some(ref routing) = routing {
                         routing.record_endpoint_health(
-                            endpoint.id,
+                            &model_id,
                             &channel_id,
+                            endpoint.id,
                             &endpoint.url,
                             false,
                         );
