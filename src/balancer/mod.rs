@@ -19,6 +19,10 @@ pub type EndpointGroup = Vec<EndpointConfig>;
 
 pub(crate) static BREAKER_THRESHOLD: AtomicU32 = AtomicU32::new(3);
 pub(crate) static BREAKER_COOLDOWN_SECS: AtomicU64 = AtomicU64::new(30);
+/// Consecutive probe failures before an endpoint is marked long-unavailable.
+pub(crate) static BREAKER_LONG_FAIL_THRESHOLD: AtomicU32 = AtomicU32::new(10);
+/// Probe interval (seconds) for long-unavailable endpoints.
+pub(crate) static BREAKER_LONG_PROBE_INTERVAL_SECS: AtomicU64 = AtomicU64::new(1800);
 
 /// Default failure threshold before a breaker opens.
 pub(crate) const BREAKER_THRESHOLD_DEFAULT: u32 = 3;
@@ -28,9 +32,22 @@ pub(crate) const BREAKER_THRESHOLD_MIN: u32 = 1;
 pub(crate) const BREAKER_THRESHOLD_MAX: u32 = 100;
 pub(crate) const BREAKER_COOLDOWN_MIN: u64 = 0;
 pub(crate) const BREAKER_COOLDOWN_MAX: u64 = 3600;
+/// Default consecutive probe failures before "long-unavailable" kicks in.
+pub(crate) const BREAKER_LONG_FAIL_THRESHOLD_DEFAULT: u32 = 10;
+/// Default slow probe interval for long-unavailable endpoints.
+pub(crate) const BREAKER_LONG_PROBE_INTERVAL_DEFAULT: u64 = 1800;
+pub(crate) const BREAKER_LONG_FAIL_THRESHOLD_MIN: u32 = 1;
+pub(crate) const BREAKER_LONG_FAIL_THRESHOLD_MAX: u32 = 1000;
+pub(crate) const BREAKER_LONG_PROBE_INTERVAL_MIN: u64 = 60;
+pub(crate) const BREAKER_LONG_PROBE_INTERVAL_MAX: u64 = 86400;
 
 /// Overwrite the process-wide breaker parameters from persisted settings.
-pub(crate) fn set_breaker_params(threshold: Option<u32>, cooldown_secs: Option<u64>) {
+pub(crate) fn set_breaker_params(
+    threshold: Option<u32>,
+    cooldown_secs: Option<u64>,
+    long_fail_threshold: Option<u32>,
+    long_probe_interval_secs: Option<u64>,
+) {
     if let Some(t) = threshold {
         BREAKER_THRESHOLD.store(
             t.clamp(BREAKER_THRESHOLD_MIN, BREAKER_THRESHOLD_MAX),
@@ -40,6 +57,24 @@ pub(crate) fn set_breaker_params(threshold: Option<u32>, cooldown_secs: Option<u
     if let Some(c) = cooldown_secs {
         BREAKER_COOLDOWN_SECS.store(
             c.clamp(BREAKER_COOLDOWN_MIN, BREAKER_COOLDOWN_MAX),
+            Ordering::Relaxed,
+        );
+    }
+    if let Some(t) = long_fail_threshold {
+        BREAKER_LONG_FAIL_THRESHOLD.store(
+            t.clamp(
+                BREAKER_LONG_FAIL_THRESHOLD_MIN,
+                BREAKER_LONG_FAIL_THRESHOLD_MAX,
+            ),
+            Ordering::Relaxed,
+        );
+    }
+    if let Some(i) = long_probe_interval_secs {
+        BREAKER_LONG_PROBE_INTERVAL_SECS.store(
+            i.clamp(
+                BREAKER_LONG_PROBE_INTERVAL_MIN,
+                BREAKER_LONG_PROBE_INTERVAL_MAX,
+            ),
             Ordering::Relaxed,
         );
     }
@@ -62,6 +97,13 @@ struct BreakerInner {
     last_failure: Option<Instant>,
     half_open_in_flight: bool,
     probe_lease: Option<ProbeLease>,
+    /// Consecutive failed recovery probes. Reaches `long_fail_threshold` →
+    /// the endpoint is considered long-unavailable and probed on a slower
+    /// cycle instead of the normal cooldown.
+    consecutive_probe_failures: u32,
+    /// Long-unavailable flag. Once set, only the slow probe cycle may attempt
+    /// recovery. Cleared by a successful probe.
+    long_unavailable: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -70,16 +112,48 @@ struct ProbeLease {
     expires_at: Instant,
 }
 
+/// Serializable snapshot of a breaker's runtime state. Used to persist across
+/// restarts (Redis) and to inspect per-endpoint health.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BreakerSnapshot {
+    pub enabled: bool,
+    pub status: String,
+    pub failure_count: u32,
+    /// Seconds elapsed since the last failure (None = never failed).
+    pub last_failure_age_secs: Option<u64>,
+    pub consecutive_probe_failures: u32,
+    pub long_unavailable: bool,
+}
+
 #[derive(Debug)]
 pub struct CircuitBreaker {
     inner: Arc<RwLock<BreakerInner>>,
     threshold: u32,
     cooldown_secs: u64,
+    long_fail_threshold: u32,
+    long_probe_interval_secs: u64,
     next_probe_token: AtomicU64,
 }
 
 impl CircuitBreaker {
-    pub fn new(enabled: bool, threshold: u32, cooldown_secs: u64) -> Self {
+    pub fn new(enabled: bool) -> Self {
+        Self::with_params(
+            enabled,
+            BREAKER_THRESHOLD.load(Ordering::Relaxed),
+            BREAKER_COOLDOWN_SECS.load(Ordering::Relaxed),
+            BREAKER_LONG_FAIL_THRESHOLD.load(Ordering::Relaxed),
+            BREAKER_LONG_PROBE_INTERVAL_SECS.load(Ordering::Relaxed),
+        )
+    }
+
+    /// Explicit-parameter constructor (tests / recovery).
+    pub fn with_params(
+        enabled: bool,
+        threshold: u32,
+        cooldown_secs: u64,
+        long_fail_threshold: u32,
+        long_probe_interval_secs: u64,
+    ) -> Self {
         Self {
             inner: Arc::new(RwLock::new(BreakerInner {
                 enabled,
@@ -88,11 +162,67 @@ impl CircuitBreaker {
                 last_failure: None,
                 half_open_in_flight: false,
                 probe_lease: None,
+                consecutive_probe_failures: 0,
+                long_unavailable: false,
             })),
             threshold,
             cooldown_secs,
+            long_fail_threshold,
+            long_probe_interval_secs,
             next_probe_token: AtomicU64::new(1),
         }
+    }
+
+    /// Serializable snapshot of current state (for Redis persistence).
+    pub fn snapshot(&self) -> BreakerSnapshot {
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        BreakerSnapshot {
+            enabled: inner.enabled,
+            status: match inner.status {
+                BreakerStatus::Closed => "closed",
+                BreakerStatus::Open => "open",
+                BreakerStatus::HalfOpen => "half_open",
+            }
+            .to_string(),
+            failure_count: inner.failure_count,
+            last_failure_age_secs: inner.last_failure.map(|i| i.elapsed().as_secs()),
+            consecutive_probe_failures: inner.consecutive_probe_failures,
+            long_unavailable: inner.long_unavailable,
+        }
+    }
+
+    /// Restore persisted state (called after a reload/rebuild). In-flight
+    /// probe leases are always cleared; a persisted HalfOpen becomes Open.
+    pub fn restore(&self, snap: &BreakerSnapshot) {
+        let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        inner.enabled = snap.enabled;
+        inner.status = match snap.status.as_str() {
+            "closed" => BreakerStatus::Closed,
+            "half_open" => BreakerStatus::Open,
+            _ => BreakerStatus::Open,
+        };
+        inner.failure_count = snap.failure_count;
+        inner.last_failure = snap
+            .last_failure_age_secs
+            .map(|age| Instant::now() - Duration::from_secs(age));
+        inner.half_open_in_flight = false;
+        inner.probe_lease = None;
+        inner.consecutive_probe_failures = snap.consecutive_probe_failures;
+        inner.long_unavailable = snap.long_unavailable;
+    }
+
+    pub fn long_unavailable(&self) -> bool {
+        self.inner
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .long_unavailable
+    }
+
+    pub fn consecutive_probe_failures(&self) -> u32 {
+        self.inner
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .consecutive_probe_failures
     }
 
     /// Whether this endpoint can receive business traffic.
@@ -127,6 +257,8 @@ impl CircuitBreaker {
             inner.last_failure = None;
             inner.half_open_in_flight = false;
             inner.probe_lease = None;
+            inner.consecutive_probe_failures = 0;
+            inner.long_unavailable = false;
         }
         inner.enabled = enabled;
     }
@@ -141,6 +273,8 @@ impl CircuitBreaker {
         inner.failure_count = 0;
         inner.status = BreakerStatus::Closed;
         inner.half_open_in_flight = false;
+        inner.consecutive_probe_failures = 0;
+        inner.long_unavailable = false;
     }
 
     pub fn record_failure(&self) {
@@ -155,10 +289,11 @@ impl CircuitBreaker {
 
     /// Begin an automatic liveness probe.
     ///
-    /// `Some(None)` means the endpoint was already Closed and can be checked;
-    /// `Some(Some(token))` means an Open endpoint was promoted to a leased
-    /// recovery probe. `None` means disabled, still cooling down, or already
-    /// being probed.
+    /// Returns:
+    /// - `Some(None)` — endpoint is Closed and can be checked (fast cycle).
+    /// - `Some(Some(token))` — Open endpoint promoted to HalfOpen for recovery
+    ///   (fast or slow cycle depending on `long_unavailable`).
+    /// - `None` — not eligible (disabled, cooling down, already being probed).
     pub fn begin_probe(&self) -> Option<Option<u64>> {
         let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
@@ -177,11 +312,23 @@ impl CircuitBreaker {
         }
         match inner.status {
             BreakerStatus::Closed => Some(None),
-            BreakerStatus::Open
-                if inner
+            BreakerStatus::Open => {
+                let cooldown_ok = inner
                     .last_failure
-                    .is_some_and(|last| last.elapsed().as_secs() >= self.cooldown_secs) =>
-            {
+                    .is_some_and(|last| last.elapsed().as_secs() >= self.cooldown_secs);
+                if !cooldown_ok {
+                    return None;
+                }
+                let long_ok = if inner.long_unavailable {
+                    inner
+                        .last_failure
+                        .is_some_and(|last| last.elapsed().as_secs() >= self.long_probe_interval_secs)
+                } else {
+                    true
+                };
+                if !long_ok {
+                    return None;
+                }
                 let token = self.next_probe_token.fetch_add(1, Ordering::Relaxed);
                 inner.status = BreakerStatus::HalfOpen;
                 inner.half_open_in_flight = true;
@@ -245,9 +392,16 @@ impl CircuitBreaker {
         if success {
             inner.failure_count = 0;
             inner.status = BreakerStatus::Closed;
+            inner.consecutive_probe_failures = 0;
+            inner.long_unavailable = false;
         } else {
             inner.last_failure = Some(Instant::now());
             inner.status = BreakerStatus::Open;
+            inner.consecutive_probe_failures =
+                inner.consecutive_probe_failures.saturating_add(1);
+            if inner.consecutive_probe_failures >= self.long_fail_threshold {
+                inner.long_unavailable = true;
+            }
         }
         true
     }
@@ -316,11 +470,9 @@ pub struct HealthAwareBalancer {
 
 impl HealthAwareBalancer {
     pub fn new(endpoints: &EndpointGroup) -> Self {
-        let threshold = BREAKER_THRESHOLD.load(Ordering::Relaxed);
-        let cooldown_secs = BREAKER_COOLDOWN_SECS.load(Ordering::Relaxed);
         let breakers: Vec<_> = endpoints
             .iter()
-            .map(|ep| Arc::new(CircuitBreaker::new(ep.enabled, threshold, cooldown_secs)))
+            .map(|ep| Arc::new(CircuitBreaker::new(ep.enabled)))
             .collect();
 
         let all_equal = endpoints
@@ -611,7 +763,7 @@ mod tests {
 
     #[test]
     fn business_availability_never_claims_open_probe() {
-        let breaker = CircuitBreaker::new(true, 1, 0);
+        let breaker = CircuitBreaker::with_params(true, 1, 0, 10, 1800);
         breaker.record_failure();
 
         assert!(!breaker.is_available_readonly());
@@ -642,7 +794,7 @@ mod tests {
 
     #[test]
     fn probe_claim_is_not_available_before_cooldown() {
-        let breaker = CircuitBreaker::new(true, 1, 30);
+        let breaker = CircuitBreaker::with_params(true, 1, 30, 10, 1800);
         breaker.record_failure();
         assert!(breaker.claim_probe().is_none());
         assert_eq!(breaker.status(), BreakerStatus::Open);
@@ -650,7 +802,7 @@ mod tests {
 
     #[test]
     fn probe_token_must_match_before_state_changes() {
-        let breaker = CircuitBreaker::new(true, 1, 0);
+        let breaker = CircuitBreaker::with_params(true, 1, 0, 10, 1800);
         breaker.record_failure();
         let token = breaker.claim_probe().expect("cooldown has elapsed");
         assert!(!breaker.probe_success(token + 1));
@@ -661,7 +813,7 @@ mod tests {
 
     #[test]
     fn re_enabling_endpoint_resets_breaker_state() {
-        let breaker = CircuitBreaker::new(true, 1, 30);
+        let breaker = CircuitBreaker::with_params(true, 1, 30, 10, 1800);
         breaker.record_failure();
         breaker.set_enabled(false);
         breaker.set_enabled(true);

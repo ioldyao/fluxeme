@@ -524,6 +524,47 @@ async fn main() {
         instance_id: instance_id.clone(),
     });
 
+    // Restore breaker snapshots from Redis after reload has built all balancers.
+    {
+        let cache = state.cache.clone();
+        let routing = state.routing.clone();
+        match cache.get("breaker", "snapshots").await {
+            Ok(Some(raw)) => {
+                match serde_json::from_str::<Vec<(String, String, Vec<(i64, crate::balancer::BreakerSnapshot)>)>>(&raw) {
+                    Ok(snapshots) if !snapshots.is_empty() => {
+                        routing.restore_breaker_snapshots(&snapshots);
+                        tracing::info!(count = snapshots.len(), "Restored breaker snapshots from Redis");
+                    }
+                    _ => tracing::debug!("No breaker snapshots in Redis"),
+                }
+            }
+            _ => tracing::debug!("No breaker snapshots in Redis"),
+        }
+    }
+
+    // Periodic breaker snapshot persistence to Redis (~30s).
+    {
+        let cache = state.cache.clone();
+        let routing = state.routing.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                let snapshots = routing.all_breaker_snapshots();
+                if snapshots.is_empty() {
+                    continue;
+                }
+                match serde_json::to_string(&snapshots) {
+                    Ok(json) => {
+                        if let Err(e) = cache.set("breaker", "snapshots", &json, 3600).await {
+                            tracing::warn!("Failed to persist breaker snapshots: {}", e);
+                        }
+                    }
+                    Err(e) => tracing::warn!("Failed to serialize breaker snapshots: {}", e),
+                }
+            }
+        });
+    }
+
     // Cross-instance config invalidation: poll config_version; when it
     // changes (bumped by an admin mutation on any instance), reload the
     // in-memory caches so all instances converge.

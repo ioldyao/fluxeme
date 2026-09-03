@@ -219,9 +219,25 @@ pub(crate) async fn get_breaker_params(
         .map_err(db_err)?
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(crate::balancer::BREAKER_COOLDOWN_DEFAULT);
+    let long_fail_threshold = state
+        .db
+        .get_setting("breaker_long_fail_threshold")
+        .await
+        .map_err(db_err)?
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(crate::balancer::BREAKER_LONG_FAIL_THRESHOLD_DEFAULT);
+    let long_probe_interval_secs = state
+        .db
+        .get_setting("breaker_long_probe_interval_secs")
+        .await
+        .map_err(db_err)?
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(crate::balancer::BREAKER_LONG_PROBE_INTERVAL_DEFAULT);
     Ok(Json(serde_json::json!({
         "threshold": threshold,
         "cooldown_secs": cooldown_secs,
+        "long_fail_threshold": long_fail_threshold,
+        "long_probe_interval_secs": long_probe_interval_secs,
     })))
 }
 
@@ -229,6 +245,10 @@ pub(crate) async fn get_breaker_params(
 pub(crate) struct BreakerParamsReq {
     threshold: u32,
     cooldown_secs: u64,
+    #[serde(default)]
+    long_fail_threshold: Option<u32>,
+    #[serde(default)]
+    long_probe_interval_secs: Option<u64>,
 }
 
 /// PUT /api/settings/breaker — persist and apply circuit breaker params.
@@ -259,6 +279,46 @@ pub(crate) async fn set_breaker_params(
             crate::balancer::BREAKER_COOLDOWN_MAX
         )));
     }
+    let stored_long_fail = state
+        .db
+        .get_setting("breaker_long_fail_threshold")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<u32>().ok());
+    let stored_long_interval = state
+        .db
+        .get_setting("breaker_long_probe_interval_secs")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<u64>().ok());
+    let long_fail = req
+        .long_fail_threshold
+        .unwrap_or_else(|| stored_long_fail.unwrap_or(crate::balancer::BREAKER_LONG_FAIL_THRESHOLD_DEFAULT));
+    let long_interval = req
+        .long_probe_interval_secs
+        .unwrap_or_else(|| stored_long_interval.unwrap_or(crate::balancer::BREAKER_LONG_PROBE_INTERVAL_DEFAULT));
+    if !(crate::balancer::BREAKER_LONG_FAIL_THRESHOLD_MIN
+        ..=crate::balancer::BREAKER_LONG_FAIL_THRESHOLD_MAX)
+        .contains(&long_fail)
+    {
+        return Err(AdminError::bad_request(format!(
+            "long_fail_threshold must be between {} and {}",
+            crate::balancer::BREAKER_LONG_FAIL_THRESHOLD_MIN,
+            crate::balancer::BREAKER_LONG_FAIL_THRESHOLD_MAX
+        )));
+    }
+    if !(crate::balancer::BREAKER_LONG_PROBE_INTERVAL_MIN
+        ..=crate::balancer::BREAKER_LONG_PROBE_INTERVAL_MAX)
+        .contains(&long_interval)
+    {
+        return Err(AdminError::bad_request(format!(
+            "long_probe_interval_secs must be between {} and {}",
+            crate::balancer::BREAKER_LONG_PROBE_INTERVAL_MIN,
+            crate::balancer::BREAKER_LONG_PROBE_INTERVAL_MAX
+        )));
+    }
     state
         .db
         .set_setting("breaker_threshold", &req.threshold.to_string())
@@ -269,13 +329,33 @@ pub(crate) async fn set_breaker_params(
         .set_setting("breaker_cooldown_secs", &req.cooldown_secs.to_string())
         .await
         .map_err(db_err)?;
-    crate::balancer::set_breaker_params(Some(req.threshold), Some(req.cooldown_secs));
+    state
+        .db
+        .set_setting("breaker_long_fail_threshold", &long_fail.to_string())
+        .await
+        .map_err(db_err)?;
+    state
+        .db
+        .set_setting(
+            "breaker_long_probe_interval_secs",
+            &long_interval.to_string(),
+        )
+        .await
+        .map_err(db_err)?;
+    crate::balancer::set_breaker_params(
+        Some(req.threshold),
+        Some(req.cooldown_secs),
+        Some(long_fail),
+        Some(long_interval),
+    );
     // Rebuild channel balancers so new params apply to live breakers.
     state.routing.reload().await.map_err(AdminError::internal)?;
     notify_config_changed(&state).await;
     Ok(Json(serde_json::json!({
         "threshold": req.threshold,
         "cooldown_secs": req.cooldown_secs,
+        "long_fail_threshold": long_fail,
+        "long_probe_interval_secs": long_interval,
     })))
 }
 

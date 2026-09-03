@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
-use crate::balancer::LoadBalancer;
+use crate::balancer::{BreakerSnapshot, LoadBalancer};
 use crate::config::types::EndpointConfig;
 
 type RouteCacheEntry = (String, Arc<LoadBalancer>);
@@ -123,7 +123,21 @@ impl RoutingService {
                 .ok()
                 .flatten()
                 .and_then(|v| v.parse::<u64>().ok());
-            crate::balancer::set_breaker_params(threshold, cooldown);
+            let long_fail = self
+                .db
+                .get_setting("breaker_long_fail_threshold")
+                .await
+                .ok()
+                .flatten()
+                .and_then(|v| v.parse::<u32>().ok());
+            let long_interval = self
+                .db
+                .get_setting("breaker_long_probe_interval_secs")
+                .await
+                .ok()
+                .flatten()
+                .and_then(|v| v.parse::<u64>().ok());
+            crate::balancer::set_breaker_params(threshold, cooldown, long_fail, long_interval);
         }
 
         // Build the complete replacement before changing the live routing data.
@@ -550,6 +564,20 @@ impl RoutingService {
                 }
             }
         }
+    }
+
+    /// Collect all binding-level breaker snapshots for persistence.
+    /// Returns Vec<(model_id, channel_id, [(endpoint_id, snapshot)])>.
+    pub fn all_breaker_snapshots(&self) -> Vec<(String, String, Vec<(i64, BreakerSnapshot)>)> {
+        self.binding_pool.all_snapshots()
+    }
+
+    /// Restore binding-level breaker snapshots (called on startup after reload).
+    pub fn restore_breaker_snapshots(
+        &self,
+        snapshots: &[(String, String, Vec<(i64, BreakerSnapshot)>)],
+    ) {
+        self.binding_pool.restore_snapshots(snapshots);
     }
 
     /// Collect health status for all endpoints in a channel.

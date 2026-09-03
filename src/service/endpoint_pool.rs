@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use crate::balancer::LoadBalancer;
+use crate::balancer::{BreakerSnapshot, LoadBalancer};
 use crate::domain::model::Model;
 
 /// Stable identity for a model-to-channel binding.
@@ -131,6 +131,49 @@ impl BindingStatePool {
                     health.record_failure(index);
                 }
                 break;
+            }
+        }
+    }
+
+    /// One persisted snapshot per breaker, keyed by (model, channel, endpoint id).
+    pub fn all_snapshots(&self) -> Vec<(String, String, Vec<(i64, BreakerSnapshot)>)> {
+        let bindings = self.bindings.read().unwrap_or_else(|e| e.into_inner());
+        let mut out = Vec::with_capacity(bindings.len());
+        for (key, balancer) in bindings.iter() {
+            let health = balancer.as_health_aware();
+            let snapshots = health
+                .endpoints()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, ep)| {
+                    ep.id.map(|id| (id, health.breakers()[i].snapshot()))
+                })
+                .collect::<Vec<_>>();
+            if !snapshots.is_empty() {
+                out.push((key.model_id.clone(), key.channel_id.clone(), snapshots));
+            }
+        }
+        out
+    }
+
+    /// Restore persisted breaker snapshots by (model, channel, endpoint id).
+    pub fn restore_snapshots(
+        &self,
+        snapshots: &[(String, String, Vec<(i64, BreakerSnapshot)>)],
+    ) {
+        let bindings = self.bindings.read().unwrap_or_else(|e| e.into_inner());
+        for (model_id, channel_id, rows) in snapshots {
+            let Some(balancer) = bindings.get(&BindingKey::new(model_id, channel_id)) else {
+                continue;
+            };
+            let health = balancer.as_health_aware();
+            for (endpoint_id, snap) in rows {
+                for (i, ep) in health.endpoints().iter().enumerate() {
+                    if ep.id == Some(*endpoint_id) {
+                        health.breakers()[i].restore(snap);
+                        break;
+                    }
+                }
             }
         }
     }
