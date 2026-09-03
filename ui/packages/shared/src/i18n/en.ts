@@ -1253,6 +1253,11 @@ const en: Record<string, string> = {
   'dashscope.workspaceId': 'Workspace ID',
   'dashscope.workspaceIdDesc': 'Aliyun Bailian workspace id (WorkspaceId)',
   'dashscope.tokenPlanDesc': 'Token Plan plan-specific address with a fixed token-plan prefix; no workspace id needed.',
+  'qianfan.type': 'Type',
+  'qianfan.typeQianfan': '千帆大模型',
+  'qianfan.typeTokenPlan': 'Token Plan',
+  'qianfan.tokenPlanDesc': 'Token Plan fixed URL https://qianfan.baidubce.com; backend auto-appends /v2/tokenplan/personal (OpenAI) or /anthropic/tokenplan/personal (Anthropic).',
+  'qianfan.normalDesc': 'Enter the full URL for the Qianfan channel.',
 };
 
 export default en;

@@ -1253,5 +1253,10 @@ const zh: Record<string, string> = {
   'dashscope.workspaceId': '业务空间 ID',
   'dashscope.workspaceIdDesc': '阿里云百炼业务空间 ID（WorkspaceId）',
   'dashscope.tokenPlanDesc': 'Token Plan 套餐专属地址，前缀固定为 token-plan，无需填写业务空间 ID。',
+  'qianfan.type': '类型',
+  'qianfan.typeQianfan': '千帆大模型',
+  'qianfan.typeTokenPlan': 'Token Plan',
+  'qianfan.tokenPlanDesc': 'Token Plan 专属地址，URL 固定为 https://qianfan.baidubce.com，后端根据请求类型自动拼接 /v2/tokenplan/personal（OpenAI）或 /anthropic/tokenplan/personal（Anthropic）。',
+  'qianfan.normalDesc': '千帆大模型渠道请填写完整 URL。',
 };
 export default zh;

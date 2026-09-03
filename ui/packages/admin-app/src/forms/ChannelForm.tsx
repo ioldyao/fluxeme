@@ -56,6 +56,8 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
   const [dashscopeRegion, setDashscopeRegion] = useState('cn-beijing');
   const [dashscopeWorkspaceId, setDashscopeWorkspaceId] = useState('');
   const [dashscopeType, setDashscopeType] = useState<'dashscope' | 'token_plan'>('dashscope');
+  // Qianfan-specific fields: 千帆大模型 类型（普通 千帆大模型 / Token Plan）
+  const [qianfanType, setQianfanType] = useState<'qianfan' | 'token_plan'>('qianfan');
 
   // DashScope URL construction (auto based on type + region; Token Plan has a
   // fixed `token-plan` prefix, DashScope uses the workspace id)
@@ -67,12 +69,28 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
         ? `https://${dashscopeWorkspaceId}.${dashscopeRegion}.maas.aliyuncs.com`
         : ''
     : '';
-  const fixedBaseUrl = isDashScope ? dashscopeBaseUrl : FIXED_BASE_URLS[provider] || '';
+  // Qianfan Token Plan 固定域名；后端按请求类型自动拼接
+  // /v2/tokenplan/personal（OpenAI）或 /anthropic/tokenplan/personal（Anthropic）
+  const qianfanFixedBaseUrl =
+    provider === 'qianfan' && qianfanType === 'token_plan'
+      ? 'https://qianfan.baidubce.com'
+      : '';
+  const fixedBaseUrl = isDashScope
+    ? dashscopeBaseUrl
+    : qianfanFixedBaseUrl || FIXED_BASE_URLS[provider] || '';
 
   useEffect(() => {
     if (channel) {
       setName(channel.name);
-      setProvider(channel.provider);
+      // 千帆 Token Plan 渠道实际 provider 为 qianfan_token_plan，
+      // 表单里显示为「千帆大模型」+ 类型「Token Plan」。
+      if (channel.provider === 'qianfan_token_plan') {
+        setProvider('qianfan');
+        setQianfanType('token_plan');
+      } else {
+        setProvider(channel.provider);
+        setQianfanType('qianfan');
+      }
       setPriority(String(channel.priority));
       setEnabled(channel.enabled);
       setAnthropicCompat(channel.anthropic_compat ?? false);
@@ -97,6 +115,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       setDashscopeRegion('cn-beijing');
       setDashscopeWorkspaceId('');
       setDashscopeType('dashscope');
+      setQianfanType('qianfan');
       setEndpoints([emptyEp()]);
     }
   }, [channel, open]);
@@ -131,9 +150,12 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // 千帆大模型类型 → provider qianfan；Token Plan → provider qianfan_token_plan
+    const effectiveProvider =
+      provider === 'qianfan' && qianfanType === 'token_plan' ? 'qianfan_token_plan' : provider;
     const data: Record<string, unknown> = {
       name,
-      provider,
+      provider: effectiveProvider,
       priority: Number(priority),
       enabled,
       anthropic_compat: anthropicCompat,
@@ -156,6 +178,15 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       (data as Record<string, unknown>).endpoints = (data.endpoints as Endpoint[]).map((ep: Endpoint) => ({
         ...ep,
         url: ep.full_url ? ep.url : finalUrl,
+      }));
+    }
+
+    // Qianfan Token Plan: URL 固定为 https://qianfan.baidubce.com，
+    // 后端自动拼接 /v2/tokenplan/personal 或 /anthropic/tokenplan/personal。
+    if (provider === 'qianfan' && qianfanType === 'token_plan') {
+      (data as Record<string, unknown>).endpoints = (data.endpoints as Endpoint[]).map((ep: Endpoint) => ({
+        ...ep,
+        url: ep.full_url ? ep.url : 'https://qianfan.baidubce.com',
       }));
     }
 
@@ -189,7 +220,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                 <Select value={provider} onValueChange={(v) => setProvider(v ?? '')} required>
                   <SelectTrigger className="h-9 bg-background"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {PROVIDERS.map((p) => (
+                    {PROVIDERS.filter((p) => p !== 'qianfan_token_plan').map((p) => (
                       <SelectItem key={p} value={p}>{PROVIDER_DISPLAY[p] || p}</SelectItem>
                     ))}
                   </SelectContent>
@@ -283,6 +314,40 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                       后端自动根据请求类型拼接 /apps/anthropic 或 /compatible-mode/v1
                     </p>
                   </div>
+                </div>
+              )}
+
+              {provider === 'qianfan' && (
+                <div className="space-y-3 pt-2 border-t border-muted/30 mt-2">
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium">{t('qianfan.type')}</Label>
+                    <Select
+                      value={qianfanType}
+                      onValueChange={(v) => setQianfanType((v ?? 'qianfan') as 'qianfan' | 'token_plan')}
+                    >
+                      <SelectTrigger className="h-9 bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="qianfan">{t('qianfan.typeQianfan')}</SelectItem>
+                        <SelectItem value="token_plan">{t('qianfan.typeTokenPlan')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {qianfanType === 'token_plan' ? (
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] text-muted-foreground leading-tight">
+                        {t('qianfan.tokenPlanDesc')}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] text-muted-foreground leading-tight">
+                        {t('qianfan.normalDesc')}
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

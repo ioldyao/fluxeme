@@ -3,6 +3,7 @@ pub mod anthropic_compat;
 pub mod dashscope;
 pub mod generic;
 pub mod openai;
+pub mod qianfan;
 pub mod vllm;
 
 use std::net::IpAddr;
@@ -521,6 +522,8 @@ pub struct ProviderRegistry {
     sglang: Arc<generic::GenericAdapter>,
     deepseek: Arc<generic::GenericAdapter>,
     dashscope: Arc<dashscope::DashScopeAdapter>,
+    qianfan: Arc<generic::GenericAdapter>,
+    qianfan_token_plan: Arc<qianfan::QianfanTokenPlanAdapter>,
     zhipu: Arc<generic::GenericAdapter>,
     minimax: Arc<generic::GenericAdapter>,
 }
@@ -534,6 +537,8 @@ impl ProviderRegistry {
             sglang: Arc::new(generic::GenericAdapter::sglang()),
             deepseek: Arc::new(generic::GenericAdapter::deepseek()),
             dashscope: Arc::new(dashscope::DashScopeAdapter::new()),
+            qianfan: Arc::new(generic::GenericAdapter::qianfan()),
+            qianfan_token_plan: Arc::new(qianfan::QianfanTokenPlanAdapter::new()),
             zhipu: Arc::new(generic::GenericAdapter::zhipu()),
             minimax: Arc::new(generic::GenericAdapter::minimax()),
         }
@@ -547,6 +552,8 @@ impl ProviderRegistry {
             "sglang" => Some(self.sglang.clone()),
             "deepseek" => Some(self.deepseek.clone()),
             "dashscope" => Some(self.dashscope.clone()),
+            "qianfan" => Some(self.qianfan.clone()),
+            "qianfan_token_plan" => Some(self.qianfan_token_plan.clone()),
             "zhipu" => Some(self.zhipu.clone()),
             "minimax" => Some(self.minimax.clone()),
             "azure" | "ollama" => Some(self.openai.clone()),

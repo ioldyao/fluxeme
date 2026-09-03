@@ -80,6 +80,14 @@ impl GenericAdapter {
             anthropic_path: "/v1/messages",
         }
     }
+
+    pub fn qianfan() -> Self {
+        Self {
+            name: "qianfan",
+            display_name: "Qianfan",
+            anthropic_path: "/v1/messages",
+        }
+    }
 }
 
 #[async_trait::async_trait]
