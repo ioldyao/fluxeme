@@ -24,8 +24,8 @@ data/
 outputs/
 test/
 web/assets/
-.claude/commands/
 scripts/
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+.mcp.json
