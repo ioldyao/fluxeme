@@ -151,8 +151,9 @@ function extractUserMessages(body: string | null | undefined): string[] {
     texts.push(stripped);
   }
 
-  // Agent sessions may have hundreds of user turns — only show the last few
-  if (texts.length > 3) return texts.slice(-3);
+  // Agent sessions may have hundreds of user turns — the relevant "user
+  // request" is the most recent real user input.
+  if (texts.length > 1) return [texts[texts.length - 1]];
   return texts;
 }
 
