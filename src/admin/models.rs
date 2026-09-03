@@ -358,14 +358,6 @@ fn normalize_and_validate_model(model: &mut Model) -> Result<(), AdminError> {
     {
         return Err(AdminError::bad_request("Channel ID cannot be empty"));
     }
-    let mut channel_ids = std::collections::HashSet::new();
-    if model
-        .channels
-        .iter()
-        .any(|binding| !channel_ids.insert(&binding.channel_id))
-    {
-        return Err(AdminError::bad_request("Duplicate channel binding"));
-    }
     Ok(())
 }
 

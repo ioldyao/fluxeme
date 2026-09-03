@@ -43,7 +43,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
   }, [model, open]);
 
   const [selectedAddChannel, setSelectedAddChannel] = useState('');
-  const availableChannels = channels?.filter((ch) => !bindings.some((b) => b.channel_id === ch.id)) ?? [];
+  const availableChannels = channels ?? [];
 
   const addBinding = (channelId: string) => {
     if (!channelId) return;
