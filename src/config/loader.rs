@@ -190,6 +190,8 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
         channel_id: String,
         #[serde(default = "default_one_i32")]
         priority: i32,
+        #[serde(default)]
+        max_tokens: Option<u32>,
     }
 
     #[derive(Default, Deserialize)]
@@ -389,6 +391,7 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
                         priority: mc.priority,
                         provider: String::new(),
                         upstream_model: None,
+                        max_tokens: mc.max_tokens,
                     })
                     .collect(),
                 published: false,

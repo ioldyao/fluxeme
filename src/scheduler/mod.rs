@@ -168,6 +168,13 @@ impl SchedulerService {
             upstream_model.as_deref(),
         )?;
 
+        // Apply the selected model-channel binding's upstream output cap
+        // before filtering, caching, reservation, and the upstream request.
+        // Keep the original numeric request value so a cross-binding fallback
+        // can re-apply the fallback binding's own cap.
+        dispatch.requested_max_tokens = body.get("max_tokens").and_then(Value::as_u64);
+        dispatch::clamp_max_tokens(&mut body, dispatch.max_tokens);
+
         // Anthropic-compat OpenAI channels accept /v1/messages and convert.
         if matches!(format, DispatchFormat::AnthropicMessages) {
             if let Some(ref ch) = self.routing.get_channel(&channel_id) {

@@ -269,6 +269,7 @@ mod tests {
                 priority: 0,
                 provider: String::new(),
                 upstream_model: Some("internal-upstream-name".to_string()),
+                max_tokens: None,
             }],
             published,
             context_length: Some(32_000),
@@ -318,6 +319,7 @@ mod tests {
             priority: 0,
             provider: String::new(),
             upstream_model: Some("another-internal-name".to_string()),
+            max_tokens: None,
         });
         let result = marketplace_projection(
             vec![configured],
@@ -356,6 +358,15 @@ fn normalize_and_validate_model(model: &mut Model) -> Result<(), AdminError> {
         .any(|binding| binding.channel_id.trim().is_empty())
     {
         return Err(AdminError::bad_request("Channel ID cannot be empty"));
+    }
+    if model
+        .channels
+        .iter()
+        .any(|binding| binding.max_tokens == Some(0))
+    {
+        return Err(AdminError::bad_request(
+            "Binding max_tokens must be greater than zero",
+        ));
     }
     Ok(())
 }

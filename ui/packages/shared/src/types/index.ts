@@ -138,6 +138,7 @@ export interface ModelChannel {
   priority: number;
   provider?: string;
   upstream_model?: string | null;
+  max_tokens?: number | null;
 }
 
 export interface MarketplaceFormats {

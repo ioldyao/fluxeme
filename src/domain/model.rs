@@ -83,6 +83,12 @@ pub struct ModelChannel {
     /// under different internal names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream_model: Option<String>,
+    /// Per-channel cap on the upstream `max_tokens` this model may request.
+    /// When set, the scheduler clamps the request's `max_tokens` down to this
+    /// value before hitting the upstream (some upstreams reject larger values
+    /// with a 500). `None` leaves the request untouched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
 }
 
 fn default_priority() -> i32 {

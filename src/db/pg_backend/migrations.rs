@@ -79,8 +79,10 @@ impl CoreBackend for PgBackend {
                 model_id TEXT NOT NULL REFERENCES models(id) ON DELETE CASCADE,
                 channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
                 priority INTEGER NOT NULL DEFAULT 1,
+                max_tokens BIGINT,
                 PRIMARY KEY (model_id, channel_id)
             );
+            ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS max_tokens BIGINT;
 
             CREATE TABLE IF NOT EXISTS routing_rules (
                 id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,

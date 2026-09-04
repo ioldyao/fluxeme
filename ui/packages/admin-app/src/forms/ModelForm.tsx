@@ -26,7 +26,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
   const [id, setId] = useState('');
   const [name, setName] = useState('');
   const [contextLength, setContextLength] = useState('');
-  const [bindings, setBindings] = useState<{ channel_id: string; priority: number; upstream_model: string }[]>([]);
+  const [bindings, setBindings] = useState<{ channel_id: string; priority: number; upstream_model: string; max_tokens: string }[]>([]);
   const [category, setCategory] = useState<string[]>([]);
 
   useEffect(() => {
@@ -34,7 +34,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
       setId(model.id);
       setName(model.name);
       setContextLength(model.context_length ? String(model.context_length) : '');
-      setBindings(model.channels?.map((c) => ({ ...c, upstream_model: c.upstream_model || '' })) || []);
+      setBindings(model.channels?.map((c) => ({ ...c, upstream_model: c.upstream_model || '', max_tokens: c.max_tokens ? String(c.max_tokens) : '' })) || []);
       setCategory(model.category ? model.category.split(',').filter(Boolean) : []);
     } else {
       setId(''); setName('');
@@ -47,7 +47,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
 
   const addBinding = (channelId: string) => {
     if (!channelId) return;
-    setBindings([...bindings, { channel_id: channelId, priority: 1, upstream_model: '' }]);
+    setBindings([...bindings, { channel_id: channelId, priority: 1, upstream_model: '', max_tokens: '' }]);
     setSelectedAddChannel('');
   };
   const updateBinding = (i: number, field: string, value: string | number) =>
@@ -68,7 +68,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
       context_length: contextLength ? Number(contextLength) : null,
       published: model?.published ?? false,
       category: category.join(','),
-      channels: bindings.map((b) => ({ channel_id: b.channel_id, priority: Number(b.priority), upstream_model: b.upstream_model || null })),
+      channels: bindings.map((b) => ({ channel_id: b.channel_id, priority: Number(b.priority), upstream_model: b.upstream_model || null, max_tokens: b.max_tokens ? Number(b.max_tokens) : null })),
     };
     onSubmit(data);
   };
@@ -215,6 +215,8 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                             value={b.upstream_model}
                             onChange={(e) => updateBinding(i, 'upstream_model', e.target.value)}
                           />
+                        </div>
+                        <div className="flex items-center gap-2">
                           <span className="text-xs text-muted-foreground shrink-0">{t('form.channelPriority')}:</span>
                           <Input
                             className="h-8 bg-background w-20"
@@ -222,6 +224,17 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                             placeholder="0"
                             value={b.priority}
                             onChange={(e) => updateBinding(i, 'priority', Number(e.target.value))}
+                          />
+                          <span className="text-xs text-muted-foreground shrink-0">{t('form.bindingMaxTokens')}:</span>
+                          <Input
+                            className="h-8 bg-background w-24"
+                            type="number"
+                            min="1"
+                            step="1"
+                            placeholder={t('form.bindingMaxTokensPlaceholder')}
+                            title={t('form.bindingMaxTokensHint')}
+                            value={b.max_tokens}
+                            onChange={(e) => updateBinding(i, 'max_tokens', e.target.value)}
                           />
                         </div>
                       </div>

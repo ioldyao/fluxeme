@@ -53,6 +53,7 @@ type EndpointStatusRow = {
   endpointEnabled: boolean;
   endpointWeight: number;
   endpointTimeoutSecs?: number | null;
+  bindingMaxTokens?: number | null;
   routingObserved: boolean;
   routingAvailable: boolean;
   probe: ProbeResult | null;
@@ -608,6 +609,7 @@ export default function FlowTowerContent() {
             endpointEnabled: endpoint.enabled !== false,
             endpointWeight: endpoint.weight,
             endpointTimeoutSecs: endpoint.timeout_secs,
+            bindingMaxTokens: binding.max_tokens,
             routingObserved: live ? true : Boolean(endpointHealth),
             // Prefer live binding-pool state over 24h aggregates.
             routingAvailable: live ? live.available : (endpointHealth?.available ?? false),
@@ -1135,7 +1137,13 @@ export default function FlowTowerContent() {
                                 </td>
                                 <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">
                                   <div>{row.endpointEnabled ? t('flowControl.enabled') : t('flowControl.disabled')}</div>
-                                  <div className="text-[10px] text-muted-foreground">weight {row.endpointWeight}{row.endpointTimeoutSecs != null ? ` · ${row.endpointTimeoutSecs}s` : ''}</div>
+                                  <div className="text-[10px] text-muted-foreground" title={t('flowControl.bindingMaxTokensHint')}>
+                                    weight {row.endpointWeight}
+                                    {row.endpointTimeoutSecs != null ? ` · ${row.endpointTimeoutSecs}s` : ''}
+                                    {row.bindingMaxTokens != null
+                                      ? ` · max ${row.bindingMaxTokens}`
+                                      : ''}
+                                  </div>
                                 </td>
                                 <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">{endpointRoutingLabel(row, t)}</td>
                                 <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">{endpointProbeLabel(row.probe, t)}</td>

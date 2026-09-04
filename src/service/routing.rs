@@ -21,6 +21,8 @@ pub struct RoutePlan {
     pub endpoint_idx: usize,
     pub endpoint: EndpointConfig,
     pub balancer: Arc<LoadBalancer>,
+    /// Optional per-model-binding cap applied to request `max_tokens` by the scheduler.
+    pub max_tokens: Option<u32>,
 }
 
 pub struct RoutingService {
@@ -362,7 +364,7 @@ impl RoutingService {
         let _snapshot_guard = self.snapshot_lock.read().unwrap_or_else(|e| e.into_inner());
         let models = self.models.read().unwrap_or_else(|e| e.into_inner());
         let channels = self.channels.read().unwrap_or_else(|e| e.into_inner());
-        let mut candidates: Vec<(i32, String, String, Arc<LoadBalancer>)> = models
+        let mut candidates: Vec<(i32, String, String, Arc<LoadBalancer>, Option<u32>)> = models
             .iter()
             .filter(|configured| configured.name == model && configured.published)
             .flat_map(|configured| {
@@ -390,22 +392,23 @@ impl RoutingService {
                                 binding.channel_id.clone(),
                                 channels.get(&binding.channel_id)?.provider.clone(),
                                 balancer,
+                                binding.max_tokens,
                             ))
                         })
                 })
             })
             .collect();
-        candidates.sort_by_key(|(priority, _, _, _)| *priority);
-        let Some(best_priority) = candidates.first().map(|(priority, _, _, _)| *priority) else {
+        candidates.sort_by_key(|(priority, _, _, _, _)| *priority);
+        let Some(best_priority) = candidates.first().map(|(priority, _, _, _, _)| *priority) else {
             return Err(RouteError::unavailable(model_busy_message(&model)));
         };
         let same_priority: Vec<_> = candidates
             .into_iter()
-            .filter(|(priority, _, _, _)| *priority == best_priority)
+            .filter(|(priority, _, _, _, _)| *priority == best_priority)
             .collect();
         let start = self.zone_counter.fetch_add(1, Ordering::Relaxed) as usize;
         for offset in 0..same_priority.len() {
-            let (_, channel_id, provider_name, balancer) =
+            let (_, channel_id, provider_name, balancer, max_tokens) =
                 &same_priority[(start + offset) % same_priority.len()];
             let excluded: HashSet<i64> = attempted
                 .iter()
@@ -422,6 +425,7 @@ impl RoutingService {
                     endpoint_idx,
                     endpoint: endpoint.clone(),
                     balancer: balancer.clone(),
+                    max_tokens: *max_tokens,
                 });
             }
         }
@@ -489,6 +493,7 @@ impl RoutingService {
             endpoint_idx,
             endpoint: endpoint.clone(),
             balancer,
+            max_tokens: binding.max_tokens,
         })
     }
 
@@ -660,9 +665,7 @@ impl RoutingService {
     ///
     /// Returns per-endpoint: (endpoint_id, enabled, healthy_bindings,
     /// total_bindings, long_unavailable).
-    pub fn all_endpoints_live_health(
-        &self,
-    ) -> Vec<(i64, bool, u32, u32, bool)> {
+    pub fn all_endpoints_live_health(&self) -> Vec<(i64, bool, u32, u32, bool)> {
         let _snapshot_guard = self.snapshot_lock.read().unwrap_or_else(|e| e.into_inner());
         let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
         let models = self.models.read().unwrap_or_else(|e| e.into_inner());

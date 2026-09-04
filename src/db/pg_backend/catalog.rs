@@ -230,7 +230,7 @@ impl CatalogBackend for PgBackend {
         .await?;
 
         let b_rows = query(
-            "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model \
+            "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model, mc.max_tokens \
              FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id \
              ORDER BY mc.model_id, mc.priority",
         )
@@ -275,6 +275,7 @@ impl CatalogBackend for PgBackend {
                 priority: r.get(2),
                 provider: r.get::<Option<String>, _>(3).unwrap_or_default(),
                 upstream_model: r.get::<Option<String>, _>(4),
+                max_tokens: r.get::<Option<i64>, _>(5).and_then(|v| u32::try_from(v).ok()),
             });
         }
         for m in &mut models {
@@ -321,7 +322,7 @@ impl CatalogBackend for PgBackend {
                 category: r.get::<Option<String>, _>(12).unwrap_or_default(),
             };
             let bindings = query(
-                "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model \
+                "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model, mc.max_tokens \
                  FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id \
                  WHERE mc.model_id = $1 ORDER BY mc.priority",
             )
@@ -336,6 +337,7 @@ impl CatalogBackend for PgBackend {
                     priority: r.get(2),
                     provider: r.get::<Option<String>, _>(3).unwrap_or_default(),
                     upstream_model: r.get::<Option<String>, _>(4),
+                max_tokens: r.get::<Option<i64>, _>(5).and_then(|v| u32::try_from(v).ok()),
                 })
                 .collect();
             Ok(Some(m))
@@ -370,13 +372,14 @@ impl CatalogBackend for PgBackend {
 
         for binding in &m.channels {
             query(
-                "INSERT INTO model_channels (model_id, channel_id, priority, upstream_model) \
-                 VALUES ($1, $2, $3, $4)",
+                "INSERT INTO model_channels (model_id, channel_id, priority, upstream_model, max_tokens) \
+                 VALUES ($1, $2, $3, $4, $5)",
             )
             .bind(&m.id)
             .bind(&binding.channel_id)
             .bind(binding.priority)
             .bind(&binding.upstream_model)
+            .bind(binding.max_tokens.map(i64::from))
             .execute(&mut *tx)
             .await?;
         }
@@ -416,12 +419,13 @@ impl CatalogBackend for PgBackend {
             .await?;
         for binding in &m.channels {
             query(
-                "INSERT INTO model_channels (model_id, channel_id, priority, upstream_model) VALUES ($1, $2, $3, $4)",
+                "INSERT INTO model_channels (model_id, channel_id, priority, upstream_model, max_tokens) VALUES ($1, $2, $3, $4, $5)",
             )
             .bind(&m.id)
             .bind(&binding.channel_id)
             .bind(binding.priority)
             .bind(&binding.upstream_model)
+            .bind(binding.max_tokens.map(i64::from))
             .execute(&mut *tx)
             .await?;
         }
@@ -448,7 +452,7 @@ impl CatalogBackend for PgBackend {
         .await?;
 
         let b_rows = query(
-            "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model \
+            "SELECT mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model, mc.max_tokens \
              FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id \
              ORDER BY mc.model_id, mc.priority",
         )
@@ -493,6 +497,7 @@ impl CatalogBackend for PgBackend {
                 priority: r.get(2),
                 provider: r.get::<Option<String>, _>(3).unwrap_or_default(),
                 upstream_model: r.get::<Option<String>, _>(4),
+                max_tokens: r.get::<Option<i64>, _>(5).and_then(|v| u32::try_from(v).ok()),
             });
         }
         for m in &mut models {

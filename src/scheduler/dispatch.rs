@@ -64,6 +64,12 @@ pub(crate) struct Dispatch {
     pub(crate) providers: Arc<ProviderRegistry>,
     pub(crate) model: String,
     pub(crate) upstream_model: Option<String>,
+    /// Per-binding cap applied to the request's `max_tokens` before the
+    /// upstream call. Updated when a retry crosses to another binding.
+    pub(crate) max_tokens: Option<u32>,
+    /// Original numeric request value, retained so a fallback to another
+    /// binding can re-apply that binding's cap rather than the previous cap.
+    pub(crate) requested_max_tokens: Option<u64>,
     /// Endpoint identities already attempted by this request. A retry must
     /// never immediately revisit the same binding endpoint.
     pub(crate) attempted_endpoint_ids: HashSet<i64>,
@@ -118,9 +124,22 @@ impl Dispatch {
         self.endpoint = plan.endpoint;
         self.balancer = plan.balancer;
         self.adapter = adapter;
+        self.max_tokens = plan.max_tokens;
         self.attempted_endpoint_ids.clear();
         self.attempted_endpoint_indexes.clear();
         true
+    }
+
+    /// Restore the original request budget and apply the current binding's
+    /// cap before each attempt. This matters when fallback changes bindings:
+    /// a lower cap from the first channel must not leak into the next one.
+    fn body_for_attempt(&self, body: &Value) -> Value {
+        let mut body = body.clone();
+        if let Some(requested) = self.requested_max_tokens {
+            body["max_tokens"] = Value::from(requested);
+        }
+        clamp_max_tokens(&mut body, self.max_tokens);
+        body
     }
 
     /// Feed a successful upstream call into the circuit breaker (closes it).
@@ -171,12 +190,28 @@ pub(crate) fn resolve_dispatch(
         providers: svc.providers.clone(),
         model: model.to_string(),
         upstream_model: upstream_model.map(str::to_string),
+        max_tokens: plan.max_tokens,
+        requested_max_tokens: None,
         attempted_endpoint_ids: HashSet::new(),
         attempted_endpoint_indexes: HashSet::new(),
         attempted_channels: HashSet::new(),
     })
 }
 
+/// Clamp a request's output-token budget to the selected model binding's
+/// optional upstream limit. Missing, null, and non-numeric values are left
+/// untouched so existing validation/upstream behavior is preserved.
+pub(crate) fn clamp_max_tokens(body: &mut Value, limit: Option<u32>) {
+    let Some(limit) = limit else {
+        return;
+    };
+    let Some(requested) = body.get("max_tokens").and_then(Value::as_u64) else {
+        return;
+    };
+    if requested > u64::from(limit) {
+        body["max_tokens"] = Value::from(limit);
+    }
+}
 /// Channel-level compatibility fallback (dead code, kept for parity).
 #[allow(dead_code)]
 pub(crate) fn resolve_route(
@@ -205,6 +240,8 @@ pub(crate) fn resolve_route(
         providers: svc.providers.clone(),
         model: String::new(),
         upstream_model: None,
+        max_tokens: None,
+        requested_max_tokens: None,
         attempted_endpoint_ids: HashSet::new(),
         attempted_endpoint_indexes: HashSet::new(),
         attempted_channels: HashSet::new(),
@@ -233,7 +270,8 @@ impl crate::scheduler::SchedulerService {
     ) -> Result<Value, (ProviderError, u32)> {
         let mut retry_count = 0u32;
         loop {
-            match call(dispatch, body.clone()).await {
+            let attempt_body = dispatch.body_for_attempt(&body);
+            match call(dispatch, attempt_body).await {
                 Ok(resp) => {
                     return Ok(resp);
                 }
@@ -1116,9 +1154,10 @@ impl crate::scheduler::SchedulerService {
         let max_retries = self.gateway_config.read().unwrap().max_retries;
         let mut retries = 0u32;
         let result = loop {
+            let attempt_body = dispatch.body_for_attempt(&body);
             let result = dispatch
                 .adapter
-                .relay(&dispatch.endpoint, "/v1/responses", body.clone())
+                .relay(&dispatch.endpoint, "/v1/responses", attempt_body)
                 .await;
             match result {
                 Err(error)
@@ -1278,9 +1317,10 @@ impl crate::scheduler::SchedulerService {
         let max_retries = self.gateway_config.read().unwrap().max_retries;
         let mut retries = 0u32;
         let stream_result = loop {
+            let attempt_body = dispatch.body_for_attempt(&body);
             let result = dispatch
                 .adapter
-                .responses_stream(&dispatch.endpoint, body.clone())
+                .responses_stream(&dispatch.endpoint, attempt_body)
                 .await;
             match result {
                 Err(error)
@@ -1667,4 +1707,45 @@ pub(crate) fn responses_input_tokens_supported_for_channel(
         channel.map(|ch| ch.provider.as_str()),
         None | Some("openai" | "azure" | "ollama")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clamp_max_tokens;
+    use serde_json::json;
+
+    #[test]
+    fn clamps_requested_max_tokens_above_binding_limit() {
+        let mut body = json!({"max_tokens": 100_000});
+        clamp_max_tokens(&mut body, Some(65_536));
+        assert_eq!(body["max_tokens"], 65_536);
+    }
+
+    #[test]
+    fn preserves_requested_max_tokens_within_binding_limit() {
+        let mut body = json!({"max_tokens": 32_768});
+        clamp_max_tokens(&mut body, Some(65_536));
+        assert_eq!(body["max_tokens"], 32_768);
+    }
+
+    #[test]
+    fn leaves_missing_max_tokens_untouched() {
+        let mut body = json!({"model": "example"});
+        clamp_max_tokens(&mut body, Some(65_536));
+        assert_eq!(body, json!({"model": "example"}));
+    }
+
+    #[test]
+    fn leaves_non_numeric_max_tokens_untouched() {
+        let mut body = json!({"max_tokens": "100000"});
+        clamp_max_tokens(&mut body, Some(65_536));
+        assert_eq!(body["max_tokens"], "100000");
+    }
+
+    #[test]
+    fn leaves_body_untouched_without_binding_limit() {
+        let mut body = json!({"max_tokens": 100_000});
+        clamp_max_tokens(&mut body, None);
+        assert_eq!(body["max_tokens"], 100_000);
+    }
 }
