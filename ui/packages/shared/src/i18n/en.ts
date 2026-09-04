@@ -157,6 +157,7 @@ const en: Record<string, string> = {
   'flowControl.health24h': 'Routing Health · Last 24h',
   'flowControl.noHealthDetail': 'This configured model has no routing health records yet; that does not necessarily indicate a failure. It may have no traffic or enabled endpoints.',
   'flowControl.channelBindings': 'Configured channel bindings',
+  'flowControl.bindingPriorityHint': 'Routing priority — lower value routes this model to this channel first.',
   'flowControl.metricsRange': 'Flow Metrics · Selected range',
   'flowControl.aggregateView': 'Aggregate view',
   'flowControl.selectModelHint': 'Select a specific model on the left to view its configuration, last 24-hour status, and endpoint availability.',

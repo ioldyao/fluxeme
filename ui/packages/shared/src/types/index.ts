@@ -118,7 +118,6 @@ export interface Channel {
   id: string;
   name: string;
   provider: Provider;
-  priority: number;
   enabled: boolean;
   anthropic_compat?: boolean;
   endpoints: Endpoint[];

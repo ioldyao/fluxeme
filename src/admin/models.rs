@@ -281,7 +281,6 @@ mod tests {
             id: id.to_string(),
             name: id.to_string(),
             provider: provider.to_string(),
-            priority: 0,
             enabled: true,
             anthropic_compat,
             endpoints: Vec::new(),

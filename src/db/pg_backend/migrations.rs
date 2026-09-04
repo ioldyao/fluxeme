@@ -50,10 +50,13 @@ impl CoreBackend for PgBackend {
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL DEFAULT '',
                 provider TEXT NOT NULL,
-                priority INTEGER NOT NULL DEFAULT 1,
                 enabled BOOLEAN NOT NULL DEFAULT true,
                 anthropic_compat BOOLEAN NOT NULL DEFAULT false
             );
+            -- `channels.priority` was a display-only field that routing never
+            -- consulted (routing priority lives on model_channels.priority).
+            -- Drop it so the two priority concepts cannot be confused.
+            ALTER TABLE channels DROP COLUMN IF EXISTS priority;
 
             CREATE TABLE IF NOT EXISTS endpoints (
                 id BIGSERIAL PRIMARY KEY,

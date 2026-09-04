@@ -47,7 +47,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
 
   const addBinding = (channelId: string) => {
     if (!channelId) return;
-    setBindings([...bindings, { channel_id: channelId, priority: 0, upstream_model: '' }]);
+    setBindings([...bindings, { channel_id: channelId, priority: 1, upstream_model: '' }]);
     setSelectedAddChannel('');
   };
   const updateBinding = (i: number, field: string, value: string | number) =>

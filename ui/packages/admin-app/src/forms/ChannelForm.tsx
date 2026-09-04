@@ -49,7 +49,6 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
   const { data: health } = useChannelHealth(channel?.id ?? '');
   const [name, setName] = useState('');
   const [provider, setProvider] = useState('');
-  const [priority, setPriority] = useState('0');
   const [enabled, setEnabled] = useState(true);
   const [anthropicCompat, setAnthropicCompat] = useState(false);
   const [endpoints, setEndpoints] = useState<Endpoint[]>([emptyEp()]);
@@ -106,7 +105,6 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
         setQianfanType('qianfan');
         setVolcesType('ark');
       }
-      setPriority(String(channel.priority));
       setEnabled(channel.enabled);
       setAnthropicCompat(channel.anthropic_compat ?? false);
       // Load DashScope-specific config from channel
@@ -126,7 +124,7 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       }
       setEndpoints(channel.endpoints.length ? channel.endpoints : [emptyEp()]);
     } else {
-      setName(''); setProvider(''); setPriority('0'); setEnabled(true); setAnthropicCompat(false);
+      setName(''); setProvider(''); setEnabled(true); setAnthropicCompat(false);
       setDashscopeRegion('cn-beijing');
       setDashscopeWorkspaceId('');
       setDashscopeType('dashscope');
@@ -175,7 +173,6 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
     const data: Record<string, unknown> = {
       name,
       provider: effectiveProvider,
-      priority: Number(priority),
       enabled,
       anthropic_compat: provider === 'openai' ? anthropicCompat : false,
       ...(channel ? {} : { id: randomId() }),
@@ -269,16 +266,6 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                 {provider === 'aiionly' && (
                   <p className="text-[11px] text-muted-foreground leading-tight">{t('channel.aiionlyDesc')}</p>
                 )}
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium">{t('form.priority')}</Label>
-                <Input
-                  className="h-9 bg-background"
-                  type="number"
-                  value={priority}
-                  onChange={(e) => setPriority(e.target.value)}
-                />
               </div>
 
               <label className="flex items-center gap-2 text-sm pt-1">

@@ -53,7 +53,6 @@ mod tests {
             id: "ch_1".to_string(),
             name: "test".to_string(),
             provider: provider.to_string(),
-            priority: 1,
             enabled: true,
             anthropic_compat,
             endpoints: Vec::new(),

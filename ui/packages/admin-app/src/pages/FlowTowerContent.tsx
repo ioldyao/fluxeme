@@ -1286,7 +1286,7 @@ export default function FlowTowerContent() {
                             {selectedCatalogModel.config.channels.map((channel) => (
                               <div key={`${channel.channel_id}-${channel.priority}`} className="flex justify-between gap-3 text-[10px] text-muted-foreground">
                                 <span className="truncate">{channel.channel_id}{channel.upstream_model ? ` → ${channel.upstream_model}` : ''}</span>
-                                <span className="shrink-0">priority {channel.priority}</span>
+                                <span className="shrink-0" title={t('flowControl.bindingPriorityHint')}>priority {channel.priority}</span>
                               </div>
                             ))}
                           </div>

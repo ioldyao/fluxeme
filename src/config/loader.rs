@@ -179,8 +179,6 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
         #[serde(default)]
         name: String,
         provider: String,
-        #[serde(default = "default_one_i32")]
-        priority: i32,
         #[serde(default = "default_true")]
         enabled: bool,
         #[serde(default)]
@@ -344,7 +342,6 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
                 id: c.id.clone(),
                 name: c.name.clone(),
                 provider: c.provider.clone(),
-                priority: c.priority,
                 enabled: c.enabled,
                 anthropic_compat: false,
                 endpoints: c

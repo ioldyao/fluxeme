@@ -7,7 +7,7 @@ impl CatalogBackend for PgBackend {
 
     async fn list_channels(&self) -> Result<Vec<Channel>, DbError> {
         let ch_rows = query(
-            "SELECT id, name, provider, priority, enabled, anthropic_compat FROM channels ORDER BY priority, id",
+            "SELECT id, name, provider, enabled, anthropic_compat FROM channels ORDER BY id",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -24,9 +24,8 @@ impl CatalogBackend for PgBackend {
                 id: r.get(0),
                 name: r.get(1),
                 provider: r.get(2),
-                priority: r.get(3),
-                enabled: r.get(4),
-                anthropic_compat: r.get(5),
+                enabled: r.get(3),
+                anthropic_compat: r.get(4),
                 endpoints: Vec::new(),
             })
             .collect();
@@ -62,7 +61,7 @@ impl CatalogBackend for PgBackend {
 
     async fn get_channel(&self, id: &str) -> Result<Option<Channel>, DbError> {
         let rows = query(
-            "SELECT id, name, provider, priority, enabled, anthropic_compat FROM channels WHERE id = $1",
+            "SELECT id, name, provider, enabled, anthropic_compat FROM channels WHERE id = $1",
         )
         .bind(id)
         .fetch_all(&self.pool)
@@ -73,9 +72,8 @@ impl CatalogBackend for PgBackend {
                 id: r.get(0),
                 name: r.get(1),
                 provider: r.get(2),
-                priority: r.get(3),
-                enabled: r.get(4),
-                anthropic_compat: r.get(5),
+                enabled: r.get(3),
+                anthropic_compat: r.get(4),
                 endpoints: Vec::new(),
             };
             let eps = query(
@@ -111,12 +109,11 @@ impl CatalogBackend for PgBackend {
 
     async fn create_channel(&self, ch: &Channel) -> Result<(), DbError> {
         query(
-            "INSERT INTO channels (id, name, provider, priority, enabled, anthropic_compat) VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO channels (id, name, provider, enabled, anthropic_compat) VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(&ch.id)
         .bind(&ch.name)
         .bind(&ch.provider)
-        .bind(ch.priority)
         .bind(ch.enabled)
         .bind(ch.anthropic_compat)
         .execute(&self.pool)
@@ -140,11 +137,10 @@ impl CatalogBackend for PgBackend {
 
     async fn update_channel(&self, ch: &Channel) -> Result<(), DbError> {
         query(
-            "UPDATE channels SET name = $1, provider = $2, priority = $3, enabled = $4, anthropic_compat = $5 WHERE id = $6",
+            "UPDATE channels SET name = $1, provider = $2, enabled = $3, anthropic_compat = $4 WHERE id = $5",
         )
         .bind(&ch.name)
         .bind(&ch.provider)
-        .bind(ch.priority)
         .bind(ch.enabled)
         .bind(ch.anthropic_compat)
         .bind(&ch.id)

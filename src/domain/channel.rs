@@ -7,8 +7,6 @@ pub struct Channel {
     #[serde(default)]
     pub name: String,
     pub provider: String,
-    #[serde(default = "default_priority")]
-    pub priority: i32,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
     /// When true, this OpenAI channel also accepts Anthropic-format /v1/messages
@@ -36,10 +34,6 @@ pub struct Endpoint {
     /// When true, use `url` exactly without appending a provider path.
     #[serde(default)]
     pub full_url: bool,
-}
-
-fn default_priority() -> i32 {
-    1
 }
 
 fn default_enabled() -> bool {

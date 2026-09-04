@@ -157,6 +157,7 @@ const zh: Record<string, string> = {
   'flowControl.health24h': 'Routing Health · 最近 24h',
   'flowControl.noHealthDetail': '该已配置模型当前没有可用的 routing health 记录；这不等于故障，可能是无流量或没有启用端点。',
   'flowControl.channelBindings': '配置通道绑定',
+  'flowControl.bindingPriorityHint': '路由优先级：数值越小，该模型越优先路由到此渠道。',
   'flowControl.metricsRange': 'Flow Metrics · 当前选择区间',
   'flowControl.aggregateView': '聚合视图',
   'flowControl.selectModelHint': '选择左侧具体模型后，可查看模型配置、最近 24 小时运行状态和端点可用性。',

@@ -103,7 +103,6 @@ function ChannelRow({
             </span>
           )}
         </td>
-        <td className="py-3 px-2 text-center">{ch.priority}</td>
         <td className="py-3 px-2 text-center">{endpoints.length}</td>
         <td className="py-3 px-2 text-center">
           <Switch
@@ -125,7 +124,7 @@ function ChannelRow({
       {/* Expanded endpoint detail row */}
       {expanded && (
         <tr className="border-b bg-muted/20">
-          <td colSpan={8} className="p-0">
+          <td colSpan={7} className="p-0">
             <div className="py-3 pr-4 pl-12">
               {endpoints.length === 0 ? (
                 <div className="text-sm text-muted-foreground py-2">{t('endpoint.noEndpoints')}</div>
@@ -237,7 +236,6 @@ export default function Channels() {
                     <th className="text-left py-3 px-2">{t('table.id')}</th>
                     <th className="text-left py-3 px-2">{t('table.name')}</th>
                     <th className="text-left py-3 px-2">{t('table.provider')}</th>
-                    <th className="text-center py-3 px-2">{t('table.priority')}</th>
                     <th className="text-center py-3 px-2">{t('table.endpoints')}</th>
                     <th className="text-center py-3 px-2">{t('table.statusLabel')}</th>
                     <th className="text-right py-3 px-2">{t('table.actions')}</th>
