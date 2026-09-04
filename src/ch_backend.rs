@@ -1320,24 +1320,21 @@ impl ClickHouseBackend {
             .collect())
     }
 
-    pub async fn query_usage(
-        &self,
-        limit: usize,
-        offset: usize,
+    fn usage_conditions_and_binds(
         filter: &crate::domain::usage::UsageFilter,
-    ) -> Result<Vec<crate::domain::usage::UsageRecord>, String> {
+    ) -> Result<(Vec<String>, Vec<String>), String> {
         let mut conditions = Vec::new();
         let mut binds = Vec::new();
         if let Some(user_id) = filter.user_id.as_deref().filter(|value| !value.is_empty()) {
-            conditions.push("user_id = ?");
+            conditions.push("user_id = ?".to_string());
             binds.push(user_id.to_string());
         }
         if let Some(team_id) = filter.team_id.as_deref().filter(|value| !value.is_empty()) {
-            conditions.push("team_id = ?");
+            conditions.push("team_id = ?".to_string());
             binds.push(team_id.to_string());
         }
         if let Some(model) = filter.model.as_deref().filter(|value| !value.is_empty()) {
-            conditions.push("model = ?");
+            conditions.push("model = ?".to_string());
             binds.push(model.to_string());
         }
         if let Some(api_key_name) = filter
@@ -1345,7 +1342,7 @@ impl ClickHouseBackend {
             .as_deref()
             .filter(|value| !value.is_empty())
         {
-            conditions.push("api_key_name = ?");
+            conditions.push("api_key_name = ?".to_string());
             binds.push(api_key_name.to_string());
         }
         if let Some(api_format) = filter
@@ -1353,22 +1350,78 @@ impl ClickHouseBackend {
             .as_deref()
             .filter(|value| !value.is_empty())
         {
-            conditions.push("api_format = ?");
+            conditions.push("api_format = ?".to_string());
             binds.push(api_format.to_string());
+        }
+        if let Some(request_id) = filter
+            .request_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push("startsWith(request_id, ?)".to_string());
+            binds.push(request_id.to_string());
+        }
+        if let Some(channel_id) = filter
+            .channel_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push("channel_id = ?".to_string());
+            binds.push(channel_id.to_string());
+        }
+        if let Some(channel_ids) = filter.channel_ids.as_deref() {
+            if channel_ids.is_empty() {
+                conditions.push("0 = 1".to_string());
+            } else {
+                conditions.push(format!(
+                    "channel_id IN ({})",
+                    vec!["?"; channel_ids.len()].join(", ")
+                ));
+                binds.extend(channel_ids.iter().cloned());
+            }
+        }
+        if let Some(endpoint_id) = filter.endpoint_id {
+            conditions.push("endpoint_id = ?".to_string());
+            binds.push(endpoint_id.to_string());
+        }
+        if let Some(endpoint_url) = filter
+            .endpoint_url
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push("endpoint_url = ?".to_string());
+            binds.push(endpoint_url.to_string());
+        }
+        if let Some(client_ip) = filter
+            .client_ip
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            conditions.push("client_ip = ?".to_string());
+            binds.push(client_ip.to_string());
         }
         if let Some(start_date) = filter
             .start_date
             .as_deref()
             .filter(|value| !value.is_empty())
         {
-            conditions.push("usage_events.timestamp >= parseDateTimeBestEffort(?)");
+            conditions.push("usage_events.timestamp >= parseDateTimeBestEffort(?)".to_string());
             binds.push(normalize_clickhouse_datetime(start_date)?);
         }
         if let Some(end_date) = filter.end_date.as_deref().filter(|value| !value.is_empty()) {
-            conditions.push("usage_events.timestamp < parseDateTimeBestEffort(?)");
+            conditions.push("usage_events.timestamp < parseDateTimeBestEffort(?)".to_string());
             binds.push(normalize_clickhouse_datetime(end_date)?);
         }
+        Ok((conditions, binds))
+    }
 
+    pub async fn query_usage(
+        &self,
+        limit: usize,
+        offset: usize,
+        filter: &crate::domain::usage::UsageFilter,
+    ) -> Result<Vec<crate::domain::usage::UsageRecord>, String> {
+        let (conditions, binds) = Self::usage_conditions_and_binds(filter)?;
         let where_clause = if conditions.is_empty() {
             String::new()
         } else {
@@ -1403,49 +1456,7 @@ impl ClickHouseBackend {
         &self,
         filter: &crate::domain::usage::UsageFilter,
     ) -> Result<usize, String> {
-        let mut conditions = Vec::new();
-        let mut binds = Vec::new();
-        if let Some(user_id) = filter.user_id.as_deref().filter(|value| !value.is_empty()) {
-            conditions.push("user_id = ?");
-            binds.push(user_id.to_string());
-        }
-        if let Some(team_id) = filter.team_id.as_deref().filter(|value| !value.is_empty()) {
-            conditions.push("team_id = ?");
-            binds.push(team_id.to_string());
-        }
-        if let Some(model) = filter.model.as_deref().filter(|value| !value.is_empty()) {
-            conditions.push("model = ?");
-            binds.push(model.to_string());
-        }
-        if let Some(api_key_name) = filter
-            .api_key_name
-            .as_deref()
-            .filter(|value| !value.is_empty())
-        {
-            conditions.push("api_key_name = ?");
-            binds.push(api_key_name.to_string());
-        }
-        if let Some(api_format) = filter
-            .api_format
-            .as_deref()
-            .filter(|value| !value.is_empty())
-        {
-            conditions.push("api_format = ?");
-            binds.push(api_format.to_string());
-        }
-        if let Some(start_date) = filter
-            .start_date
-            .as_deref()
-            .filter(|value| !value.is_empty())
-        {
-            conditions.push("usage_events.timestamp >= parseDateTimeBestEffort(?)");
-            binds.push(normalize_clickhouse_datetime(start_date)?);
-        }
-        if let Some(end_date) = filter.end_date.as_deref().filter(|value| !value.is_empty()) {
-            conditions.push("usage_events.timestamp < parseDateTimeBestEffort(?)");
-            binds.push(normalize_clickhouse_datetime(end_date)?);
-        }
-
+        let (conditions, binds) = Self::usage_conditions_and_binds(filter)?;
         let where_clause = if conditions.is_empty() {
             String::new()
         } else {
@@ -1468,6 +1479,46 @@ impl ClickHouseBackend {
             .await
             .map_err(|e| format!("CH count_usage: {e}"))?;
         Ok(row.count as usize)
+    }
+
+    /// Most recent distinct client IPs by request volume — used to populate the
+    /// IP filter combobox on the admin usage log.
+    pub async fn query_recent_client_ips(
+        &self,
+        since: &str,
+        user_id: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<String>, String> {
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct ClientIpRow {
+            ip: String,
+        }
+        let sql = "SELECT client_ip AS ip FROM usage_events \
+                   WHERE timestamp >= parseDateTimeBestEffort(?) AND client_ip IS NOT NULL AND client_ip != '' \
+                   GROUP BY client_ip ORDER BY count() DESC LIMIT ?";
+        let rows = if let Some(uid) = user_id {
+            self.client
+                .query(&format!(
+                    "SELECT client_ip AS ip FROM usage_events \
+                     WHERE timestamp >= parseDateTimeBestEffort(?) AND user_id = ? AND client_ip IS NOT NULL AND client_ip != '' \
+                     GROUP BY client_ip ORDER BY count() DESC LIMIT ?"
+                ))
+                .bind(since)
+                .bind(uid)
+                .bind(limit)
+                .fetch_all::<ClientIpRow>()
+                .await
+                .map_err(|e| format!("CH recent client ips (user): {e}"))?
+        } else {
+            self.client
+                .query(sql)
+                .bind(since)
+                .bind(limit)
+                .fetch_all::<ClientIpRow>()
+                .await
+                .map_err(|e| format!("CH recent client ips: {e}"))?
+        };
+        Ok(rows.into_iter().map(|row| row.ip).collect())
     }
 
     pub async fn query_api_key_activity(

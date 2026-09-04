@@ -368,6 +368,12 @@ pub(crate) async fn admin_billing_team_requests(
         api_format: q.api_format,
         start_date: Some(start),
         end_date: Some(end),
+        request_id: None,
+        channel_id: None,
+        channel_ids: None,
+        endpoint_id: None,
+        endpoint_url: None,
+        client_ip: None,
     };
 
     let ch = state
@@ -418,6 +424,12 @@ pub(crate) async fn admin_billing_team_user_api_keys(
         api_format: q.api_format,
         start_date: Some(start),
         end_date: Some(end),
+        request_id: None,
+        channel_id: None,
+        channel_ids: None,
+        endpoint_id: None,
+        endpoint_url: None,
+        client_ip: None,
     };
 
     let ch = state
@@ -1337,6 +1349,12 @@ pub(crate) async fn admin_billing_api_key_detail(
         api_format: q.api_format,
         start_date: Some(start),
         end_date: Some(end),
+        request_id: None,
+        channel_id: None,
+        channel_ids: None,
+        endpoint_id: None,
+        endpoint_url: None,
+        client_ip: None,
     };
 
     let ch = state
@@ -1489,6 +1507,12 @@ pub(crate) async fn admin_billing_api_key_detail_global(
         api_format: q.api_format,
         start_date: Some(start),
         end_date: Some(end),
+        request_id: None,
+        channel_id: None,
+        channel_ids: None,
+        endpoint_id: None,
+        endpoint_url: None,
+        client_ip: None,
     };
 
     let ch = state

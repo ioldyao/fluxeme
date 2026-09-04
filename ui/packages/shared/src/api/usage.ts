@@ -12,6 +12,11 @@ interface UsageParams {
   api_format?: string;
   start_date?: string;
   end_date?: string;
+  request_id?: string;
+  channel_name?: string;
+  channel_id?: string;
+  endpoint_url?: string;
+  client_ip?: string;
 }
 
 interface UsageResponse {
@@ -79,6 +84,11 @@ function buildUsageSearchParams(params: UsageParams = {}) {
   if (params.api_format) searchParams.set('api_format', params.api_format);
   if (params.start_date) searchParams.set('start_date', params.start_date);
   if (params.end_date) searchParams.set('end_date', params.end_date);
+  if (params.request_id) searchParams.set('request_id', params.request_id);
+  if (params.channel_name) searchParams.set('channel_name', params.channel_name);
+  if (params.channel_id) searchParams.set('channel_id', params.channel_id);
+  if (params.endpoint_url) searchParams.set('endpoint_url', params.endpoint_url);
+  if (params.client_ip) searchParams.set('client_ip', params.client_ip);
   return searchParams;
 }
 
@@ -119,6 +129,28 @@ export function useMyUsageAnalytics(days: number = 7, enabled = true) {
     enabled: enabled && !!userId,
     placeholderData: keepPreviousData,
     refetchInterval: 60_000,
+  });
+}
+
+export function useUsageAnalytics(days: number = 7, enabled = true) {
+  const safeDays = Math.min(30, Math.max(1, days));
+
+  return useQuery({
+    queryKey: ['usage', 'analytics', 'all', safeDays],
+    queryFn: () => api<UsageAnalyticsResponse>(`/usage/analytics?days=${safeDays}`),
+    enabled,
+    placeholderData: keepPreviousData,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useRecentClientIps(enabled = true) {
+  return useQuery({
+    queryKey: ['usage', 'client-ips'],
+    queryFn: () => api<string[]>('/usage/client-ips'),
+    enabled,
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
   });
 }
 

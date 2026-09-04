@@ -26,6 +26,11 @@ pub(crate) struct UsageQuery {
     api_format: Option<String>,
     start_date: Option<String>,
     end_date: Option<String>,
+    request_id: Option<String>,
+    channel_name: Option<String>,
+    channel_id: Option<String>,
+    endpoint_url: Option<String>,
+    client_ip: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -53,7 +58,20 @@ fn validate_usage_datetime(
 fn build_usage_filter(
     user_id: Option<String>,
     query: UsageQuery,
+    channel_ids: Option<Vec<String>>,
 ) -> Result<UsageFilter, AdminError> {
+    // Endpoint filter: an integer value is treated as an endpoint ID; anything
+    // else is matched against the request-time endpoint URL.
+    let endpoint_id = query
+        .endpoint_url
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .and_then(|value| value.trim().parse::<i64>().ok());
+    let endpoint_url = if endpoint_id.is_some() {
+        None
+    } else {
+        query.endpoint_url
+    };
     Ok(UsageFilter {
         user_id,
         team_id: query.team_id,
@@ -62,6 +80,12 @@ fn build_usage_filter(
         api_format: query.api_format,
         start_date: validate_usage_datetime(query.start_date, "start_date")?,
         end_date: validate_usage_datetime(query.end_date, "end_date")?,
+        request_id: query.request_id,
+        channel_id: query.channel_id,
+        channel_ids,
+        endpoint_id,
+        endpoint_url,
+        client_ip: query.client_ip,
     })
 }
 
@@ -88,7 +112,28 @@ pub(crate) async fn get_usage(
         q.user_id.clone()
     };
 
-    let filter = build_usage_filter(user_filter, q)?;
+    // Resolve the channel-name filter to channel ids (PG business metadata).
+    // A name with no matching channel can never match any usage event.
+    let channel_ids = match q.channel_name.as_deref().filter(|v| !v.trim().is_empty()) {
+        Some(name) => {
+            let channels = state.db.list_channels().await.map_err(db_err)?;
+            let ids: Vec<String> = channels
+                .into_iter()
+                .filter(|c| c.name == name)
+                .map(|c| c.id)
+                .collect();
+            if ids.is_empty() {
+                return Ok(Json(UsageResponse {
+                    records: Vec::new(),
+                    total: 0,
+                }));
+            }
+            Some(ids)
+        }
+        None => None,
+    };
+
+    let filter = build_usage_filter(user_filter, q, channel_ids)?;
 
     let ch = state
         .ch
@@ -116,7 +161,7 @@ pub(crate) async fn get_my_usage(
 
     let limit = q.limit.unwrap_or(50);
     let offset = q.offset.unwrap_or(0);
-    let filter = build_usage_filter(Some(session.user_id.clone()), q)?;
+    let filter = build_usage_filter(Some(session.user_id.clone()), q, None)?;
 
     let ch = state
         .ch
@@ -390,28 +435,17 @@ fn validate_usage_analytics_days(days: Option<i64>) -> Result<i64, AdminError> {
     Ok(days)
 }
 
-pub(crate) async fn my_usage_analytics(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Query(q): Query<UsageAnalyticsQuery>,
-) -> Result<Json<UsageAnalyticsResponse>, AdminError> {
-    let session = require_session(&state.admin, &headers).await?;
-    let days = validate_usage_analytics_days(q.days)?;
-    let tz = state
-        .db
-        .get_user_timezone(&session.user_id)
-        .await
-        .map_err(db_err)?;
-    let offset = tz_offset_seconds(Some(&tz));
-    let since = since_local_days_ago(days, offset);
-    let user_filter = Some(session.user_id.as_str());
-    let ch = state
-        .ch
-        .as_ref()
-        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
-
+/// Shared analytics builder — feeds both the user-facing (`/api/me/usage/analytics`)
+/// and admin-wide (`/api/usage/analytics`) chart views.
+async fn build_usage_analytics(
+    ch: &crate::ch_backend::ClickHouseBackend,
+    since: &str,
+    user_filter: Option<&str>,
+    offset: i64,
+    days: i64,
+) -> Result<UsageAnalyticsResponse, AdminError> {
     let bucket_rows = ch
-        .query_daily_usage_stats(&since, user_filter, offset)
+        .query_daily_usage_stats(since, user_filter, offset)
         .await
         .map_err(AdminError::internal)?;
     let bucket_by_date: HashMap<_, _> = bucket_rows
@@ -468,7 +502,7 @@ pub(crate) async fn my_usage_analytics(
         .collect::<Vec<_>>();
 
     let models = ch
-        .query_model_activity(&since, user_filter)
+        .query_model_activity(since, user_filter)
         .await
         .map_err(AdminError::internal)?
         .into_iter()
@@ -519,13 +553,99 @@ pub(crate) async fn my_usage_analytics(
         },
     );
 
-    Ok(Json(UsageAnalyticsResponse {
+    Ok(UsageAnalyticsResponse {
         schema_version: 1,
         days,
         buckets,
         totals,
         models,
-    }))
+    })
+}
+
+pub(crate) async fn my_usage_analytics(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<UsageAnalyticsQuery>,
+) -> Result<Json<UsageAnalyticsResponse>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    let days = validate_usage_analytics_days(q.days)?;
+    let tz = state
+        .db
+        .get_user_timezone(&session.user_id)
+        .await
+        .map_err(db_err)?;
+    let offset = tz_offset_seconds(Some(&tz));
+    let since = since_local_days_ago(days, offset);
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let response = build_usage_analytics(ch, &since, Some(&session.user_id), offset, days).await?;
+    Ok(Json(response))
+}
+
+pub(crate) async fn usage_analytics(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<UsageAnalyticsQuery>,
+) -> Result<Json<UsageAnalyticsResponse>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    let days = validate_usage_analytics_days(q.days)?;
+    let tz = state
+        .db
+        .get_user_timezone(&session.user_id)
+        .await
+        .map_err(db_err)?;
+    let offset = tz_offset_seconds(Some(&tz));
+    let since = since_local_days_ago(days, offset);
+    let can_view_all = state.authz.enforce(&session.role, "admin:usage").await;
+    let user_filter = if can_view_all {
+        None
+    } else {
+        Some(session.user_id.as_str())
+    };
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let response = build_usage_analytics(ch, &since, user_filter, offset, days).await?;
+    Ok(Json(response))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RecentClientIpsQuery {
+    days: Option<i64>,
+}
+
+pub(crate) async fn recent_client_ips(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<RecentClientIpsQuery>,
+) -> Result<Json<Vec<String>>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    let days = q.days.unwrap_or(30).clamp(1, 90);
+    let tz = state
+        .db
+        .get_user_timezone(&session.user_id)
+        .await
+        .map_err(db_err)?;
+    let offset = tz_offset_seconds(Some(&tz));
+    let since = since_local_days_ago(days, offset);
+    let can_view_all = state.authz.enforce(&session.role, "admin:usage").await;
+    let user_filter = if can_view_all {
+        None
+    } else {
+        Some(session.user_id.as_str())
+    };
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let ips = ch
+        .query_recent_client_ips(&since, user_filter, 50)
+        .await
+        .map_err(AdminError::internal)?;
+    Ok(Json(ips))
 }
 
 pub(crate) async fn my_usage_aggregate(

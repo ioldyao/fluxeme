@@ -10,6 +10,18 @@ pub struct UsageFilter {
     pub api_format: Option<String>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
+    /// Request ID prefix match (startsWith).
+    pub request_id: Option<String>,
+    /// Direct channel ID match (=).
+    pub channel_id: Option<String>,
+    /// Channel IDs resolved from a channel-name filter (IN).
+    pub channel_ids: Option<Vec<String>>,
+    /// Endpoint ID match — set when the endpoint filter value parses as an integer.
+    pub endpoint_id: Option<i64>,
+    /// Endpoint URL match (=).
+    pub endpoint_url: Option<String>,
+    /// Client IP match (=).
+    pub client_ip: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
