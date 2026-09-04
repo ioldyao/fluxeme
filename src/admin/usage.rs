@@ -4,7 +4,7 @@ use std::sync::Arc;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::{Duration as ChronoDuration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::ch_backend::normalize_clickhouse_datetime;
@@ -356,7 +356,7 @@ pub(crate) async fn usage_aggregate(
         .as_ref()
         .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
     let records: Vec<DailyAggregate> = ch
-        .query_daily_usage_stats(&since, user_filter, offset)
+        .query_daily_usage_stats(&since, None, user_filter, offset)
         .await
         .map_err(AdminError::internal)?
         .into_iter()
@@ -380,6 +380,8 @@ pub(crate) async fn usage_aggregate(
 #[derive(Debug, Deserialize)]
 pub(crate) struct UsageAnalyticsQuery {
     days: Option<i64>,
+    start_date: Option<String>,
+    end_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -435,17 +437,27 @@ fn validate_usage_analytics_days(days: Option<i64>) -> Result<i64, AdminError> {
     Ok(days)
 }
 
+/// Convert a UTC RFC3339 timestamp to the user-local calendar date.
+fn local_date_from_utc(value: &str, offset: i64) -> Result<NaiveDate, AdminError> {
+    let dt = chrono::DateTime::parse_from_rfc3339(value)
+        .map_err(|_| AdminError::bad_request("Invalid datetime"))?;
+    Ok((dt.naive_utc() + ChronoDuration::seconds(offset)).date())
+}
+
 /// Shared analytics builder — feeds both the user-facing (`/api/me/usage/analytics`)
-/// and admin-wide (`/api/usage/analytics`) chart views.
+/// and admin-wide (`/api/usage/analytics`) chart views. Buckets are rendered from
+/// `start_local` through `end_local` (inclusive), so arbitrary ranges work.
 async fn build_usage_analytics(
     ch: &crate::ch_backend::ClickHouseBackend,
     since: &str,
+    until: &str,
     user_filter: Option<&str>,
     offset: i64,
-    days: i64,
+    start_local: NaiveDate,
+    end_local: NaiveDate,
 ) -> Result<UsageAnalyticsResponse, AdminError> {
     let bucket_rows = ch
-        .query_daily_usage_stats(since, user_filter, offset)
+        .query_daily_usage_stats(since, Some(until), user_filter, offset)
         .await
         .map_err(AdminError::internal)?;
     let bucket_by_date: HashMap<_, _> = bucket_rows
@@ -478,31 +490,32 @@ async fn build_usage_analytics(
             },
         )
         .collect();
-    let local_today = (Utc::now() + ChronoDuration::seconds(offset)).date_naive();
-    let buckets = (0..days)
-        .rev()
-        .map(|days_ago| {
-            let date = local_today - ChronoDuration::days(days_ago);
-            let date_key = date.format("%Y-%m-%d").to_string();
+    let empty_bucket = |date_key: String| UsageAnalyticsBucket {
+        date: date_key,
+        requests: 0,
+        succeeded: 0,
+        failed: 0,
+        input_tokens: 0,
+        cache_read_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        latency_ms: 0,
+    };
+    let mut buckets = Vec::new();
+    let mut date = start_local;
+    while date <= end_local {
+        let date_key = date.format("%Y-%m-%d").to_string();
+        buckets.push(
             bucket_by_date
                 .get(&date_key)
                 .cloned()
-                .unwrap_or(UsageAnalyticsBucket {
-                    date: date_key,
-                    requests: 0,
-                    succeeded: 0,
-                    failed: 0,
-                    input_tokens: 0,
-                    cache_read_tokens: 0,
-                    output_tokens: 0,
-                    total_tokens: 0,
-                    latency_ms: 0,
-                })
-        })
-        .collect::<Vec<_>>();
+                .unwrap_or_else(|| empty_bucket(date_key)),
+        );
+        date += ChronoDuration::days(1);
+    }
 
     let models = ch
-        .query_model_activity(since, user_filter)
+        .query_model_activity(since, Some(until), user_filter)
         .await
         .map_err(AdminError::internal)?
         .into_iter()
@@ -555,7 +568,7 @@ async fn build_usage_analytics(
 
     Ok(UsageAnalyticsResponse {
         schema_version: 1,
-        days,
+        days: buckets.len() as i64,
         buckets,
         totals,
         models,
@@ -576,11 +589,23 @@ pub(crate) async fn my_usage_analytics(
         .map_err(db_err)?;
     let offset = tz_offset_seconds(Some(&tz));
     let since = since_local_days_ago(days, offset);
+    let until = Utc::now().to_rfc3339();
+    let local_today = (Utc::now() + ChronoDuration::seconds(offset)).date_naive();
+    let start_local = local_today - ChronoDuration::days(days - 1);
     let ch = state
         .ch
         .as_ref()
         .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
-    let response = build_usage_analytics(ch, &since, Some(&session.user_id), offset, days).await?;
+    let response = build_usage_analytics(
+        ch,
+        &since,
+        &until,
+        Some(&session.user_id),
+        offset,
+        start_local,
+        local_today,
+    )
+    .await?;
     Ok(Json(response))
 }
 
@@ -590,14 +615,12 @@ pub(crate) async fn usage_analytics(
     Query(q): Query<UsageAnalyticsQuery>,
 ) -> Result<Json<UsageAnalyticsResponse>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
-    let days = validate_usage_analytics_days(q.days)?;
     let tz = state
         .db
         .get_user_timezone(&session.user_id)
         .await
         .map_err(db_err)?;
     let offset = tz_offset_seconds(Some(&tz));
-    let since = since_local_days_ago(days, offset);
     let can_view_all = state.authz.enforce(&session.role, "admin:usage").await;
     let user_filter = if can_view_all {
         None
@@ -608,7 +631,53 @@ pub(crate) async fn usage_analytics(
         .ch
         .as_ref()
         .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
-    let response = build_usage_analytics(ch, &since, user_filter, offset, days).await?;
+
+    // Explicit range takes priority over the days fallback.
+    let response = if let Some(start) = q.start_date.as_deref().filter(|v| !v.is_empty()) {
+        let since = validate_usage_datetime(Some(start.to_string()), "start_date")?
+            .ok_or_else(|| AdminError::bad_request("start_date must be a valid datetime"))?;
+        let until = validate_usage_datetime(q.end_date, "end_date")?
+            .unwrap_or_else(|| Utc::now().to_rfc3339());
+        let start_local = local_date_from_utc(&since, offset)?;
+        let end_local = local_date_from_utc(&until, offset)?;
+        if start_local > end_local {
+            return Err(AdminError::bad_request(
+                "start_date must be before end_date",
+            ));
+        }
+        let days = (end_local - start_local).num_days();
+        if days > 366 {
+            return Err(AdminError::bad_request(
+                "Date range too wide (max 366 days)",
+            ));
+        }
+        build_usage_analytics(
+            ch,
+            &since,
+            &until,
+            user_filter,
+            offset,
+            start_local,
+            end_local,
+        )
+        .await?
+    } else {
+        let days = validate_usage_analytics_days(q.days)?;
+        let since = since_local_days_ago(days, offset);
+        let until = Utc::now().to_rfc3339();
+        let local_today = (Utc::now() + ChronoDuration::seconds(offset)).date_naive();
+        let start_local = local_today - ChronoDuration::days(days - 1);
+        build_usage_analytics(
+            ch,
+            &since,
+            &until,
+            user_filter,
+            offset,
+            start_local,
+            local_today,
+        )
+        .await?
+    };
     Ok(Json(response))
 }
 
@@ -670,7 +739,7 @@ pub(crate) async fn my_usage_aggregate(
         .as_ref()
         .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
     let records: Vec<DailyAggregate> = ch
-        .query_daily_usage_stats(&since, user_filter, offset)
+        .query_daily_usage_stats(&since, None, user_filter, offset)
         .await
         .map_err(AdminError::internal)?
         .into_iter()
@@ -729,7 +798,7 @@ pub(crate) async fn model_activity(
         .as_ref()
         .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
     let records: Vec<ModelActivity> = ch
-        .query_model_activity(&since, user_filter)
+        .query_model_activity(&since, None, user_filter)
         .await
         .map_err(AdminError::internal)?
         .into_iter()
@@ -767,7 +836,7 @@ pub(crate) async fn my_model_activity(
         .as_ref()
         .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
     let records: Vec<ModelActivity> = ch
-        .query_model_activity(&since, user_filter)
+        .query_model_activity(&since, None, user_filter)
         .await
         .map_err(AdminError::internal)?
         .into_iter()

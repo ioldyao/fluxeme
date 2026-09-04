@@ -36,7 +36,9 @@ export default function UsageLog() {
   const [endDt, setEndDt] = useState('');
   const [detailId, setDetailId] = useState<string | null>(null);
   const [chartTab, setChartTab] = useState('list');
-  const [chartDays, setChartDays] = useState(7);
+  const [chartDateFilter, setChartDateFilter] = useState('7d');
+  const [chartStartDt, setChartStartDt] = useState('');
+  const [chartEndDt, setChartEndDt] = useState('');
 
   // ── Date filter (supports ?date=YYYY-MM-DD from wallet navigation) ──
   const [searchParams] = useSearchParams();
@@ -127,13 +129,37 @@ export default function UsageLog() {
   const page = offset / limit + 1;
   const totalPages = Math.max(1, Math.ceil(total / limit));
 
+  // Chart time window — mirrors the list filter's date widget (quick tabs +
+  // DateRangePicker). Unlike the paginated list, a chart always needs a bounded
+  // window, so "all" falls back to the last 30 days.
+  const chartDateParams = useMemo(() => {
+    if (chartStartDt || chartEndDt) {
+      return {
+        ...(chartStartDt ? { start_date: new Date(chartStartDt).toISOString() } : {}),
+        ...(chartEndDt ? { end_date: new Date(chartEndDt).toISOString() } : {}),
+      };
+    }
+    if (chartDateFilter === 'today') {
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      return { start_date: start.toISOString(), end_date: now.toISOString() };
+    }
+    if (chartDateFilter === '7d') {
+      return { start_date: new Date(Date.now() - 7 * 86400000).toISOString(), end_date: new Date().toISOString() };
+    }
+    if (chartDateFilter === '30d' || chartDateFilter === 'all') {
+      return { start_date: new Date(Date.now() - 30 * 86400000).toISOString(), end_date: new Date().toISOString() };
+    }
+    return { days: 7 };
+  }, [chartDateFilter, chartStartDt, chartEndDt]);
+
   const {
     data: analytics,
     isLoading: analyticsLoading,
     isFetching: analyticsFetching,
     isError: analyticsError,
     refetch: refetchAnalytics,
-  } = useUsageAnalytics(chartDays, chartTab === 'chart');
+  } = useUsageAnalytics({ ...chartDateParams, enabled: chartTab === 'chart' });
 
   return (
     <div className="animate-fade-in">
@@ -417,12 +443,35 @@ export default function UsageLog() {
         </TabsContent>
 
         <TabsContent value="chart" className="space-y-4">
-          <div className="flex gap-2">
-            {[7, 14, 30].map(d => (
-              <Button key={d} variant={chartDays === d ? 'default' : 'outline'} size="sm" onClick={() => setChartDays(d)}>
-                {d}{t('common.days')}
-              </Button>
-            ))}
+          {/* Chart time window — same widget as the list filter */}
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-3 text-xs">
+            <div className="flex flex-wrap items-center gap-1">
+              {(['today', '7d', '30d', 'all'] as const).map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => { setChartDateFilter(key); setChartStartDt(''); setChartEndDt(''); }}
+                  className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                    (!chartStartDt && !chartEndDt && chartDateFilter === key)
+                      ? 'bg-brand text-white'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                  }`}
+                >
+                  {key === 'today' ? t('usage.dateToday') : key === '7d' ? t('usage.date7d') : key === '30d' ? t('usage.date30d') : t('usage.dateAll')}
+                </button>
+              ))}
+            </div>
+            <div className="ml-auto flex w-full items-center gap-1.5 sm:w-auto">
+              <DateRangePicker
+                start={chartStartDt}
+                end={chartEndDt}
+                onStartChange={(v) => { setChartStartDt(v); }}
+                onEndChange={(v) => { setChartEndDt(v); }}
+                startPlaceholder={t('usage.startTime')}
+                endPlaceholder={t('usage.endTime')}
+                className="w-full sm:w-auto"
+              />
+            </div>
           </div>
 
           <UsageAnalyticsCharts

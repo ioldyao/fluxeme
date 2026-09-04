@@ -1188,6 +1188,7 @@ impl ClickHouseBackend {
     pub async fn query_daily_usage_stats(
         &self,
         since: &str,
+        until: Option<&str>,
         user_id: Option<&str>,
         tz_offset_seconds: i64,
     ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64, u64)>, String> {
@@ -1225,6 +1226,11 @@ impl ClickHouseBackend {
              FROM usage_events WHERE timestamp >= ?",
             date_expr
         );
+        let base_sql = if until.is_some() {
+            format!("{base_sql} AND timestamp < parseDateTimeBestEffort(?)")
+        } else {
+            base_sql
+        };
         let sql = if user_id.is_some() {
             format!(
                 "{} AND user_id = ? GROUP BY date ORDER BY date ASC",
@@ -1234,6 +1240,9 @@ impl ClickHouseBackend {
             format!("{} GROUP BY date ORDER BY date ASC", base_sql)
         };
         let mut query = self.client.query(&sql).bind(since);
+        if let Some(until) = until {
+            query = query.bind(until);
+        }
         if let Some(uid) = user_id {
             query = query.bind(uid);
         }
@@ -1262,6 +1271,7 @@ impl ClickHouseBackend {
     pub async fn query_model_activity(
         &self,
         since: &str,
+        until: Option<&str>,
         user_id: Option<&str>,
     ) -> Result<Vec<(String, u64, u64, u64, u64, u64, u64)>, String> {
         #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
@@ -1282,27 +1292,35 @@ impl ClickHouseBackend {
                    countIf(success = 0)::UInt64 AS failure_count, \
                    sum(cache_hit_input_tokens)::UInt64 AS cache_hit_tokens \
                    FROM usage_events WHERE timestamp >= ?";
-        let rows = if let Some(uid) = user_id {
-            self.client
-                .query(&format!(
-                    "{} AND user_id = ? GROUP BY model ORDER BY total_requests DESC",
-                    sql
-                ))
-                .bind(since)
-                .bind(uid)
-                .fetch_all::<ActRow>()
-                .await
-                .map_err(|e| format!("CH model_activity: {e}"))?
+        let sql = if until.is_some() {
+            format!("{sql} AND timestamp < parseDateTimeBestEffort(?)")
         } else {
-            self.client
-                .query(&format!(
-                    "{} GROUP BY model ORDER BY total_requests DESC",
-                    sql
-                ))
-                .bind(since)
-                .fetch_all::<ActRow>()
-                .await
-                .map_err(|e| format!("CH model_activity: {e}"))?
+            sql.to_string()
+        };
+        let build = |sql: &str| {
+            let mut query = self.client.query(sql).bind(since);
+            if let Some(until) = until {
+                query = query.bind(until);
+            }
+            query
+        };
+        let rows = if let Some(uid) = user_id {
+            build(&format!(
+                "{} AND user_id = ? GROUP BY model ORDER BY total_requests DESC",
+                sql
+            ))
+            .bind(uid)
+            .fetch_all::<ActRow>()
+            .await
+            .map_err(|e| format!("CH model_activity: {e}"))?
+        } else {
+            build(&format!(
+                "{} GROUP BY model ORDER BY total_requests DESC",
+                sql
+            ))
+            .fetch_all::<ActRow>()
+            .await
+            .map_err(|e| format!("CH model_activity: {e}"))?
         };
         Ok(rows
             .into_iter()

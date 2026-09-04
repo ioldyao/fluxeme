@@ -132,12 +132,23 @@ export function useMyUsageAnalytics(days: number = 7, enabled = true) {
   });
 }
 
-export function useUsageAnalytics(days: number = 7, enabled = true) {
+export function useUsageAnalytics({ days = 7, start_date, end_date, enabled = true }: {
+  days?: number;
+  start_date?: string;
+  end_date?: string;
+  enabled?: boolean;
+} = {}) {
   const safeDays = Math.min(30, Math.max(1, days));
+  const searchParams = new URLSearchParams();
+  if (start_date) searchParams.set('start_date', start_date);
+  else searchParams.set('days', String(safeDays));
+  if (end_date) searchParams.set('end_date', end_date);
+  const qs = searchParams.toString();
+  const rangeKey = JSON.stringify({ days: start_date ? undefined : safeDays, start_date, end_date });
 
   return useQuery({
-    queryKey: ['usage', 'analytics', 'all', safeDays],
-    queryFn: () => api<UsageAnalyticsResponse>(`/usage/analytics?days=${safeDays}`),
+    queryKey: ['usage', 'analytics', 'all', rangeKey],
+    queryFn: () => api<UsageAnalyticsResponse>(`/usage/analytics?${qs}`),
     enabled,
     placeholderData: keepPreviousData,
     refetchInterval: 60_000,
