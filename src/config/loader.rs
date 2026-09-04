@@ -387,11 +387,13 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
                     .iter()
                     .map(|mc| ModelChannel {
                         model_id: m.id.clone(),
+                        binding_id: None,
                         channel_id: mc.channel_id.clone(),
                         priority: mc.priority,
                         provider: String::new(),
                         upstream_model: None,
                         max_tokens: mc.max_tokens,
+                        endpoint_weight_overrides: Vec::new(),
                     })
                     .collect(),
                 published: false,

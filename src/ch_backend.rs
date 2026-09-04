@@ -793,6 +793,74 @@ impl ClickHouseBackend {
             .collect())
     }
 
+    /// 24h request counts per (model, channel, endpoint) for topology views.
+    /// Observability-only query; observability data stays in ClickHouse.
+    pub async fn query_endpoint_usage_24h(
+        &self,
+        model: &str,
+        channel_id: &str,
+    ) -> Result<Vec<(i64, u64)>, String> {
+        #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
+        struct EndpointUsageRow {
+            endpoint_id: i64,
+            requests: u64,
+        }
+        let rows = self
+            .client
+            .query(
+                "SELECT endpoint_id::Int64 AS endpoint_id, \
+                 count()::UInt64 AS requests \
+                 FROM usage_events \
+                 WHERE timestamp >= now() - INTERVAL 24 HOUR \
+                   AND model = ? \
+                   AND channel_id = ? \
+                   AND endpoint_id != 0 \
+                 GROUP BY endpoint_id \
+                 ORDER BY requests DESC",
+            )
+            .bind(model)
+            .bind(channel_id)
+            .fetch_all::<EndpointUsageRow>()
+            .await
+            .map_err(|e| format!("CH endpoint_usage_24h: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.endpoint_id, r.requests))
+            .collect())
+    }
+
+    /// 24h request counts per channel for a model (topology binding share).
+    /// Observability-only query; observability data stays in ClickHouse.
+    pub async fn query_model_channel_usage_24h(
+        &self,
+        model: &str,
+    ) -> Result<Vec<(String, u64)>, String> {
+        #[derive(clickhouse::Row, serde::Serialize, serde::Deserialize)]
+        struct ChannelUsageRow {
+            channel_id: String,
+            requests: u64,
+        }
+        let rows = self
+            .client
+            .query(
+                "SELECT channel_id, \
+                 count()::UInt64 AS requests \
+                 FROM usage_events \
+                 WHERE timestamp >= now() - INTERVAL 24 HOUR \
+                   AND model = ? \
+                 GROUP BY channel_id \
+                 ORDER BY requests DESC",
+            )
+            .bind(model)
+            .fetch_all::<ChannelUsageRow>()
+            .await
+            .map_err(|e| format!("CH model_channel_usage_24h: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.channel_id, r.requests))
+            .collect())
+    }
+
     /// 24h channel usage across all observed models. Observability-only query;
     /// callers must apply any presentation filtering after the query.
     pub async fn query_channel_usage_24h_all(

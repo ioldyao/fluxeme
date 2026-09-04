@@ -36,6 +36,7 @@ pub mod moderation;
 pub mod policies;
 pub mod routing;
 pub mod rules;
+pub mod scheduler_topology;
 pub mod settings;
 pub mod skillhub;
 pub mod sso;
@@ -786,6 +787,10 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
         .route(
             "/api/models/{id}",
             axum::routing::put(models::update_model).delete(models::delete_model),
+        )
+        .route(
+            "/api/scheduler/models/{id}/topology",
+            axum::routing::get(scheduler_topology::model_scheduler_topology),
         )
         // Routing rules (system-level, admin)
         .route(

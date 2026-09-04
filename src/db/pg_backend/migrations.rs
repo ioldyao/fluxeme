@@ -255,6 +255,18 @@ impl CoreBackend for PgBackend {
              END $$"
         );
 
+        // Binding-scoped endpoint weight overrides. The FK uses the
+        // surrogate model_channels.id because the same model/channel pair
+        // may have multiple upstream_model bindings.
+        add_col!(
+            "CREATE TABLE IF NOT EXISTS model_channel_endpoint_overrides (\
+                model_channel_id BIGINT NOT NULL REFERENCES model_channels(id) ON DELETE CASCADE,\
+                endpoint_id BIGINT NOT NULL REFERENCES endpoints(id) ON DELETE CASCADE,\
+                weight_override INTEGER NOT NULL CHECK (weight_override >= 1),\
+                PRIMARY KEY (model_channel_id, endpoint_id)\
+            )"
+        );
+
         // ── Billing groups ───────────────────────────────────────────────
         raw_sql(
             "CREATE TABLE IF NOT EXISTS billing_groups (\

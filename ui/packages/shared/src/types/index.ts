@@ -139,6 +139,12 @@ export interface ModelChannel {
   provider?: string;
   upstream_model?: string | null;
   max_tokens?: number | null;
+  endpoint_weight_overrides?: EndpointWeightOverride[];
+}
+
+export interface EndpointWeightOverride {
+  endpoint_id: number;
+  weight: number;
 }
 
 export interface MarketplaceFormats {

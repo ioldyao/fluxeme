@@ -79,6 +79,8 @@ pub(crate) async fn create_model(
     check_perm(&state.authz, &session, "admin:models").await?;
 
     normalize_and_validate_model(&mut model)?;
+    let channels = state.db.list_channels().await.map_err(db_err)?;
+    validate_endpoint_overrides(&model, &channels)?;
 
     state.db.create_model(&model).await.map_err(db_err)?;
     state.routing.reload().await.map_err(AdminError::internal)?;
@@ -106,6 +108,8 @@ pub(crate) async fn update_model(
     if model.id != old_id {
         return Err(AdminError::bad_request("Model ID cannot be changed"));
     }
+    let channels = state.db.list_channels().await.map_err(db_err)?;
+    validate_endpoint_overrides(&model, &channels)?;
     state
         .db
         .update_model(&old_id, &model)
@@ -265,11 +269,13 @@ mod tests {
             pricing: Pricing::default(),
             channels: vec![ModelChannel {
                 model_id: id.to_string(),
+                binding_id: None,
                 channel_id: channel_id.to_string(),
                 priority: 0,
                 provider: String::new(),
                 upstream_model: Some("internal-upstream-name".to_string()),
                 max_tokens: None,
+                endpoint_weight_overrides: Vec::new(),
             }],
             published,
             context_length: Some(32_000),
@@ -315,11 +321,13 @@ mod tests {
         let mut configured = model("model", "DeepSeek-V4-Flash", true, "openai");
         configured.channels.push(ModelChannel {
             model_id: configured.id.clone(),
+            binding_id: None,
             channel_id: "openai-compat".to_string(),
             priority: 0,
             provider: String::new(),
             upstream_model: Some("another-internal-name".to_string()),
             max_tokens: None,
+            endpoint_weight_overrides: Vec::new(),
         });
         let result = marketplace_projection(
             vec![configured],
@@ -367,6 +375,52 @@ fn normalize_and_validate_model(model: &mut Model) -> Result<(), AdminError> {
         return Err(AdminError::bad_request(
             "Binding max_tokens must be greater than zero",
         ));
+    }
+    Ok(())
+}
+
+/// Validate endpoint weight overrides against the live channel/endpoint set.
+///
+/// Each override's endpoint must exist and belong to the binding's channel,
+/// weights must be >= 1, and a binding cannot list the same endpoint twice.
+/// Empty override lists are normalized to no overrides (empty Vec).
+fn validate_endpoint_overrides(model: &Model, channels: &[Channel]) -> Result<(), AdminError> {
+    use std::collections::HashSet;
+
+    for binding in &model.channels {
+        let channel = channels
+            .iter()
+            .find(|c| c.id == binding.channel_id)
+            .ok_or_else(|| {
+                AdminError::bad_request(format!(
+                    "Binding channel '{}' does not exist",
+                    binding.channel_id
+                ))
+            })?;
+        let mut seen = HashSet::new();
+        for ov in &binding.endpoint_weight_overrides {
+            if ov.weight == 0 {
+                return Err(AdminError::bad_request(
+                    "Endpoint override weight must be greater than zero",
+                ));
+            }
+            if !seen.insert(ov.endpoint_id) {
+                return Err(AdminError::bad_request(format!(
+                    "Duplicate endpoint override for endpoint {} in channel '{}'",
+                    ov.endpoint_id, binding.channel_id
+                )));
+            }
+            let belongs = channel
+                .endpoints
+                .iter()
+                .any(|ep| ep.id == Some(ov.endpoint_id));
+            if !belongs {
+                return Err(AdminError::bad_request(format!(
+                    "Endpoint {} does not belong to channel '{}'",
+                    ov.endpoint_id, binding.channel_id
+                )));
+            }
+        }
     }
     Ok(())
 }

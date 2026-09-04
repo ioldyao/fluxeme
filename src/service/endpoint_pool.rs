@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::balancer::{BreakerSnapshot, LoadBalancer};
-use crate::domain::model::Model;
+use crate::config::types::EndpointConfig;
+use crate::domain::model::{EndpointWeightOverride, Model, ModelChannel};
 
 /// Stable identity for a model-to-channel binding.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -29,6 +30,32 @@ pub struct BindingStatePool {
     bindings: RwLock<HashMap<BindingKey, Arc<LoadBalancer>>>,
 }
 
+/// Build the effective endpoint list for one binding: the channel's endpoint
+/// defaults with the binding's per-endpoint weight overrides applied. Only
+/// endpoints listed in `overrides` change; everything else inherits.
+fn build_binding_endpoints(
+    channel_endpoints: &[EndpointConfig],
+    overrides: &[EndpointWeightOverride],
+) -> Vec<EndpointConfig> {
+    if overrides.is_empty() {
+        return channel_endpoints.to_vec();
+    }
+    let map: HashMap<i64, u32> = overrides
+        .iter()
+        .map(|o| (o.endpoint_id, o.weight))
+        .collect();
+    channel_endpoints
+        .iter()
+        .map(|ep| {
+            let mut ep = ep.clone();
+            if let Some(w) = ep.id.and_then(|id| map.get(&id)) {
+                ep.weight = *w;
+            }
+            ep
+        })
+        .collect()
+}
+
 impl BindingStatePool {
     pub fn new() -> Self {
         Self::default()
@@ -37,6 +64,10 @@ impl BindingStatePool {
     /// Keep existing balancers for unchanged model bindings and rebuild only
     /// the routing index. Endpoint breaker state is reconciled by stable endpoint
     /// identity inside `LoadBalancer::rebuild_preserving_state`.
+    ///
+    /// Each binding's balancer is built from the channel's endpoint defaults
+    /// merged with the binding's per-endpoint weight overrides, so a model can
+    /// steer traffic within a shared channel without affecting other models.
     pub fn reconcile(
         &self,
         models: &[Model],
@@ -50,7 +81,9 @@ impl BindingStatePool {
                 let Some((_, channel_balancer)) = routes.get(&binding.channel_id) else {
                     continue;
                 };
-                let endpoints = channel_balancer.as_health_aware().endpoints().to_vec();
+                let channel_endpoints = channel_balancer.as_health_aware().endpoints().to_vec();
+                let endpoints =
+                    build_binding_endpoints(&channel_endpoints, &binding.endpoint_weight_overrides);
                 let key = BindingKey::new(&model.id, &binding.channel_id);
                 let balancer = previous
                     .get(&key)
@@ -155,9 +188,7 @@ impl BindingStatePool {
                 .endpoints()
                 .iter()
                 .enumerate()
-                .filter_map(|(i, ep)| {
-                    ep.id.map(|id| (id, health.breakers()[i].snapshot()))
-                })
+                .filter_map(|(i, ep)| ep.id.map(|id| (id, health.breakers()[i].snapshot())))
                 .collect::<Vec<_>>();
             if !snapshots.is_empty() {
                 out.push((key.model_id.clone(), key.channel_id.clone(), snapshots));
@@ -167,10 +198,7 @@ impl BindingStatePool {
     }
 
     /// Restore persisted breaker snapshots by (model, channel, endpoint id).
-    pub fn restore_snapshots(
-        &self,
-        snapshots: &[(String, String, Vec<(i64, BreakerSnapshot)>)],
-    ) {
+    pub fn restore_snapshots(&self, snapshots: &[(String, String, Vec<(i64, BreakerSnapshot)>)]) {
         let bindings = self.bindings.read().unwrap_or_else(|e| e.into_inner());
         for (model_id, channel_id, rows) in snapshots {
             let Some(balancer) = bindings.get(&BindingKey::new(model_id, channel_id)) else {
@@ -207,6 +235,102 @@ mod tests {
     }
 
     #[test]
+    fn partial_overrides_preserve_unlisted_channel_defaults() {
+        let endpoints = vec![endpoint(1), endpoint(2)];
+        let effective = build_binding_endpoints(
+            &endpoints,
+            &[EndpointWeightOverride {
+                endpoint_id: 1,
+                weight: 8,
+            }],
+        );
+        assert_eq!(effective[0].weight, 8);
+        assert_eq!(effective[1].weight, 1);
+    }
+
+    #[test]
+    fn empty_overrides_inherit_all_channel_defaults() {
+        let endpoints = vec![endpoint(1), endpoint(2)];
+        let effective = build_binding_endpoints(&endpoints, &[]);
+        assert_eq!(
+            effective.iter().map(|e| e.weight).collect::<Vec<_>>(),
+            vec![1, 1]
+        );
+    }
+
+    #[test]
+    fn model_binding_overrides_are_isolated() {
+        let pool = BindingStatePool::new();
+        let channel_balancer = Arc::new(LoadBalancer::new(&vec![endpoint(1), endpoint(2)]));
+        let mut routes = HashMap::new();
+        routes.insert(
+            "channel-a".to_string(),
+            ("openai".to_string(), channel_balancer),
+        );
+        let models = vec![
+            Model {
+                id: "model-a".to_string(),
+                name: "a".to_string(),
+                model_pattern: "a".to_string(),
+                pricing: Default::default(),
+                channels: vec![ModelChannel {
+                    model_id: "model-a".to_string(),
+                    binding_id: None,
+                    channel_id: "channel-a".to_string(),
+                    priority: 1,
+                    provider: String::new(),
+                    upstream_model: None,
+                    max_tokens: None,
+                    endpoint_weight_overrides: vec![EndpointWeightOverride {
+                        endpoint_id: 1,
+                        weight: 9,
+                    }],
+                }],
+                published: true,
+                context_length: None,
+                category: String::new(),
+            },
+            Model {
+                id: "model-b".to_string(),
+                name: "b".to_string(),
+                model_pattern: "b".to_string(),
+                pricing: Default::default(),
+                channels: vec![ModelChannel {
+                    model_id: "model-b".to_string(),
+                    binding_id: None,
+                    channel_id: "channel-a".to_string(),
+                    priority: 1,
+                    provider: String::new(),
+                    upstream_model: None,
+                    max_tokens: None,
+                    endpoint_weight_overrides: Vec::new(),
+                }],
+                published: true,
+                context_length: None,
+                category: String::new(),
+            },
+        ];
+        pool.reconcile(&models, &routes);
+        assert_eq!(
+            pool.get("model-a", "channel-a")
+                .unwrap()
+                .as_health_aware()
+                .endpoint(0)
+                .unwrap()
+                .weight,
+            9
+        );
+        assert_eq!(
+            pool.get("model-b", "channel-a")
+                .unwrap()
+                .as_health_aware()
+                .endpoint(0)
+                .unwrap()
+                .weight,
+            1
+        );
+    }
+    #[test]
     fn binding_keys_are_model_scoped() {
         let pool = BindingStatePool::new();
         let first = Arc::new(LoadBalancer::new(&vec![endpoint(1)]));
@@ -224,11 +348,13 @@ mod tests {
                 pricing: Default::default(),
                 channels: vec![crate::domain::model::ModelChannel {
                     model_id: "model-a".to_string(),
+                    binding_id: None,
                     channel_id: "channel-a".to_string(),
                     priority: 1,
                     provider: String::new(),
                     upstream_model: None,
                     max_tokens: None,
+                    endpoint_weight_overrides: Vec::new(),
                 }],
                 published: true,
                 context_length: None,
@@ -241,11 +367,13 @@ mod tests {
                 pricing: Default::default(),
                 channels: vec![crate::domain::model::ModelChannel {
                     model_id: "model-b".to_string(),
+                    binding_id: None,
                     channel_id: "channel-a".to_string(),
                     priority: 1,
                     provider: String::new(),
                     upstream_model: None,
                     max_tokens: None,
+                    endpoint_weight_overrides: Vec::new(),
                 }],
                 published: true,
                 context_length: None,

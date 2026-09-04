@@ -13,13 +13,13 @@ import { useFlowMetrics } from '@fluxeme/shared';
 import { usePublicModels } from '@fluxeme/shared/src/api/models';
 import { useChannels } from '@fluxeme/shared/src/api/channels';
 import { useProbeResults } from '@fluxeme/shared/src/api/probe';
-import { useRoutingHealth, useEndpointsLiveHealth } from '@fluxeme/shared/src/api/routing';
-import type { RoutingHealthModel, EndpointLiveHealth } from '@fluxeme/shared/src/api/routing';
+import { useRoutingHealth, useEndpointsLiveHealth, useSchedulerTopology } from '@fluxeme/shared/src/api/routing';
+import type { RoutingHealthModel, EndpointLiveHealth, SchedulerBindingTopology } from '@fluxeme/shared/src/api/routing';
 import RoutingFlow from './RoutingFlow';
 import type { Channel, FlowMetricsClientIp, FlowMetricsModelShare, FlowMetricsPercentiles, Model, ProbeResult } from '@fluxeme/shared/src/types';
 
 type RangeKey = '5m' | '15m' | '1h' | '6h' | '24h';
-type FlowTabKey = 'flow' | 'endpoint' | 'compare';
+type FlowTabKey = 'flow' | 'endpoint' | 'compare' | 'scheduler';
 type Tone = 'blue' | 'cyan' | 'green' | 'yellow' | 'red';
 
 type MetricRow = {
@@ -102,6 +102,7 @@ const FLOW_TABS: Array<{ key: FlowTabKey; i18n: string }> = [
   { key: 'flow', i18n: 'flowControl.tabFlow' },
   { key: 'endpoint', i18n: 'flowControl.tabEndpoint' },
   { key: 'compare', i18n: 'flowControl.tabCompare' },
+  { key: 'scheduler', i18n: 'flowControl.schedulerTab' },
 ];
 
 function formatNumber(value: number | null | undefined) {
@@ -429,6 +430,67 @@ function MetricList({ rows }: { rows: MetricRow[] }) {
   );
 }
 
+function SchedulerBindingCard({
+  binding,
+  t,
+  formatNumber,
+  formatPercent,
+}: {
+  binding: SchedulerBindingTopology;
+  t: (key: string) => string;
+  formatNumber: (value: number | null | undefined) => string;
+  formatPercent: (value: number | null | undefined) => string;
+}) {
+  const stateLabel = binding.routing_state === 'active'
+    ? t('topology.active')
+    : binding.routing_state === 'standby' ? t('topology.standby') : t('topology.blocked');
+  return (
+    <div className="rounded-xl border border-secondary bg-card p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold">{binding.channel_name}</div>
+          <div className="mt-1 font-mono text-[10px] text-muted-foreground">{binding.channel_id}</div>
+          <div className="mt-1 text-[10px] text-muted-foreground">{binding.routing_reason}</div>
+        </div>
+        <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+          <span>priority {binding.priority}</span>
+          <span className="rounded-full border px-2 py-1">{stateLabel}</span>
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] text-muted-foreground sm:grid-cols-4">
+        <div>{t('flowControl.routeRequests24h')}: {formatNumber(binding.request_count_24h)}</div>
+        <div>{t('flowControl.observedModelShare24h')}: {formatPercent(binding.observed_model_share_24h == null ? null : binding.observed_model_share_24h * 100)}</div>
+        <div>{t('flowControl.bindingMaxTokens')}: {formatNumber(binding.max_tokens)}</div>
+        <div>{t('flowControl.observedEndpointShare24h')}: {formatNumber(binding.observed_endpoint_total_24h)}</div>
+      </div>
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full min-w-[900px] text-[10px]">
+          <thead><tr className="border-b border-secondary text-left text-muted-foreground">
+            <th className="px-2 py-2">{t('flowControl.endpoint')}</th>
+            <th className="px-2 py-2">{t('flowControl.weightSource')}</th>
+            <th className="px-2 py-2">{t('flowControl.configuredShare')}</th>
+            <th className="px-2 py-2">{t('flowControl.eligibleShare')}</th>
+            <th className="px-2 py-2">{t('flowControl.observedEndpointShare24h')}</th>
+            <th className="px-2 py-2">{t('flowControl.circuitState')}</th>
+            <th className="px-2 py-2">{t('flowControl.routingReason')}</th>
+          </tr></thead>
+          <tbody>{binding.endpoints.map((ep) => (
+            <tr key={ep.endpoint_id} className="border-b border-secondary last:border-0">
+              <td className="max-w-[260px] px-2 py-2"><div className="truncate font-mono" title={ep.url}>{ep.url}</div><div className="text-muted-foreground">ID {ep.endpoint_id} · {ep.default_weight} → {ep.override_weight ?? ep.effective_weight}</div></td>
+              <td className="px-2 py-2">{ep.weight_source === 'binding_override' ? t('topology.bindingOverride') : t('topology.channelDefault')}</td>
+              <td className="px-2 py-2">{formatPercent(ep.configured_share == null ? null : ep.configured_share * 100)}</td>
+              <td className="px-2 py-2">{formatPercent(ep.eligible_share == null ? null : ep.eligible_share * 100)}</td>
+              <td className="px-2 py-2">{formatPercent(ep.observed_endpoint_share_24h == null ? null : ep.observed_endpoint_share_24h * 100)}</td>
+              <td className="px-2 py-2">{ep.circuit_state}</td>
+              <td className="px-2 py-2">{ep.routing_reason}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function FlowTowerContent() {
   const { t, i18n } = useTranslation();
   const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US';
@@ -445,6 +507,10 @@ export default function FlowTowerContent() {
   const channelsQuery = useChannels();
   const routingHealthQuery = useRoutingHealth();
   const endpointsLiveQuery = useEndpointsLiveHealth();
+  const schedulerTopologyQuery = useSchedulerTopology(
+    selectedModelId !== 'all' ? selectedModelId : '',
+    { enabled: selectedModelId !== 'all' },
+  );
   const probeResultsQuery = useProbeResults({
     enabled: selectedModelId !== 'all',
     modelId: selectedModelId !== 'all' ? selectedModelId : undefined,
@@ -1230,6 +1296,25 @@ export default function FlowTowerContent() {
                       description={t('flowControl.noCompareModelsDesc')}
                     />
                   )}
+                </div>
+              ) : null}
+              {activeTab === 'scheduler' ? (
+                <div id="flowtower-panel-scheduler" role="tabpanel" aria-labelledby="flowtower-tab-scheduler" className="space-y-5 p-4">
+                  {selectedModelId === 'all' ? (
+                    <div className="rounded-xl border border-dashed border-border px-4 py-3 text-[10.5px] text-muted-foreground">
+                      {t('flowControl.selectModelHint')}
+                    </div>
+                  ) : schedulerTopologyQuery.isError ? (
+                    <div className="rounded-xl border border-dashed border-border px-4 py-3 text-[10.5px] text-muted-foreground">
+                      {t('flowControl.healthDataFailed')}
+                    </div>
+                  ) : schedulerTopologyQuery.data ? (
+                    <div className="space-y-4">
+                      {schedulerTopologyQuery.data.bindings.map((b) => (
+                        <SchedulerBindingCard key={b.channel_id} binding={b} t={t} formatNumber={formatNumber} formatPercent={formatPercent} />
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </article>
