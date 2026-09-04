@@ -1,13 +1,18 @@
 #[cfg(test)]
 mod tests {
-    use super::{
-        authorize_effective_model, count_tokens_supported_for_channel, estimate_tokens_responses,
-        parse_responses_sse_usage, responses_input_tokens_supported_for_channel,
-    };
+    use super::estimate_tokens_responses;
     use crate::domain::channel::Channel;
+    use crate::scheduler::dispatch::{
+        count_tokens_supported_for_channel, parse_responses_sse_usage,
+        responses_input_tokens_supported_for_channel,
+    };
+    use crate::scheduler::helpers::authorize_effective_model;
     use serde_json::json;
 
-    fn auth(allowed_models: Option<Vec<String>>, scopes: Option<Vec<String>>) -> crate::domain::user::AuthResult {
+    fn auth(
+        allowed_models: Option<Vec<String>>,
+        scopes: Option<Vec<String>>,
+    ) -> crate::domain::user::AuthResult {
         crate::domain::user::AuthResult {
             user_id: "user".to_string(),
             user_name: "user".to_string(),
@@ -130,4 +135,3 @@ mod tests {
         assert_eq!(estimate_tokens_responses(&body), 32);
     }
 }
-

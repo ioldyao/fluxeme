@@ -20,11 +20,10 @@ use crate::authz::{AuthzModule, TeamAuthzModule};
 use crate::cache::RedisCache;
 use crate::ch_backend::ClickHouseBackend;
 use crate::config::types::{AppConfig, GatewayRuntimeConfig};
-use crate::provider::ProviderRegistry;
 use crate::ratelimit::RateLimiter;
 use crate::service::{
     AuthService, ContentFilterService, HealthProbeService, HealthService, OidcResourceServer,
-    RoutingService, UsageService,
+    RoutingService,
 };
 use crate::sso::SsoModule;
 
@@ -33,9 +32,9 @@ pub struct AppState {
     pub config: Arc<RwLock<AppConfig>>,
     pub auth: Arc<AuthService>,
     pub routing: Arc<RoutingService>,
-    pub providers: Arc<ProviderRegistry>,
+    /// Unified request scheduling service (route → dispatch → retry → usage).
+    pub scheduler: Arc<crate::scheduler::SchedulerService>,
     pub rate_limiter: Arc<RateLimiter>,
-    pub usage: UsageService,
     pub db: Arc<crate::db::Database>,
     /// SkillHub 控制面子系统（目录/版本/安装/包存储）。
     pub skillhub: Arc<fluxeme_skillhub::SkillHubModule>,

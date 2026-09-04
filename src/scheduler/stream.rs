@@ -1,8 +1,21 @@
-// ── Streaming ─────────────────────────────────────────────────────
+// ── Streaming helpers (moved from server/handlers/stream.rs) ──
+
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
+
+use futures::Future;
+use futures::Stream;
+use serde_json::Value;
+
+use crate::balancer::LoadBalancer;
+use crate::domain::usage::UsageRecord;
+use rust_decimal::Decimal;
 
 /// Extract reasoning and output content from raw SSE data.
 /// Returns (reasoning, content) extracted from delta chunks.
-fn extract_sse_content(data: &str) -> (String, String) {
+pub(crate) fn extract_sse_content(data: &str) -> (String, String) {
     let mut reasoning = String::new();
     let mut content = String::new();
     for line in data.lines() {
@@ -66,7 +79,7 @@ fn extract_sse_content(data: &str) -> (String, String) {
 /// Scans forward, taking the max for each token type — handles both
 /// OpenAI (final chunk has all usage) and Anthropic (message_start has
 /// prompt_tokens, message_delta has completion_tokens).
-fn parse_sse_usage(data: &str) -> (u64, u64, u64, u64) {
+pub(crate) fn parse_sse_usage(data: &str) -> (u64, u64, u64, u64) {
     let mut p_tokens = 0u64;
     let mut c_tokens = 0u64;
     let mut cache_hit = 0u64;
@@ -215,14 +228,14 @@ fn sse_tail_is_valid(tail: &str) -> bool {
 /// a TCP segment splits a `data: {...}` line across two chunks.
 ///
 /// Safety mechanisms:
-/// - Buffer capped at 1 MB — beyond that an error event is emitted and the
+/// - Buffer capped at 1 MB — beyond that an error event is emitted and the
 ///   stream is closed.
 /// - At EOF any leftover data that doesn't form valid JSON is silently
 ///   dropped (with a warning) instead of forwarded to the client.
-struct SseBuffer<S> {
-    inner: S,
-    buf: String,
-    overflow_error: Option<String>,
+pub(crate) struct SseBuffer<S> {
+    pub(crate) inner: S,
+    pub(crate) buf: String,
+    pub(crate) overflow_error: Option<String>,
 }
 
 impl<S: Stream<Item = String> + Unpin> Stream for SseBuffer<S> {
@@ -290,34 +303,34 @@ impl<S: Stream<Item = String> + Unpin> Stream for SseBuffer<S> {
 
 // ── Usage-tracking stream wrapper ─────────────────────────────────
 
-struct UsageTrackingStream<S> {
-    inner: S,
-    resp_buf: String,
-    usage: crate::service::UsageService,
-    request_id: String,
-    user_id: String,
-    user_name: String,
-    api_key_name: String,
-    channel_id: String,
-    model: String,
-    original_model: String,
-    start: Instant,
-    req_body: Option<String>,
-    api_format: String,
-    recorded: bool,
-    client_ip: String,
-    endpoint_id: Option<i64>,
-    endpoint_url: Option<String>,
+pub(crate) struct UsageTrackingStream<S> {
+    pub(crate) inner: S,
+    pub(crate) resp_buf: String,
+    pub(crate) usage: crate::service::UsageService,
+    pub(crate) request_id: String,
+    pub(crate) user_id: String,
+    pub(crate) user_name: String,
+    pub(crate) api_key_name: String,
+    pub(crate) channel_id: String,
+    pub(crate) model: String,
+    pub(crate) original_model: String,
+    pub(crate) start: Instant,
+    pub(crate) req_body: Option<String>,
+    pub(crate) api_format: String,
+    pub(crate) recorded: bool,
+    pub(crate) client_ip: String,
+    pub(crate) endpoint_id: Option<i64>,
+    pub(crate) endpoint_url: Option<String>,
     /// Team scope of the request. None = personal.
-    team_id: Option<String>,
-    upstream_started_at: Instant,
-    ttft_ms: Option<u64>,
+    pub(crate) team_id: Option<String>,
+    pub(crate) upstream_started_at: Instant,
+    pub(crate) ttft_ms: Option<u64>,
     /// Circuit-breaker feedback for the streaming request: record_success
     /// when the stream completes cleanly. Client disconnects / mid-stream
     /// drops are not fed into the breaker — they aren't upstream failures.
-    balancer: Option<Arc<LoadBalancer>>,
-    endpoint_idx: usize,
-    reservation: Option<crate::service::token_reservation::ReservationFinalizer>,
+    pub(crate) balancer: Option<Arc<LoadBalancer>>,
+    pub(crate) endpoint_idx: usize,
+    pub(crate) reservation: Option<crate::service::token_reservation::ReservationFinalizer>,
 }
 
 impl<S: Stream<Item = String> + Unpin> Stream for UsageTrackingStream<S> {
@@ -409,7 +422,7 @@ impl<S> UsageTrackingStream<S> {
 
         self.usage.record_with_endpoint(
             UsageRecord {
-                timestamp: Utc::now().to_rfc3339(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
                 request_id: self.request_id.clone(),
                 user_id: self.user_id.clone(),
                 user_name: self.user_name.clone(),
@@ -481,7 +494,7 @@ impl<S> UsageTrackingStream<S> {
 /// The first timeout waits `first_byte_timeout`; subsequent timeouts use
 /// `idle_timeout`.  This lets callers set a generous initial allowance
 /// for model "thinking" before tightening the per-chunk expectation.
-struct IdleTimeoutStream {
+pub(crate) struct IdleTimeoutStream {
     inner: Pin<Box<dyn Stream<Item = String> + Send>>,
     #[allow(dead_code)]
     first_byte_timeout: Duration,
@@ -492,7 +505,7 @@ struct IdleTimeoutStream {
 }
 
 impl IdleTimeoutStream {
-    fn new(
+    pub(crate) fn new(
         inner: Pin<Box<dyn Stream<Item = String> + Send>>,
         first_byte_timeout: Duration,
         idle_timeout: Duration,
@@ -547,4 +560,3 @@ impl Stream for IdleTimeoutStream {
         }
     }
 }
-

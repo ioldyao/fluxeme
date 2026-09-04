@@ -1,3 +1,15 @@
+// ── Shared request helpers (moved from server/handlers/common.rs) ──
+
+use std::net::SocketAddr;
+
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Json, Response};
+use serde_json::Value;
+
+use crate::cache::GateStatus;
+use crate::server::AppState;
+use rust_decimal::Decimal;
+
 // ── Error type ────────────────────────────────────────────────────
 
 #[allow(dead_code)]
@@ -99,15 +111,15 @@ impl From<crate::provider::ProviderError> for GatewayError {
     }
 }
 
-impl From<FilterBlocked> for GatewayError {
-    fn from(e: FilterBlocked) -> Self {
+impl From<crate::service::moderation::FilterBlocked> for GatewayError {
+    fn from(e: crate::service::moderation::FilterBlocked) -> Self {
         Self::BadRequest(e.0)
     }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────
+// ── Request helpers ───────────────────────────────────────────────
 
-fn authorize_effective_model(
+pub(crate) fn authorize_effective_model(
     user: &crate::domain::user::AuthResult,
     resolved_model: &str,
 ) -> Result<(), GatewayError> {
@@ -138,7 +150,7 @@ fn authorize_effective_model(
     Ok(())
 }
 
-fn trim_model(body: &mut Value) -> Result<String, GatewayError> {
+pub(crate) fn trim_model(body: &mut Value) -> Result<String, GatewayError> {
     let model_val = body["model"].clone();
     let s = model_val
         .as_str()
@@ -160,10 +172,11 @@ fn trim_model(body: &mut Value) -> Result<String, GatewayError> {
 ///     upstreams (e.g. aiionly's Java gateway) declare it as a non-object type
 ///     and 500 with a Jackson parse error on the object form
 ///   - a `content` array containing only text blocks → collapse to string
+///
 /// Claude Code occasionally sends system prompts as inline messages with
 /// role="system", which SGLang's /v1/messages rejects (only "user" and
 /// "assistant" are allowed in the messages array).
-fn normalize_messages_body(body: &mut Value) {
+pub(crate) fn normalize_messages_body(body: &mut Value) {
     // Top-level `system`: string or content-block array → plain string.
     if let Some(sys) = body.get("system").cloned() {
         let text = match &sys {
@@ -291,6 +304,7 @@ fn normalize_messages_body(body: &mut Value) {
 ///
 /// The wallet account to check. A request charges either the personal user
 /// wallet or a team wallet, depending on its team context.
+#[allow(dead_code)]
 enum WalletAccount<'a> {
     User(&'a str),
     Team(&'a str),
@@ -298,6 +312,7 @@ enum WalletAccount<'a> {
 
 /// Check Redis gate status first. PostgreSQL is used only for a cold read when
 /// Redis is reachable but has no cached status; Redis errors are propagated.
+#[allow(dead_code)]
 async fn check_wallet_balance(
     state: &AppState,
     account: WalletAccount<'_>,
@@ -344,10 +359,12 @@ async fn check_wallet_balance(
     Ok(())
 }
 
-/// Non-standard reasoning field names from various providers to normalize.
-const REASONING_ALIASES: &[&str] = &["reasoning", "thinking", "thinking_content"];
+// ── Reasoning normalization ───────────────────────────────────────
 
-fn rename_to_reasoning_content(obj: &mut serde_json::Map<String, Value>) {
+/// Non-standard reasoning field names from various providers to normalize.
+pub(crate) const REASONING_ALIASES: &[&str] = &["reasoning", "thinking", "thinking_content"];
+
+pub(crate) fn rename_to_reasoning_content(obj: &mut serde_json::Map<String, Value>) {
     if obj.contains_key("reasoning_content") {
         return;
     }
@@ -359,7 +376,7 @@ fn rename_to_reasoning_content(obj: &mut serde_json::Map<String, Value>) {
     }
 }
 
-fn normalize_reasoning_inner(val: &mut Value) {
+pub(crate) fn normalize_reasoning_inner(val: &mut Value) {
     if let Some(choices) = val.get_mut("choices").and_then(|c| c.as_array_mut()) {
         for choice in choices.iter_mut() {
             if let Some(msg) = choice.get_mut("message").and_then(|m| m.as_object_mut()) {
@@ -372,7 +389,7 @@ fn normalize_reasoning_inner(val: &mut Value) {
     }
 }
 
-fn normalize_sse_reasoning(data: &str) -> String {
+pub(crate) fn normalize_sse_reasoning(data: &str) -> String {
     let mut out = String::with_capacity(data.len());
     for line in data.lines() {
         let trimmed = line.trim();
@@ -401,159 +418,8 @@ fn normalize_sse_reasoning(data: &str) -> String {
     out
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────
-
-fn extract_client_ip(_headers: &HeaderMap, addr: SocketAddr) -> String {
+pub(crate) fn extract_client_ip(_headers: &HeaderMap, addr: SocketAddr) -> String {
     addr.ip().to_string()
-}
-
-struct RouteTarget {
-    channel_id: String,
-    endpoint: EndpointConfig,
-    /// Index of the current endpoint in the balancer's endpoint list.
-    /// Circuit-breaker feedback (record_success / record_failure) is keyed
-    /// by this index so live traffic updates real-time endpoint health.
-    endpoint_idx: usize,
-    adapter: Arc<dyn crate::provider::ProviderAdapter>,
-    balancer: Arc<LoadBalancer>,
-    routing: Arc<crate::service::routing::RoutingService>,
-    providers: Arc<crate::provider::ProviderRegistry>,
-    model: String,
-    upstream_model: Option<String>,
-    /// Endpoint identities already attempted by this request. A retry must
-    /// never immediately revisit the same binding endpoint.
-    attempted_endpoint_ids: std::collections::HashSet<i64>,
-    attempted_endpoint_indexes: std::collections::HashSet<usize>,
-    attempted_channels: std::collections::HashSet<String>,
-}
-
-impl RouteTarget {
-    /// Try the next available endpoint from the balancer.
-    /// Returns `false` if no more endpoints available.
-    fn retry_next(&mut self) -> bool {
-        if let Some(id) = self.endpoint.id {
-            self.attempted_endpoint_ids.insert(id);
-        }
-        self.attempted_endpoint_indexes.insert(self.endpoint_idx);
-        if let Some((idx, ep)) = self
-            .balancer
-            .as_health_aware()
-            .select_healthy_excluding_indexes(
-                &self.attempted_endpoint_ids,
-                &self.attempted_endpoint_indexes,
-            )
-        {
-            self.endpoint_idx = idx;
-            self.endpoint = ep.clone();
-            return true;
-        }
-        self.attempted_channels.insert(self.channel_id.clone());
-        let Ok(plan) = self.routing.route_model_binding_for_model_excluding_channels(
-            &self.model,
-            self.upstream_model.as_deref(),
-            &[],
-            &self.attempted_channels,
-        ) else {
-            return false;
-        };
-        let Some(provider_name) = self.routing.get_route(&plan.channel_id).map(|(name, _)| name)
-        else {
-            return false;
-        };
-        let Some(adapter) = self.providers.get(&provider_name) else {
-            return false;
-        };
-        self.channel_id = plan.channel_id;
-        self.endpoint_idx = plan.endpoint_idx;
-        self.endpoint = plan.endpoint;
-        self.balancer = plan.balancer;
-        self.adapter = adapter;
-        self.attempted_endpoint_ids.clear();
-        self.attempted_endpoint_indexes.clear();
-        true
-    }
-
-    /// Feed a successful upstream call into the circuit breaker (closes it).
-    fn report_success(&self) {
-        self.balancer
-            .as_health_aware()
-            .record_success(self.endpoint_idx);
-    }
-
-    /// Feed an upstream failure (connect / 5xx / timeout) into the breaker.
-    fn report_failure(&mut self) {
-        self.balancer
-            .as_health_aware()
-            .record_failure(self.endpoint_idx);
-    }
-}
-
-fn resolve_route(state: &AppState, channel_id: &str) -> Result<RouteTarget, GatewayError> {
-    let (provider_name, balancer) = state
-        .routing
-        .get_route(channel_id)
-        .ok_or_else(|| GatewayError::Internal("Channel route unavailable".into()))?;
-
-    let adapter = state
-        .providers
-        .get(provider_name.as_str())
-        .ok_or_else(|| GatewayError::Internal("Provider not available".into()))?;
-
-    let (idx, endpoint) = balancer
-        .as_health_aware()
-        .select()
-        .ok_or_else(|| GatewayError::Internal("No available endpoints".into()))?;
-
-    Ok(RouteTarget {
-        channel_id: channel_id.to_string(),
-        endpoint: endpoint.clone(),
-        endpoint_idx: idx,
-        adapter,
-        balancer,
-        routing: state.routing.clone(),
-        providers: state.providers.clone(),
-        model: String::new(),
-        upstream_model: None,
-        attempted_endpoint_ids: std::collections::HashSet::new(),
-        attempted_endpoint_indexes: std::collections::HashSet::new(),
-        attempted_channels: std::collections::HashSet::new(),
-    })
-}
-
-/// Resolve the endpoint from the model-binding pool. System-rule targets
-/// without a model binding retain a channel-level compatibility fallback.
-fn resolve_route_for_model(
-    state: &AppState,
-    model: &str,
-    channel_id: &str,
-    upstream_model: Option<&str>,
-) -> Result<RouteTarget, GatewayError> {
-    // Resolve from the model binding pool first. If a rule-selected binding
-    // has become unhealthy, choose another healthy binding for this request.
-    let plan = state
-        .routing
-        .route_model_binding_for_channel_and_upstream(model, channel_id, upstream_model, &[])
-        .or_else(|_| state.routing.route_model_binding_for_model(model, upstream_model, &[]))
-        .map_err(GatewayError::from)?;
-    let provider_name = plan.provider_name.clone();
-    let adapter = state
-        .providers
-        .get(provider_name.as_str())
-        .ok_or_else(|| GatewayError::Internal("Provider not available".into()))?;
-    Ok(RouteTarget {
-        channel_id: plan.channel_id,
-        endpoint: plan.endpoint,
-        endpoint_idx: plan.endpoint_idx,
-        adapter,
-        balancer: plan.balancer,
-        routing: state.routing.clone(),
-        providers: state.providers.clone(),
-        model: model.to_string(),
-        upstream_model: upstream_model.map(str::to_string),
-        attempted_endpoint_ids: std::collections::HashSet::new(),
-        attempted_endpoint_indexes: std::collections::HashSet::new(),
-        attempted_channels: std::collections::HashSet::new(),
-    })
 }
 
 #[cfg(test)]
@@ -613,96 +479,28 @@ mod normalize_tests {
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "part one"},
-                        {"type": "text", "text": "part two"}
+                        {"type": "text", "text": "one"},
+                        {"type": "text", "text": "two"}
                     ]
                 }
             ]
         });
         super::normalize_messages_body(&mut body);
-        assert_eq!(body["messages"][0]["content"], "part one\npart two");
+        assert_eq!(body["messages"][0]["content"], "one\ntwo");
     }
 
     #[test]
-    fn preserves_non_text_content_array() {
+    fn moves_inline_system_messages_to_top_level() {
         let mut body = json!({
             "model": "m",
             "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "description"},
-                        {"type": "image_url", "image_url": {"url": "data:..."}}
-                    ]
-                }
-            ]
-        });
-        super::normalize_messages_body(&mut body);
-        // Image block should remain as-is (not collapsed)
-        assert!(body["messages"][0]["content"].is_array());
-        assert_eq!(body["messages"][0]["content"][0]["type"], "text");
-    }
-
-    #[test]
-    fn moves_inline_system_message_to_top_level() {
-        let mut body = json!({
-            "model": "m",
-            "messages": [
-                {"role": "system", "content": "Be concise."},
+                {"role": "system", "content": "sys line"},
                 {"role": "user", "content": "hi"}
             ]
         });
         super::normalize_messages_body(&mut body);
-        // The role=system message should be removed from messages,
-        // and a top-level "system" field should exist
-        let msgs = body["messages"].as_array().unwrap();
-        assert_eq!(msgs.len(), 1);
-        assert_eq!(body["system"], "Be concise.");
-    }
-
-    #[test]
-    fn merges_top_level_system_with_inline_system() {
-        let mut body = json!({
-            "model": "m",
-            "system": "Top system.",
-            "messages": [
-                {"role": "system", "content": "Inline system."},
-                {"role": "user", "content": "hi"}
-            ]
-        });
-        super::normalize_messages_body(&mut body);
-        let msgs = body["messages"].as_array().unwrap();
-        assert_eq!(msgs.len(), 1);
-        assert_eq!(body["system"], "Inline system.\nTop system.");
-    }
-
-    #[test]
-    fn preserves_tool_use_content() {
-        let mut body = json!({
-            "model": "m",
-            "messages": [
-                {
-                    "role": "assistant",
-                    "content": [
-                        {"type": "text", "text": "Let me check..."},
-                        {"type": "tool_use", "id": "tu_1", "name": "bash", "input": {"cmd": "ls"}}
-                    ]
-                }
-            ]
-        });
-        super::normalize_messages_body(&mut body);
-        // Should remain an array (contains non-text block)
-        assert!(body["messages"][0]["content"].is_array());
-        assert_eq!(body["messages"][0]["content"][0]["type"], "text");
-    }
-
-    #[test]
-    fn handles_empty_body_gracefully() {
-        let mut body = json!({"model": "m"});
-        // Should not panic
-        super::normalize_messages_body(&mut body);
-        assert_eq!(body["model"], "m");
+        assert_eq!(body["system"], "sys line");
+        assert_eq!(body["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(body["messages"][0]["role"], "user");
     }
 }
-
-

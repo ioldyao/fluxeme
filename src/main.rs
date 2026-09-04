@@ -12,6 +12,7 @@ mod management;
 mod observability;
 mod provider;
 mod ratelimit;
+mod scheduler;
 mod server;
 mod service;
 mod skill_runtime;
@@ -33,6 +34,7 @@ use crate::service::{
     AuthService, ContentFilterService, HealthProbeService, HealthService, OidcResourceServer,
     RoutingService, UsageService,
 };
+use crate::scheduler::SchedulerService;
 
 async fn migrate_endpoint_credentials(
     db: &Database,
@@ -440,6 +442,21 @@ async fn main() {
     // Initialize content filter service
     let content_filter = Arc::new(ContentFilterService::new(db.clone()).await);
 
+    // Initialize the unified scheduling service: owns route decision → endpoint
+    // selection → upstream execution → retry → breaker feedback → caching →
+    // content filtering → usage recording for every data-plane request.
+    let scheduler = Arc::new(SchedulerService::new(
+        routing.clone(),
+        providers.clone(),
+        db.clone(),
+        cache.clone(),
+        usage.clone(),
+        flow_tracker.clone(),
+        event_bus.clone(),
+        content_filter.clone(),
+        gateway_config.clone(),
+    ));
+
     // Initialize health probe service
     let health_probe = Arc::new(HealthProbeService::new(
         db.clone(),
@@ -520,9 +537,8 @@ async fn main() {
         config,
         auth,
         routing,
-        providers,
+        scheduler,
         rate_limiter,
-        usage,
         db,
         skillhub,
         skill_backing,

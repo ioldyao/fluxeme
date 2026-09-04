@@ -4,17 +4,7 @@ pub async fn embeddings(
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
-    let client_ip = extract_client_ip(&headers, addr);
-    relay_to_upstream(
-        &state,
-        &headers,
-        body.0,
-        "/v1/embeddings",
-        Uuid::new_v4().to_string(),
-        Instant::now(),
-        client_ip,
-    )
-    .await
+    relay_dispatch(&state, &headers, addr, body.0, "/v1/embeddings").await
 }
 
 pub async fn batches(
@@ -23,17 +13,7 @@ pub async fn batches(
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
-    let client_ip = extract_client_ip(&headers, addr);
-    relay_to_upstream(
-        &state,
-        &headers,
-        body.0,
-        "/v1/messages/batches",
-        Uuid::new_v4().to_string(),
-        Instant::now(),
-        client_ip,
-    )
-    .await
+    relay_dispatch(&state, &headers, addr, body.0, "/v1/messages/batches").await
 }
 
 pub async fn tokenize(
@@ -42,17 +22,7 @@ pub async fn tokenize(
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
-    let client_ip = extract_client_ip(&headers, addr);
-    relay_to_upstream(
-        &state,
-        &headers,
-        body.0,
-        "/tokenize",
-        Uuid::new_v4().to_string(),
-        Instant::now(),
-        client_ip,
-    )
-    .await
+    relay_dispatch(&state, &headers, addr, body.0, "/tokenize").await
 }
 
 pub async fn detokenize(
@@ -61,17 +31,7 @@ pub async fn detokenize(
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<Response, GatewayError> {
-    let client_ip = extract_client_ip(&headers, addr);
-    relay_to_upstream(
-        &state,
-        &headers,
-        body.0,
-        "/detokenize",
-        Uuid::new_v4().to_string(),
-        Instant::now(),
-        client_ip,
-    )
-    .await
+    relay_dispatch(&state, &headers, addr, body.0, "/detokenize").await
 }
 
 // ── Other ─────────────────────────────────────────────────────────
@@ -141,5 +101,3 @@ pub async fn list_models(
         "last_id": last_id,
     })))
 }
-
-
