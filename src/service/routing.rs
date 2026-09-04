@@ -397,10 +397,7 @@ impl RoutingService {
             .collect();
         candidates.sort_by_key(|(priority, _, _, _)| *priority);
         let Some(best_priority) = candidates.first().map(|(priority, _, _, _)| *priority) else {
-            return Err(RouteError::unavailable(format!(
-                "No route found for model '{}'",
-                model
-            )));
+            return Err(RouteError::unavailable(model_busy_message(&model)));
         };
         let same_priority: Vec<_> = candidates
             .into_iter()
@@ -428,10 +425,7 @@ impl RoutingService {
                 });
             }
         }
-        Err(RouteError::unavailable(format!(
-            "No route found for model '{}'",
-            model
-        )))
+        Err(RouteError::unavailable(model_busy_message(&model)))
     }
 
     pub fn route_model_binding_for_channel_and_upstream(
@@ -483,7 +477,7 @@ impl RoutingService {
         let (endpoint_idx, endpoint) = balancer
             .as_health_aware()
             .select_healthy_excluding(&excluded)
-            .ok_or_else(|| RouteError::unavailable("No available endpoints"))?;
+            .ok_or_else(|| RouteError::unavailable(model_busy_message(&model)))?;
         let binding = model_cfg
             .channels
             .iter()
@@ -1032,10 +1026,7 @@ impl RoutingService {
             healthy_binding_count,
             "No routable model binding"
         );
-        Err(RouteError::unavailable(format!(
-            "No route found for model '{}'",
-            model_name
-        )))
+        Err(RouteError::unavailable(model_busy_message(&model_name)))
     }
 }
 
@@ -1101,6 +1092,16 @@ impl RouteError {
     pub fn unavailable(message: impl Into<String>) -> Self {
         Self::new(message, RouteErrorKind::Unavailable)
     }
+}
+
+/// Friendly message for when a model exists but all its endpoints are
+/// circuit-broken (no healthy endpoint to route to).
+pub(crate) fn model_busy_message(model: &str) -> String {
+    format!(
+        "Model '{}' is currently at peak capacity, all channels are busy. \
+         Please try again later.",
+        model
+    )
 }
 
 impl std::fmt::Display for RouteError {
