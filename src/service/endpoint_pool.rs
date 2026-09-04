@@ -72,6 +72,16 @@ impl BindingStatePool {
             .cloned()
     }
 
+    /// Snapshot of all (key, balancer) pairs. Used by aggregate health queries.
+    pub fn iter(&self) -> Vec<(BindingKey, Arc<LoadBalancer>)> {
+        self.bindings
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
     pub fn has_healthy(&self, model_id: &str, channel_id: &str) -> bool {
         self.get(model_id, channel_id)
             .is_some_and(|balancer| balancer.as_health_aware().has_healthy_endpoint())

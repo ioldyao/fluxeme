@@ -161,3 +161,28 @@ export function useRoutingHealth(opts?: { enabled?: boolean }) {
     enabled: opts?.enabled !== false,
   });
 }
+
+export interface EndpointLiveHealth {
+  endpoint_id: number;
+  enabled: boolean;
+  healthy_bindings: number;
+  total_bindings: number;
+  long_unavailable: boolean;
+  available: boolean;
+}
+
+export interface EndpointsLiveHealthResponse {
+  endpoints: EndpointLiveHealth[];
+}
+
+/** Realtime per-endpoint circuit-breaker health aggregated over all published
+ *  model bindings — reflects binding_pool state, not 24h ClickHouse aggregates.
+ *  Polled every 10s. */
+export function useEndpointsLiveHealth(opts?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['routing', 'endpoints-live'],
+    queryFn: () => api<EndpointsLiveHealthResponse>('/health/endpoints-live'),
+    refetchInterval: 10_000,
+    enabled: opts?.enabled !== false,
+  });
+}

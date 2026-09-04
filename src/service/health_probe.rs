@@ -245,6 +245,17 @@ impl HealthProbeService {
     /// used by business traffic. A probe claim is separate from business
     /// traffic, so a recovering endpoint cannot re-enter routing until success.
     pub async fn probe_open_bindings(&self) -> Result<Vec<ProbeResultRow>, String> {
+        self.probe_bindings(false).await
+    }
+
+    /// Fast recovery cycle — probe every enabled endpoint that is currently
+    /// Open (after cooldown) so recovery doesn't wait for the next slow cycle.
+    pub async fn probe_recovering_bindings(&self) -> Result<Vec<ProbeResultRow>, String> {
+        let rows = self.probe_bindings(true).await?;
+        Ok(rows)
+    }
+
+    async fn probe_bindings(&self, recovering_only: bool) -> Result<Vec<ProbeResultRow>, String> {
         let models = self.db.list_models().await.map_err(|e| e.0)?;
         let mut jobs = Vec::new();
 
@@ -279,6 +290,13 @@ impl HealthProbeService {
                     };
                     if !endpoint.enabled {
                         continue;
+                    }
+                    if recovering_only {
+                        // Only probe endpoints that are not healthy (Open,
+                        // HalfOpen, or lease expired) — skip healthy ones.
+                        if balancer.as_health_aware().breakers()[endpoint_order].is_healthy() {
+                            continue;
+                        }
                     }
                     jobs.push(ProbeJob {
                         binding_order: jobs.len(),

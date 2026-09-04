@@ -673,3 +673,33 @@ pub(crate) async fn flow_metrics(
         },
     }))
 }
+
+/// GET /api/health/endpoints-live — realtime per-endpoint circuit-breaker
+/// health aggregated across all published model bindings. Unlike
+/// routing_health (24h ClickHouse aggregates), this reflects the live
+/// binding_pool state that business routing actually consults.
+pub(crate) async fn endpoints_live_health(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:dashboard").await?;
+
+    let rows = state.routing.all_endpoints_live_health();
+    let items: Vec<_> = rows
+        .into_iter()
+        .map(
+            |(endpoint_id, enabled, healthy_bindings, total_bindings, long_unavailable)| {
+                serde_json::json!({
+                    "endpoint_id": endpoint_id,
+                    "enabled": enabled,
+                    "healthy_bindings": healthy_bindings,
+                    "total_bindings": total_bindings,
+                    "long_unavailable": long_unavailable,
+                    "available": healthy_bindings > 0,
+                })
+            },
+        )
+        .collect();
+    Ok(Json(serde_json::json!({ "endpoints": items })))
+}

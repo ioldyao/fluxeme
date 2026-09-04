@@ -6,6 +6,9 @@ export interface EndpointHealthItem {
   url: string;
   enabled: boolean;
   available: boolean;
+  healthy_bindings: number;
+  total_bindings: number;
+  long_unavailable: boolean;
 }
 
 export interface ChannelHealthResponse {

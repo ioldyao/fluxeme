@@ -13,8 +13,8 @@ import { useFlowMetrics } from '@fluxeme/shared';
 import { usePublicModels } from '@fluxeme/shared/src/api/models';
 import { useChannels } from '@fluxeme/shared/src/api/channels';
 import { useProbeResults } from '@fluxeme/shared/src/api/probe';
-import { useRoutingHealth } from '@fluxeme/shared/src/api/routing';
-import type { RoutingHealthModel } from '@fluxeme/shared/src/api/routing';
+import { useRoutingHealth, useEndpointsLiveHealth } from '@fluxeme/shared/src/api/routing';
+import type { RoutingHealthModel, EndpointLiveHealth } from '@fluxeme/shared/src/api/routing';
 import RoutingFlow from './RoutingFlow';
 import type { Channel, FlowMetricsClientIp, FlowMetricsModelShare, FlowMetricsPercentiles, Model, ProbeResult } from '@fluxeme/shared/src/types';
 
@@ -207,12 +207,19 @@ function deriveCatalogModel(
   channelById: Map<string, Channel>,
   channelConfigReady: boolean,
   health?: RoutingHealthModel,
+  liveByEndpoint?: Map<number, EndpointLiveHealth>,
 ): CatalogModel {
   const healthChannels = health?.channels ?? [];
   const channels = healthChannels.filter((channel) => channel.enabled);
   const endpointAvailability = new Map(
     channels.flatMap((channel) => channel.endpoints.map((endpoint) => [endpoint.endpoint_id, endpoint.available])),
   );
+  // Prefer live binding-pool availability when present.
+  if (liveByEndpoint) {
+    for (const [endpointId, live] of liveByEndpoint) {
+      endpointAvailability.set(endpointId, live.available);
+    }
+  }
   const configuredEndpoints = config.channels.flatMap((binding) => {
     const channel = channelById.get(binding.channel_id);
     if (!channel?.enabled) return [];
@@ -436,10 +443,21 @@ export default function FlowTowerContent() {
   const modelsQuery = usePublicModels();
   const channelsQuery = useChannels();
   const routingHealthQuery = useRoutingHealth();
+  const endpointsLiveQuery = useEndpointsLiveHealth();
   const probeResultsQuery = useProbeResults({
     enabled: selectedModelId !== 'all',
     modelId: selectedModelId !== 'all' ? selectedModelId : undefined,
   });
+  const endpointLiveByModel = useMemo(() => {
+    // endpoint_id -> live health. A binding-level endpoint is "available" if
+    // at least one published model binding is healthy; unavailable+long
+    // means circuit-broken in the long-unavailable state.
+    const map = new Map<number, EndpointLiveHealth>();
+    for (const ep of endpointsLiveQuery.data?.endpoints ?? []) {
+      map.set(ep.endpoint_id, ep);
+    }
+    return map;
+  }, [endpointsLiveQuery.data]);
   const channelById = useMemo(
     () => new Map((channelsQuery.data ?? []).map((channel) => [channel.id, channel])),
     [channelsQuery.data],
@@ -450,9 +468,9 @@ export default function FlowTowerContent() {
   );
   const catalogModels = useMemo(
     () => (modelsQuery.data ?? [])
-      .map((model) => deriveCatalogModel(model, channelById, !channelsQuery.isLoading && !channelsQuery.isError, healthByModelId.get(model.id)))
+      .map((model) => deriveCatalogModel(model, channelById, !channelsQuery.isLoading && !channelsQuery.isError, healthByModelId.get(model.id), endpointLiveByModel))
       .sort((left, right) => left.config.name.localeCompare(right.config.name) || left.config.id.localeCompare(right.config.id)),
-    [channelById, channelsQuery.isLoading, healthByModelId, modelsQuery.data],
+    [channelById, channelsQuery.isLoading, endpointLiveByModel, healthByModelId, modelsQuery.data],
   );
   const selectedCatalogModel = selectedModelId === 'all'
     ? undefined
@@ -578,6 +596,7 @@ export default function FlowTowerContent() {
         .filter((endpoint) => endpoint.enabled !== false)
         .map((endpoint) => {
           const endpointHealth = channelHealth?.endpoints.find((item) => item.endpoint_id === endpoint.id);
+          const live = endpoint.id != null ? endpointLiveByModel.get(endpoint.id) : undefined;
           const probe = probeRows.find((row) => row.channel_id === binding.channel_id && row.endpoint_url === endpoint.url) ?? null;
           return {
             channelId: binding.channel_id,
@@ -589,18 +608,19 @@ export default function FlowTowerContent() {
             endpointEnabled: endpoint.enabled !== false,
             endpointWeight: endpoint.weight,
             endpointTimeoutSecs: endpoint.timeout_secs,
-            routingObserved: Boolean(endpointHealth),
-            routingAvailable: endpointHealth?.available ?? false,
+            routingObserved: live ? true : Boolean(endpointHealth),
+            // Prefer live binding-pool state over 24h aggregates.
+            routingAvailable: live ? live.available : (endpointHealth?.available ?? false),
             probe,
             channelRequests24h: channelHealth?.requests ?? 0,
             channelSuccessRate24h: channelHealth?.requests ? channelHealth.success_rate * 100 : undefined,
             channelP95Latency24h: channelHealth?.requests ? channelHealth.p95_latency_ms : undefined,
-            circuitEnabled: channelHealth?.circuit_enabled ?? false,
-            circuitOk: channelHealth?.circuit_ok ?? false,
+            circuitEnabled: live ? live.enabled : (channelHealth?.circuit_enabled ?? false),
+            circuitOk: live ? live.available : (channelHealth?.circuit_ok ?? false),
           } satisfies EndpointStatusRow;
         });
     });
-  }, [channelById, probeResultsQuery.data, selectedCatalogModel]);
+  }, [channelById, endpointLiveByModel, probeResultsQuery.data, selectedCatalogModel]);
 
   const endpointSummaryRows: MetricRow[] = useMemo(() => {
     const enabled = endpointRows.length;

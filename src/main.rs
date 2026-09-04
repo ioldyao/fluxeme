@@ -477,6 +477,24 @@ async fn main() {
         });
     }
 
+    // Fast recovery probe cycle — runs every 10s and only probes endpoints
+    // whose breakers are not healthy (Open/HalfOpen after cooldown). Long-
+    // unavailable endpoints are skipped by their breaker until the slower
+    // long-probe interval elapses.
+    {
+        let health_probe = health_probe.clone();
+        tokio::spawn(async move {
+            // Stagger start slightly so both loops don't fire together.
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            loop {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                if let Err(e) = health_probe.probe_recovering_bindings().await {
+                    tracing::warn!("Recovery probe failed: {}", e);
+                }
+            }
+        });
+    }
+
     // Skill Runtime 数据面子系统：只依赖 contract Port（目录/鉴权/计量），
     // 不 import skillhub 代码。poller 后台消费 outbox 任务部署端点。
     let skill_authorizer = Arc::new(crate::skill_runtime::SkillKeyAuthorizer::new(db.clone()));

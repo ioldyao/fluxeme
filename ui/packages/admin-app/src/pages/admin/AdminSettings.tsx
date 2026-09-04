@@ -25,6 +25,10 @@ const BREAKER_THRESHOLD_MIN = 1;
 const BREAKER_THRESHOLD_MAX = 100;
 const BREAKER_COOLDOWN_MIN = 0;
 const BREAKER_COOLDOWN_MAX = 3600;
+const BREAKER_LONG_FAIL_THRESHOLD_MIN = 1;
+const BREAKER_LONG_FAIL_THRESHOLD_MAX = 1000;
+const BREAKER_LONG_PROBE_INTERVAL_MIN = 60;
+const BREAKER_LONG_PROBE_INTERVAL_MAX = 86400;
 
 export default function AdminSettings() {
   const { t } = useTranslation();
@@ -42,6 +46,8 @@ export default function AdminSettings() {
   const [privateIpsLoading, setPrivateIpsLoading] = useState(true);
   const [breakerThreshold, setBreakerThreshold] = useState(3);
   const [breakerCooldown, setBreakerCooldown] = useState(30);
+  const [breakerLongFailThreshold, setBreakerLongFailThreshold] = useState(10);
+  const [breakerLongProbeInterval, setBreakerLongProbeInterval] = useState(1800);
   const [breakerLoading, setBreakerLoading] = useState(true);
   const [breakerSaving, setBreakerSaving] = useState(false);
 
@@ -58,8 +64,13 @@ export default function AdminSettings() {
       .then((r) => setAllowPrivateIps(r.enabled))
       .catch(() => {})
       .finally(() => setPrivateIpsLoading(false));
-    api<{ threshold: number; cooldown_secs: number }>('/settings/breaker')
-      .then((r) => { setBreakerThreshold(r.threshold); setBreakerCooldown(r.cooldown_secs); })
+    api<{ threshold: number; cooldown_secs: number; long_fail_threshold?: number; long_probe_interval_secs?: number }>('/settings/breaker')
+      .then((r) => {
+        setBreakerThreshold(r.threshold);
+        setBreakerCooldown(r.cooldown_secs);
+        if (r.long_fail_threshold != null) setBreakerLongFailThreshold(r.long_fail_threshold);
+        if (r.long_probe_interval_secs != null) setBreakerLongProbeInterval(r.long_probe_interval_secs);
+      })
       .catch(() => {})
       .finally(() => setBreakerLoading(false));
   }, []);
@@ -100,27 +111,35 @@ export default function AdminSettings() {
   const saveBreaker = async () => {
     const threshold = Math.round(breakerThreshold);
     const cooldown = Math.round(breakerCooldown);
+    const longFail = Math.round(breakerLongFailThreshold);
+    const longProbe = Math.round(breakerLongProbeInterval);
     if (
       Number.isNaN(threshold) || Number.isNaN(cooldown) ||
       threshold < BREAKER_THRESHOLD_MIN || threshold > BREAKER_THRESHOLD_MAX ||
-      cooldown < BREAKER_COOLDOWN_MIN || cooldown > BREAKER_COOLDOWN_MAX
+      cooldown < BREAKER_COOLDOWN_MIN || cooldown > BREAKER_COOLDOWN_MAX ||
+      Number.isNaN(longFail) || longFail < BREAKER_LONG_FAIL_THRESHOLD_MIN || longFail > BREAKER_LONG_FAIL_THRESHOLD_MAX ||
+      Number.isNaN(longProbe) || longProbe < BREAKER_LONG_PROBE_INTERVAL_MIN || longProbe > BREAKER_LONG_PROBE_INTERVAL_MAX
     ) {
       toast.error(
         t('settings.breakerInvalid', {
           thMin: BREAKER_THRESHOLD_MIN, thMax: BREAKER_THRESHOLD_MAX,
           cdMin: BREAKER_COOLDOWN_MIN, cdMax: BREAKER_COOLDOWN_MAX,
+          lfMin: BREAKER_LONG_FAIL_THRESHOLD_MIN, lfMax: BREAKER_LONG_FAIL_THRESHOLD_MAX,
+          lpMin: BREAKER_LONG_PROBE_INTERVAL_MIN, lpMax: BREAKER_LONG_PROBE_INTERVAL_MAX,
         }),
       );
       return;
     }
     setBreakerSaving(true);
     try {
-      const r = await api<{ threshold: number; cooldown_secs: number }>('/settings/breaker', {
+      const r = await api<{ threshold: number; cooldown_secs: number; long_fail_threshold: number; long_probe_interval_secs: number }>('/settings/breaker', {
         method: 'PUT',
-        body: { threshold, cooldown_secs: cooldown },
+        body: { threshold, cooldown_secs: cooldown, long_fail_threshold: longFail, long_probe_interval_secs: longProbe },
       });
       setBreakerThreshold(r.threshold);
       setBreakerCooldown(r.cooldown_secs);
+      setBreakerLongFailThreshold(r.long_fail_threshold);
+      setBreakerLongProbeInterval(r.long_probe_interval_secs);
       toast.success(t('settings.breakerSaved'));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t('settings.saveFailed'));
@@ -441,12 +460,57 @@ export default function AdminSettings() {
                 className="max-w-[180px]"
               />
             </div>
+            <div className="flex-1 min-w-[220px]">
+              <Label htmlFor="breaker-long-fail" className="text-sm">
+                {t('settings.breakerLongFailThreshold')}
+              </Label>
+              <p className="text-xs text-muted-foreground mt-0.5 mb-2">
+                {t('settings.breakerLongFailThresholdHint', {
+                  min: BREAKER_LONG_FAIL_THRESHOLD_MIN,
+                  max: BREAKER_LONG_FAIL_THRESHOLD_MAX,
+                })}
+              </p>
+              <Input
+                id="breaker-long-fail"
+                type="number"
+                min={BREAKER_LONG_FAIL_THRESHOLD_MIN}
+                max={BREAKER_LONG_FAIL_THRESHOLD_MAX}
+                value={Number.isNaN(breakerLongFailThreshold) ? '' : breakerLongFailThreshold}
+                onChange={(e) => setBreakerLongFailThreshold(Number(e.target.value))}
+                disabled={breakerLoading}
+                className="max-w-[180px]"
+              />
+            </div>
+            <div className="flex-1 min-w-[220px]">
+              <Label htmlFor="breaker-long-probe" className="text-sm">
+                {t('settings.breakerLongProbeInterval')}
+              </Label>
+              <p className="text-xs text-muted-foreground mt-0.5 mb-2">
+                {t('settings.breakerLongProbeIntervalHint', {
+                  min: BREAKER_LONG_PROBE_INTERVAL_MIN,
+                  max: BREAKER_LONG_PROBE_INTERVAL_MAX,
+                })}
+              </p>
+              <Input
+                id="breaker-long-probe"
+                type="number"
+                min={BREAKER_LONG_PROBE_INTERVAL_MIN}
+                max={BREAKER_LONG_PROBE_INTERVAL_MAX}
+                value={Number.isNaN(breakerLongProbeInterval) ? '' : breakerLongProbeInterval}
+                onChange={(e) => setBreakerLongProbeInterval(Number(e.target.value))}
+                disabled={breakerLoading}
+                className="max-w-[180px]"
+              />
+            </div>
             <Button onClick={saveBreaker} disabled={breakerLoading || breakerSaving}>
               {t('common.save')}
             </Button>
           </div>
           <p className="text-xs text-muted-foreground leading-relaxed">
             {t('settings.breakerCostHint')}
+          </p>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            {t('settings.breakerLongHint')}
           </p>
         </CardContent>
       </Card>

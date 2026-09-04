@@ -580,7 +580,60 @@ impl RoutingService {
         self.binding_pool.restore_snapshots(snapshots);
     }
 
-    /// Collect health status for all endpoints in a channel.
+    /// Aggregated endpoint health for a channel, across all **published**
+    /// model bindings that use it. Unlike the channel-level balancer (which
+    /// business traffic doesn't update), this reflects the real binding-level
+    /// circuit breakers — the ones routing actually consults.
+    ///
+    /// Returns `(endpoint_id, enabled, healthy_bindings, total_bindings,
+    /// long_unavailable)` per endpoint.
+    pub fn channel_health_aggregated(&self, channel_id: &str) -> Vec<(i64, bool, u32, u32, bool)> {
+        let _snapshot_guard = self.snapshot_lock.read().unwrap_or_else(|e| e.into_inner());
+        let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
+        let models = self.models.read().unwrap_or_else(|e| e.into_inner());
+        let published_ids: HashSet<&str> = models
+            .iter()
+            .filter(|m| m.published)
+            .map(|m| m.id.as_str())
+            .collect();
+
+        // endpoint_id -> (healthy_bindings, total_bindings, any_long_unavailable)
+        let mut agg: HashMap<i64, (u32, u32, bool)> = HashMap::new();
+        for (key, balancer) in self.binding_pool.iter() {
+            if key.channel_id != channel_id || !published_ids.contains(key.model_id.as_str()) {
+                continue;
+            }
+            let health = balancer.as_health_aware();
+            for (i, ep) in health.endpoints().iter().enumerate() {
+                if let Some(id) = ep.id {
+                    let entry = agg.entry(id).or_insert((0, 0, false));
+                    entry.1 += 1;
+                    if health.breakers()[i].is_healthy() {
+                        entry.0 += 1;
+                    }
+                    if health.breakers()[i].long_unavailable() {
+                        entry.2 = true;
+                    }
+                }
+            }
+        }
+
+        let Some(ch) = chs.get(channel_id) else {
+            return Vec::new();
+        };
+        ch.endpoints
+            .iter()
+            .filter_map(|ep| {
+                ep.id.map(|id| {
+                    let (healthy, total, long) = agg.get(&id).copied().unwrap_or((0, 0, false));
+                    (id, ep.enabled, healthy, total, long)
+                })
+            })
+            .collect()
+    }
+
+    /// Collect health status for all endpoints in a channel (channel-level
+    /// balancer only; kept for the flow-control console).
     pub fn channel_health(&self, channel_id: &str) -> Vec<(i64, bool, bool)> {
         let _snapshot_guard = self.snapshot_lock.read().unwrap_or_else(|e| e.into_inner());
         let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
@@ -607,7 +660,56 @@ impl RoutingService {
         Vec::new()
     }
 
-    /// Return published models in a format suitable for the /v1/models endpoint.
+    /// Global live endpoint health across all channels, aggregated over all
+    /// **published** model bindings. This is the real state business routing
+    /// consults (binding_pool), not the channel-level balancer.
+    ///
+    /// Returns per-endpoint: (endpoint_id, enabled, healthy_bindings,
+    /// total_bindings, long_unavailable).
+    pub fn all_endpoints_live_health(
+        &self,
+    ) -> Vec<(i64, bool, u32, u32, bool)> {
+        let _snapshot_guard = self.snapshot_lock.read().unwrap_or_else(|e| e.into_inner());
+        let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
+        let models = self.models.read().unwrap_or_else(|e| e.into_inner());
+        let published_ids: HashSet<&str> = models
+            .iter()
+            .filter(|m| m.published)
+            .map(|m| m.id.as_str())
+            .collect();
+
+        // endpoint_id -> (healthy_bindings, total_bindings, any_long_unavailable)
+        let mut agg: HashMap<i64, (u32, u32, bool)> = HashMap::new();
+        for (key, balancer) in self.binding_pool.iter() {
+            if !published_ids.contains(key.model_id.as_str()) {
+                continue;
+            }
+            let health = balancer.as_health_aware();
+            for (i, ep) in health.endpoints().iter().enumerate() {
+                if let Some(id) = ep.id {
+                    let entry = agg.entry(id).or_insert((0, 0, false));
+                    entry.1 += 1;
+                    if health.breakers()[i].is_healthy() {
+                        entry.0 += 1;
+                    }
+                    if health.breakers()[i].long_unavailable() {
+                        entry.2 = true;
+                    }
+                }
+            }
+        }
+
+        let mut out = Vec::new();
+        for ch in chs.values() {
+            for ep in &ch.endpoints {
+                if let Some(id) = ep.id {
+                    let (healthy, total, long) = agg.get(&id).copied().unwrap_or((0, 0, false));
+                    out.push((id, ep.enabled, healthy, total, long));
+                }
+            }
+        }
+        out
+    }
     /// Same-named models are merged into one entry (they share the "id" field).
     pub fn list_display_models(&self) -> Vec<serde_json::Value> {
         self.list_display_models_for(None)

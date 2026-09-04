@@ -171,9 +171,13 @@ pub(crate) struct EndpointHealthItem {
     url: String,
     enabled: bool,
     available: bool,
+    /// Number of published model bindings where this endpoint is healthy.
+    healthy_bindings: u32,
+    /// Total published model bindings for this endpoint.
+    total_bindings: u32,
+    /// Whether the breaker is in long-unavailable state.
+    long_unavailable: bool,
 }
-
-use serde::Serialize;
 
 #[derive(Serialize)]
 pub(crate) struct ChannelHealthResponse {
@@ -194,7 +198,9 @@ pub(crate) async fn get_channel_health(
 ) -> Result<Json<ChannelHealthResponse>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:channels").await?;
-    let eps = state.routing.channel_health(&id);
+    // Use the aggregated health query that reads from binding_pool across
+    // all published models, not just the channel-level balancer.
+    let agg = state.routing.channel_health_aggregated(&id);
     let ch = state.db.get_channel(&id).await.map_err(db_err)?;
     let channel_id = ch.as_ref().map(|c| c.id.clone()).unwrap_or(id);
     // Read latest endpoint-aware probe results from database (persisted across restarts)
@@ -222,8 +228,8 @@ pub(crate) async fn get_channel_health(
             .unwrap_or(0);
         (Some(all_success), Some(max_latency))
     };
-    let mut endpoints = Vec::with_capacity(eps.len());
-    for (eid, enabled, available) in eps {
+    let mut endpoints = Vec::with_capacity(agg.len());
+    for (eid, enabled, healthy, total, long) in agg {
         let url = state
             .db
             .get_endpoint(eid)
@@ -236,7 +242,10 @@ pub(crate) async fn get_channel_health(
             endpoint_id: eid,
             url,
             enabled,
-            available,
+            available: healthy > 0,
+            healthy_bindings: healthy,
+            total_bindings: total,
+            long_unavailable: long,
         });
     }
     Ok(Json(ChannelHealthResponse {

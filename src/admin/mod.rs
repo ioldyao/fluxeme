@@ -772,6 +772,10 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             axum::routing::get(routing::routing_health),
         )
         .route(
+            "/api/health/endpoints-live",
+            axum::routing::get(routing::endpoints_live_health),
+        )
+        .route(
             "/api/health/recent-paths",
             axum::routing::get(routing::recent_request_paths),
         )

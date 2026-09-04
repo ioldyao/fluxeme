@@ -18,21 +18,26 @@ import { toast } from 'sonner';
 import { cn } from '@fluxeme/shared/src/lib/utils';
 import type { Channel, Endpoint } from '@fluxeme/shared/src/types';
 
-type EndpointStatus = 'healthy' | 'circuitBroken' | 'disabled' | 'unknown';
+type EndpointStatus = 'healthy' | 'degraded' | 'circuitBroken' | 'disabled' | 'unused' | 'unknown';
 
 function getEndpointStatus(ep: Endpoint, health: EndpointHealthItem[] | undefined): EndpointStatus {
   if (!health) return 'unknown';
   const item = health.find((h) => h.endpoint_id === ep.id);
   if (!item) return 'unknown';
   if (!item.enabled) return 'disabled';
-  if (!item.available) return 'circuitBroken';
+  if (item.total_bindings === 0) return 'unused';
+  if (item.long_unavailable) return 'circuitBroken';
+  if (item.healthy_bindings === 0) return 'circuitBroken';
+  if (item.healthy_bindings < item.total_bindings) return 'degraded';
   return 'healthy';
 }
 
 const STATUS_VARIANT: Record<EndpointStatus, 'default' | 'destructive' | 'secondary' | 'outline'> = {
   healthy: 'default',
+  degraded: 'secondary',
   circuitBroken: 'destructive',
   disabled: 'secondary',
+  unused: 'outline',
   unknown: 'outline',
 };
 
@@ -40,8 +45,10 @@ function StatusBadge({ status }: { status: EndpointStatus }) {
   const { t } = useTranslation();
   const labels: Record<EndpointStatus, string> = {
     healthy: t('endpoint.statusHealthy'),
+    degraded: t('endpoint.statusDegraded'),
     circuitBroken: t('endpoint.statusCircuitBroken'),
     disabled: t('endpoint.statusDisabled'),
+    unused: t('endpoint.statusUnused'),
     unknown: t('endpoint.unknown'),
   };
   return <Badge variant={STATUS_VARIANT[status]}>{labels[status]}</Badge>;
