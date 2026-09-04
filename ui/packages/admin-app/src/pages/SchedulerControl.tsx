@@ -118,7 +118,7 @@ export default function SchedulerControl() {
 
   useEffect(() => {
     const list = modelsQuery.data ?? [];
-    const first = list.find((m) => m.published) ?? list[0];
+    const first = list[0];
     if (!selectedModelId && first) {
       setSelectedModelId(first.id);
       modelIndexRef.current = list.indexOf(first);

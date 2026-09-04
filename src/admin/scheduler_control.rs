@@ -48,7 +48,9 @@ pub(crate) async fn list_scheduler_models(
 ) -> Result<Json<Vec<SchedulerModelSummary>>, AdminError> {
     let session = require_session(&state.admin, &headers).await?;
     check_perm(&state.authz, &session, "admin:models").await?;
-    let models = state.db.list_models().await.map_err(db_err)?;
+    // Only published models are schedulable — an unpublished model has no
+    // public routing surface, so there is nothing to schedule.
+    let models = state.db.list_published_models().await.map_err(db_err)?;
     Ok(Json(
         models
             .into_iter()
