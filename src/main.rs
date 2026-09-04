@@ -29,12 +29,12 @@ use crate::config::loader;
 use crate::db::Database;
 use crate::provider::ProviderRegistry;
 use crate::ratelimit::RateLimiter;
+use crate::scheduler::SchedulerService;
 use crate::server::{build_router, AppState};
 use crate::service::{
     AuthService, ContentFilterService, HealthProbeService, HealthService, OidcResourceServer,
     RoutingService, UsageService,
 };
-use crate::scheduler::SchedulerService;
 
 async fn migrate_endpoint_credentials(
     db: &Database,
@@ -564,10 +564,16 @@ async fn main() {
         let routing = state.routing.clone();
         match cache.get("breaker", "snapshots").await {
             Ok(Some(raw)) => {
-                match serde_json::from_str::<Vec<(String, String, Vec<(i64, crate::balancer::BreakerSnapshot)>)>>(&raw) {
+                match serde_json::from_str::<
+                    Vec<(String, Vec<(i64, crate::balancer::BreakerSnapshot)>)>,
+                >(&raw)
+                {
                     Ok(snapshots) if !snapshots.is_empty() => {
                         routing.restore_breaker_snapshots(&snapshots);
-                        tracing::info!(count = snapshots.len(), "Restored breaker snapshots from Redis");
+                        tracing::info!(
+                            count = snapshots.len(),
+                            "Restored breaker snapshots from Redis"
+                        );
                     }
                     _ => tracing::debug!("No breaker snapshots in Redis"),
                 }

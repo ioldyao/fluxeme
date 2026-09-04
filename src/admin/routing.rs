@@ -100,7 +100,6 @@ pub(crate) async fn routing_health(
                     "channel_id": binding.channel_id,
                     "channel_name": ch_name,
                     "enabled": channel_enabled,
-                    "priority": binding.priority,
                     "provider": binding.provider,
                     "requests": req,
                     "success_rate": if req > 0 { suc as f64 / req as f64 } else { 0.0 },

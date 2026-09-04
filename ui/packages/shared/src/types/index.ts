@@ -106,8 +106,6 @@ export interface Endpoint {
   id?: number | null;
   url: string;
   api_key: string;
-  weight: number;
-  timeout_secs?: number | null;
   enabled?: boolean;
   full_url?: boolean;
 }
@@ -135,16 +133,8 @@ export interface Pricing {
 
 export interface ModelChannel {
   channel_id: string;
-  priority: number;
   provider?: string;
   upstream_model?: string | null;
-  max_tokens?: number | null;
-  endpoint_weight_overrides?: EndpointWeightOverride[];
-}
-
-export interface EndpointWeightOverride {
-  endpoint_id: number;
-  weight: number;
 }
 
 export interface MarketplaceFormats {

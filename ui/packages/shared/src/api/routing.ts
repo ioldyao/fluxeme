@@ -120,7 +120,6 @@ export interface RoutingHealthChannel {
   channel_id: string;
   channel_name: string;
   enabled: boolean;
-  priority: number;
   provider?: string;
   requests: number;
   success_rate: number;
@@ -184,55 +183,5 @@ export function useEndpointsLiveHealth(opts?: { enabled?: boolean }) {
     queryFn: () => api<EndpointsLiveHealthResponse>('/health/endpoints-live'),
     refetchInterval: 10_000,
     enabled: opts?.enabled !== false,
-  });
-}
-
-// ── Scheduler Effective Topology ───────────────────────────────────
-
-export interface SchedulerEndpointTopology {
-  endpoint_id: number;
-  url: string;
-  default_weight: number;
-  override_weight: number | null;
-  effective_weight: number;
-  weight_source: 'channel_default' | 'binding_override';
-  routing_available: boolean;
-  routing_state: 'eligible' | 'excluded';
-  routing_reason: string;
-  circuit_state: 'closed' | 'open' | 'half_open' | 'disabled';
-  configured_share: number | null;
-  eligible_share: number | null;
-  observed_endpoint_share_24h: number | null;
-}
-
-export interface SchedulerBindingTopology {
-  channel_id: string;
-  channel_name: string;
-  provider: string;
-  priority: number;
-  upstream_model: string | null;
-  max_tokens: number | null;
-  routing_state: 'active' | 'standby' | 'blocked';
-  routing_reason: string;
-  request_count_24h: number;
-  observed_model_share_24h: number | null;
-  observed_endpoint_total_24h: number;
-  endpoints: SchedulerEndpointTopology[];
-}
-
-export interface SchedulerTopologyResponse {
-  model: string;
-  bindings: SchedulerBindingTopology[];
-}
-
-/** Effective scheduler topology for a model. Scheduler is the final
- *  interpreter; frontend never re-derives routing state from other APIs. */
-export function useSchedulerTopology(modelId: string, opts?: { enabled?: boolean }) {
-  return useQuery({
-    queryKey: ['scheduler', 'topology', modelId],
-    queryFn: () =>
-      api<SchedulerTopologyResponse>(`/scheduler/models/${encodeURIComponent(modelId)}/topology`),
-    enabled: (opts?.enabled !== false) && !!modelId,
-    refetchInterval: 10_000,
   });
 }

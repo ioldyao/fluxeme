@@ -320,9 +320,9 @@ impl CircuitBreaker {
                     return None;
                 }
                 let long_ok = if inner.long_unavailable {
-                    inner
-                        .last_failure
-                        .is_some_and(|last| last.elapsed().as_secs() >= self.long_probe_interval_secs)
+                    inner.last_failure.is_some_and(|last| {
+                        last.elapsed().as_secs() >= self.long_probe_interval_secs
+                    })
                 } else {
                     true
                 };
@@ -397,8 +397,7 @@ impl CircuitBreaker {
         } else {
             inner.last_failure = Some(Instant::now());
             inner.status = BreakerStatus::Open;
-            inner.consecutive_probe_failures =
-                inner.consecutive_probe_failures.saturating_add(1);
+            inner.consecutive_probe_failures = inner.consecutive_probe_failures.saturating_add(1);
             if inner.consecutive_probe_failures >= self.long_fail_threshold {
                 inner.long_unavailable = true;
             }
@@ -717,6 +716,7 @@ mod tests {
             api_key: String::new(),
             weight: 1,
             timeout_secs: None,
+            max_tokens: None,
             enabled,
             full_url: false,
         }

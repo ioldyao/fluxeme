@@ -20,7 +20,6 @@ use chrono::Utc;
 use futures::StreamExt;
 use serde_json::Value;
 
-use crate::balancer::LoadBalancer;
 use crate::config::types::EndpointConfig;
 use crate::domain::usage::UsageRecord;
 use crate::provider::{
@@ -52,149 +51,129 @@ pub(crate) struct DispatchCtx {
     pub(crate) account_type: Option<String>,
 }
 
-/// Per-request scheduling state: current channel/endpoint/adapter plus the
-/// set of already-attempted endpoints and channels for retry/fallback.
+/// Per-request scheduling state: current endpoint/adapter plus the set of
+/// already-attempted endpoints. Endpoint selection is single-level over the
+/// model's flattened pool; `retry_next` is the RecoveryPolicy's endpoint-level
+/// retry (same-channel scope first, then any other eligible endpoint). The
+/// LoadBalancer / selection engine never sees failures.
 pub(crate) struct Dispatch {
     pub(crate) channel_id: String,
     pub(crate) endpoint: EndpointConfig,
     pub(crate) endpoint_idx: usize,
     pub(crate) adapter: Arc<dyn ProviderAdapter>,
-    pub(crate) balancer: Arc<LoadBalancer>,
+    pub(crate) runtime: Arc<crate::service::endpoint_pool::ModelEndpointRuntime>,
     pub(crate) routing: Arc<RoutingService>,
     pub(crate) providers: Arc<ProviderRegistry>,
     pub(crate) model: String,
     pub(crate) upstream_model: Option<String>,
-    /// Per-binding cap applied to the request's `max_tokens` before the
-    /// upstream call. Updated when a retry crosses to another binding.
-    pub(crate) max_tokens: Option<u32>,
-    /// Original numeric request value, retained so a fallback to another
-    /// binding can re-apply that binding's cap rather than the previous cap.
+    /// Original numeric request value, retained so a retry to another endpoint
+    /// re-applies that endpoint's own cap rather than the previous cap.
     pub(crate) requested_max_tokens: Option<u64>,
     /// Endpoint identities already attempted by this request. A retry must
-    /// never immediately revisit the same binding endpoint.
+    /// never immediately revisit the same endpoint.
     pub(crate) attempted_endpoint_ids: HashSet<i64>,
     pub(crate) attempted_endpoint_indexes: HashSet<usize>,
-    pub(crate) attempted_channels: HashSet<String>,
 }
 
 impl Dispatch {
-    /// Try the next available endpoint from the balancer.
-    /// Returns `false` if no more endpoints available.
+    /// Re-select another endpoint from the model's flattened pool, excluding
+    /// every endpoint this request already tried. Scope policy: prefer another
+    /// endpoint in the same channel, then expand to any eligible endpoint.
+    /// Returns `false` when nothing remains.
     fn retry_next(&mut self) -> bool {
         if let Some(id) = self.endpoint.id {
             self.attempted_endpoint_ids.insert(id);
         }
         self.attempted_endpoint_indexes.insert(self.endpoint_idx);
-        if let Some((idx, ep)) = self
-            .balancer
-            .as_health_aware()
-            .select_healthy_excluding_indexes(
-                &self.attempted_endpoint_ids,
-                &self.attempted_endpoint_indexes,
-            )
-        {
-            self.endpoint_idx = idx;
-            self.endpoint = ep.clone();
+        // same_channel_first: try the rest of the current channel first.
+        if let Some(idx) = self.runtime.select_healthy_excluding(
+            Some(&self.channel_id),
+            None,
+            &self.attempted_endpoint_ids,
+            &self.attempted_endpoint_indexes,
+        ) {
+            self.apply_endpoint(idx);
             return true;
         }
-        self.attempted_channels.insert(self.channel_id.clone());
-        let Ok(plan) = self
-            .routing
-            .route_model_binding_for_model_excluding_channels(
-                &self.model,
-                self.upstream_model.as_deref(),
-                &[],
-                &self.attempted_channels,
-            )
-        else {
-            return false;
-        };
-        let Some(provider_name) = self
-            .routing
-            .get_route(&plan.channel_id)
-            .map(|(name, _)| name)
-        else {
-            return false;
-        };
-        let Some(adapter) = self.providers.get(&provider_name) else {
-            return false;
-        };
-        self.channel_id = plan.channel_id;
-        self.endpoint_idx = plan.endpoint_idx;
-        self.endpoint = plan.endpoint;
-        self.balancer = plan.balancer;
-        self.adapter = adapter;
-        self.max_tokens = plan.max_tokens;
-        self.attempted_endpoint_ids.clear();
-        self.attempted_endpoint_indexes.clear();
-        true
+        if let Some(idx) = self.runtime.select_healthy_excluding(
+            None,
+            None,
+            &self.attempted_endpoint_ids,
+            &self.attempted_endpoint_indexes,
+        ) {
+            self.apply_endpoint(idx);
+            return true;
+        }
+        false
     }
 
-    /// Restore the original request budget and apply the current binding's
-    /// cap before each attempt. This matters when fallback changes bindings:
-    /// a lower cap from the first channel must not leak into the next one.
+    fn apply_endpoint(&mut self, idx: usize) {
+        let state = &self.runtime.endpoints[idx];
+        self.endpoint_idx = idx;
+        self.endpoint = state.endpoint.clone();
+        self.channel_id = state.channel_id.clone();
+        self.upstream_model = state.upstream_model.clone();
+        if let Some(adapter) = self.providers.get(&state.provider) {
+            self.adapter = adapter;
+        }
+    }
+
+    /// Restore the original request budget and apply the current endpoint's
+    /// cap before each attempt. A retry to another endpoint must not inherit
+    /// the previous endpoint's (possibly lower) cap.
     fn body_for_attempt(&self, body: &Value) -> Value {
         let mut body = body.clone();
         if let Some(requested) = self.requested_max_tokens {
             body["max_tokens"] = Value::from(requested);
         }
-        clamp_max_tokens(&mut body, self.max_tokens);
+        clamp_max_tokens(&mut body, self.endpoint.max_tokens);
         body
     }
 
-    /// Feed a successful upstream call into the circuit breaker (closes it).
+    /// Feed a successful upstream call into the current endpoint's breaker.
     fn report_success(&self) {
-        self.balancer
-            .as_health_aware()
-            .record_success(self.endpoint_idx);
+        if let Some(state) = self.runtime.endpoints.get(self.endpoint_idx) {
+            state.breaker.record_success();
+        }
     }
 
     /// Feed an upstream failure (connect / 5xx / timeout) into the breaker.
     fn report_failure(&mut self) {
-        self.balancer
-            .as_health_aware()
-            .record_failure(self.endpoint_idx);
+        if let Some(state) = self.runtime.endpoints.get(self.endpoint_idx) {
+            state.breaker.record_failure();
+        }
     }
 }
 
-/// Resolve the endpoint from the model-binding pool. System-rule targets
-/// without a model binding retain a channel-level compatibility fallback.
+/// Resolve the endpoint from the model's flattened endpoint pool. A system
+/// rule may constrain the candidate set to one channel (`channel_scope`).
 pub(crate) fn resolve_dispatch(
     svc: &crate::scheduler::SchedulerService,
     model: &str,
-    channel_id: &str,
+    channel_scope: Option<&str>,
     upstream_model: Option<&str>,
 ) -> Result<Dispatch, GatewayError> {
-    // Resolve from the model binding pool first. If a rule-selected binding
-    // has become unhealthy, choose another healthy binding for this request.
     let plan = svc
         .routing
-        .route_model_binding_for_channel_and_upstream(model, channel_id, upstream_model, &[])
-        .or_else(|_| {
-            svc.routing
-                .route_model_binding_for_model(model, upstream_model, &[])
-        })
+        .route_model_endpoint(model, upstream_model, channel_scope, &[])
         .map_err(GatewayError::from)?;
-    let provider_name = plan.provider_name.clone();
     let adapter = svc
         .providers
-        .get(provider_name.as_str())
+        .get(&plan.provider_name)
         .ok_or_else(|| GatewayError::Internal("Provider not available".into()))?;
     Ok(Dispatch {
         channel_id: plan.channel_id,
         endpoint: plan.endpoint,
         endpoint_idx: plan.endpoint_idx,
         adapter,
-        balancer: plan.balancer,
+        runtime: plan.runtime,
         routing: svc.routing.clone(),
         providers: svc.providers.clone(),
         model: model.to_string(),
-        upstream_model: upstream_model.map(str::to_string),
-        max_tokens: plan.max_tokens,
+        upstream_model: plan.upstream_model,
         requested_max_tokens: None,
         attempted_endpoint_ids: HashSet::new(),
         attempted_endpoint_indexes: HashSet::new(),
-        attempted_channels: HashSet::new(),
     })
 }
 
@@ -211,41 +190,6 @@ pub(crate) fn clamp_max_tokens(body: &mut Value, limit: Option<u32>) {
     if requested > u64::from(limit) {
         body["max_tokens"] = Value::from(limit);
     }
-}
-/// Channel-level compatibility fallback (dead code, kept for parity).
-#[allow(dead_code)]
-pub(crate) fn resolve_route(
-    svc: &crate::scheduler::SchedulerService,
-    channel_id: &str,
-) -> Result<Dispatch, GatewayError> {
-    let (provider_name, balancer) = svc
-        .routing
-        .get_route(channel_id)
-        .ok_or_else(|| GatewayError::Internal("Channel route unavailable".into()))?;
-    let adapter = svc
-        .providers
-        .get(provider_name.as_str())
-        .ok_or_else(|| GatewayError::Internal("Provider not available".into()))?;
-    let (idx, endpoint) = balancer
-        .as_health_aware()
-        .select()
-        .ok_or_else(|| GatewayError::Internal("No available endpoints".into()))?;
-    Ok(Dispatch {
-        channel_id: channel_id.to_string(),
-        endpoint: endpoint.clone(),
-        endpoint_idx: idx,
-        adapter,
-        balancer,
-        routing: svc.routing.clone(),
-        providers: svc.providers.clone(),
-        model: String::new(),
-        upstream_model: None,
-        max_tokens: None,
-        requested_max_tokens: None,
-        attempted_endpoint_ids: HashSet::new(),
-        attempted_endpoint_indexes: HashSet::new(),
-        attempted_channels: HashSet::new(),
-    })
 }
 
 impl crate::scheduler::SchedulerService {
@@ -311,7 +255,7 @@ impl crate::scheduler::SchedulerService {
         ctx: DispatchCtx,
         adapter: Arc<dyn ProviderAdapter>,
         endpoint: EndpointConfig,
-        balancer: Arc<LoadBalancer>,
+        runtime: Arc<crate::service::endpoint_pool::ModelEndpointRuntime>,
         endpoint_idx: usize,
         body: Value,
         reservation: Option<ReservationFinalizer>,
@@ -357,7 +301,7 @@ impl crate::scheduler::SchedulerService {
                     endpoint_id: endpoint.id,
                     endpoint_url: Some(endpoint.url.clone()),
                     original_model: ctx.orig_model.clone(),
-                    balancer: Some(balancer),
+                    runtime: Some(runtime),
                     team_id: ctx.team_id,
                     upstream_started_at: Instant::now(),
                     ttft_ms: None,
@@ -379,7 +323,9 @@ impl crate::scheduler::SchedulerService {
                 if let Some(reservation) = &reservation {
                     reservation.release("stream upstream request failed");
                 }
-                balancer.as_health_aware().record_failure(endpoint_idx);
+                if let Some(state) = runtime.endpoints.get(endpoint_idx) {
+                    state.breaker.record_failure();
+                }
                 tracing::error!(
                     request_id = %ctx.request_id,
                     channel = %ctx.channel_id,
@@ -651,7 +597,7 @@ impl crate::scheduler::SchedulerService {
         ctx: DispatchCtx,
         adapter: Arc<dyn ProviderAdapter>,
         endpoint: EndpointConfig,
-        balancer: Arc<LoadBalancer>,
+        runtime: Arc<crate::service::endpoint_pool::ModelEndpointRuntime>,
         endpoint_idx: usize,
         body: Value,
         reservation: Option<ReservationFinalizer>,
@@ -696,7 +642,7 @@ impl crate::scheduler::SchedulerService {
                     endpoint_id: endpoint.id,
                     endpoint_url: Some(endpoint.url.clone()),
                     original_model: ctx.orig_model.clone(),
-                    balancer: Some(balancer),
+                    runtime: Some(runtime),
                     team_id: ctx.team_id,
                     upstream_started_at: Instant::now(),
                     ttft_ms: None,
@@ -718,7 +664,9 @@ impl crate::scheduler::SchedulerService {
                 if let Some(reservation) = &reservation {
                     reservation.release("stream upstream request failed");
                 }
-                balancer.as_health_aware().record_failure(endpoint_idx);
+                if let Some(state) = runtime.endpoints.get(endpoint_idx) {
+                    state.breaker.record_failure();
+                }
                 tracing::error!(
                     request_id = %ctx.request_id,
                     channel = %ctx.channel_id,

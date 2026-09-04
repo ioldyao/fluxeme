@@ -1,113 +1,231 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
-use crate::balancer::{BreakerSnapshot, LoadBalancer};
+use crate::balancer::{BreakerSnapshot, CircuitBreaker, LoadBalancer};
 use crate::config::types::EndpointConfig;
-use crate::domain::model::{EndpointWeightOverride, Model, ModelChannel};
+use crate::domain::model::Model;
+use crate::domain::scheduler::SchedulerEndpointPolicy;
 
-/// Stable identity for a model-to-channel binding.
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct BindingKey {
-    pub model_id: String,
+/// Runtime state for one model-visible upstream endpoint.
+///
+/// The endpoint's channel is metadata used by dispatch, observability, and
+/// recovery scope. It is not a scheduling level: all states in one model
+/// runtime are one candidate set.
+#[derive(Clone)]
+pub struct EndpointRuntimeState {
+    pub endpoint_id: i64,
     pub channel_id: String,
+    pub channel_enabled: bool,
+    pub provider: String,
+    pub upstream_model: Option<String>,
+    pub endpoint: EndpointConfig,
+    pub breaker: Arc<CircuitBreaker>,
 }
 
-impl BindingKey {
-    pub fn new(model_id: impl Into<String>, channel_id: impl Into<String>) -> Self {
+/// Compiled endpoint runtime for one logical model. The selector counter is
+/// kept here so weighted selection remains stateful across requests.
+pub struct ModelEndpointRuntime {
+    pub endpoints: Vec<EndpointRuntimeState>,
+    counter: AtomicUsize,
+}
+
+impl ModelEndpointRuntime {
+    fn new(endpoints: Vec<EndpointRuntimeState>) -> Self {
         Self {
-            model_id: model_id.into(),
-            channel_id: channel_id.into(),
+            endpoints,
+            counter: AtomicUsize::new(0),
         }
     }
-}
 
-/// Runtime endpoint state scoped to one model binding.
-///
-/// The pool deliberately contains no credentials and does not persist data.
-/// It is reconciled from the routing snapshot whenever configuration changes.
-#[derive(Default)]
-pub struct BindingStatePool {
-    bindings: RwLock<HashMap<BindingKey, Arc<LoadBalancer>>>,
-}
-
-/// Build the effective endpoint list for one binding: the channel's endpoint
-/// defaults with the binding's per-endpoint weight overrides applied. Only
-/// endpoints listed in `overrides` change; everything else inherits.
-fn build_binding_endpoints(
-    channel_endpoints: &[EndpointConfig],
-    overrides: &[EndpointWeightOverride],
-) -> Vec<EndpointConfig> {
-    if overrides.is_empty() {
-        return channel_endpoints.to_vec();
+    pub fn endpoint_count(&self) -> usize {
+        self.endpoints.len()
     }
-    let map: HashMap<i64, u32> = overrides
-        .iter()
-        .map(|o| (o.endpoint_id, o.weight))
-        .collect();
-    channel_endpoints
-        .iter()
-        .map(|ep| {
-            let mut ep = ep.clone();
-            if let Some(w) = ep.id.and_then(|id| map.get(&id)) {
-                ep.weight = *w;
-            }
-            ep
+
+    pub fn has_healthy_endpoint(&self, channel_scope: Option<&str>) -> bool {
+        self.endpoints.iter().any(|e| {
+            e.channel_enabled
+                && channel_scope.is_none_or(|scope| e.channel_id == scope)
+                && e.breaker.is_healthy()
         })
-        .collect()
+    }
+
+    pub fn select_healthy_excluding(
+        &self,
+        channel_scope: Option<&str>,
+        upstream_model: Option<&str>,
+        excluded_endpoint_ids: &std::collections::HashSet<i64>,
+        excluded_indexes: &std::collections::HashSet<usize>,
+    ) -> Option<usize> {
+        let candidates: Vec<usize> = self
+            .endpoints
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| {
+                (e.channel_enabled
+                    && channel_scope.is_none_or(|scope| e.channel_id == scope)
+                    && upstream_model
+                        .is_none_or(|upstream| e.upstream_model.as_deref() == Some(upstream))
+                    && e.breaker.is_healthy()
+                    && !excluded_indexes.contains(&i)
+                    && !excluded_endpoint_ids.contains(&e.endpoint_id))
+                .then_some(i)
+            })
+            .collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        let total: u32 = candidates
+            .iter()
+            .map(|&i| self.endpoints[i].endpoint.weight)
+            .sum();
+        if total == 0 {
+            return Some(
+                candidates[self.counter.fetch_add(1, Ordering::Relaxed) % candidates.len()],
+            );
+        }
+        let pos = self.counter.fetch_add(1, Ordering::Relaxed) % total as usize;
+        let mut cumulative = 0u32;
+        for i in candidates {
+            cumulative = cumulative.saturating_add(self.endpoints[i].endpoint.weight);
+            if pos < cumulative as usize {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    pub fn set_endpoint_enabled(&self, endpoint_id: i64, enabled: bool) {
+        for state in &self.endpoints {
+            if state.endpoint_id == endpoint_id {
+                state.breaker.set_enabled(enabled);
+            }
+        }
+    }
+
+    pub fn record_endpoint_health(&self, endpoint_id: i64, success: bool) {
+        for state in &self.endpoints {
+            if state.endpoint_id == endpoint_id {
+                if success {
+                    state.breaker.record_success();
+                } else {
+                    state.breaker.record_failure();
+                }
+            }
+        }
+    }
+
+    pub fn all_snapshots(&self) -> Vec<(i64, BreakerSnapshot)> {
+        self.endpoints
+            .iter()
+            .map(|e| (e.endpoint_id, e.breaker.snapshot()))
+            .collect()
+    }
 }
 
-impl BindingStatePool {
+/// Compiled model → endpoint runtime pool. Channels are expanded during
+/// reconcile; request handling never rebuilds ModelChannel configuration.
+#[derive(Default)]
+pub struct ModelEndpointPool {
+    models: RwLock<HashMap<String, Arc<ModelEndpointRuntime>>>,
+}
+
+fn build_endpoint(
+    channel_id: &str,
+    channel_enabled: bool,
+    provider: &str,
+    upstream_model: Option<String>,
+    endpoint: &EndpointConfig,
+    policy: Option<&SchedulerEndpointPolicy>,
+) -> EndpointRuntimeState {
+    let mut compiled = endpoint.clone();
+    compiled.weight = policy.map_or(1, |p| p.weight);
+    compiled.timeout_secs = policy.and_then(|p| p.timeout_secs);
+    compiled.max_tokens = policy.and_then(|p| p.max_tokens);
+    EndpointRuntimeState {
+        endpoint_id: endpoint.id.unwrap_or_default(),
+        channel_id: channel_id.to_string(),
+        channel_enabled,
+        provider: provider.to_string(),
+        upstream_model,
+        endpoint: compiled.clone(),
+        breaker: Arc::new(CircuitBreaker::new(compiled.enabled)),
+    }
+}
+
+impl ModelEndpointPool {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Keep existing balancers for unchanged model bindings and rebuild only
-    /// the routing index. Endpoint breaker state is reconciled by stable endpoint
-    /// identity inside `LoadBalancer::rebuild_preserving_state`.
-    ///
-    /// Each binding's balancer is built from the channel's endpoint defaults
-    /// merged with the binding's per-endpoint weight overrides, so a model can
-    /// steer traffic within a shared channel without affecting other models.
     pub fn reconcile(
         &self,
         models: &[Model],
         routes: &HashMap<String, (String, Arc<LoadBalancer>)>,
+        channels: &std::collections::HashMap<String, Arc<crate::domain::channel::Channel>>,
+        endpoint_policies: &HashMap<(String, String), Vec<SchedulerEndpointPolicy>>,
     ) {
-        let previous = self.bindings.read().unwrap_or_else(|e| e.into_inner());
+        let previous = self.models.read().unwrap_or_else(|e| e.into_inner());
         let mut next = HashMap::new();
-
         for model in models {
+            let mut endpoints = Vec::new();
             for binding in &model.channels {
-                let Some((_, channel_balancer)) = routes.get(&binding.channel_id) else {
+                let Some((provider, channel_balancer)) = routes.get(&binding.channel_id) else {
                     continue;
                 };
-                let channel_endpoints = channel_balancer.as_health_aware().endpoints().to_vec();
-                let endpoints =
-                    build_binding_endpoints(&channel_endpoints, &binding.endpoint_weight_overrides);
-                let key = BindingKey::new(&model.id, &binding.channel_id);
-                let balancer = previous
-                    .get(&key)
-                    .map(|old| LoadBalancer::rebuild_preserving_state(old, &endpoints))
-                    .unwrap_or_else(|| LoadBalancer::new(&endpoints));
-                next.insert(key, Arc::new(balancer));
+                let channel_enabled = channels
+                    .get(&binding.channel_id)
+                    .is_some_and(|channel| channel.enabled);
+                let policy_map: HashMap<i64, &SchedulerEndpointPolicy> = endpoint_policies
+                    .get(&(model.id.clone(), binding.channel_id.clone()))
+                    .map(|rows| rows.iter().map(|p| (p.endpoint_id, p)).collect())
+                    .unwrap_or_default();
+                for endpoint in channel_balancer.as_health_aware().endpoints() {
+                    let Some(endpoint_id) = endpoint.id else {
+                        continue;
+                    };
+                    let mut state = build_endpoint(
+                        &binding.channel_id,
+                        channel_enabled,
+                        provider,
+                        Some(
+                            binding
+                                .upstream_model
+                                .clone()
+                                .unwrap_or_else(|| model.name.clone()),
+                        ),
+                        endpoint,
+                        policy_map.get(&endpoint_id).copied(),
+                    );
+                    if let Some(old) = previous.get(&model.id) {
+                        if let Some(old_state) = old.endpoints.iter().find(|e| {
+                            e.endpoint_id == endpoint_id && e.channel_id == state.channel_id
+                        }) {
+                            state.breaker = old_state.breaker.clone();
+                        }
+                    }
+                    endpoints.push(state);
+                }
             }
+            next.insert(
+                model.id.clone(),
+                Arc::new(ModelEndpointRuntime::new(endpoints)),
+            );
         }
-
         drop(previous);
-        *self.bindings.write().unwrap_or_else(|e| e.into_inner()) = next;
+        *self.models.write().unwrap_or_else(|e| e.into_inner()) = next;
     }
 
-    pub fn get(&self, model_id: &str, channel_id: &str) -> Option<Arc<LoadBalancer>> {
-        self.bindings
+    pub fn get(&self, model_id: &str) -> Option<Arc<ModelEndpointRuntime>> {
+        self.models
             .read()
             .unwrap_or_else(|e| e.into_inner())
-            .get(&BindingKey::new(model_id, channel_id))
+            .get(model_id)
             .cloned()
     }
 
-    /// Snapshot of all (key, balancer) pairs. Used by aggregate health queries.
-    pub fn iter(&self) -> Vec<(BindingKey, Arc<LoadBalancer>)> {
-        self.bindings
+    pub fn iter(&self) -> Vec<(String, Arc<ModelEndpointRuntime>)> {
+        self.models
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .iter()
@@ -115,102 +233,54 @@ impl BindingStatePool {
             .collect()
     }
 
-    pub fn has_healthy(&self, model_id: &str, channel_id: &str) -> bool {
-        self.get(model_id, channel_id)
-            .is_some_and(|balancer| balancer.as_health_aware().has_healthy_endpoint())
-    }
-
     pub fn set_endpoint_enabled(&self, endpoint_id: i64, enabled: bool) {
-        let bindings = self.bindings.read().unwrap_or_else(|e| e.into_inner());
-        for balancer in bindings.values() {
-            for (index, endpoint) in balancer.as_health_aware().endpoints().iter().enumerate() {
-                if endpoint.id == Some(endpoint_id) {
-                    balancer.as_health_aware().breakers()[index].set_enabled(enabled);
-                }
-            }
+        for runtime in self
+            .models
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+        {
+            runtime.set_endpoint_enabled(endpoint_id, enabled);
         }
     }
 
-    /// Record a probe outcome on every binding balancer containing the endpoint
-    /// (matched by DB id). Success is a physical fact about the endpoint, so it
-    /// may reset every model sharing it; used after a successful manual/auto
-    /// probe so the binding pool reflects the real endpoint status.
     pub fn record_endpoint_health(&self, endpoint_id: i64, success: bool) {
-        let bindings = self.bindings.read().unwrap_or_else(|e| e.into_inner());
-        for balancer in bindings.values() {
-            for (index, endpoint) in balancer.as_health_aware().endpoints().iter().enumerate() {
-                if endpoint.id == Some(endpoint_id) {
-                    if success {
-                        balancer.as_health_aware().record_success(index);
-                    } else {
-                        balancer.as_health_aware().record_failure(index);
-                    }
-                }
-            }
+        for runtime in self
+            .models
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+        {
+            runtime.record_endpoint_health(endpoint_id, success);
         }
     }
 
-    /// Record a probe outcome on only the given model binding's balancer.
-    ///
-    /// A manual probe tests one specific model; its failure may be model-scoped
-    /// (wrong upstream model name, auth contract, etc.) and must not open the
-    /// breaker for other models sharing the same endpoint.
     pub fn record_endpoint_health_for_model(
         &self,
         model_id: &str,
-        channel_id: &str,
         endpoint_id: i64,
         success: bool,
     ) {
-        let Some(balancer) = self.get(model_id, channel_id) else {
-            return;
-        };
-        let health = balancer.as_health_aware();
-        for (index, endpoint) in health.endpoints().iter().enumerate() {
-            if endpoint.id == Some(endpoint_id) {
-                if success {
-                    health.record_success(index);
-                } else {
-                    health.record_failure(index);
-                }
-                break;
-            }
+        if let Some(runtime) = self.get(model_id) {
+            runtime.record_endpoint_health(endpoint_id, success);
         }
     }
 
-    /// One persisted snapshot per breaker, keyed by (model, channel, endpoint id).
-    pub fn all_snapshots(&self) -> Vec<(String, String, Vec<(i64, BreakerSnapshot)>)> {
-        let bindings = self.bindings.read().unwrap_or_else(|e| e.into_inner());
-        let mut out = Vec::with_capacity(bindings.len());
-        for (key, balancer) in bindings.iter() {
-            let health = balancer.as_health_aware();
-            let snapshots = health
-                .endpoints()
-                .iter()
-                .enumerate()
-                .filter_map(|(i, ep)| ep.id.map(|id| (id, health.breakers()[i].snapshot())))
-                .collect::<Vec<_>>();
-            if !snapshots.is_empty() {
-                out.push((key.model_id.clone(), key.channel_id.clone(), snapshots));
-            }
-        }
-        out
+    pub fn all_snapshots(&self) -> Vec<(String, Vec<(i64, BreakerSnapshot)>)> {
+        self.iter()
+            .into_iter()
+            .map(|(model, runtime)| (model, runtime.all_snapshots()))
+            .collect()
     }
 
-    /// Restore persisted breaker snapshots by (model, channel, endpoint id).
-    pub fn restore_snapshots(&self, snapshots: &[(String, String, Vec<(i64, BreakerSnapshot)>)]) {
-        let bindings = self.bindings.read().unwrap_or_else(|e| e.into_inner());
-        for (model_id, channel_id, rows) in snapshots {
-            let Some(balancer) = bindings.get(&BindingKey::new(model_id, channel_id)) else {
+    pub fn restore_snapshots(&self, snapshots: &[(String, Vec<(i64, BreakerSnapshot)>)]) {
+        for (model_id, rows) in snapshots {
+            let Some(runtime) = self.get(model_id) else {
                 continue;
             };
-            let health = balancer.as_health_aware();
-            for (endpoint_id, snap) in rows {
-                for (i, ep) in health.endpoints().iter().enumerate() {
-                    if ep.id == Some(*endpoint_id) {
-                        health.breakers()[i].restore(snap);
-                        break;
-                    }
+            for (id, snapshot) in rows {
+                if let Some(state) = runtime.endpoints.iter().find(|e| e.endpoint_id == *id) {
+                    state.breaker.restore(snapshot);
                 }
             }
         }
@@ -221,6 +291,7 @@ impl BindingStatePool {
 mod tests {
     use super::*;
     use crate::config::types::EndpointConfig;
+    use crate::domain::model::ModelChannel;
 
     fn endpoint(id: i64) -> EndpointConfig {
         EndpointConfig {
@@ -229,165 +300,65 @@ mod tests {
             api_key: String::new(),
             weight: 1,
             timeout_secs: None,
+            max_tokens: None,
             enabled: true,
             full_url: false,
         }
     }
 
     #[test]
-    fn partial_overrides_preserve_unlisted_channel_defaults() {
-        let endpoints = vec![endpoint(1), endpoint(2)];
-        let effective = build_binding_endpoints(
-            &endpoints,
-            &[EndpointWeightOverride {
+    fn partial_policies_apply_endpoint_settings() {
+        let runtime = ModelEndpointRuntime::new(vec![build_endpoint(
+            "c",
+            true,
+            "openai",
+            None,
+            &endpoint(1),
+            Some(&SchedulerEndpointPolicy {
+                model_id: "m".into(),
+                channel_id: "c".into(),
                 endpoint_id: 1,
                 weight: 8,
-            }],
-        );
-        assert_eq!(effective[0].weight, 8);
-        assert_eq!(effective[1].weight, 1);
+                timeout_secs: Some(600),
+                max_tokens: Some(65536),
+            }),
+        )]);
+        assert_eq!(runtime.endpoints[0].endpoint.weight, 8);
+        assert_eq!(runtime.endpoints[0].endpoint.timeout_secs, Some(600));
+        assert_eq!(runtime.endpoints[0].endpoint.max_tokens, Some(65536));
     }
 
     #[test]
-    fn empty_overrides_inherit_all_channel_defaults() {
-        let endpoints = vec![endpoint(1), endpoint(2)];
-        let effective = build_binding_endpoints(&endpoints, &[]);
-        assert_eq!(
-            effective.iter().map(|e| e.weight).collect::<Vec<_>>(),
-            vec![1, 1]
-        );
-    }
-
-    #[test]
-    fn model_binding_overrides_are_isolated() {
-        let pool = BindingStatePool::new();
-        let channel_balancer = Arc::new(LoadBalancer::new(&vec![endpoint(1), endpoint(2)]));
+    fn model_endpoint_runtime_is_flattened() {
+        let channel = Arc::new(LoadBalancer::new(&vec![endpoint(1), endpoint(2)]));
         let mut routes = HashMap::new();
-        routes.insert(
-            "channel-a".to_string(),
-            ("openai".to_string(), channel_balancer),
-        );
-        let models = vec![
-            Model {
-                id: "model-a".to_string(),
-                name: "a".to_string(),
-                model_pattern: "a".to_string(),
-                pricing: Default::default(),
-                channels: vec![ModelChannel {
-                    model_id: "model-a".to_string(),
-                    binding_id: None,
-                    channel_id: "channel-a".to_string(),
-                    priority: 1,
-                    provider: String::new(),
+        routes.insert("a".into(), ("openai".into(), channel.clone()));
+        routes.insert("b".into(), ("openai".into(), channel));
+        let model = Model {
+            id: "m".into(),
+            name: "m".into(),
+            model_pattern: "m".into(),
+            pricing: Default::default(),
+            channels: vec![
+                ModelChannel {
+                    model_id: "m".into(),
+                    channel_id: "a".into(),
+                    provider: "openai".into(),
                     upstream_model: None,
-                    max_tokens: None,
-                    endpoint_weight_overrides: vec![EndpointWeightOverride {
-                        endpoint_id: 1,
-                        weight: 9,
-                    }],
-                }],
-                published: true,
-                context_length: None,
-                category: String::new(),
-            },
-            Model {
-                id: "model-b".to_string(),
-                name: "b".to_string(),
-                model_pattern: "b".to_string(),
-                pricing: Default::default(),
-                channels: vec![ModelChannel {
-                    model_id: "model-b".to_string(),
-                    binding_id: None,
-                    channel_id: "channel-a".to_string(),
-                    priority: 1,
-                    provider: String::new(),
+                },
+                ModelChannel {
+                    model_id: "m".into(),
+                    channel_id: "b".into(),
+                    provider: "openai".into(),
                     upstream_model: None,
-                    max_tokens: None,
-                    endpoint_weight_overrides: Vec::new(),
-                }],
-                published: true,
-                context_length: None,
-                category: String::new(),
-            },
-        ];
-        pool.reconcile(&models, &routes);
-        assert_eq!(
-            pool.get("model-a", "channel-a")
-                .unwrap()
-                .as_health_aware()
-                .endpoint(0)
-                .unwrap()
-                .weight,
-            9
-        );
-        assert_eq!(
-            pool.get("model-b", "channel-a")
-                .unwrap()
-                .as_health_aware()
-                .endpoint(0)
-                .unwrap()
-                .weight,
-            1
-        );
-    }
-    #[test]
-    fn binding_keys_are_model_scoped() {
-        let pool = BindingStatePool::new();
-        let first = Arc::new(LoadBalancer::new(&vec![endpoint(1)]));
-        let mut routes = HashMap::new();
-        routes.insert(
-            "channel-a".to_string(),
-            ("openai".to_string(), first.clone()),
-        );
-
-        let models = vec![
-            Model {
-                id: "model-a".to_string(),
-                name: "display-a".to_string(),
-                model_pattern: "display-a".to_string(),
-                pricing: Default::default(),
-                channels: vec![crate::domain::model::ModelChannel {
-                    model_id: "model-a".to_string(),
-                    binding_id: None,
-                    channel_id: "channel-a".to_string(),
-                    priority: 1,
-                    provider: String::new(),
-                    upstream_model: None,
-                    max_tokens: None,
-                    endpoint_weight_overrides: Vec::new(),
-                }],
-                published: true,
-                context_length: None,
-                category: String::new(),
-            },
-            Model {
-                id: "model-b".to_string(),
-                name: "display-b".to_string(),
-                model_pattern: "display-b".to_string(),
-                pricing: Default::default(),
-                channels: vec![crate::domain::model::ModelChannel {
-                    model_id: "model-b".to_string(),
-                    binding_id: None,
-                    channel_id: "channel-a".to_string(),
-                    priority: 1,
-                    provider: String::new(),
-                    upstream_model: None,
-                    max_tokens: None,
-                    endpoint_weight_overrides: Vec::new(),
-                }],
-                published: true,
-                context_length: None,
-                category: String::new(),
-            },
-        ];
-        pool.reconcile(&models, &routes);
-        let model_a = pool.get("model-a", "channel-a").unwrap();
-        let model_b = pool.get("model-b", "channel-a").unwrap();
-        model_a.as_health_aware().record_failure(0);
-        model_a.as_health_aware().record_failure(0);
-        model_a.as_health_aware().record_failure(0);
-
-        assert!(!model_a.as_health_aware().has_available_endpoint());
-        assert!(model_b.as_health_aware().has_available_endpoint());
+                },
+            ],
+            published: true,
+            context_length: None,
+            category: String::new(),
+        };
+        let pool = ModelEndpointPool::new();
+        pool.reconcile(&[model], &routes, &HashMap::new(), &HashMap::new());
+        assert_eq!(pool.get("m").unwrap().endpoints.len(), 4);
     }
 }

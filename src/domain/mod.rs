@@ -4,6 +4,7 @@ pub mod gateway;
 pub mod model;
 pub mod moderation;
 pub mod routing;
+pub mod scheduler;
 pub mod sso;
 pub mod team;
 pub mod token_package;

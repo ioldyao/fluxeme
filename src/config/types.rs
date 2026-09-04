@@ -170,6 +170,10 @@ pub struct EndpointConfig {
     #[serde(default = "default_weight")]
     pub weight: u32,
     pub timeout_secs: Option<u64>,
+    /// Optional per-endpoint cap applied to a request's `max_tokens` by the
+    /// scheduler (from the model × endpoint policy). None = no cap.
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
     /// When true, use `url` exactly without appending a provider path.

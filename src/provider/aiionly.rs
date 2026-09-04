@@ -279,6 +279,7 @@ mod tests {
             api_key: "test-key".into(),
             weight: 1,
             timeout_secs: None,
+            max_tokens: None,
             enabled: true,
             full_url,
         }

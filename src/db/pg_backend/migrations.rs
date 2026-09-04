@@ -255,17 +255,75 @@ impl CoreBackend for PgBackend {
              END $$"
         );
 
-        // Binding-scoped endpoint weight overrides. The FK uses the
-        // surrogate model_channels.id because the same model/channel pair
-        // may have multiple upstream_model bindings.
+        // ── Scheduler endpoint policy table ───────────────────────────────
+        // Scheduling is endpoint-centric. Channels remain resource groups;
+        // only model × endpoint policies are persisted by the scheduler.
         add_col!(
-            "CREATE TABLE IF NOT EXISTS model_channel_endpoint_overrides (\
-                model_channel_id BIGINT NOT NULL REFERENCES model_channels(id) ON DELETE CASCADE,\
-                endpoint_id BIGINT NOT NULL REFERENCES endpoints(id) ON DELETE CASCADE,\
-                weight_override INTEGER NOT NULL CHECK (weight_override >= 1),\
-                PRIMARY KEY (model_channel_id, endpoint_id)\
+            "DO $$\n             BEGIN\n                 IF NOT EXISTS (\n                     SELECT 1 FROM pg_constraint\n                     WHERE conname = 'model_channels_model_channel_key'\n                       AND conrelid = 'model_channels'::regclass\n                 ) THEN\n                     ALTER TABLE model_channels\n                         ADD CONSTRAINT model_channels_model_channel_key UNIQUE (model_id, channel_id);\n                 END IF;\n             END $$"
+        );
+        // Keep this legacy table creation before the backfill so upgrades from
+        // the previous control-plane revision can copy binding max_tokens.
+        add_col!(
+            "CREATE TABLE IF NOT EXISTS scheduler_binding_policies (\
+                model_id TEXT NOT NULL,\
+                channel_id TEXT NOT NULL,\
+                priority INTEGER NOT NULL DEFAULT 1,\
+                max_tokens BIGINT,\
+                PRIMARY KEY (model_id, channel_id),\
+                FOREIGN KEY (model_id, channel_id) REFERENCES model_channels(model_id, channel_id) ON DELETE CASCADE\
             )"
         );
+        add_col!(
+            "CREATE TABLE IF NOT EXISTS scheduler_endpoint_policies (\
+                model_id TEXT NOT NULL,\
+                channel_id TEXT NOT NULL,\
+                endpoint_id BIGINT NOT NULL,\
+                weight INTEGER NOT NULL DEFAULT 1 CHECK (weight >= 1),\
+                timeout_secs BIGINT CHECK (timeout_secs IS NULL OR timeout_secs > 0),\
+                max_tokens BIGINT CHECK (max_tokens IS NULL OR max_tokens > 0),\
+                PRIMARY KEY (model_id, endpoint_id),\
+                FOREIGN KEY (model_id, channel_id) REFERENCES model_channels(model_id, channel_id) ON DELETE CASCADE,\
+                FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE CASCADE\
+            )"
+        );
+        add_col!("ALTER TABLE scheduler_endpoint_policies ADD COLUMN IF NOT EXISTS max_tokens BIGINT CHECK (max_tokens IS NULL OR max_tokens > 0)");
+        // Carry legacy binding max_tokens into the (temporary) binding policy
+        // rows so both upgrade paths converge: a never-migrated DB still has
+        // model_channels.max_tokens; an intermediate DB already backfilled it.
+        add_col!(
+            "INSERT INTO scheduler_binding_policies (model_id, channel_id, priority, max_tokens)\
+             SELECT model_id, channel_id, priority, max_tokens FROM model_channels\
+             ON CONFLICT (model_id, channel_id) DO NOTHING"
+        );
+        // Backfill old channel-global endpoint settings to every model using
+        // that channel (preserves legacy one-channel-weight-for-all behavior).
+        add_col!(
+            "INSERT INTO scheduler_endpoint_policies (model_id, channel_id, endpoint_id, weight, timeout_secs)\
+             SELECT mc.model_id, mc.channel_id, e.id, e.weight, e.timeout_secs\
+             FROM model_channels mc JOIN endpoints e ON e.channel_id = mc.channel_id\
+             ON CONFLICT (model_id, endpoint_id) DO NOTHING"
+        );
+        // Carry recent per-binding endpoint overrides into the endpoint policy.
+        add_col!(
+            "UPDATE scheduler_endpoint_policies sep\
+             SET weight = ov.weight_override\
+             FROM model_channel_endpoint_overrides ov JOIN model_channels mc ON mc.id = ov.model_channel_id\
+             WHERE sep.model_id = mc.model_id AND sep.channel_id = mc.channel_id AND sep.endpoint_id = ov.endpoint_id"
+        );
+        // Binding max_tokens applies to every endpoint of that binding.
+        add_col!(
+            "UPDATE scheduler_endpoint_policies sep\
+             SET max_tokens = sb.max_tokens\
+             FROM scheduler_binding_policies sb\
+             WHERE sep.model_id = sb.model_id AND sep.channel_id = sb.channel_id AND sb.max_tokens IS NOT NULL"
+        );
+        // Legacy scheduling columns/tables are fully backfilled; remove them.
+        add_col!("ALTER TABLE model_channels DROP COLUMN IF EXISTS priority");
+        add_col!("ALTER TABLE model_channels DROP COLUMN IF EXISTS max_tokens");
+        add_col!("ALTER TABLE endpoints DROP COLUMN IF EXISTS weight");
+        add_col!("ALTER TABLE endpoints DROP COLUMN IF EXISTS timeout_secs");
+        add_col!("DROP TABLE IF EXISTS model_channel_endpoint_overrides");
+        add_col!("DROP TABLE IF EXISTS scheduler_binding_policies");
 
         // ── Billing groups ───────────────────────────────────────────────
         raw_sql(

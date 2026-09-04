@@ -9,8 +9,8 @@ use futures::Future;
 use futures::Stream;
 use serde_json::Value;
 
-use crate::balancer::LoadBalancer;
 use crate::domain::usage::UsageRecord;
+use crate::service::endpoint_pool::ModelEndpointRuntime;
 use rust_decimal::Decimal;
 
 /// Extract reasoning and output content from raw SSE data.
@@ -328,7 +328,7 @@ pub(crate) struct UsageTrackingStream<S> {
     /// Circuit-breaker feedback for the streaming request: record_success
     /// when the stream completes cleanly. Client disconnects / mid-stream
     /// drops are not fed into the breaker — they aren't upstream failures.
-    pub(crate) balancer: Option<Arc<LoadBalancer>>,
+    pub(crate) runtime: Option<Arc<ModelEndpointRuntime>>,
     pub(crate) endpoint_idx: usize,
     pub(crate) reservation: Option<crate::service::token_reservation::ReservationFinalizer>,
 }
@@ -377,8 +377,10 @@ impl<S> UsageTrackingStream<S> {
         // endpoint is healthy. Mid-stream drops (client disconnect) are not
         // recorded — see the `balancer` field docs.
         if completed {
-            if let Some(b) = &self.balancer {
-                b.as_health_aware().record_success(self.endpoint_idx);
+            if let Some(runtime) = &self.runtime {
+                if let Some(state) = runtime.endpoints.get(self.endpoint_idx) {
+                    state.breaker.record_success();
+                }
             }
         }
 

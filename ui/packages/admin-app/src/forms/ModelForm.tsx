@@ -26,7 +26,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
   const [id, setId] = useState('');
   const [name, setName] = useState('');
   const [contextLength, setContextLength] = useState('');
-  const [bindings, setBindings] = useState<{ channel_id: string; priority: number; upstream_model: string; max_tokens: string; overrides: Record<string, string> }[]>([]);
+  const [bindings, setBindings] = useState<{ channel_id: string; upstream_model: string }[]>([]);
   const [category, setCategory] = useState<string[]>([]);
 
   useEffect(() => {
@@ -36,12 +36,8 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
       setContextLength(model.context_length ? String(model.context_length) : '');
       setBindings(
         model.channels?.map((c) => ({
-          ...c,
+          channel_id: c.channel_id,
           upstream_model: c.upstream_model || '',
-          max_tokens: c.max_tokens ? String(c.max_tokens) : '',
-          overrides: Object.fromEntries(
-            (c.endpoint_weight_overrides ?? []).map((o) => [String(o.endpoint_id), String(o.weight)]),
-          ),
         })) || [],
       );
       setCategory(model.category ? model.category.split(',').filter(Boolean) : []);
@@ -56,23 +52,12 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
 
   const addBinding = (channelId: string) => {
     if (!channelId) return;
-    setBindings([...bindings, { channel_id: channelId, priority: 1, upstream_model: '', max_tokens: '', overrides: {} }]);
+    setBindings([...bindings, { channel_id: channelId, upstream_model: '' }]);
     setSelectedAddChannel('');
   };
   const updateBinding = (i: number, field: string, value: string | number) =>
     setBindings(bindings.map((b, idx) => idx === i ? { ...b, [field]: value } : b));
   const removeBinding = (i: number) => setBindings(bindings.filter((_, idx) => idx !== i));
-  const setBindingOverride = (i: number, endpointId: number | null, value: string) => {
-    if (endpointId == null) return;
-    setBindings(bindings.map((b, idx) => {
-      if (idx !== i) return b;
-      const overrides = { ...b.overrides };
-      const key = String(endpointId);
-      if (value === '') delete overrides[key];
-      else overrides[key] = value;
-      return { ...b, overrides };
-    }));
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,12 +75,7 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
       category: category.join(','),
       channels: bindings.map((b) => ({
         channel_id: b.channel_id,
-        priority: Number(b.priority),
         upstream_model: b.upstream_model || null,
-        max_tokens: b.max_tokens ? Number(b.max_tokens) : null,
-        endpoint_weight_overrides: Object.entries(b.overrides)
-          .filter(([, value]) => value !== '' && Number(value) >= 1)
-          .map(([endpoint_id, weight]) => ({ endpoint_id: Number(endpoint_id), weight: Number(weight) })),
       })),
     };
     onSubmit(data);
@@ -244,60 +224,6 @@ export function ModelForm({ model, open, onOpenChange, onSubmit, isPending }: Pr
                             onChange={(e) => updateBinding(i, 'upstream_model', e.target.value)}
                           />
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground shrink-0">{t('form.channelPriority')}:</span>
-                          <Input
-                            className="h-8 bg-background w-20"
-                            type="number"
-                            placeholder="0"
-                            value={b.priority}
-                            onChange={(e) => updateBinding(i, 'priority', Number(e.target.value))}
-                          />
-                          <span className="text-xs text-muted-foreground shrink-0">{t('form.bindingMaxTokens')}:</span>
-                          <Input
-                            className="h-8 bg-background w-24"
-                            type="number"
-                            min="1"
-                            step="1"
-                            placeholder={t('form.bindingMaxTokensPlaceholder')}
-                            title={t('form.bindingMaxTokensHint')}
-                            value={b.max_tokens}
-                            onChange={(e) => updateBinding(i, 'max_tokens', e.target.value)}
-                          />
-                        </div>
-                        {/* Endpoint weight overrides — list channel endpoints, user only edits override value */}
-                        {(() => {
-                          const ch = channels?.find((c) => c.id === b.channel_id);
-                          const eps = ch?.endpoints ?? [];
-                          if (eps.length === 0) return null;
-                          return (
-                            <div className="border-t border-muted/30 pt-2">
-                              <div className="mb-1 text-xs font-medium text-muted-foreground">{t('form.endpointWeightOverrides')}</div>
-                              <div className="space-y-1">
-                                {eps.map((ep) => {
-                                  const key = String(ep.id ?? '');
-                                  const override = b.overrides[key] ?? '';
-                                  return (
-                                    <div key={key} className="flex items-center gap-2 text-xs">
-                                      <span className="flex-1 truncate font-mono text-muted-foreground" title={ep.url}>{ep.url}</span>
-                                      <span className="shrink-0 text-muted-foreground">默认 {ep.weight}</span>
-                                      <Input
-                                        className="h-7 bg-background w-20"
-                                        type="number"
-                                        min="1"
-                                        step="1"
-                                        placeholder={t('form.endpointWeightInherited')}
-                                        title={t('form.endpointWeightOverrideHint')}
-                                        value={override}
-                                        onChange={(e) => setBindingOverride(i, ep.id ?? null, e.target.value)}
-                                      />
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })()}
                       </div>
                     ))}
                   </div>

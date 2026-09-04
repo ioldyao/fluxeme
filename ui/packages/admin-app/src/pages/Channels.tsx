@@ -134,8 +134,6 @@ function ChannelRow({
                     <tr className="border-b text-muted-foreground">
                       <th className="text-left py-2 pr-3 font-medium">{t('endpoint.id')}</th>
                       <th className="text-left py-2 pr-3 font-medium">{t('endpoint.url')}</th>
-                      <th className="text-center py-2 pr-3 font-medium w-16">{t('endpoint.weight')}</th>
-                      <th className="text-center py-2 pr-3 font-medium w-24">{t('endpoint.timeoutSecs')}</th>
                       <th className="text-center py-2 font-medium w-28">{t('endpoint.status')}</th>
                     </tr>
                   </thead>
@@ -150,8 +148,6 @@ function ChannelRow({
                           <td className="py-2 pr-3 max-w-64 truncate" title={ep.url}>
                             {ep.url}
                           </td>
-                          <td className="py-2 pr-3 text-center">{ep.weight}</td>
-                          <td className="py-2 pr-3 text-center">{ep.timeout_secs ?? '—'}</td>
                           <td className="py-2 text-center">
                             <StatusBadge status={status} />
                           </td>

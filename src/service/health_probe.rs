@@ -5,12 +5,12 @@ use futures::stream::{self, StreamExt};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::balancer::LoadBalancer;
 use crate::config::types::EndpointConfig;
 use crate::db::{Database, ProbeResultRow};
 use crate::provider::{
     is_retryable_error, ErrorKind, ProviderAdapter, ProviderError, ProviderRegistry,
 };
+use crate::service::endpoint_pool::ModelEndpointRuntime;
 use crate::service::routing::RoutingService;
 
 const MAX_CONCURRENT_ENDPOINT_PROBES: usize = 8;
@@ -24,9 +24,11 @@ struct ProbeJob {
     provider_name: String,
     upstream_name: String,
     adapter: Arc<dyn ProviderAdapter>,
-    balancer: Arc<LoadBalancer>,
+    /// The model's compiled endpoint runtime; `endpoint_idx` indexes it.
+    runtime: Arc<ModelEndpointRuntime>,
+    endpoint_idx: usize,
     /// The routing service, so a successful probe can sync its breaker state
-    /// back to both the binding pool and the channel-level cache balancer.
+    /// back to both the model endpoint pool and the channel-level cache balancer.
     /// Only set for manual probes (`automatic=false`); automatic probes are
     /// serialized by proxy lease and the caller does not wait for results, so
     /// there is no caller-side sync step.
@@ -106,72 +108,63 @@ impl HealthProbeService {
         if bindings.is_empty() {
             return Err("No channel bindings selected".to_string());
         }
-        bindings.sort_by_key(|binding| binding.priority);
-
+        // Probe bindings in model declaration order; endpoint selection no longer
+        // has a channel-priority ordering.
         let mut ordered_results = Vec::new();
         let mut jobs = Vec::new();
+
+        let Some(runtime) = self.routing.get_model_endpoint_runtime(model_id) else {
+            return Err(format!("Model '{}' has no endpoint runtime", model_id));
+        };
 
         for (binding_order, binding) in bindings.iter().enumerate() {
             let upstream_name = binding
                 .upstream_model
                 .clone()
                 .unwrap_or_else(|| model.name.clone());
-
-            let route = match self.routing.get_route(&binding.channel_id) {
-                Some(route) => route,
-                None => {
-                    ordered_results.push(OrderedProbeRow {
-                        binding_order,
-                        endpoint_order: 0,
-                        row: Self::make_row(
-                            &binding.channel_id,
-                            model_id,
-                            false,
-                            0,
-                            Some("Route not available"),
-                            None,
-                            None,
-                            None,
-                        ),
-                    });
-                    continue;
-                }
+            let Some(route) = self.routing.get_route(&binding.channel_id) else {
+                ordered_results.push(OrderedProbeRow {
+                    binding_order,
+                    endpoint_order: 0,
+                    row: Self::make_row(
+                        &binding.channel_id,
+                        model_id,
+                        false,
+                        0,
+                        Some("Route not available"),
+                        None,
+                        None,
+                        None,
+                    ),
+                });
+                continue;
             };
             let provider_name = route.0.clone();
-            let adapter = match self.providers.get(&provider_name) {
-                Some(adapter) => adapter,
-                None => {
-                    ordered_results.push(OrderedProbeRow {
-                        binding_order,
-                        endpoint_order: 0,
-                        row: Self::make_row(
-                            &binding.channel_id,
-                            model_id,
-                            false,
-                            0,
-                            Some("Provider adapter not found"),
-                            None,
-                            None,
-                            None,
-                        ),
-                    });
-                    continue;
-                }
+            let Some(adapter) = self.providers.get(&provider_name) else {
+                ordered_results.push(OrderedProbeRow {
+                    binding_order,
+                    endpoint_order: 0,
+                    row: Self::make_row(
+                        &binding.channel_id,
+                        model_id,
+                        false,
+                        0,
+                        Some("Provider adapter not found"),
+                        None,
+                        None,
+                        None,
+                    ),
+                });
+                continue;
             };
-
-            let probe_balancer = self
-                .routing
-                .get_binding_route(model_id, &binding.channel_id)
-                .unwrap_or_else(|| route.1.clone());
-            let endpoints = probe_balancer.as_health_aware().endpoints();
-            // Model liveness probes exercise the configured chat operation.
-            // Full URLs are valid here: provider URL resolution preserves them
-            // verbatim, so they must not be mistaken for discovery endpoints.
-            let endpoint_jobs: Vec<_> = endpoints
+            let endpoint_jobs: Vec<_> = runtime
+                .endpoints
                 .iter()
-                .cloned()
                 .enumerate()
-                .filter(|(_, endpoint)| endpoint.enabled)
+                .filter(|(_, state)| {
+                    state.channel_id == binding.channel_id && state.endpoint.enabled
+                })
+                .map(|(idx, state)| (idx, state.endpoint.clone()))
                 .collect();
             if endpoint_jobs.is_empty() {
                 ordered_results.push(OrderedProbeRow {
@@ -190,8 +183,8 @@ impl HealthProbeService {
                 });
                 continue;
             }
-
-            for (endpoint_order, endpoint) in endpoint_jobs {
+            for (endpoint_order, (endpoint_idx, endpoint)) in endpoint_jobs.into_iter().enumerate()
+            {
                 jobs.push(ProbeJob {
                     binding_order,
                     endpoint_order,
@@ -201,7 +194,8 @@ impl HealthProbeService {
                     upstream_name: upstream_name.clone(),
                     upstream_model: upstream_name.clone(),
                     adapter: adapter.clone(),
-                    balancer: probe_balancer.clone(),
+                    runtime: runtime.clone(),
+                    endpoint_idx,
                     routing: Some(self.routing.clone()),
                     endpoint,
                     stream,
@@ -270,10 +264,7 @@ impl HealthProbeService {
                 let Some(route) = self.routing.get_route(&binding.channel_id) else {
                     continue;
                 };
-                let Some(balancer) = self
-                    .routing
-                    .get_binding_route(&model.id, &binding.channel_id)
-                else {
+                let Some(runtime) = self.routing.get_model_endpoint_runtime(&model.id) else {
                     continue;
                 };
                 let provider_name = route.0.clone();
@@ -284,32 +275,29 @@ impl HealthProbeService {
                     .upstream_model
                     .clone()
                     .unwrap_or_else(|| model.name.clone());
-                for endpoint_order in 0..balancer.as_health_aware().endpoint_count() {
-                    let Some(endpoint) = balancer.as_health_aware().endpoint(endpoint_order) else {
-                        continue;
-                    };
-                    if !endpoint.enabled {
+                for (endpoint_idx, state) in runtime.endpoints.iter().enumerate() {
+                    if state.channel_id != binding.channel_id {
                         continue;
                     }
-                    if recovering_only {
-                        // Only probe endpoints that are not healthy (Open,
-                        // HalfOpen, or lease expired) — skip healthy ones.
-                        if balancer.as_health_aware().breakers()[endpoint_order].is_healthy() {
-                            continue;
-                        }
+                    if !state.endpoint.enabled {
+                        continue;
+                    }
+                    if recovering_only && state.breaker.is_healthy() {
+                        continue;
                     }
                     jobs.push(ProbeJob {
                         binding_order: jobs.len(),
-                        endpoint_order,
+                        endpoint_order: endpoint_idx,
                         channel_id: binding.channel_id.clone(),
                         model_id: model.id.clone(),
                         provider_name: provider_name.clone(),
                         upstream_name: upstream_name.clone(),
                         upstream_model: upstream_name.clone(),
                         adapter: adapter.clone(),
-                        balancer: balancer.clone(),
+                        runtime: runtime.clone(),
+                        endpoint_idx,
                         routing: None,
-                        endpoint: endpoint.clone(),
+                        endpoint: state.endpoint.clone(),
                         stream: false,
                         automatic: true,
                         cache: self.cache.clone(),
@@ -357,7 +345,8 @@ impl HealthProbeService {
             upstream_name,
             upstream_model,
             adapter,
-            balancer,
+            runtime,
+            endpoint_idx,
             routing,
             endpoint,
             stream,
@@ -401,10 +390,12 @@ impl HealthProbeService {
                     ),
                 };
             }
-            let Some((_, _, token)) = balancer
-                .as_health_aware()
-                .begin_probe_endpoint(endpoint_order)
-            else {
+            let Some((_, _, token)) = runtime.endpoints.get(endpoint_idx).and_then(|state| {
+                state
+                    .breaker
+                    .begin_probe()
+                    .map(|token| (endpoint_idx, state, token))
+            }) else {
                 let _ = cache.probe_release(&lease_key, &lease_owner).await;
                 return OrderedProbeRow {
                     binding_order,
@@ -445,12 +436,12 @@ impl HealthProbeService {
 
         let row = match result {
             Ok(()) => {
-                if let Some(token) = probe_token {
-                    balancer
-                        .as_health_aware()
-                        .probe_success(endpoint_order, token);
-                } else {
-                    balancer.as_health_aware().record_success(endpoint_order);
+                if let Some(state) = runtime.endpoints.get(endpoint_idx) {
+                    if let Some(token) = probe_token {
+                        state.breaker.probe_success(token);
+                    } else {
+                        state.breaker.record_success();
+                    }
                 }
                 // Sync to both the binding pool and the channel-level cache
                 // balancer so the model console health dot reflects success.
@@ -481,12 +472,12 @@ impl HealthProbeService {
                 if matches!(error.kind(), ErrorKind::ConnectFailed | ErrorKind::Timeout)
                     || is_retryable_error(&error)
                 {
-                    if let Some(token) = probe_token {
-                        balancer
-                            .as_health_aware()
-                            .probe_failure(endpoint_order, token);
-                    } else {
-                        balancer.as_health_aware().record_failure(endpoint_order);
+                    if let Some(state) = runtime.endpoints.get(endpoint_idx) {
+                        if let Some(token) = probe_token {
+                            state.breaker.probe_failure(token);
+                        } else {
+                            state.breaker.record_failure();
+                        }
                     }
                     // Sync failure to the model-scoped binding only; never
                     // broadcast to other models sharing this endpoint.
@@ -500,11 +491,10 @@ impl HealthProbeService {
                         );
                     }
                 } else if let Some(token) = probe_token {
-                    // Authentication, model, and request errors describe the
-                    // probe input/upstream contract, not endpoint liveness.
-                    balancer
-                        .as_health_aware()
-                        .probe_release(endpoint_order, token);
+                    // Contract/input errors do not describe endpoint liveness.
+                    if let Some(state) = runtime.endpoints.get(endpoint_idx) {
+                        state.breaker.probe_release(token);
+                    }
                 }
                 if let (Some(key), Some(owner)) = (lease_key.as_ref(), lease_owner.as_ref()) {
                     let _ = cache.probe_release(key, owner).await;

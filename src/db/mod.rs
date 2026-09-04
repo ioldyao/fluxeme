@@ -12,6 +12,7 @@ use crate::domain::gateway::GatewayRoute;
 use crate::domain::model::{Model, Pricing};
 use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
+use crate::domain::scheduler::SchedulerEndpointPolicy;
 use crate::domain::sso::SsoConfigRow;
 use crate::domain::team::{Team, TeamMember};
 use crate::domain::token_package::{
@@ -534,6 +535,22 @@ impl Database {
     ) -> Result<(), DbError> {
         self.backend
             .set_model_context_length(id, context_length)
+            .await
+    }
+
+    // ── Scheduler policies (Scheduler Control plane) ────────────────────
+    pub async fn list_scheduler_endpoint_policies(
+        &self,
+    ) -> Result<Vec<SchedulerEndpointPolicy>, DbError> {
+        self.backend.list_scheduler_endpoint_policies().await
+    }
+    pub async fn replace_endpoint_policies(
+        &self,
+        model_id: &str,
+        endpoints: &[SchedulerEndpointPolicy],
+    ) -> Result<(), DbError> {
+        self.backend
+            .replace_endpoint_policies(model_id, endpoints)
             .await
     }
 

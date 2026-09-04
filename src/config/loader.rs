@@ -354,8 +354,6 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
                         channel_id: c.id.clone(),
                         url: ep.url.clone(),
                         api_key: ep.api_key.clone(),
-                        weight: ep.weight,
-                        timeout_secs: ep.timeout_secs,
                         enabled: true,
                         full_url: ep.full_url,
                     })
@@ -387,13 +385,9 @@ pub async fn seed_from_config(config_path: &str, db: &Database) -> Result<(), St
                     .iter()
                     .map(|mc| ModelChannel {
                         model_id: m.id.clone(),
-                        binding_id: None,
                         channel_id: mc.channel_id.clone(),
-                        priority: mc.priority,
                         provider: String::new(),
                         upstream_model: None,
-                        max_tokens: mc.max_tokens,
-                        endpoint_weight_overrides: Vec::new(),
                     })
                     .collect(),
                 published: false,

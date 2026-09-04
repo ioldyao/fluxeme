@@ -345,6 +345,7 @@ mod endpoint_url_tests {
             api_key: String::new(),
             weight: 1,
             timeout_secs: None,
+            max_tokens: None,
             enabled: true,
             full_url,
         }

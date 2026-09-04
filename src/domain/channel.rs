@@ -26,9 +26,6 @@ pub struct Endpoint {
     pub url: String,
     #[serde(default)]
     pub api_key: String,
-    #[serde(default = "default_weight")]
-    pub weight: u32,
-    pub timeout_secs: Option<u64>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
     /// When true, use `url` exactly without appending a provider path.
@@ -38,8 +35,4 @@ pub struct Endpoint {
 
 fn default_enabled() -> bool {
     true
-}
-
-fn default_weight() -> u32 {
-    1
 }

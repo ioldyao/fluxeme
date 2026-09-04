@@ -12,7 +12,7 @@ impl CatalogBackend for PgBackend {
                 .await?;
 
         let ep_rows = query(
-            "SELECT id, channel_id, url, api_key, weight, timeout_secs, enabled, full_url FROM endpoints ORDER BY channel_id",
+            "SELECT id, channel_id, url, api_key, enabled, full_url FROM endpoints ORDER BY channel_id",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -38,16 +38,8 @@ impl CatalogBackend for PgBackend {
                 channel_id: r.get(1),
                 url: r.get(2),
                 api_key: r.get(3),
-                weight: {
-                    let w: i32 = r.get(4);
-                    w as u32
-                },
-                timeout_secs: {
-                    let t: Option<i64> = r.get(5);
-                    t.map(|v| v as u64)
-                },
-                enabled: r.get(6),
-                full_url: r.get(7),
+                enabled: r.get(4),
+                full_url: r.get(5),
             });
         }
         for ch in &mut channels {
@@ -76,7 +68,7 @@ impl CatalogBackend for PgBackend {
                 endpoints: Vec::new(),
             };
             let eps = query(
-                "SELECT id, channel_id, url, api_key, weight, timeout_secs, enabled, full_url FROM endpoints WHERE channel_id = $1",
+                "SELECT id, channel_id, url, api_key, enabled, full_url FROM endpoints WHERE channel_id = $1",
             )
             .bind(&ch.id)
             .fetch_all(&self.pool)
@@ -88,16 +80,8 @@ impl CatalogBackend for PgBackend {
                     channel_id: r.get(1),
                     url: r.get(2),
                     api_key: r.get(3),
-                    weight: {
-                        let w: i32 = r.get(4);
-                        w as u32
-                    },
-                    timeout_secs: {
-                        let t: Option<i64> = r.get(5);
-                        t.map(|v| v as u64)
-                    },
-                    enabled: r.get(6),
-                    full_url: r.get(7),
+                    enabled: r.get(4),
+                    full_url: r.get(5),
                 })
                 .collect();
             Ok(Some(ch))
@@ -119,13 +103,11 @@ impl CatalogBackend for PgBackend {
         .await?;
         for ep in &ch.endpoints {
             query(
-                "INSERT INTO endpoints (channel_id, url, api_key, weight, timeout_secs, enabled, full_url) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                "INSERT INTO endpoints (channel_id, url, api_key, enabled, full_url) VALUES ($1, $2, $3, $4, $5)",
             )
             .bind(&ch.id)
             .bind(&ep.url)
             .bind(&ep.api_key)
-            .bind(ep.weight as i32)
-            .bind(ep.timeout_secs.map(|v| v as i64))
             .bind(ep.enabled)
             .bind(ep.full_url)
             .execute(&self.pool)
@@ -151,13 +133,11 @@ impl CatalogBackend for PgBackend {
             .await?;
         for ep in &ch.endpoints {
             query(
-                "INSERT INTO endpoints (channel_id, url, api_key, weight, timeout_secs, enabled, full_url) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                "INSERT INTO endpoints (channel_id, url, api_key, enabled, full_url) VALUES ($1, $2, $3, $4, $5)",
             )
             .bind(&ch.id)
             .bind(&ep.url)
             .bind(&ep.api_key)
-            .bind(ep.weight as i32)
-            .bind(ep.timeout_secs.map(|v| v as i64))
             .bind(ep.enabled)
             .bind(ep.full_url)
             .execute(&self.pool)
@@ -176,7 +156,7 @@ impl CatalogBackend for PgBackend {
 
     async fn get_endpoint(&self, id: i64) -> Result<Option<Endpoint>, DbError> {
         let rows = query(
-            "SELECT id, channel_id, url, api_key, weight, timeout_secs, enabled, full_url FROM endpoints WHERE id = $1",
+            "SELECT id, channel_id, url, api_key, enabled, full_url FROM endpoints WHERE id = $1",
         )
         .bind(id)
         .fetch_all(&self.pool)
@@ -186,16 +166,8 @@ impl CatalogBackend for PgBackend {
             channel_id: r.get(1),
             url: r.get(2),
             api_key: r.get(3),
-            weight: {
-                let w: i32 = r.get(4);
-                w as u32
-            },
-            timeout_secs: {
-                let t: Option<i64> = r.get(5);
-                t.map(|v| v as u64)
-            },
-            enabled: r.get(6),
-            full_url: r.get(7),
+            enabled: r.get(4),
+            full_url: r.get(5),
         }))
     }
 
@@ -229,9 +201,9 @@ impl CatalogBackend for PgBackend {
         .await?;
 
         let b_rows = query(
-            "SELECT mc.id, mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model, mc.max_tokens \
+            "SELECT mc.model_id, mc.channel_id, COALESCE(c.provider, ''), mc.upstream_model \
              FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id \
-             ORDER BY mc.model_id, mc.priority",
+             ORDER BY mc.model_id",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -264,45 +236,15 @@ impl CatalogBackend for PgBackend {
             })
             .collect();
 
-        // Load per-binding endpoint weight overrides.
-        let overrides = query(
-            "SELECT o.model_channel_id, o.endpoint_id, o.weight_override \
-             FROM model_channel_endpoint_overrides o ORDER BY o.model_channel_id, o.endpoint_id",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        let mut ov_by_binding: std::collections::HashMap<i64, Vec<EndpointWeightOverride>> =
-            std::collections::HashMap::new();
-        for r in &overrides {
-            let mc_id: i64 = r.get(0);
-            ov_by_binding
-                .entry(mc_id)
-                .or_default()
-                .push(EndpointWeightOverride {
-                    endpoint_id: r.get(1),
-                    weight: r.get::<i32, _>(2) as u32,
-                });
-        }
-
         let mut by_model: std::collections::HashMap<String, Vec<ModelChannel>> =
             std::collections::HashMap::new();
         for r in &b_rows {
-            let binding_id: Option<i64> = r.get(0);
-            let model_id: String = r.get(1);
+            let model_id: String = r.get(0);
             by_model.entry(model_id).or_default().push(ModelChannel {
-                model_id: r.get(1),
-                binding_id,
-                channel_id: r.get(2),
-                priority: r.get(3),
-                provider: r.get::<Option<String>, _>(4).unwrap_or_default(),
-                upstream_model: r.get::<Option<String>, _>(5),
-                max_tokens: r
-                    .get::<Option<i64>, _>(6)
-                    .and_then(|v| u32::try_from(v).ok()),
-                endpoint_weight_overrides: binding_id
-                    .and_then(|id| ov_by_binding.get(&id))
-                    .cloned()
-                    .unwrap_or_default(),
+                model_id: r.get(0),
+                channel_id: r.get(1),
+                provider: r.get::<Option<String>, _>(2).unwrap_or_default(),
+                upstream_model: r.get::<Option<String>, _>(3),
             });
         }
         for m in &mut models {
@@ -349,46 +291,22 @@ impl CatalogBackend for PgBackend {
                 category: r.get::<Option<String>, _>(12).unwrap_or_default(),
             };
             let bindings = query(
-                "SELECT mc.id, mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model, mc.max_tokens \
+                "SELECT mc.model_id, mc.channel_id, COALESCE(c.provider, ''), mc.upstream_model \
                  FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id \
-                 WHERE mc.model_id = $1 ORDER BY mc.priority",
+                 WHERE mc.model_id = $1 ORDER BY mc.channel_id",
             )
             .bind(&m.id)
             .fetch_all(&self.pool)
             .await?;
-            let mut mcs = Vec::with_capacity(bindings.len());
-            for r in &bindings {
-                let binding_id: Option<i64> = r.get(0);
-                let overrides = if let Some(bid) = binding_id {
-                    query(
-                        "SELECT endpoint_id, weight_override FROM model_channel_endpoint_overrides WHERE model_channel_id = $1 ORDER BY endpoint_id",
-                    )
-                    .bind(bid)
-                    .fetch_all(&self.pool)
-                    .await?
-                    .iter()
-                    .map(|o| EndpointWeightOverride {
-                        endpoint_id: o.get(0),
-                        weight: o.get::<i32, _>(1) as u32,
-                    })
-                    .collect()
-                } else {
-                    Vec::new()
-                };
-                mcs.push(ModelChannel {
-                    model_id: r.get(1),
-                    binding_id,
-                    channel_id: r.get(2),
-                    priority: r.get(3),
-                    provider: r.get::<Option<String>, _>(4).unwrap_or_default(),
-                    upstream_model: r.get::<Option<String>, _>(5),
-                    max_tokens: r
-                        .get::<Option<i64>, _>(6)
-                        .and_then(|v| u32::try_from(v).ok()),
-                    endpoint_weight_overrides: overrides,
-                });
-            }
-            m.channels = mcs;
+            m.channels = bindings
+                .iter()
+                .map(|r| ModelChannel {
+                    model_id: r.get(0),
+                    channel_id: r.get(1),
+                    provider: r.get::<Option<String>, _>(2).unwrap_or_default(),
+                    upstream_model: r.get::<Option<String>, _>(3),
+                })
+                .collect();
             Ok(Some(m))
         } else {
             Ok(None)
@@ -420,29 +338,14 @@ impl CatalogBackend for PgBackend {
         .await?;
 
         for binding in &m.channels {
-            let row = query(
-                "INSERT INTO model_channels (model_id, channel_id, priority, upstream_model, max_tokens) \
-                 VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            query(
+                "INSERT INTO model_channels (model_id, channel_id, upstream_model) VALUES ($1, $2, $3)",
             )
             .bind(&m.id)
             .bind(&binding.channel_id)
-            .bind(binding.priority)
             .bind(&binding.upstream_model)
-            .bind(binding.max_tokens.map(i64::from))
-            .fetch_one(&mut *tx)
+            .execute(&mut *tx)
             .await?;
-            let mc_id: i64 = row.get(0);
-            for ov in &binding.endpoint_weight_overrides {
-                query(
-                    "INSERT INTO model_channel_endpoint_overrides (model_channel_id, endpoint_id, weight_override) \
-                     VALUES ($1, $2, $3)",
-                )
-                .bind(mc_id)
-                .bind(ov.endpoint_id)
-                .bind(ov.weight as i32)
-                .execute(&mut *tx)
-                .await?;
-            }
         }
         tx.commit().await?;
         Ok(())
@@ -474,34 +377,20 @@ impl CatalogBackend for PgBackend {
         .execute(&mut *tx)
         .await?;
         // Delete old bindings by old_id (model_channels FK references old model
-        // id; model_channel_endpoint_overrides cascade via model_channel_id).
+        // id; scheduler policy tables cascade via (model_id, channel_id)).
         query("DELETE FROM model_channels WHERE model_id = $1")
             .bind(old_id)
             .execute(&mut *tx)
             .await?;
         for binding in &m.channels {
-            let row = query(
-                "INSERT INTO model_channels (model_id, channel_id, priority, upstream_model, max_tokens) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            query(
+                "INSERT INTO model_channels (model_id, channel_id, upstream_model) VALUES ($1, $2, $3)",
             )
             .bind(&m.id)
             .bind(&binding.channel_id)
-            .bind(binding.priority)
             .bind(&binding.upstream_model)
-            .bind(binding.max_tokens.map(i64::from))
-            .fetch_one(&mut *tx)
+            .execute(&mut *tx)
             .await?;
-            let mc_id: i64 = row.get(0);
-            for ov in &binding.endpoint_weight_overrides {
-                query(
-                    "INSERT INTO model_channel_endpoint_overrides (model_channel_id, endpoint_id, weight_override) \
-                     VALUES ($1, $2, $3)",
-                )
-                .bind(mc_id)
-                .bind(ov.endpoint_id)
-                .bind(ov.weight as i32)
-                .execute(&mut *tx)
-                .await?;
-            }
         }
         tx.commit().await?;
         Ok(())
@@ -526,9 +415,9 @@ impl CatalogBackend for PgBackend {
         .await?;
 
         let b_rows = query(
-            "SELECT mc.id, mc.model_id, mc.channel_id, mc.priority, COALESCE(c.provider, ''), mc.upstream_model, mc.max_tokens \
+            "SELECT mc.model_id, mc.channel_id, COALESCE(c.provider, ''), mc.upstream_model \
              FROM model_channels mc LEFT JOIN channels c ON c.id = mc.channel_id \
-             ORDER BY mc.model_id, mc.priority",
+             ORDER BY mc.model_id",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -561,43 +450,15 @@ impl CatalogBackend for PgBackend {
             })
             .collect();
 
-        let ov_rows = query(
-            "SELECT o.model_channel_id, o.endpoint_id, o.weight_override \
-             FROM model_channel_endpoint_overrides o ORDER BY o.model_channel_id, o.endpoint_id",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        let mut ov_by_binding: std::collections::HashMap<i64, Vec<EndpointWeightOverride>> =
-            std::collections::HashMap::new();
-        for r in &ov_rows {
-            ov_by_binding
-                .entry(r.get(0))
-                .or_default()
-                .push(EndpointWeightOverride {
-                    endpoint_id: r.get(1),
-                    weight: r.get::<i32, _>(2) as u32,
-                });
-        }
-
         let mut by_model: std::collections::HashMap<String, Vec<ModelChannel>> =
             std::collections::HashMap::new();
         for r in &b_rows {
-            let binding_id: Option<i64> = r.get(0);
-            let model_id: String = r.get(1);
+            let model_id: String = r.get(0);
             by_model.entry(model_id).or_default().push(ModelChannel {
-                model_id: r.get(1),
-                binding_id,
-                channel_id: r.get(2),
-                priority: r.get(3),
-                provider: r.get::<Option<String>, _>(4).unwrap_or_default(),
-                upstream_model: r.get::<Option<String>, _>(5),
-                max_tokens: r
-                    .get::<Option<i64>, _>(6)
-                    .and_then(|v| u32::try_from(v).ok()),
-                endpoint_weight_overrides: binding_id
-                    .and_then(|id| ov_by_binding.get(&id))
-                    .cloned()
-                    .unwrap_or_default(),
+                model_id: r.get(0),
+                channel_id: r.get(1),
+                provider: r.get::<Option<String>, _>(2).unwrap_or_default(),
+                upstream_model: r.get::<Option<String>, _>(3),
             });
         }
         for m in &mut models {
@@ -642,6 +503,61 @@ impl CatalogBackend for PgBackend {
             .bind(id)
             .execute(&self.pool)
             .await?;
+        Ok(())
+    }
+
+    // ── Scheduler policies (Scheduler Control plane) ────────────────────
+
+    async fn list_scheduler_endpoint_policies(
+        &self,
+    ) -> Result<Vec<SchedulerEndpointPolicy>, DbError> {
+        let rows = query(
+            "SELECT model_id, channel_id, endpoint_id, weight, timeout_secs, max_tokens \
+             FROM scheduler_endpoint_policies ORDER BY model_id, channel_id, endpoint_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| SchedulerEndpointPolicy {
+                model_id: r.get(0),
+                channel_id: r.get(1),
+                endpoint_id: r.get(2),
+                weight: r.get::<i32, _>(3) as u32,
+                timeout_secs: r.get::<Option<i64>, _>(4).map(|v| v as u64),
+                max_tokens: r
+                    .get::<Option<i64>, _>(5)
+                    .and_then(|v| u32::try_from(v).ok()),
+            })
+            .collect())
+    }
+
+    async fn replace_endpoint_policies(
+        &self,
+        model_id: &str,
+        endpoints: &[SchedulerEndpointPolicy],
+    ) -> Result<(), DbError> {
+        let mut tx = self.pool.begin().await?;
+        // Replace the whole model's endpoint policies atomically.
+        query("DELETE FROM scheduler_endpoint_policies WHERE model_id = $1")
+            .bind(model_id)
+            .execute(&mut *tx)
+            .await?;
+        for ep in endpoints {
+            query(
+                "INSERT INTO scheduler_endpoint_policies (model_id, channel_id, endpoint_id, weight, timeout_secs, max_tokens) \
+                 VALUES ($1, $2, $3, $4, $5, $6)",
+            )
+            .bind(&ep.model_id)
+            .bind(&ep.channel_id)
+            .bind(ep.endpoint_id)
+            .bind(ep.weight as i32)
+            .bind(ep.timeout_secs.map(|v| v as i64))
+            .bind(ep.max_tokens.map(i64::from))
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 

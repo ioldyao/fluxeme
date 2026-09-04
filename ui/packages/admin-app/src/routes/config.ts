@@ -14,6 +14,7 @@ import {
   ScrollText,
   Shield,
   Users,
+  Gauge,
 } from 'lucide-react';
 import type { Permission } from '@fluxeme/shared/src/permissions/usePermission';
 
@@ -49,6 +50,7 @@ export const adminRoutes: RouteConfig[] = [
   { path: '/teams', Component: lazy(() => import('@/pages/Teams')), guard: 'admin', label: 'nav.teams', icon: Users, nav: true, perm: 'admin:teams' },
   { path: '/channels', Component: lazy(() => import('@/pages/Channels')), guard: 'admin', label: 'nav.channels', icon: Radio, nav: true, perm: 'admin:channels' },
   { path: '/models', Component: lazy(() => import('@/pages/Models')), guard: 'admin', label: 'nav.models', icon: Cpu, nav: true, end: true, perm: 'admin:models' },
+  { path: '/scheduler-control', Component: lazy(() => import('@/pages/SchedulerControl')), guard: 'admin', label: 'nav.schedulerControl', icon: Gauge, nav: true, perm: 'admin:models' },
   { path: '/moderation', Component: lazy(() => import('@/pages/Moderation')), guard: 'admin', label: 'nav.moderation', icon: Shield, nav: true, perm: 'admin:moderation' },
   { path: '/rules', Component: lazy(() => import('@/pages/Rules')), guard: 'admin', label: 'nav.rules', icon: Route, nav: true, perm: 'admin:rules' },
   { path: '/pricing', Component: lazy(() => import('@/pages/ModelPricing')), guard: 'admin', label: 'nav.modelPricing', icon: DollarSign, nav: true, perm: 'admin:model-pricing' },

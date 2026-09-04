@@ -293,12 +293,12 @@ pub(crate) async fn set_breaker_params(
         .ok()
         .flatten()
         .and_then(|v| v.parse::<u64>().ok());
-    let long_fail = req
-        .long_fail_threshold
-        .unwrap_or_else(|| stored_long_fail.unwrap_or(crate::balancer::BREAKER_LONG_FAIL_THRESHOLD_DEFAULT));
-    let long_interval = req
-        .long_probe_interval_secs
-        .unwrap_or_else(|| stored_long_interval.unwrap_or(crate::balancer::BREAKER_LONG_PROBE_INTERVAL_DEFAULT));
+    let long_fail = req.long_fail_threshold.unwrap_or_else(|| {
+        stored_long_fail.unwrap_or(crate::balancer::BREAKER_LONG_FAIL_THRESHOLD_DEFAULT)
+    });
+    let long_interval = req.long_probe_interval_secs.unwrap_or_else(|| {
+        stored_long_interval.unwrap_or(crate::balancer::BREAKER_LONG_PROBE_INTERVAL_DEFAULT)
+    });
     if !(crate::balancer::BREAKER_LONG_FAIL_THRESHOLD_MIN
         ..=crate::balancer::BREAKER_LONG_FAIL_THRESHOLD_MAX)
         .contains(&long_fail)

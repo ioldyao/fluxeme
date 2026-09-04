@@ -41,7 +41,7 @@ interface Props {
 }
 
 function emptyEp(): Endpoint {
-  return { url: '', api_key: '', weight: 1, timeout_secs: 30, enabled: true, full_url: false };
+  return { url: '', api_key: '', enabled: true, full_url: false };
 }
 
 export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }: Props) {
@@ -178,8 +178,6 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
       ...(channel ? {} : { id: randomId() }),
       endpoints: endpoints.map((endpoint) => ({
         ...endpoint,
-        weight: Number(endpoint.weight),
-        timeout_secs: endpoint.timeout_secs ? Number(endpoint.timeout_secs) : null,
       })),
     };
 
@@ -479,39 +477,15 @@ export function ChannelForm({ channel, open, onOpenChange, onSubmit, isPending }
                         </div>
                       )}
 
-                      <div className="grid grid-cols-[1fr_80px_80px] gap-3">
-                        <div className="space-y-1">
-                          <Input
-                            className="h-9 bg-background"
-                            placeholder="API Key"
-                            type="password"
-                            value={ep.api_key}
-                            onChange={(e) => updateEp(i, 'api_key', e.target.value)}
-                            required={!channel || !ep.id}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Input
-                            className="h-9 bg-background"
-                            placeholder={t('form.weight')}
-                            type="number"
-                            value={ep.weight}
-                            onChange={(e) => updateEp(i, 'weight', Number(e.target.value))}
-                          />
-                          <p className="text-[10px] text-muted-foreground leading-tight">权重越高流量越多</p>
-                        </div>
-                        <div className="space-y-1">
-                          <Input
-                            className="h-9 bg-background"
-                            placeholder={t('form.timeout')}
-                            type="number"
-                            value={ep.timeout_secs ?? ''}
-                            onChange={(e) =>
-                              updateEp(i, 'timeout_secs', e.target.value ? Number(e.target.value) : null)
-                            }
-                          />
-                          <p className="text-[10px] text-muted-foreground leading-tight">超时秒数</p>
-                        </div>
+                      <div className="space-y-1">
+                        <Input
+                          className="h-9 bg-background"
+                          placeholder="API Key"
+                          type="password"
+                          value={ep.api_key}
+                          onChange={(e) => updateEp(i, 'api_key', e.target.value)}
+                          required={!channel || !ep.id}
+                        />
                       </div>
                       <div className="flex gap-3 text-[10px] text-muted-foreground">
                         <span className="inline-flex items-center gap-1">

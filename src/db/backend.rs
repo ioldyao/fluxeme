@@ -8,6 +8,7 @@ use crate::domain::gateway::GatewayRoute;
 use crate::domain::model::{Model, Pricing};
 use crate::domain::moderation::ContentFilterRule;
 use crate::domain::routing::RoutingRule;
+use crate::domain::scheduler::SchedulerEndpointPolicy;
 use crate::domain::sso::SsoConfigRow;
 use crate::domain::team::{Team, TeamMember};
 use crate::domain::token_package::{
@@ -170,6 +171,17 @@ pub trait CatalogBackend: Send + Sync {
     async fn set_model_published(&self, id: &str, published: bool) -> Result<(), DbError>;
     async fn set_model_pricing(&self, id: &str, pricing: &Pricing) -> Result<(), DbError>;
     async fn set_model_context_length(&self, id: &str, context_length: i64) -> Result<(), DbError>;
+
+    // ── Scheduler policies (Scheduler Control plane) ────────────────────
+    async fn list_scheduler_endpoint_policies(
+        &self,
+    ) -> Result<Vec<SchedulerEndpointPolicy>, DbError>;
+    /// Atomic replace of a model's endpoint policies.
+    async fn replace_endpoint_policies(
+        &self,
+        model_id: &str,
+        endpoints: &[SchedulerEndpointPolicy],
+    ) -> Result<(), DbError>;
 
     // ── Routing Rules ────────────────────────────────────────────────────
     async fn list_rules(&self) -> Result<Vec<RoutingRule>, DbError>;

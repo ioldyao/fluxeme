@@ -132,19 +132,19 @@ impl SchedulerService {
         );
 
         // ── 1. Route decision ──
-        let (channel_id, resolved_model, upstream_model) = self
+        let route = self
             .routing
             .route_public(&auth.user_id, &model, auth.team_id.as_deref())
             .await?;
+        let resolved_model = route.resolved_model;
+        let upstream_model = route.upstream_model;
+        let channel_scope = route.channel_scope;
         helpers::authorize_effective_model(&auth, &resolved_model)?;
         let orig_model = if model != resolved_model {
             model.clone()
         } else {
             String::new()
         };
-        if let Some(ref id) = upstream_model {
-            body["model"] = Value::String(id.clone());
-        }
 
         // ── 2. Format-specific body normalization ──
         match &format {
@@ -160,24 +160,29 @@ impl SchedulerService {
             _ => {}
         }
 
-        // ── 3. Endpoint selection (binding pool) ──
+        // ── 3. Endpoint selection (flattened model endpoint pool) ──
         let mut dispatch = dispatch::resolve_dispatch(
             self,
             &resolved_model,
-            &channel_id,
+            channel_scope.as_deref(),
             upstream_model.as_deref(),
         )?;
+        // The upstream alias travels with the selected endpoint (a model may
+        // bind channels that expose different upstream names).
+        if let Some(ref id) = dispatch.upstream_model {
+            body["model"] = Value::String(id.clone());
+        }
 
-        // Apply the selected model-channel binding's upstream output cap
-        // before filtering, caching, reservation, and the upstream request.
-        // Keep the original numeric request value so a cross-binding fallback
-        // can re-apply the fallback binding's own cap.
+        // Apply the selected endpoint's upstream output cap before filtering,
+        // caching, reservation, and the upstream request. Keep the original
+        // numeric request value so a retry to another endpoint re-applies
+        // that endpoint's own cap.
         dispatch.requested_max_tokens = body.get("max_tokens").and_then(Value::as_u64);
-        dispatch::clamp_max_tokens(&mut body, dispatch.max_tokens);
+        dispatch::clamp_max_tokens(&mut body, dispatch.endpoint.max_tokens);
 
         // Anthropic-compat OpenAI channels accept /v1/messages and convert.
         if matches!(format, DispatchFormat::AnthropicMessages) {
-            if let Some(ref ch) = self.routing.get_channel(&channel_id) {
+            if let Some(ref ch) = self.routing.get_channel(&dispatch.channel_id) {
                 if ch.anthropic_compat && ch.provider == "openai" {
                     dispatch.adapter = Arc::new(
                         crate::provider::anthropic_compat::AnthropicCompatAdapter::new(
@@ -195,14 +200,14 @@ impl SchedulerService {
             timestamp: accepted_at.clone(),
             request_id: request_id.clone(),
             model: resolved_model.clone(),
-            channel_id: channel_id.clone(),
+            channel_id: dispatch.channel_id.clone(),
             endpoint_id: dispatch.endpoint.id,
             user_id: auth.user_id.clone(),
         });
         self.flow_tracker.mark_accepted(
             request_id.clone(),
             resolved_model.clone(),
-            channel_id.clone(),
+            dispatch.channel_id.clone(),
             dispatch.endpoint.id,
             accepted_at,
         );
@@ -210,7 +215,7 @@ impl SchedulerService {
         // ── 5. Format-specific channel capability checks ──
         match &format {
             DispatchFormat::CountTokens => {
-                let channel = self.routing.get_channel(&channel_id);
+                let channel = self.routing.get_channel(&dispatch.channel_id);
                 if !dispatch::count_tokens_supported_for_channel(channel.as_ref()) {
                     return Err(GatewayError::BadRequest(
                         "POST /v1/messages/count_tokens is not supported for anthropic_compat OpenAI channels yet"
@@ -219,7 +224,7 @@ impl SchedulerService {
                 }
             }
             DispatchFormat::ResponsesInputTokens => {
-                let channel = self.routing.get_channel(&channel_id);
+                let channel = self.routing.get_channel(&dispatch.channel_id);
                 if !dispatch::responses_input_tokens_supported_for_channel(channel.as_ref()) {
                     return Err(GatewayError::BadRequest(
                         "POST /responses/input_tokens is only supported for OpenAI-compatible channels"
@@ -235,7 +240,7 @@ impl SchedulerService {
         if self.content_filter.is_enabled() {
             match self
                 .content_filter
-                .check_request(&body_str, Some(&channel_id))
+                .check_request(&body_str, Some(&dispatch.channel_id))
             {
                 FilterOutcome::Blocked(rule_name) => {
                     self.flow_tracker.mark_completed(&request_id);
@@ -362,7 +367,7 @@ impl SchedulerService {
             user_id: auth.user_id.clone(),
             user_name: auth.user_name.clone(),
             api_key_name: auth.api_key_name.clone(),
-            channel_id: channel_id.clone(),
+            channel_id: dispatch.channel_id.clone(),
             model: resolved_model.clone(),
             orig_model: orig_model.clone(),
             start,
@@ -384,7 +389,7 @@ impl SchedulerService {
                         ctx,
                         dispatch.adapter,
                         dispatch.endpoint,
-                        dispatch.balancer.clone(),
+                        dispatch.runtime.clone(),
                         dispatch.endpoint_idx,
                         body,
                         reservation_finalizer,
@@ -407,7 +412,7 @@ impl SchedulerService {
                         ctx,
                         dispatch.adapter,
                         dispatch.endpoint,
-                        dispatch.balancer.clone(),
+                        dispatch.runtime.clone(),
                         dispatch.endpoint_idx,
                         body,
                         reservation_finalizer,
