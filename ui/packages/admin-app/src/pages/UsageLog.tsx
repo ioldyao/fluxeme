@@ -347,7 +347,7 @@ export default function UsageLog() {
                 </div>
               ) : records.length > 0 ? (
                 <div className="overflow-x-auto rounded-xl border border-border">
-                  <table className="w-full min-w-[1720px] table-fixed border-collapse text-sm">
+                  <table className="w-full min-w-[1920px] table-fixed border-collapse text-sm">
                     <colgroup>
                       <col className="w-[130px]" /><col className="w-[160px]" /><col className="w-[160px]" />
                       <col className="w-[110px]" /><col className="w-[230px]" /><col className="w-[90px]" />
@@ -355,7 +355,8 @@ export default function UsageLog() {
                       <col className="w-[100px]" /><col className="w-[100px]" />
                       <col className="w-[90px]" />
                       <col className="w-[100px]" /><col className="w-[130px]" /><col className="w-[140px]" />
-                      <col className="w-[110px]" /><col className="w-[110px]" /><col className="w-[70px]" />
+                      <col className="w-[110px]" /><col className="w-[110px]" /><col className="w-[90px]" />
+                      <col className="w-[150px]" /><col className="w-[90px]" />
                     </colgroup>
                     <thead>
                       <tr className="border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground">

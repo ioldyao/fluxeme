@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { useUsageRequestDetail, useUsageRequestAttempts } from '@fluxeme/shared/src/api/usage';
+import { useUsageDetail, useUsageRequestDetail, useUsageRequestAttempts } from '@fluxeme/shared/src/api/usage';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@fluxeme/shared/src/components/ui/dialog';
 import { useCurrency } from '@fluxeme/shared/src/store/currency';
 import { parseTimestamp, formatTime } from '@fluxeme/shared/src/lib/date';
@@ -235,6 +235,7 @@ function extractSseParts(data: string): { thinking: string; content: string } {
 export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
   const { t } = useTranslation();
   const { data: request, isLoading, error } = useUsageRequestDetail(requestId);
+  const { data: legacyRecord } = useUsageDetail(requestId);
   const record: UsageRecord | null = request ? {
     ...request,
     model: request.resolved_model || request.requested_model,
@@ -243,9 +244,12 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
     success: request.status === 'succeeded',
     latency_ms: request.total_latency_ms,
     cache_hit_input_tokens: request.cache_read_tokens,
-    request_body: null,
-    response_body: null,
-    reasoning_body: null,
+    // Request events intentionally do not store payload bodies. Reuse the
+    // legacy usage fact when one exists so successful calls retain their
+    // request/reply inspection; rejected requests correctly remain empty.
+    request_body: legacyRecord?.request_body ?? null,
+    response_body: legacyRecord?.response_body ?? null,
+    reasoning_body: legacyRecord?.reasoning_body ?? null,
     api_key_name: request.api_key_name ?? null,
     client_ip: request.client_ip ?? null,
     endpoint_id: request.endpoint_id ?? null,
@@ -256,10 +260,10 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
     billing_group_name: null,
     billing_payment_mode: request.billing_payment_mode ?? null,
     account_type: null,
-    prompt_price: 0,
-    completion_price: 0,
-    cache_read_price: 0,
-    cache_write_price: 0,
+    prompt_price: legacyRecord?.prompt_price ?? 0,
+    completion_price: legacyRecord?.completion_price ?? 0,
+    cache_read_price: legacyRecord?.cache_read_price ?? 0,
+    cache_write_price: legacyRecord?.cache_write_price ?? 0,
   } as UsageRecord : null;
   const { data: attempts } = useUsageRequestAttempts(requestId);
   useCurrency();
