@@ -108,6 +108,8 @@ struct LifecycleDraft {
     attempt_count: u32,
     successful_attempt: Option<u32>,
     wallet_amount: Option<f64>,
+    request_body: Option<String>,
+    response_body: Option<String>,
 }
 
 impl Default for LifecycleDraft {
@@ -129,6 +131,8 @@ impl Default for LifecycleDraft {
             attempt_count: 0,
             successful_attempt: None,
             wallet_amount: None,
+            request_body: None,
+            response_body: None,
         }
     }
 }
@@ -329,6 +333,12 @@ impl RequestLifecycle {
         self.draft.lock().unwrap().client_disconnected = true;
     }
 
+    pub fn set_payload_bodies(&self, request_body: Option<String>, response_body: Option<String>) {
+        let mut draft = self.draft.lock().unwrap();
+        draft.request_body = request_body;
+        draft.response_body = response_body;
+    }
+
     /// Record attempt bookkeeping. Attempts are counted by the caller
     /// (attempt lifecycle lands in a later phase); the request event simply
     /// reflects the final totals.
@@ -455,6 +465,8 @@ impl RequestLifecycle {
             billing_payment_mode: self.identity.billing_payment_mode.clone(),
             wallet_amount: draft.wallet_amount,
             bytes_in: 0,
+            request_body: draft.request_body.clone(),
+            response_body: draft.response_body.clone(),
         };
         self.recorder.record_request(event);
         true

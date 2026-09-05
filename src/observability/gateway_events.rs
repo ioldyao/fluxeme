@@ -71,6 +71,14 @@ pub struct GatewayRequestEvent {
     pub billing_payment_mode: Option<String>,
     pub wallet_amount: Option<f64>,
     pub bytes_in: u64,
+    /// Payload bodies for token-counting requests only (/v1/messages/count_tokens,
+    /// /responses/input_tokens). These endpoints emit no usage row, so their
+    /// request/response is only inspectable through the request event. Ordinary
+    /// inference requests deliberately leave these empty (privacy + size).
+    #[serde(default)]
+    pub request_body: Option<String>,
+    #[serde(default)]
+    pub response_body: Option<String>,
 }
 
 /// One concrete upstream attempt. There may be several attempts per request.
@@ -297,6 +305,8 @@ mod tests {
             billing_payment_mode: Some("metered".to_string()),
             wallet_amount: Some(12.5),
             bytes_in: 1024,
+            request_body: None,
+            response_body: None,
         }
     }
 

@@ -342,8 +342,8 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
     // Request events intentionally do not store payload bodies. Reuse the
     // legacy usage fact when one exists so successful calls retain their
     // request/reply inspection; rejected requests correctly remain empty.
-    request_body: legacyRecord?.request_body ?? null,
-    response_body: legacyRecord?.response_body ?? null,
+    request_body: legacyRecord?.request_body ?? request.request_body ?? null,
+    response_body: legacyRecord?.response_body ?? request.response_body ?? null,
     reasoning_body: legacyRecord?.reasoning_body ?? null,
     api_key_name: request.api_key_name ?? null,
     client_ip: request.client_ip ?? null,

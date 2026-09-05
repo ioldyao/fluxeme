@@ -140,6 +140,8 @@ pub struct GatewayRequestEventRow {
     pub billing_payment_mode: Option<String>,
     pub wallet_amount: Option<f64>,
     pub bytes_in: u64,
+    pub request_body: Option<String>,
+    pub response_body: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, Row)]
@@ -235,6 +237,8 @@ impl From<crate::observability::gateway_events::GatewayRequestEvent> for Gateway
             billing_payment_mode: e.billing_payment_mode,
             wallet_amount: e.wallet_amount,
             bytes_in: e.bytes_in,
+            request_body: e.request_body,
+            response_body: e.response_body,
         }
     }
 }
@@ -817,6 +821,8 @@ impl ClickHouseBackend {
             "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS termination_reason Nullable(String)",
             "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS billing_payment_mode Nullable(String)",
             "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS wallet_amount Nullable(Float64)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS request_body Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS response_body Nullable(String)",
         ] {
             self.client
                 .query(alter)
@@ -1926,7 +1932,7 @@ impl ClickHouseBackend {
         } else {
             format!("WHERE {}", all_conditions.join(" AND "))
         };
-        let sql = format!("SELECT toUInt32(timestamp) AS timestamp, request_id, user_id, user_name, team_id, api_key_id, api_key_name, route_id, method, path, api_format, stream, client_ip, user_agent, requested_model, resolved_model, model_mapping_rule, channel_id, endpoint_id, endpoint_url, upstream_model, provider, status, status_code, error_stage, error_kind, error_code, error_message, attempt_count, successful_attempt, prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens, total_tokens, total_latency_ms, ttft_ms, client_disconnected, termination_reason, billing_payment_mode, wallet_amount, bytes_in FROM gateway_request_events {} ORDER BY timestamp DESC LIMIT ? OFFSET ?", where_clause);
+        let sql = format!("SELECT toUInt32(timestamp) AS timestamp, request_id, user_id, user_name, team_id, api_key_id, api_key_name, route_id, method, path, api_format, stream, client_ip, user_agent, requested_model, resolved_model, model_mapping_rule, channel_id, endpoint_id, endpoint_url, upstream_model, provider, status, status_code, error_stage, error_kind, error_code, error_message, attempt_count, successful_attempt, prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens, total_tokens, total_latency_ms, ttft_ms, client_disconnected, termination_reason, billing_payment_mode, wallet_amount, bytes_in, request_body, response_body FROM gateway_request_events {} ORDER BY timestamp DESC LIMIT ? OFFSET ?", where_clause);
         let mut q = self.client.query(&sql);
         let mut all_binds = model_binds;
         all_binds.extend(binds);
@@ -2836,6 +2842,8 @@ mod tests {
             billing_payment_mode: None,
             wallet_amount: None,
             bytes_in: 42,
+            request_body: None,
+            response_body: None,
         });
         assert_eq!(row.timestamp, 0);
         assert_eq!(row.request_id, "req-1");

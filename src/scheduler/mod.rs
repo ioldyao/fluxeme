@@ -523,6 +523,7 @@ impl SchedulerService {
                     .await
                 }
                 DispatchFormat::CountTokens => {
+                    let req_body = serde_json::to_string(&body).ok();
                     let value = self
                         .exec_count_tokens(
                             &mut dispatch,
@@ -532,10 +533,18 @@ impl SchedulerService {
                             &lifecycle_cloned,
                         )
                         .await?;
+                    // Token-counting endpoints emit no usage row, so their
+                    // payload is the only inspectable trace. Record attempt
+                    // bookkeeping and bodies on the request lifecycle.
+                    lifecycle_cloned
+                        .set_attempts(dispatch.attempt_count, Some(dispatch.attempt_count));
+                    lifecycle_cloned
+                        .set_payload_bodies(req_body, serde_json::to_string(&value).ok());
                     lifecycle_cloned.finalize_success();
                     Ok(axum::response::Json(value).into_response())
                 }
                 DispatchFormat::ResponsesInputTokens => {
+                    let req_body = serde_json::to_string(&body).ok();
                     let value = self
                         .exec_responses_input_tokens(
                             &mut dispatch,
@@ -545,6 +554,10 @@ impl SchedulerService {
                             &lifecycle_cloned,
                         )
                         .await?;
+                    lifecycle_cloned
+                        .set_attempts(dispatch.attempt_count, Some(dispatch.attempt_count));
+                    lifecycle_cloned
+                        .set_payload_bodies(req_body, serde_json::to_string(&value).ok());
                     lifecycle_cloned.finalize_success();
                     Ok(axum::response::Json(value).into_response())
                 }
