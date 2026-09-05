@@ -1834,7 +1834,10 @@ impl ClickHouseBackend {
         eq!(filter.user_id, "user_id");
         eq!(filter.api_key_name, "api_key_name");
         eq!(filter.api_format, "api_format");
-        eq!(filter.request_id, "request_id");
+        if let Some(v) = filter.request_id.as_deref().filter(|v| !v.is_empty()) {
+            conditions.push("startsWith(request_id, ?)".to_string());
+            binds.push(v.to_string());
+        }
         eq!(filter.channel_id, "channel_id");
         if let Some(channel_ids) = filter.channel_ids.as_deref() {
             if channel_ids.is_empty() {

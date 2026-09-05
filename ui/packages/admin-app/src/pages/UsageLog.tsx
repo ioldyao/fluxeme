@@ -16,7 +16,7 @@ import { DateRangePicker } from '@fluxeme/shared/src/components/ui/date-range-pi
 import { Card, CardContent } from '@fluxeme/shared/src/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@fluxeme/shared/src/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@fluxeme/shared/src/components/ui/tabs';
-import { RefreshCw, CheckCircle2, XCircle, Filter, ChevronDown, ChevronRight, List, BarChart3, Radio, RadioIcon } from 'lucide-react';
+import { RefreshCw, Filter, ChevronDown, ChevronRight, List, BarChart3, Radio, RadioIcon } from 'lucide-react';
 
 type RequestStatus = 'succeeded' | 'rejected' | 'failed' | 'cancelled';
 
@@ -387,7 +387,7 @@ export default function UsageLog() {
                           <td className="whitespace-nowrap px-3 py-3 text-xs text-muted-foreground">
                             {formatTimestamp(r.timestamp)}
                           </td>
-                          <td className="max-w-[160px] truncate whitespace-nowrap px-3 py-3" title={r.user_name}>{r.user_name}</td>
+                          <td className="max-w-[160px] truncate whitespace-nowrap px-3 py-3" title={r.user_name ?? undefined}>{r.user_name}</td>
                           <td className="max-w-[160px] truncate whitespace-nowrap px-3 py-3" title={r.api_key_name ?? undefined}>{r.api_key_name ?? '—'}</td>
                           <td className="whitespace-nowrap px-3 py-3"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${r.billing_payment_mode === 'prepaid' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{r.billing_payment_mode === 'prepaid' ? t('usage.prepaid') : t('usage.metered')}</span></td>
                           <td className="max-w-[230px] whitespace-nowrap px-3 py-3">
@@ -405,10 +405,10 @@ export default function UsageLog() {
                             </span>
                           </td>
                           <td className="whitespace-nowrap px-3 py-3 font-mono text-xs">{r.api_format ?? '—'}</td>
-                          <td className="max-w-[120px] truncate whitespace-nowrap px-3 py-3" title={channelNameById.get(r.channel_id) ?? undefined}>
-                            {channelNameById.get(r.channel_id) ?? '—'}
+                          <td className="max-w-[120px] truncate whitespace-nowrap px-3 py-3" title={channelNameById.get(r.channel_id ?? '') ?? undefined}>
+                            {channelNameById.get(r.channel_id ?? '') ?? '—'}
                           </td>
-                          <td className="whitespace-nowrap px-3 py-3 font-mono text-xs">{r.channel_id}</td>
+                          <td className="whitespace-nowrap px-3 py-3 font-mono text-xs">{r.channel_id ?? '—'}</td>
                           <td className="whitespace-nowrap px-3 py-3 font-mono text-xs">{r.endpoint_id ?? '—'}</td>
                           <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{r.prompt_tokens.toLocaleString()}</td>
                           <td className="whitespace-nowrap px-3 py-3 text-right text-muted-foreground tabular-nums">{(r.cache_read_tokens ?? r.cache_hit_input_tokens ?? 0) > 0 ? (r.cache_read_tokens ?? r.cache_hit_input_tokens ?? 0).toLocaleString() : '—'}</td>
