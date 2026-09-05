@@ -258,6 +258,7 @@ impl SchedulerService {
             DispatchFormat::CountTokens => {
                 let channel = self.routing.get_channel(&dispatch.channel_id);
                 if !dispatch::count_tokens_supported_for_channel(channel.as_ref()) {
+                    self.flow_tracker.mark_completed(&request_id);
                     return Err(helpers::finalize_and_fail(
                         &lifecycle,
                         GatewayError::BadRequest(
@@ -270,6 +271,7 @@ impl SchedulerService {
             DispatchFormat::ResponsesInputTokens => {
                 let channel = self.routing.get_channel(&dispatch.channel_id);
                 if !dispatch::responses_input_tokens_supported_for_channel(channel.as_ref()) {
+                    self.flow_tracker.mark_completed(&request_id);
                     return Err(helpers::finalize_and_fail(
                         &lifecycle,
                         GatewayError::BadRequest(
@@ -561,6 +563,9 @@ impl SchedulerService {
                 Ok(inner)
             }
             Ok(Err(e)) => {
+                // Every accepted request must leave the live flow registry,
+                // including executor failures that already emitted a usage row.
+                self.flow_tracker.mark_completed(&rid);
                 // Upstream / detected failure returned by an executor. Stream
                 // executors may already have finalized this exact outcome; the
                 // lifecycle's exactly-once guard makes a second finalize a

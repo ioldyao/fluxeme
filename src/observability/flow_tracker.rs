@@ -10,7 +10,10 @@ const FLOW_KEY_PREFIX: &str = "flow:active:";
 const FLOW_INDEX_KEY: &str = "flow:active:index";
 const FLOW_COMPLETED_PREFIX: &str = "flow:completed:";
 const FLOW_TTL_SECS: u64 = 3600;
-const LOCAL_STALE_AFTER: Duration = Duration::from_secs(FLOW_TTL_SECS);
+// The gateway handler timeout is at most 10 minutes. Keep a margin, but do
+// not let a missed completion callback make LIVE metrics stale for an hour.
+const FLOW_ACTIVE_TTL_SECS: u64 = 15 * 60;
+const LOCAL_STALE_AFTER: Duration = Duration::from_secs(FLOW_ACTIVE_TTL_SECS);
 
 #[derive(Clone, Debug)]
 pub struct ActiveRequest {
@@ -69,7 +72,7 @@ impl FlowTracker {
                     FLOW_INDEX_KEY,
                     state,
                     sequence,
-                    FLOW_TTL_SECS,
+                    FLOW_ACTIVE_TTL_SECS,
                 )
                 .await
             {
