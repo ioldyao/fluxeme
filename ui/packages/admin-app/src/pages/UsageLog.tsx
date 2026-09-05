@@ -347,14 +347,14 @@ export default function UsageLog() {
                 </div>
               ) : records.length > 0 ? (
                 <div className="overflow-x-auto rounded-xl border border-border">
-                  <table className="w-full min-w-[1760px] table-fixed border-collapse text-xs">
+                  <table className="w-full min-w-[1720px] table-fixed border-collapse text-xs">
                     <colgroup>
-                      <col className="w-[120px]" /><col className="w-[82px]" /><col className="w-[125px]" /><col className="w-[125px]" />
-                      <col className="w-[95px]" /><col className="w-[180px]" /><col className="w-[78px]" />
-                      <col className="w-[105px]" /><col className="w-[85px]" /><col className="w-[75px]" />
-                      <col className="w-[90px]" /><col className="w-[90px]" /><col className="w-[75px]" /><col className="w-[90px]" />
-                      <col className="w-[90px]" /><col className="w-[105px]" /><col className="w-[90px]" /><col className="w-[100px]" />
-                      <col className="w-[125px]" /><col className="w-[75px]" />
+                      <col className="w-[115px]" /><col className="w-[80px]" /><col className="w-[105px]" /><col className="w-[120px]" />
+                      <col className="w-[90px]" /><col className="w-[170px]" /><col className="w-[72px]" />
+                      <col className="w-[95px]" /><col className="w-[78px]" /><col className="w-[62px]" />
+                      <col className="w-[90px]" /><col className="w-[88px]" /><col className="w-[74px]" /><col className="w-[90px]" />
+                      <col className="w-[88px]" /><col className="w-[102px]" /><col className="w-[88px]" /><col className="w-[95px]" />
+                      <col className="w-[118px]" /><col className="w-[72px]" />
                     </colgroup>
                     <thead>
                       <tr className="border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground">
