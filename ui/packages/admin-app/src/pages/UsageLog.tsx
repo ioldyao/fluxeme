@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { formatTimestamp } from '@fluxeme/shared/src/lib/date';
-import { useUsage, useAdminUsageBilling, useUsageAnalytics, useRecentClientIps } from '@fluxeme/shared/src/api/usage';
+import { useUsageRequests, useAdminUsageBilling, useUsageAnalytics, useRecentClientIps } from '@fluxeme/shared/src/api/usage';
 import { useChannels } from '@fluxeme/shared/src/api/channels';
 import { useCurrency } from '@fluxeme/shared/src/store/currency';
 import { UsageAnalyticsCharts } from '@fluxeme/shared/src/components/usage/UsageAnalyticsCharts';
@@ -17,6 +17,36 @@ import { Card, CardContent } from '@fluxeme/shared/src/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@fluxeme/shared/src/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@fluxeme/shared/src/components/ui/tabs';
 import { RefreshCw, CheckCircle2, XCircle, Filter, ChevronDown, ChevronRight, List, BarChart3, Radio, RadioIcon } from 'lucide-react';
+
+type RequestStatus = 'succeeded' | 'rejected' | 'failed' | 'cancelled';
+
+const STATUS_BADGE: Record<RequestStatus, string> = {
+  succeeded: 'bg-chart-2/10 text-chart-2',
+  rejected: 'bg-amber-100 text-amber-700',
+  failed: 'bg-destructive/10 text-destructive',
+  cancelled: 'bg-muted text-muted-foreground',
+};
+
+function statusBadgeClass(status: string): string {
+  return STATUS_BADGE[status as RequestStatus] ?? 'bg-secondary text-foreground';
+}
+
+const ERROR_KIND_LABEL: Record<string, string> = {
+  model_not_found: 'usage.errModelNotFound',
+  no_available_endpoint: 'usage.errNoEndpoint',
+  rate_limit_exceeded: 'usage.errRateLimit',
+  stream_idle_timeout: 'usage.errStreamIdle',
+  auth_failed: 'usage.errAuth',
+  upstream_error: 'usage.errUpstream',
+  upstream_timeout: 'usage.errUpstreamTimeout',
+  bad_request: 'usage.errBadRequest',
+};
+
+function errorKindLabel(kind: string | null | undefined, t: (k: string) => string): string {
+  if (!kind) return '—';
+  const key = ERROR_KIND_LABEL[kind];
+  return key ? t(key) : kind;
+}
 
 export default function UsageLog() {
   const { t } = useTranslation();
@@ -93,7 +123,7 @@ export default function UsageLog() {
     ...(clientIpFilter ? { client_ip: clientIpFilter } : {}),
     ...dateParams,
   };
-  const { data: usage, isLoading, isError, refetch } = useUsage(params);
+  const { data: usage, isLoading, isError, refetch } = useUsageRequests(params);
   const records = usage?.records ?? [];
   const requestIds = useMemo(() => records.map((record) => record.request_id), [records]);
   const { data: billingRows, isError: isBillingError } = useAdminUsageBilling(requestIds);
@@ -347,6 +377,8 @@ export default function UsageLog() {
                         <th className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{t('table.latency')}</th>
                         <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.clientIp')}</th>
                         <th className="whitespace-nowrap px-3 py-3 text-center">{t('table.status')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.errorKind')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-right">{t('usage.attemptCount')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -360,7 +392,7 @@ export default function UsageLog() {
                           <td className="whitespace-nowrap px-3 py-3"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${r.billing_payment_mode === 'prepaid' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{r.billing_payment_mode === 'prepaid' ? t('usage.prepaid') : t('usage.metered')}</span></td>
                           <td className="max-w-[230px] whitespace-nowrap px-3 py-3">
                             <span className="inline-flex max-w-full min-w-0 items-center gap-1">
-                              <span className="min-w-0 truncate" title={r.model}>{r.model}</span>
+                              <span className="min-w-0 truncate" title={(r.resolved_model || r.requested_model)}>{(r.resolved_model || r.requested_model)}</span>
                               {r.stream ? (
                                 <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-accent-foreground bg-accent border border-border px-1.5 py-0.5 rounded">
                                   <Radio className="h-2.5 w-2.5" />stream
@@ -379,9 +411,9 @@ export default function UsageLog() {
                           <td className="whitespace-nowrap px-3 py-3 font-mono text-xs">{r.channel_id}</td>
                           <td className="whitespace-nowrap px-3 py-3 font-mono text-xs">{r.endpoint_id ?? '—'}</td>
                           <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{r.prompt_tokens.toLocaleString()}</td>
-                          <td className="whitespace-nowrap px-3 py-3 text-right text-muted-foreground tabular-nums">{r.cache_hit_input_tokens > 0 ? r.cache_hit_input_tokens.toLocaleString() : '—'}</td>
+                          <td className="whitespace-nowrap px-3 py-3 text-right text-muted-foreground tabular-nums">{(r.cache_read_tokens ?? r.cache_hit_input_tokens ?? 0) > 0 ? (r.cache_read_tokens ?? r.cache_hit_input_tokens ?? 0).toLocaleString() : '—'}</td>
                           <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{r.completion_tokens.toLocaleString()}</td>
-                          <td className="whitespace-nowrap px-3 py-3 text-right font-medium tabular-nums">{(r.prompt_tokens + r.cache_hit_input_tokens + r.completion_tokens).toLocaleString()}</td>
+                          <td className="whitespace-nowrap px-3 py-3 text-right font-medium tabular-nums">{(r.prompt_tokens + (r.cache_read_tokens ?? r.cache_hit_input_tokens ?? 0) + r.completion_tokens).toLocaleString()}</td>
                           {(() => {
                             const billing = billingByRequestId.get(r.request_id);
                             const wallet = currency === 'cny' ? '¥' : '$';
@@ -391,15 +423,13 @@ export default function UsageLog() {
                               <td className="whitespace-nowrap px-3 py-3 text-right font-mono text-xs tabular-nums">{isBillingError || !billing || billing.wallet_debit_status === 'unavailable' ? '—' : billing.wallet_debit_status === 'pending' ? t('usage.settlementPending') : `${wallet}${walletAmount.toFixed(6)}`}</td>
                             </>;
                           })()}
-                          <td className="whitespace-nowrap px-3 py-3 text-right text-muted-foreground tabular-nums">{r.latency_ms.toLocaleString()}ms</td>
+                          <td className="whitespace-nowrap px-3 py-3 text-right text-muted-foreground tabular-nums">{r.total_latency_ms.toLocaleString()}ms</td>
                           <td className="max-w-[110px] truncate whitespace-nowrap px-3 py-3 text-xs font-mono text-muted-foreground" title={r.client_ip ?? undefined}>{r.client_ip ?? '—'}</td>
-                          <td className="whitespace-nowrap px-3 py-3 text-center" aria-label={r.success ? t('usage.success') : t('usage.failure')}>
-                            {r.success ? (
-                              <CheckCircle2 className="size-4 text-chart-2 inline" />
-                            ) : (
-                              <XCircle className="size-4 text-destructive inline" />
-                            )}
+                          <td className="whitespace-nowrap px-3 py-3 text-center" aria-label={r.status}>
+                            <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${statusBadgeClass(r.status)}`}>{r.status}</span>
                           </td>
+                          <td className="max-w-[150px] truncate px-3 py-3 text-xs" title={r.error_kind ?? undefined}>{errorKindLabel(r.error_kind, t)}</td>
+                          <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{r.attempt_count}</td>
                         </tr>
                       ))}
                     </tbody>

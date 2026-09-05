@@ -96,7 +96,7 @@ pub struct GatewayCall {
 }
 
 /// Row type for the typed gateway observability tables.
-#[derive(Debug, Clone, Serialize, Row)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, Row)]
 pub struct GatewayRequestEventRow {
     pub timestamp: u32,
     pub request_id: String,
@@ -141,7 +141,7 @@ pub struct GatewayRequestEventRow {
     pub bytes_in: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Row)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, Row)]
 pub struct GatewayAttemptEventRow {
     pub timestamp: u32,
     pub request_id: String,
@@ -1816,6 +1816,150 @@ impl ClickHouseBackend {
             .await
             .map_err(|e| format!("CH query_usage: {e}"))?;
         Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    fn gateway_conditions_and_binds(
+        filter: &crate::domain::usage::UsageFilter,
+    ) -> Result<(Vec<String>, Vec<String>), String> {
+        let mut conditions = Vec::new();
+        let mut binds = Vec::new();
+        macro_rules! eq {
+            ($field:expr, $col:expr) => {
+                if let Some(v) = $field.as_deref().filter(|v| !v.is_empty()) {
+                    conditions.push(format!("{} = ?", $col));
+                    binds.push(v.to_string());
+                }
+            };
+        }
+        eq!(filter.user_id, "user_id");
+        eq!(filter.api_key_name, "api_key_name");
+        eq!(filter.api_format, "api_format");
+        eq!(filter.request_id, "request_id");
+        eq!(filter.channel_id, "channel_id");
+        if let Some(channel_ids) = filter.channel_ids.as_deref() {
+            if channel_ids.is_empty() {
+                conditions.push("0 = 1".to_string());
+            } else {
+                conditions.push(format!(
+                    "channel_id IN ({})",
+                    vec!["?"; channel_ids.len()].join(", ")
+                ));
+                binds.extend(channel_ids.iter().cloned());
+            }
+        }
+        if let Some(endpoint_id) = filter.endpoint_id {
+            conditions.push("endpoint_id = ?".to_string());
+            binds.push(endpoint_id.to_string());
+        }
+        eq!(filter.endpoint_url, "endpoint_url");
+        eq!(filter.client_ip, "client_ip");
+        if let Some(v) = filter.start_date.as_deref().filter(|v| !v.is_empty()) {
+            conditions.push("timestamp >= parseDateTimeBestEffort(?)".to_string());
+            binds.push(normalize_clickhouse_datetime(v)?);
+        }
+        if let Some(v) = filter.end_date.as_deref().filter(|v| !v.is_empty()) {
+            conditions.push("timestamp < parseDateTimeBestEffort(?)".to_string());
+            binds.push(normalize_clickhouse_datetime(v)?);
+        }
+        Ok((conditions, binds))
+    }
+
+    /// Build a WHERE clause matching `model` against either the requested model
+    /// or the resolved (final) model.
+    fn gateway_model_clause(
+        filter: &crate::domain::usage::UsageFilter,
+    ) -> (Option<String>, Vec<String>) {
+        let Some(model) = filter.model.as_deref().filter(|v| !v.is_empty()) else {
+            return (None, Vec::new());
+        };
+        (
+            Some("(requested_model = ? OR resolved_model = ?)".to_string()),
+            vec![model.to_string(), model.to_string()],
+        )
+    }
+
+    pub async fn query_gateway_requests(
+        &self,
+        limit: usize,
+        offset: usize,
+        filter: &crate::domain::usage::UsageFilter,
+    ) -> Result<Vec<GatewayRequestEventRow>, String> {
+        let (conditions, binds) = Self::gateway_conditions_and_binds(filter)?;
+        let (model_clause, model_binds) = Self::gateway_model_clause(filter);
+        let mut all_conditions = conditions;
+        if let Some(clause) = model_clause {
+            all_conditions.push(clause);
+        }
+        let where_clause = if all_conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", all_conditions.join(" AND "))
+        };
+        let sql = format!("SELECT toUInt32(timestamp) AS timestamp, request_id, user_id, user_name, team_id, api_key_id, api_key_name, route_id, method, path, api_format, stream, client_ip, user_agent, requested_model, resolved_model, channel_id, endpoint_id, endpoint_url, upstream_model, provider, status, status_code, error_stage, error_kind, error_code, error_message, attempt_count, successful_attempt, prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens, total_tokens, total_latency_ms, ttft_ms, client_disconnected, termination_reason, billing_payment_mode, wallet_amount, bytes_in FROM gateway_request_events {} ORDER BY timestamp DESC LIMIT ? OFFSET ?", where_clause);
+        let mut q = self.client.query(&sql);
+        let mut all_binds = model_binds;
+        all_binds.extend(binds);
+        for b in &all_binds {
+            q = q.bind(b.as_str());
+        }
+        q = q.bind(limit as u64).bind(offset as u64);
+        q.fetch_all::<GatewayRequestEventRow>()
+            .await
+            .map_err(|e| format!("CH query_gateway_requests: {e}"))
+    }
+    pub async fn count_gateway_requests(
+        &self,
+        filter: &crate::domain::usage::UsageFilter,
+    ) -> Result<usize, String> {
+        let (conditions, binds) = Self::gateway_conditions_and_binds(filter)?;
+        let (model_clause, model_binds) = Self::gateway_model_clause(filter);
+        let mut all_conditions = conditions;
+        if let Some(clause) = model_clause {
+            all_conditions.push(clause);
+        }
+        let wc = if all_conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", all_conditions.join(" AND "))
+        };
+        let mut q = self.client.query(&format!(
+            "SELECT count()::UInt64 AS count FROM gateway_request_events {}",
+            wc
+        ));
+        let mut all_binds = model_binds;
+        all_binds.extend(binds);
+        for b in &all_binds {
+            q = q.bind(b.as_str());
+        }
+        #[derive(clickhouse::Row, serde::Deserialize)]
+        struct C {
+            count: u64,
+        }
+        Ok(q.fetch_one::<C>()
+            .await
+            .map_err(|e| format!("CH count_gateway_requests: {e}"))?
+            .count as usize)
+    }
+    pub async fn get_gateway_request_detail(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<GatewayRequestEventRow>, String> {
+        self.query_gateway_requests(
+            1,
+            0,
+            &crate::domain::usage::UsageFilter {
+                request_id: Some(request_id.to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .map(|mut r| r.pop())
+    }
+    pub async fn query_gateway_attempts(
+        &self,
+        request_id: &str,
+    ) -> Result<Vec<GatewayAttemptEventRow>, String> {
+        self.client.query("SELECT toUInt32(timestamp) AS timestamp, request_id, attempt_id, attempt_no, route_id, channel_id, endpoint_id, endpoint_url, provider, status_code, success, latency_ms, timeout, error FROM gateway_attempt_events WHERE request_id = ? ORDER BY attempt_no ASC").bind(request_id).fetch_all::<GatewayAttemptEventRow>().await.map_err(|e|format!("CH query_gateway_attempts: {e}"))
     }
 
     pub async fn count_usage(

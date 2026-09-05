@@ -261,6 +261,130 @@ pub(crate) async fn get_usage_detail(
     Ok(Json(record))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct GatewayUsageQuery {
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+    pub user_id: Option<String>,
+    pub model: Option<String>,
+    pub api_key: Option<String>,
+    pub api_format: Option<String>,
+    pub request_id: Option<String>,
+    pub channel_name: Option<String>,
+    pub channel_id: Option<String>,
+    pub endpoint_url: Option<String>,
+    pub client_ip: Option<String>,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+}
+fn gateway_filter(q: GatewayUsageQuery) -> Result<UsageFilter, AdminError> {
+    let endpoint_id = q
+        .endpoint_url
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .and_then(|value| value.trim().parse::<i64>().ok());
+    let endpoint_url = if endpoint_id.is_some() {
+        None
+    } else {
+        q.endpoint_url
+    };
+    Ok(UsageFilter {
+        user_id: q.user_id,
+        model: q.model,
+        api_key_name: q.api_key,
+        api_format: q.api_format,
+        request_id: q.request_id,
+        channel_id: q.channel_id,
+        endpoint_id,
+        endpoint_url,
+        client_ip: q.client_ip,
+        start_date: validate_usage_datetime(q.start_date, "start_date")?,
+        end_date: validate_usage_datetime(q.end_date, "end_date")?,
+        ..Default::default()
+    })
+}
+#[derive(Serialize)]
+pub(crate) struct GatewayUsageResponse {
+    records: Vec<crate::ch_backend::GatewayRequestEventRow>,
+    total: usize,
+}
+pub(crate) async fn get_admin_usage_requests(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<GatewayUsageQuery>,
+) -> Result<Json<GatewayUsageResponse>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:usage").await?;
+    let limit = q.limit.unwrap_or(50);
+    let offset = q.offset.unwrap_or(0);
+    let channel_ids = match q.channel_name.as_deref().filter(|v| !v.trim().is_empty()) {
+        Some(name) => {
+            let channels = state.db.list_channels().await.map_err(db_err)?;
+            let ids: Vec<String> = channels
+                .into_iter()
+                .filter(|c| c.name == name)
+                .map(|c| c.id)
+                .collect();
+            if ids.is_empty() {
+                return Ok(Json(GatewayUsageResponse {
+                    records: Vec::new(),
+                    total: 0,
+                }));
+            }
+            Some(ids)
+        }
+        None => None,
+    };
+    let mut filter = gateway_filter(q)?;
+    filter.channel_ids = channel_ids;
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    let total = ch
+        .count_gateway_requests(&filter)
+        .await
+        .map_err(AdminError::internal)?;
+    let records = ch
+        .query_gateway_requests(limit, offset, &filter)
+        .await
+        .map_err(AdminError::internal)?;
+    Ok(Json(GatewayUsageResponse { records, total }))
+}
+pub(crate) async fn get_admin_usage_request(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+) -> Result<Json<crate::ch_backend::GatewayRequestEventRow>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:usage").await?;
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    ch.get_gateway_request_detail(&request_id)
+        .await
+        .map_err(AdminError::internal)?
+        .map(Json)
+        .ok_or_else(|| AdminError::not_found("Request not found"))
+}
+pub(crate) async fn get_admin_usage_attempts(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+) -> Result<Json<Vec<crate::ch_backend::GatewayAttemptEventRow>>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:usage").await?;
+    let ch = state
+        .ch
+        .as_ref()
+        .ok_or_else(|| AdminError::internal("ClickHouse not configured"))?;
+    ch.query_gateway_attempts(&request_id)
+        .await
+        .map(Json)
+        .map_err(AdminError::internal)
+}
+
 #[derive(Serialize)]
 pub(crate) struct DailyUsage {
     date: String,

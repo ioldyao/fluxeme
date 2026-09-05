@@ -867,6 +867,18 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             axum::routing::get(usage::get_admin_usage_billing),
         )
         .route(
+            "/api/admin/usage/requests",
+            axum::routing::get(usage::get_admin_usage_requests),
+        )
+        .route(
+            "/api/admin/usage/requests/{request_id}",
+            axum::routing::get(usage::get_admin_usage_request),
+        )
+        .route(
+            "/api/admin/usage/requests/{request_id}/attempts",
+            axum::routing::get(usage::get_admin_usage_attempts),
+        )
+        .route(
             "/api/usage/analytics",
             axum::routing::get(usage::usage_analytics),
         )

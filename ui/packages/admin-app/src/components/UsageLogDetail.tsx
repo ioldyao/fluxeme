@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { useUsageDetail } from '@fluxeme/shared/src/api/usage';
+import { useUsageDetail, useUsageRequestAttempts } from '@fluxeme/shared/src/api/usage';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@fluxeme/shared/src/components/ui/dialog';
 import { useCurrency } from '@fluxeme/shared/src/store/currency';
 import { parseTimestamp, formatTime } from '@fluxeme/shared/src/lib/date';
@@ -235,6 +235,7 @@ function extractSseParts(data: string): { thinking: string; content: string } {
 export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
   const { t } = useTranslation();
   const { data: record, isLoading, error } = useUsageDetail(requestId);
+  const { data: attempts } = useUsageRequestAttempts(requestId);
   useCurrency();
 
   const userMessages = record ? extractUserMessages(record.request_body) : [];
@@ -326,6 +327,18 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                     </div>
                   ))}
                 </div>
+
+                  {attempts && attempts.length > 0 && (
+                    <div className="mt-4 rounded-lg border bg-card p-3">
+                      <h4 className="text-sm font-semibold mb-2">Attempts</h4>
+                      <div className="space-y-2">{attempts.map((a) => (
+                        <div key={a.attempt_no} className="flex items-center gap-2 text-xs border-b last:border-0 pb-2">
+                          <span className="font-mono font-semibold">#{a.attempt_no}</span><span>{a.provider || '—'}</span><span className="truncate">{a.endpoint_url || a.channel_id || '—'}</span><span className={a.success ? 'text-chart-2' : 'text-destructive'}>{a.success ? 'success' : (a.error || 'failed')}</span><span className="ml-auto font-mono">{a.latency_ms}ms</span>
+                        </div>
+                      ))}</div>
+                    </div>
+                  )}
+
 
                 {/* Inspector panel */}
                 <div className="rounded-lg border bg-card p-4">
