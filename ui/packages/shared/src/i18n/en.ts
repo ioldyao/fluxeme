@@ -225,6 +225,8 @@ const en: Record<string, string> = {
   'routingHistory.queryFailed': 'Historical load query failed',
   'routingHistory.retry': 'Retry',
   'routingHistory.noData': 'No observations in this time range',
+  'routingHistory.updating': 'Updating…',
+  'routingHistory.staleData': 'Refresh failed; showing previous data',
   'routingHistory.totalRequests': 'Total requests',
   'routingHistory.totalRequestsHint': 'Observed request volume',
   'routingHistory.successRate': 'Success rate',

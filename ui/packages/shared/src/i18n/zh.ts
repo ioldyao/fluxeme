@@ -225,6 +225,8 @@ const zh: Record<string, string> = {
   'routingHistory.queryFailed': '历史负载查询失败',
   'routingHistory.retry': '重试',
   'routingHistory.noData': '当前时间范围没有观测数据',
+  'routingHistory.updating': '正在更新…',
+  'routingHistory.staleData': '刷新失败，显示上次数据',
   'routingHistory.totalRequests': '总请求数',
   'routingHistory.totalRequestsHint': '观测到的请求总量',
   'routingHistory.successRate': '成功率',
