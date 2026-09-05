@@ -80,10 +80,14 @@ pub struct GatewayAttemptEvent {
     pub attempt_id: String,
     pub attempt_no: u32,
     pub route_id: String,
+    pub channel_id: Option<String>,
+    pub endpoint_id: Option<i64>,
     pub endpoint_url: Option<String>,
+    pub provider: Option<String>,
     pub status_code: Option<u16>,
     pub success: bool,
     pub latency_ms: u64,
+    pub timeout: bool,
     pub error: Option<String>,
 }
 
@@ -353,10 +357,14 @@ mod tests {
             attempt_id: "att-1".to_string(),
             attempt_no: 1,
             route_id: "route-1".to_string(),
+            channel_id: Some("ch-1".to_string()),
+            endpoint_id: Some(5),
             endpoint_url: Some("https://upstream.example/v1".to_string()),
+            provider: Some("openai".to_string()),
             status_code: Some(200),
             success: true,
             latency_ms: 120,
+            timeout: false,
             error: None,
         });
         let json = serde_json::to_string(&event).unwrap();
@@ -423,10 +431,14 @@ mod tests {
             attempt_id: "a".into(),
             attempt_no: 1,
             route_id: "rt".into(),
+            channel_id: None,
+            endpoint_id: None,
             endpoint_url: None,
+            provider: None,
             status_code: None,
             success: false,
             latency_ms: 0,
+            timeout: false,
             error: None,
         });
         recorder.record_access(GatewayAccessEvent {

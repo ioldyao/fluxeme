@@ -523,7 +523,13 @@ impl SchedulerService {
                 }
                 DispatchFormat::CountTokens => {
                     let value = self
-                        .exec_count_tokens(&mut dispatch, body, &ctx.request_id, max_retries)
+                        .exec_count_tokens(
+                            &mut dispatch,
+                            body,
+                            &ctx.request_id,
+                            max_retries,
+                            &lifecycle_cloned,
+                        )
                         .await?;
                     lifecycle_cloned.finalize_success();
                     Ok(axum::response::Json(value).into_response())
@@ -535,6 +541,7 @@ impl SchedulerService {
                             body,
                             &ctx.request_id,
                             max_retries,
+                            &lifecycle_cloned,
                         )
                         .await?;
                     lifecycle_cloned.finalize_success();

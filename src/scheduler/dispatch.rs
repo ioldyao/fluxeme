@@ -74,6 +74,10 @@ pub(crate) struct Dispatch {
     /// never immediately revisit the same endpoint.
     pub(crate) attempted_endpoint_ids: HashSet<i64>,
     pub(crate) attempted_endpoint_indexes: HashSet<usize>,
+    /// Number of real upstream adapter invocations made for this request.
+    /// Incremented once per attempt; reflects connect-failure endpoint
+    /// fallbacks as well as retryable retries.
+    pub(crate) attempt_count: u32,
 }
 
 impl Dispatch {
@@ -175,6 +179,7 @@ pub(crate) fn resolve_dispatch(
         requested_max_tokens: None,
         attempted_endpoint_ids: HashSet::new(),
         attempted_endpoint_indexes: HashSet::new(),
+        attempt_count: 0,
     })
 }
 
@@ -207,6 +212,7 @@ impl crate::scheduler::SchedulerService {
         dispatch: &mut Dispatch,
         max_retries: u32,
         body: Value,
+        lifecycle: &RequestLifecycle,
         mut call: impl FnMut(
                 &Dispatch,
                 Value,
@@ -215,34 +221,54 @@ impl crate::scheduler::SchedulerService {
     ) -> Result<Value, (ProviderError, u32)> {
         let mut retry_count = 0u32;
         loop {
+            dispatch.attempt_count += 1;
+            let attempt_no = dispatch.attempt_count;
+            let attempt = lifecycle.begin_attempt(
+                attempt_no,
+                dispatch.channel_id.clone(),
+                Some(dispatch.channel_id.clone()),
+                dispatch.endpoint.id,
+                Some(dispatch.endpoint.url.clone()),
+                dispatch
+                    .runtime
+                    .endpoints
+                    .get(dispatch.endpoint_idx)
+                    .map(|s| s.provider.clone()),
+            );
             let attempt_body = dispatch.body_for_attempt(&body);
             match call(dispatch, attempt_body).await {
                 Ok(resp) => {
+                    attempt.finalize(true, Some(200), false, None);
                     return Ok(resp);
                 }
-                Err(e) if e.kind() == ErrorKind::ConnectFailed => {
-                    // Connect failure: try next endpoint without consuming
-                    // retry budget. Only feed the breaker when the request
-                    // ultimately fails (no more endpoints to try).
-                    if !dispatch.retry_next() {
-                        dispatch.report_failure();
-                        return Err((e, retry_count));
-                    }
-                }
-                Err(e) if is_retryable_error(&e) => {
-                    if retry_count >= max_retries {
-                        dispatch.report_failure();
-                        return Err((e, retry_count));
-                    }
-                    retry_count += 1;
-                    if !dispatch.retry_next() {
-                        dispatch.report_failure();
-                        return Err((e, retry_count));
-                    }
-                }
                 Err(e) => {
-                    // Non-retryable (4xx etc.) — no breaker feedback.
-                    return Err((e, retry_count));
+                    let timeout = e.kind() == ErrorKind::Timeout;
+                    let status_code = match e.kind() {
+                        ErrorKind::RateLimited => Some(429),
+                        ErrorKind::Upstream4xx => Some(400),
+                        ErrorKind::Upstream5xx => Some(502),
+                        _ => None,
+                    };
+                    attempt.finalize(false, status_code, timeout, Some(e.0.clone()));
+                    if e.kind() == ErrorKind::ConnectFailed {
+                        // Connect failure: try next endpoint without consuming the retry budget.
+                        if !dispatch.retry_next() {
+                            dispatch.report_failure();
+                            return Err((e, retry_count));
+                        }
+                    } else if is_retryable_error(&e) {
+                        if retry_count >= max_retries {
+                            dispatch.report_failure();
+                            return Err((e, retry_count));
+                        }
+                        retry_count += 1;
+                        if !dispatch.retry_next() {
+                            dispatch.report_failure();
+                            return Err((e, retry_count));
+                        }
+                    } else {
+                        return Err((e, retry_count));
+                    }
                 }
             }
         }
@@ -265,10 +291,22 @@ impl crate::scheduler::SchedulerService {
         let req_body = serde_json::to_string(&body).ok();
         self.flow_tracker
             .mark_upstream_started(&ctx.request_id, Utc::now().to_rfc3339());
+        let attempt = lifecycle.begin_attempt(
+            1,
+            ctx.model.clone(),
+            Some(ctx.channel_id.clone()),
+            endpoint.id,
+            Some(endpoint.url.clone()),
+            runtime
+                .endpoints
+                .get(endpoint_idx)
+                .map(|s| s.provider.clone()),
+        );
         let stream_result = adapter.chat_complete_stream(&endpoint, body).await;
 
         match stream_result {
             Ok(stream) => {
+                attempt.finalize(true, Some(200), false, None);
                 // Real-time routing event is broadcast by UsageService.record() when
                 // the UsageTrackingStream completes (avoids double-counting).
                 let (first_byte_timeout, idle_timeout) = {
@@ -323,12 +361,24 @@ impl crate::scheduler::SchedulerService {
                     .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
             }
             Err(e) => {
+                attempt.finalize(
+                    false,
+                    match e.kind() {
+                        ErrorKind::RateLimited => Some(429),
+                        ErrorKind::Upstream4xx => Some(400),
+                        ErrorKind::Upstream5xx => Some(502),
+                        _ => None,
+                    },
+                    e.kind() == ErrorKind::Timeout,
+                    Some(e.0.clone()),
+                );
                 if let Some(reservation) = &reservation {
                     reservation.release("stream upstream request failed");
                 }
                 if let Some(state) = runtime.endpoints.get(endpoint_idx) {
                     state.breaker.record_failure();
                 }
+                lifecycle.set_attempts(1, None);
                 tracing::error!(
                     request_id = %ctx.request_id,
                     channel = %ctx.channel_id,
@@ -415,7 +465,7 @@ impl crate::scheduler::SchedulerService {
                 Box::pin(async move { adapter.chat_complete(&endpoint, b).await })
             };
             match self
-                .call_with_retry(dispatch, max_retries, body.clone(), call)
+                .call_with_retry(dispatch, max_retries, body.clone(), lifecycle, call)
                 .await
             {
                 Ok(resp) => Ok(resp),
@@ -454,7 +504,7 @@ impl crate::scheduler::SchedulerService {
 
                 let latency_ms = ctx.start.elapsed().as_millis() as u64;
                 lifecycle.add_tokens(prompt_tokens, completion_tokens, cache_hit, cache_write);
-                lifecycle.set_attempts(retry_count + 1, Some(retry_count + 1));
+                lifecycle.set_attempts(dispatch.attempt_count, Some(dispatch.attempt_count));
                 lifecycle.finalize_success();
                 if let Some(reservation) = &reservation {
                     reservation.settle_usage(
@@ -528,6 +578,7 @@ impl crate::scheduler::SchedulerService {
                 Ok(response)
             }
             Err(e) => {
+                lifecycle.set_attempts(dispatch.attempt_count, None);
                 let exhausted =
                     matches!(e.kind(), ErrorKind::ConnectFailed) || is_retryable_error(&e);
                 if let Some(reservation) = &reservation {
@@ -578,6 +629,7 @@ impl crate::scheduler::SchedulerService {
                     billing_payment_mode: None,
                 });
                 if exhausted {
+                    lifecycle.set_attempts(dispatch.attempt_count, None);
                     tracing::error!(
                         request_id = %ctx.request_id,
                         channel = %ctx.channel_id,
@@ -588,6 +640,7 @@ impl crate::scheduler::SchedulerService {
                         "Upstream request retries exhausted",
                     );
                 } else {
+                    lifecycle.set_attempts(dispatch.attempt_count, None);
                     tracing::error!(
                         request_id = %ctx.request_id,
                         endpoint = %dispatch.endpoint.url,
@@ -617,10 +670,22 @@ impl crate::scheduler::SchedulerService {
         let req_body = serde_json::to_string(&body).ok();
         self.flow_tracker
             .mark_upstream_started(&ctx.request_id, Utc::now().to_rfc3339());
+        let attempt = lifecycle.begin_attempt(
+            1,
+            ctx.model.clone(),
+            Some(ctx.channel_id.clone()),
+            endpoint.id,
+            Some(endpoint.url.clone()),
+            runtime
+                .endpoints
+                .get(endpoint_idx)
+                .map(|s| s.provider.clone()),
+        );
         let stream_result = adapter.messages_stream(&endpoint, body).await;
 
         match stream_result {
             Ok(stream) => {
+                attempt.finalize(true, Some(200), false, None);
                 // Real-time routing event is broadcast by UsageService.record() when
                 // the UsageTrackingStream completes (avoids double-counting).
                 let (first_byte_timeout, idle_timeout) = {
@@ -674,12 +739,24 @@ impl crate::scheduler::SchedulerService {
                     .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
             }
             Err(e) => {
+                attempt.finalize(
+                    false,
+                    match e.kind() {
+                        ErrorKind::RateLimited => Some(429),
+                        ErrorKind::Upstream4xx => Some(400),
+                        ErrorKind::Upstream5xx => Some(502),
+                        _ => None,
+                    },
+                    e.kind() == ErrorKind::Timeout,
+                    Some(e.0.clone()),
+                );
                 if let Some(reservation) = &reservation {
                     reservation.release("stream upstream request failed");
                 }
                 if let Some(state) = runtime.endpoints.get(endpoint_idx) {
                     state.breaker.record_failure();
                 }
+                lifecycle.set_attempts(1, None);
                 tracing::error!(
                     request_id = %ctx.request_id,
                     channel = %ctx.channel_id,
@@ -759,7 +836,7 @@ impl crate::scheduler::SchedulerService {
             Box::pin(async move { adapter.messages(&endpoint, b).await })
         };
         let resp_result = match self
-            .call_with_retry(dispatch, max_retries, body.clone(), call)
+            .call_with_retry(dispatch, max_retries, body.clone(), lifecycle, call)
             .await
         {
             Ok(resp) => Ok(resp),
@@ -802,7 +879,7 @@ impl crate::scheduler::SchedulerService {
 
                 let latency_ms = ctx.start.elapsed().as_millis() as u64;
                 lifecycle.add_tokens(prompt_tokens, completion_tokens, cache_hit, cache_write);
-                lifecycle.set_attempts(retry_count + 1, Some(retry_count + 1));
+                lifecycle.set_attempts(dispatch.attempt_count, Some(dispatch.attempt_count));
                 lifecycle.finalize_success();
                 if let Some(reservation) = &reservation {
                     reservation.settle_usage(
@@ -854,6 +931,7 @@ impl crate::scheduler::SchedulerService {
                 Ok(Json(resp).into_response())
             }
             Err(e) => {
+                lifecycle.set_attempts(dispatch.attempt_count, None);
                 let exhausted =
                     matches!(e.kind(), ErrorKind::ConnectFailed) || is_retryable_error(&e);
                 if let Some(reservation) = &reservation {
@@ -902,6 +980,7 @@ impl crate::scheduler::SchedulerService {
                     billing_payment_mode: None,
                 });
                 if exhausted {
+                    lifecycle.set_attempts(dispatch.attempt_count, None);
                     tracing::error!(
                         request_id = %ctx.request_id,
                         channel = %ctx.channel_id,
@@ -912,6 +991,7 @@ impl crate::scheduler::SchedulerService {
                         "Messages upstream request retries exhausted",
                     );
                 } else {
+                    lifecycle.set_attempts(dispatch.attempt_count, None);
                     tracing::error!(
                         request_id = %ctx.request_id,
                         endpoint = %dispatch.endpoint.url,
@@ -951,7 +1031,7 @@ impl crate::scheduler::SchedulerService {
             Box::pin(async move { adapter.relay(&endpoint, &path, b).await })
         };
         let resp_result = match self
-            .call_with_retry(dispatch, max_retries, body.clone(), call)
+            .call_with_retry(dispatch, max_retries, body.clone(), lifecycle, call)
             .await
         {
             Ok(resp) => Ok(resp),
@@ -989,7 +1069,7 @@ impl crate::scheduler::SchedulerService {
 
                 let latency_ms = ctx.start.elapsed().as_millis() as u64;
                 lifecycle.add_tokens(prompt_tokens, completion_tokens, cache_hit, cache_write);
-                lifecycle.set_attempts(retry_count + 1, Some(retry_count + 1));
+                lifecycle.set_attempts(dispatch.attempt_count, Some(dispatch.attempt_count));
                 lifecycle.finalize_success();
                 if let Some(reservation) = &reservation {
                     reservation.settle_usage(
@@ -1041,6 +1121,7 @@ impl crate::scheduler::SchedulerService {
                 Ok(Json(resp).into_response())
             }
             Err(e) => {
+                lifecycle.set_attempts(dispatch.attempt_count, None);
                 let exhausted =
                     matches!(e.kind(), ErrorKind::ConnectFailed) || is_retryable_error(&e);
                 if let Some(reservation) = &reservation {
@@ -1089,6 +1170,7 @@ impl crate::scheduler::SchedulerService {
                     billing_payment_mode: None,
                 });
                 if exhausted {
+                    lifecycle.set_attempts(dispatch.attempt_count, None);
                     tracing::error!(
                         request_id = %ctx.request_id,
                         channel = %ctx.channel_id,
@@ -1099,6 +1181,7 @@ impl crate::scheduler::SchedulerService {
                         "Relay upstream request retries exhausted",
                     );
                 } else {
+                    lifecycle.set_attempts(dispatch.attempt_count, None);
                     tracing::error!(
                         request_id = %ctx.request_id,
                         endpoint = %dispatch.endpoint.url,
@@ -1128,22 +1211,64 @@ impl crate::scheduler::SchedulerService {
         let max_retries = self.gateway_config.read().unwrap().max_retries;
         let mut retries = 0u32;
         let result = loop {
+            dispatch.attempt_count += 1;
+            let attempt_no = dispatch.attempt_count;
+            let attempt = lifecycle.begin_attempt(
+                attempt_no,
+                ctx.model.clone(),
+                Some(dispatch.channel_id.clone()),
+                dispatch.endpoint.id,
+                Some(dispatch.endpoint.url.clone()),
+                dispatch
+                    .runtime
+                    .endpoints
+                    .get(dispatch.endpoint_idx)
+                    .map(|s| s.provider.clone()),
+            );
             let attempt_body = dispatch.body_for_attempt(&body);
             let result = dispatch
                 .adapter
                 .relay(&dispatch.endpoint, "/v1/responses", attempt_body)
                 .await;
             match result {
+                Ok(resp) => {
+                    attempt.finalize(true, Some(200), false, None);
+                    break Ok(resp);
+                }
                 Err(error)
                     if error.kind() == ErrorKind::ConnectFailed || is_retryable_error(&error) =>
                 {
+                    attempt.finalize(
+                        false,
+                        match error.kind() {
+                            ErrorKind::RateLimited => Some(429),
+                            ErrorKind::Upstream4xx => Some(400),
+                            ErrorKind::Upstream5xx => Some(502),
+                            _ => None,
+                        },
+                        error.kind() == ErrorKind::Timeout,
+                        Some(error.0.clone()),
+                    );
                     if retries >= max_retries || !dispatch.retry_next() {
                         dispatch.report_failure();
                         break Err(error);
                     }
                     retries += 1;
                 }
-                result => break result,
+                Err(error) => {
+                    attempt.finalize(
+                        false,
+                        match error.kind() {
+                            ErrorKind::RateLimited => Some(429),
+                            ErrorKind::Upstream4xx => Some(400),
+                            ErrorKind::Upstream5xx => Some(502),
+                            _ => None,
+                        },
+                        error.kind() == ErrorKind::Timeout,
+                        Some(error.0.clone()),
+                    );
+                    break Err(error);
+                }
             }
         };
 
@@ -1165,7 +1290,7 @@ impl crate::scheduler::SchedulerService {
                 // the uncached input component, while cache tokens are reported separately.
                 let input_tokens = raw_input_tokens.saturating_sub(cache_hit + cache_write);
                 lifecycle.add_tokens(input_tokens, output_tokens, cache_hit, cache_write);
-                lifecycle.set_attempts(retries + 1, Some(retries + 1));
+                lifecycle.set_attempts(dispatch.attempt_count, Some(dispatch.attempt_count));
                 lifecycle.finalize_success();
                 if let Some(reservation) = &reservation {
                     reservation.settle_usage(
@@ -1295,22 +1420,64 @@ impl crate::scheduler::SchedulerService {
         let max_retries = self.gateway_config.read().unwrap().max_retries;
         let mut retries = 0u32;
         let stream_result = loop {
+            dispatch.attempt_count += 1;
+            let attempt_no = dispatch.attempt_count;
+            let attempt = lifecycle.begin_attempt(
+                attempt_no,
+                ctx.model.clone(),
+                Some(dispatch.channel_id.clone()),
+                dispatch.endpoint.id,
+                Some(dispatch.endpoint.url.clone()),
+                dispatch
+                    .runtime
+                    .endpoints
+                    .get(dispatch.endpoint_idx)
+                    .map(|s| s.provider.clone()),
+            );
             let attempt_body = dispatch.body_for_attempt(&body);
             let result = dispatch
                 .adapter
                 .responses_stream(&dispatch.endpoint, attempt_body)
                 .await;
             match result {
+                Ok(stream) => {
+                    attempt.finalize(true, Some(200), false, None);
+                    break Ok(stream);
+                }
                 Err(error)
                     if error.kind() == ErrorKind::ConnectFailed || is_retryable_error(&error) =>
                 {
+                    attempt.finalize(
+                        false,
+                        match error.kind() {
+                            ErrorKind::RateLimited => Some(429),
+                            ErrorKind::Upstream4xx => Some(400),
+                            ErrorKind::Upstream5xx => Some(502),
+                            _ => None,
+                        },
+                        error.kind() == ErrorKind::Timeout,
+                        Some(error.0.clone()),
+                    );
                     if retries >= max_retries || !dispatch.retry_next() {
                         dispatch.report_failure();
                         break Err(error);
                     }
                     retries += 1;
                 }
-                result => break result,
+                Err(error) => {
+                    attempt.finalize(
+                        false,
+                        match error.kind() {
+                            ErrorKind::RateLimited => Some(429),
+                            ErrorKind::Upstream4xx => Some(400),
+                            ErrorKind::Upstream5xx => Some(502),
+                            _ => None,
+                        },
+                        error.kind() == ErrorKind::Timeout,
+                        Some(error.0.clone()),
+                    );
+                    break Err(error);
+                }
             }
         };
 
@@ -1338,6 +1505,7 @@ impl crate::scheduler::SchedulerService {
                 let tid = ctx.team_id.clone();
                 let reservation_finalizer = reservation.clone();
                 let lifecycle_stream = lifecycle.clone();
+                let attempts_used = retries + 1;
                 let clean_eof2 = clean_eof.clone();
                 let buf2 = resp_buf.clone();
                 let rec2 = recorded.clone();
@@ -1375,7 +1543,10 @@ impl crate::scheduler::SchedulerService {
                         cache_hit,
                         cache_write,
                     );
-                    lifecycle_stream.set_attempts(1, if completed { Some(1) } else { None });
+                    lifecycle_stream.set_attempts(
+                        attempts_used,
+                        if completed { Some(attempts_used) } else { None },
+                    );
                     if completed {
                         lifecycle_stream.finalize_success();
                     } else {
@@ -1490,6 +1661,7 @@ impl crate::scheduler::SchedulerService {
                     .map_err(|e| GatewayError::Internal(format!("Response build error: {}", e)))?)
             }
             Err(e) => {
+                lifecycle.set_attempts(dispatch.attempt_count, None);
                 tracing::error!(
                     request_id = %ctx.request_id,
                     channel = %ctx.channel_id,
@@ -1555,6 +1727,7 @@ impl crate::scheduler::SchedulerService {
         body: Value,
         request_id: &str,
         max_retries: u32,
+        lifecycle: &RequestLifecycle,
     ) -> Result<Value, GatewayError> {
         self.flow_tracker
             .mark_upstream_started(request_id, Utc::now().to_rfc3339());
@@ -1566,7 +1739,7 @@ impl crate::scheduler::SchedulerService {
             Box::pin(async move { adapter.count_tokens(&endpoint, b).await })
         };
         match self
-            .call_with_retry(dispatch, max_retries, body, call)
+            .call_with_retry(dispatch, max_retries, body, lifecycle, call)
             .await
         {
             Ok(resp) => {
@@ -1577,6 +1750,7 @@ impl crate::scheduler::SchedulerService {
                 let exhausted =
                     matches!(error.kind(), ErrorKind::ConnectFailed) || is_retryable_error(&error);
                 if exhausted {
+                    lifecycle.set_attempts(dispatch.attempt_count, None);
                     tracing::error!(
                         request_id = %request_id,
                         endpoint = %dispatch.endpoint.url,
@@ -1584,6 +1758,7 @@ impl crate::scheduler::SchedulerService {
                         "Count tokens upstream request failed after retries"
                     );
                 } else {
+                    lifecycle.set_attempts(dispatch.attempt_count, None);
                     tracing::error!(
                         request_id = %request_id,
                         endpoint = %dispatch.endpoint.url,
@@ -1604,6 +1779,7 @@ impl crate::scheduler::SchedulerService {
         body: Value,
         request_id: &str,
         max_retries: u32,
+        lifecycle: &RequestLifecycle,
     ) -> Result<Value, GatewayError> {
         self.flow_tracker
             .mark_upstream_started(request_id, Utc::now().to_rfc3339());
@@ -1615,7 +1791,7 @@ impl crate::scheduler::SchedulerService {
             Box::pin(async move { adapter.responses_input_tokens(&endpoint, b).await })
         };
         match self
-            .call_with_retry(dispatch, max_retries, body, call)
+            .call_with_retry(dispatch, max_retries, body, lifecycle, call)
             .await
         {
             Ok(resp) => {
@@ -1626,6 +1802,7 @@ impl crate::scheduler::SchedulerService {
                 let exhausted =
                     matches!(error.kind(), ErrorKind::ConnectFailed) || is_retryable_error(&error);
                 if exhausted {
+                    lifecycle.set_attempts(dispatch.attempt_count, None);
                     tracing::error!(
                         request_id = %request_id,
                         endpoint = %dispatch.endpoint.url,
@@ -1633,6 +1810,7 @@ impl crate::scheduler::SchedulerService {
                         "Responses input_tokens upstream request failed after retries"
                     );
                 } else {
+                    lifecycle.set_attempts(dispatch.attempt_count, None);
                     tracing::error!(
                         request_id = %request_id,
                         endpoint = %dispatch.endpoint.url,

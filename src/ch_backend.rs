@@ -148,10 +148,14 @@ pub struct GatewayAttemptEventRow {
     pub attempt_id: String,
     pub attempt_no: u32,
     pub route_id: String,
+    pub channel_id: Option<String>,
+    pub endpoint_id: Option<i64>,
     pub endpoint_url: Option<String>,
+    pub provider: Option<String>,
     pub status_code: Option<u16>,
     pub success: u8,
     pub latency_ms: u64,
+    pub timeout: u8,
     pub error: Option<String>,
 }
 
@@ -237,10 +241,14 @@ impl From<crate::observability::gateway_events::GatewayAttemptEvent> for Gateway
             attempt_id: e.attempt_id,
             attempt_no: e.attempt_no,
             route_id: e.route_id,
+            channel_id: e.channel_id,
+            endpoint_id: e.endpoint_id,
             endpoint_url: e.endpoint_url,
+            provider: e.provider,
             status_code: e.status_code,
             success: if e.success { 1 } else { 0 },
             latency_ms: e.latency_ms,
+            timeout: if e.timeout { 1 } else { 0 },
             error: e.error,
         }
     }
@@ -631,9 +639,10 @@ impl ClickHouseBackend {
     const CREATE_GATEWAY_ATTEMPT_EVENTS: &'static str = "\
         CREATE TABLE IF NOT EXISTS gateway_attempt_events (\
             timestamp DateTime, request_id String, attempt_id String,\
-            attempt_no UInt32, route_id String, endpoint_url Nullable(String),\
-            status_code Nullable(UInt16), success UInt8, latency_ms UInt64,\
-            error Nullable(String)\
+            attempt_no UInt32, route_id String, channel_id Nullable(String),\
+            endpoint_id Nullable(Int64), endpoint_url Nullable(String),\
+            provider Nullable(String), status_code Nullable(UInt16), success UInt8,\
+            latency_ms UInt64, timeout UInt8 DEFAULT 0, error Nullable(String)\
         ) ENGINE = MergeTree() PARTITION BY toYYYYMM(timestamp)\
         ORDER BY (route_id, timestamp) TTL toDateTime(timestamp) + INTERVAL 90 DAY\
     ";
@@ -728,6 +737,19 @@ impl ClickHouseBackend {
                 .execute()
                 .await
                 .map_err(|e| format!("CH migration {name}: {e}"))?;
+        }
+
+        for alter in [
+            "ALTER TABLE gateway_attempt_events ADD COLUMN IF NOT EXISTS channel_id Nullable(String)",
+            "ALTER TABLE gateway_attempt_events ADD COLUMN IF NOT EXISTS endpoint_id Nullable(Int64)",
+            "ALTER TABLE gateway_attempt_events ADD COLUMN IF NOT EXISTS provider Nullable(String)",
+            "ALTER TABLE gateway_attempt_events ADD COLUMN IF NOT EXISTS timeout UInt8 DEFAULT 0",
+        ] {
+            self.client
+                .query(alter)
+                .execute()
+                .await
+                .map_err(|e| format!("CH migration gateway_attempt_events alter: {e}"))?;
         }
 
         // Phase 2: extend gateway_request_events with lifecycle columns. Every
@@ -2656,10 +2678,14 @@ mod tests {
             attempt_id: "att-1".to_string(),
             attempt_no: 2,
             route_id: "r1".to_string(),
+            channel_id: Some("ch-1".to_string()),
+            endpoint_id: Some(7),
             endpoint_url: Some("https://upstream/v1".to_string()),
+            provider: Some("openai".to_string()),
             status_code: Some(502),
             success: false,
             latency_ms: 9,
+            timeout: false,
             error: Some("Upstream5xx".to_string()),
         });
         assert_eq!(row.attempt_no, 2);

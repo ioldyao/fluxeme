@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
-use super::gateway_events::{GatewayEventRecorder, GatewayRequestEvent};
+use super::gateway_events::{GatewayAttemptEvent, GatewayEventRecorder, GatewayRequestEvent};
 
 /// HTTP method, path and identity captured for the request event.
 #[derive(Clone, Debug)]
@@ -131,6 +131,97 @@ impl Default for LifecycleDraft {
     }
 }
 
+/// Tracks one concrete invocation of a provider adapter. Dropping an active
+/// attempt finalizes it as a failed invocation, ensuring every adapter call has
+/// exactly one terminal attempt event.
+pub struct AttemptLifecycle {
+    recorder: GatewayEventRecorder,
+    started_at: Instant,
+    finalized: AtomicBool,
+    request_id: String,
+    attempt_id: String,
+    attempt_no: u32,
+    route_id: String,
+    channel_id: Option<String>,
+    endpoint_id: Option<i64>,
+    endpoint_url: Option<String>,
+    provider: Option<String>,
+}
+
+impl AttemptLifecycle {
+    pub fn new(
+        recorder: &GatewayEventRecorder,
+        request_id: impl Into<String>,
+        attempt_no: u32,
+        route_id: impl Into<String>,
+        channel_id: Option<String>,
+        endpoint_id: Option<i64>,
+        endpoint_url: Option<String>,
+        provider: Option<String>,
+    ) -> Self {
+        let request_id = request_id.into();
+        Self {
+            recorder: recorder.clone(),
+            started_at: Instant::now(),
+            finalized: AtomicBool::new(false),
+            attempt_id: format!("{}-{}", request_id, attempt_no),
+            request_id,
+            attempt_no,
+            route_id: route_id.into(),
+            channel_id,
+            endpoint_id,
+            endpoint_url,
+            provider,
+        }
+    }
+
+    pub fn finalize(
+        &self,
+        success: bool,
+        status_code: Option<u16>,
+        timeout: bool,
+        error: Option<String>,
+    ) -> bool {
+        if self
+            .finalized
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return false;
+        }
+        self.recorder.record_attempt(GatewayAttemptEvent {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            request_id: self.request_id.clone(),
+            attempt_id: self.attempt_id.clone(),
+            attempt_no: self.attempt_no,
+            route_id: self.route_id.clone(),
+            channel_id: self.channel_id.clone(),
+            endpoint_id: self.endpoint_id,
+            endpoint_url: self.endpoint_url.clone(),
+            provider: self.provider.clone(),
+            status_code,
+            success,
+            latency_ms: self.started_at.elapsed().as_millis() as u64,
+            timeout,
+            error,
+        });
+        true
+    }
+}
+
+impl Drop for AttemptLifecycle {
+    fn drop(&mut self) {
+        if !self.finalized.load(Ordering::SeqCst) {
+            self.finalize(
+                false,
+                None,
+                false,
+                Some("attempt_dropped_without_finalize".into()),
+            );
+        }
+    }
+}
+
 /// Tracks a single authenticated LLM request and guarantees exactly one
 /// `GatewayRequestEvent` is emitted. Clone is deliberately NOT implemented:
 /// each request owns exactly one lifecycle.
@@ -161,6 +252,27 @@ impl RequestLifecycle {
 
     pub fn request_id(&self) -> &str {
         &self.meta.request_id
+    }
+
+    pub fn begin_attempt(
+        &self,
+        attempt_no: u32,
+        route_id: impl Into<String>,
+        channel_id: Option<String>,
+        endpoint_id: Option<i64>,
+        endpoint_url: Option<String>,
+        provider: Option<String>,
+    ) -> AttemptLifecycle {
+        AttemptLifecycle::new(
+            &self.recorder,
+            self.meta.request_id.clone(),
+            attempt_no,
+            route_id,
+            channel_id,
+            endpoint_id,
+            endpoint_url,
+            provider,
+        )
     }
 
     pub fn is_finalized(&self) -> bool {
