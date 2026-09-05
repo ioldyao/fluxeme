@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api } from '@fluxeme/shared/src/api/client';
+import { usePublicModels } from '@fluxeme/shared/src/api/models';
+import { useChannels } from '@fluxeme/shared/src/api/channels';
 import {
   fetchAppConfig,
   saveCurrencySettings,
@@ -50,6 +52,16 @@ export default function AdminSettings() {
   const [breakerLongProbeInterval, setBreakerLongProbeInterval] = useState(1800);
   const [breakerLoading, setBreakerLoading] = useState(true);
   const [breakerSaving, setBreakerSaving] = useState(false);
+  const [probePrompt, setProbePrompt] = useState('hi');
+  const [probeMaxOutputTokens, setProbeMaxOutputTokens] = useState(1);
+  const [probeTemperature, setProbeTemperature] = useState(0.01);
+  const [probeTopP, setProbeTopP] = useState(0.01);
+  const [probeTimeoutSecs, setProbeTimeoutSecs] = useState(30);
+  const [probeProtocol, setProbeProtocol] = useState('auto');
+  const [probePreviewTab, setProbePreviewTab] = useState('openai_chat');
+  const [probeRequestLoading, setProbeRequestLoading] = useState(true);
+  const [probeRequestSaving, setProbeRequestSaving] = useState(false);
+  const [probePreviews, setProbePreviews] = useState<Record<string, string>>({});
 
   useEffect(() => {
     api<{ interval_secs: number }>('/settings/probe-interval')
@@ -73,6 +85,18 @@ export default function AdminSettings() {
       })
       .catch(() => {})
       .finally(() => setBreakerLoading(false));
+    api<{ config: { prompt: string; max_output_tokens: number; temperature: number; top_p: number; timeout_secs: number; protocol: string }; previews: Record<string, string> }>('/settings/probe-request')
+      .then((r) => {
+        setProbePrompt(r.config.prompt);
+        setProbeMaxOutputTokens(r.config.max_output_tokens);
+        setProbeTemperature(r.config.temperature);
+        setProbeTopP(r.config.top_p);
+        setProbeTimeoutSecs(r.config.timeout_secs);
+        setProbeProtocol(r.config.protocol);
+        setProbePreviews(r.previews);
+      })
+      .catch(() => {})
+      .finally(() => setProbeRequestLoading(false));
   }, []);
 
   useEffect(() => {
@@ -105,6 +129,42 @@ export default function AdminSettings() {
       toast.error(e instanceof Error ? e.message : t('settings.saveFailed'));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveProbeRequest = async () => {
+    const prompt = probePrompt.trim();
+    const maxOutputTokens = Math.round(probeMaxOutputTokens);
+    const temperature = Number(probeTemperature);
+    const topP = Number(probeTopP);
+    const timeoutSecs = Math.round(probeTimeoutSecs);
+    if (
+      !prompt ||
+      Number.isNaN(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 16 ||
+      Number.isNaN(temperature) || temperature < 0 || temperature > 2 ||
+      Number.isNaN(topP) || topP < 0 || topP > 1 ||
+      Number.isNaN(timeoutSecs) || timeoutSecs < 1 || timeoutSecs > 120
+    ) {
+      toast.error(t('settings.probeIntervalInvalid', { min: 1, max: 120 }));
+      return;
+    }
+    setProbeRequestSaving(true);
+    try {
+      const r = await api<{ config: { prompt: string; max_output_tokens: number; temperature: number; top_p: number; timeout_secs: number; protocol: string } }>('/settings/probe-request', {
+        method: 'PUT',
+        body: { prompt, max_output_tokens: maxOutputTokens, temperature, top_p: topP, timeout_secs: timeoutSecs, protocol: probeProtocol },
+      });
+      setProbePrompt(r.config.prompt);
+      setProbeMaxOutputTokens(r.config.max_output_tokens);
+      setProbeTemperature(r.config.temperature);
+      setProbeTopP(r.config.top_p);
+      setProbeTimeoutSecs(r.config.timeout_secs);
+      setProbeProtocol(r.config.protocol);
+      toast.success(t('settings.probeSaved'));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t('settings.saveFailed'));
+    } finally {
+      setProbeRequestSaving(false);
     }
   };
 
@@ -218,6 +278,7 @@ export default function AdminSettings() {
       <Tabs defaultValue="gateway">
         <TabsList variant="line">
           <TabsTrigger value="gateway">{t('settings.gatewayTab')}</TabsTrigger>
+          <TabsTrigger value="probe-request">{t('settings.probeRequestTab')}</TabsTrigger>
           <TabsTrigger value="sso">{t('ssoSettings.title')}</TabsTrigger>
         </TabsList>
 
@@ -516,11 +577,313 @@ export default function AdminSettings() {
       </Card>
         </TabsContent>
 
+        <TabsContent value="probe-request" className="mt-6 space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">{t('settings.probeRequestTitle')}</CardTitle>
+              <p className="text-sm text-muted-foreground">{t('settings.probeRequestSubtitle')}</p>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid gap-5 md:grid-cols-2">
+                <div className="md:col-span-2">
+                  <Label htmlFor="probe-prompt" className="text-sm">{t('settings.probePrompt')}</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5 mb-2">{t('settings.probePromptHint')}</p>
+                  <textarea
+                    id="probe-prompt"
+                    rows={3}
+                    value={probePrompt}
+                    onChange={(e) => setProbePrompt(e.target.value)}
+                    disabled={probeRequestLoading}
+                    className="w-full rounded-lg border border-border bg-muted px-3 py-2 text-sm outline-none placeholder:text-muted-foreground"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="probe-max-tokens" className="text-sm">{t('settings.probeMaxOutputTokens')}</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5 mb-2">{t('settings.probeMaxOutputTokensHint')}</p>
+                  <Input
+                    id="probe-max-tokens"
+                    type="number"
+                    min={1}
+                    max={16}
+                    value={Number.isNaN(probeMaxOutputTokens) ? '' : probeMaxOutputTokens}
+                    onChange={(e) => setProbeMaxOutputTokens(Number(e.target.value))}
+                    disabled={probeRequestLoading}
+                    className="max-w-[180px]"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="probe-timeout" className="text-sm">{t('settings.probeTimeout')}</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5 mb-2">{t('settings.probeTimeoutHint')}</p>
+                  <Input
+                    id="probe-timeout"
+                    type="number"
+                    min={1}
+                    max={120}
+                    value={Number.isNaN(probeTimeoutSecs) ? '' : probeTimeoutSecs}
+                    onChange={(e) => setProbeTimeoutSecs(Number(e.target.value))}
+                    disabled={probeRequestLoading}
+                    className="max-w-[180px]"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="probe-temperature" className="text-sm">{t('settings.probeTemperature')}</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5 mb-2">{t('settings.probeTemperatureHint')}</p>
+                  <Input
+                    id="probe-temperature"
+                    type="number"
+                    step={0.01}
+                    min={0}
+                    max={2}
+                    value={Number.isNaN(probeTemperature) ? '' : probeTemperature}
+                    onChange={(e) => setProbeTemperature(Number(e.target.value))}
+                    disabled={probeRequestLoading}
+                    className="max-w-[180px]"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="probe-top-p" className="text-sm">{t('settings.probeTopP')}</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5 mb-2">{t('settings.probeTopPHint')}</p>
+                  <Input
+                    id="probe-top-p"
+                    type="number"
+                    step={0.01}
+                    min={0}
+                    max={1}
+                    value={Number.isNaN(probeTopP) ? '' : probeTopP}
+                    onChange={(e) => setProbeTopP(Number(e.target.value))}
+                    disabled={probeRequestLoading}
+                    className="max-w-[180px]"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <Label htmlFor="probe-protocol" className="text-sm">{t('settings.probeProtocol')}</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5 mb-2">{t('settings.probeProtocolHint')}</p>
+                  <Select value={probeProtocol} onValueChange={setProbeProtocol} disabled={probeRequestLoading}>
+                    <SelectTrigger id="probe-protocol" className="w-full max-w-[280px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">{t('settings.probeProtocolAuto')}</SelectItem>
+                      <SelectItem value="openai_chat">{t('settings.probeProtocolOpenaiChat')}</SelectItem>
+                      <SelectItem value="anthropic_messages">{t('settings.probeProtocolAnthropicMessages')}</SelectItem>
+                      <SelectItem value="responses">{t('settings.probeProtocolResponses')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <Button onClick={saveProbeRequest} disabled={probeRequestLoading || probeRequestSaving}>
+                  {t('settings.probeSave')}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">{t('settings.probePreview')}</CardTitle>
+              <p className="text-sm text-muted-foreground">{t('settings.probePreviewHint')}</p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="inline-flex rounded-xl bg-accent p-1">
+                {['openai_chat', 'anthropic_messages', 'responses'].map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setProbePreviewTab(key)}
+                    className={`rounded-lg px-3 py-1.5 text-xs transition ${
+                      probePreviewTab === key
+                        ? 'bg-card text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {key === 'openai_chat'
+                      ? t('settings.probeProtocolOpenaiChat')
+                      : key === 'anthropic_messages'
+                        ? t('settings.probeProtocolAnthropicMessages')
+                        : t('settings.probeProtocolResponses')}
+                  </button>
+                ))}
+              </div>
+              <pre className="overflow-x-auto rounded-xl border border-border bg-muted p-4 text-xs leading-relaxed">
+                {probePreviews[probePreviewTab] ?? '—'}
+              </pre>
+            </CardContent>
+          </Card>
+
+          <ProbeTestRunner />
+        </TabsContent>
+
         <TabsContent value="sso" className="mt-6">
           <SsoSettings />
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+interface ProbeTestResult {
+  success: boolean;
+  model: string;
+  channel_id: string;
+  endpoint_id?: number | null;
+  endpoint_url: string;
+  upstream_model: string;
+  protocol: string;
+  latency_ms: number;
+  ttft_ms?: number | null;
+  error_kind?: string | null;
+  error_message?: string | null;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+}
+
+function ProbeTestRunner() {
+  const { t } = useTranslation();
+  const modelsQuery = usePublicModels();
+  const channelsQuery = useChannels();
+  const [modelId, setModelId] = useState('');
+  const [channelId, setChannelId] = useState('');
+  const [endpointId, setEndpointId] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<ProbeTestResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const model = modelsQuery.data?.find((m) => m.id === modelId);
+  const modelChannelIds = new Set((model?.channels ?? []).map((c) => c.channel_id));
+  const availableChannels = (channelsQuery.data ?? []).filter(
+    (c) => !modelId || modelChannelIds.has(c.id),
+  );
+  const selectedChannel = availableChannels.find((c) => c.id === channelId);
+  const availableEndpoints = (selectedChannel?.endpoints ?? []).filter(
+    (e) => e.enabled !== false,
+  );
+
+  useEffect(() => {
+    if (availableChannels.length > 0 && !availableChannels.some((c) => c.id === channelId)) {
+      setChannelId(availableChannels[0].id);
+      setEndpointId('');
+    }
+  }, [availableChannels, channelId]);
+
+  useEffect(() => {
+    if (availableEndpoints.length > 0 && !availableEndpoints.some((e) => String(e.id) === endpointId)) {
+      setEndpointId(availableEndpoints[0].id != null ? String(availableEndpoints[0].id) : '');
+    }
+  }, [availableEndpoints, endpointId]);
+
+  const send = async () => {
+    if (!modelId || !channelId) return;
+    setTesting(true);
+    setResult(null);
+    setError(null);
+    try {
+      const res = await api<ProbeTestResult>('/settings/probe-request/test', {
+        method: 'POST',
+        body: {
+          model_id: modelId,
+          channel_id: channelId,
+          endpoint_id: endpointId ? Number(endpointId) : null,
+        },
+      });
+      setResult(res);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('settings.saveFailed'));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">{t('settings.probeTestTitle')}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-muted-foreground">{t('settings.probeTestHint')}</p>
+        <div className="grid gap-4 md:grid-cols-3">
+          <div>
+            <Label className="text-sm">{t('settings.probeTestModel')}</Label>
+            <Select value={modelId} onValueChange={(v) => { setModelId(v); setEndpointId(''); }}>
+              <SelectTrigger className="mt-1.5 w-full">
+                <SelectValue placeholder={t('settings.probeTestSelectModel')} />
+              </SelectTrigger>
+              <SelectContent>
+                {(modelsQuery.data ?? []).map((m) => (
+                  <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-sm">{t('settings.probeTestChannel')}</Label>
+            <Select value={channelId} onValueChange={(v) => { setChannelId(v); setEndpointId(''); }}>
+              <SelectTrigger className="mt-1.5 w-full">
+                <SelectValue placeholder={t('settings.probeTestSelectChannel')} />
+              </SelectTrigger>
+              <SelectContent>
+                {availableChannels.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.name || c.id}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-sm">{t('settings.probeTestEndpoint')}</Label>
+            <Select value={endpointId} onValueChange={setEndpointId}>
+              <SelectTrigger className="mt-1.5 w-full">
+                <SelectValue placeholder={t('settings.probeTestSelectEndpoint')} />
+              </SelectTrigger>
+              <SelectContent>
+                {availableEndpoints.map((e) => (
+                  <SelectItem key={e.id ?? e.url} value={e.id != null ? String(e.id) : e.url}>
+                    {e.id != null ? `#${e.id} · ${e.url}` : e.url}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div className="flex justify-end">
+          <Button onClick={send} disabled={testing || !modelId || !channelId}>
+            {testing ? t('settings.probeTestRunning') : t('settings.probeTestSend')}
+          </Button>
+        </div>
+
+        {error ? (
+          <div className="rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+            {error}
+          </div>
+        ) : null}
+
+        {result ? (
+          <div className="rounded-xl border border-border bg-muted p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className={`inline-flex items-center gap-2 text-sm font-semibold ${result.success ? 'text-chart-2' : 'text-destructive'}`}>
+                <span className={`h-2.5 w-2.5 rounded-full ${result.success ? 'bg-chart-2' : 'bg-destructive'}`} />
+                {result.success ? t('settings.probeTestSuccess') : t('settings.probeTestFailed')}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {t('settings.probeTestProtocol')}: {result.protocol}
+              </div>
+            </div>
+            <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+              <div className="flex justify-between gap-3"><span className="text-muted-foreground">{t('settings.probeTestEndpointUrl')}</span><span className="max-w-[60%] truncate font-mono text-foreground">{result.endpoint_url}</span></div>
+              <div className="flex justify-between gap-3"><span className="text-muted-foreground">{t('settings.probeTestLatency')}</span><span className="font-mono text-foreground">{result.latency_ms} ms</span></div>
+              <div className="flex justify-between gap-3"><span className="text-muted-foreground">Upstream</span><span className="font-mono text-foreground">{result.upstream_model}</span></div>
+              <div className="flex justify-between gap-3"><span className="text-muted-foreground">{t('settings.probeTestTokens')}</span><span className="font-mono text-foreground">{result.prompt_tokens ?? '—'} / {result.completion_tokens ?? '—'}</span></div>
+            </div>
+            {!result.success && (result.error_kind || result.error_message) ? (
+              <div className="mt-3 border-t border-border pt-3 text-xs text-destructive">
+                <div>{result.error_kind ?? '—'}</div>
+                <div className="mt-1 break-all text-muted-foreground">{result.error_message ?? ''}</div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }
 

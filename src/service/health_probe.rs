@@ -14,7 +14,135 @@ use crate::service::endpoint_pool::ModelEndpointRuntime;
 use crate::service::routing::RoutingService;
 
 const MAX_CONCURRENT_ENDPOINT_PROBES: usize = 8;
-const PROBE_LEASE_TTL_SECS: u64 = 120;
+const PROBE_LEASE_TTL_SECS: u64 = 180;
+const PROBE_REQUEST_TIMEOUT_MAX_SECS: u64 = PROBE_LEASE_TTL_SECS - 1;
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProbeProtocol {
+    #[default]
+    Auto,
+    OpenaiChat,
+    AnthropicMessages,
+    Responses,
+}
+
+impl ProbeProtocol {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::OpenaiChat => "openai_chat",
+            Self::AnthropicMessages => "anthropic_messages",
+            Self::Responses => "responses",
+        }
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct ProbeRequestConfig {
+    pub prompt: String,
+    pub max_output_tokens: u32,
+    pub temperature: f64,
+    pub top_p: f64,
+    pub timeout_secs: u64,
+    pub protocol: ProbeProtocol,
+}
+
+impl Default for ProbeRequestConfig {
+    fn default() -> Self {
+        Self {
+            prompt: "hi".to_string(),
+            max_output_tokens: 1,
+            temperature: 0.01,
+            top_p: 0.01,
+            timeout_secs: 30,
+            protocol: ProbeProtocol::Auto,
+        }
+    }
+}
+
+impl ProbeRequestConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.prompt.chars().count() > 4096 {
+            return Err("prompt must be at most 4096 characters".to_string());
+        }
+        if !(1..=16).contains(&self.max_output_tokens) {
+            return Err("max_output_tokens must be between 1 and 16".to_string());
+        }
+        if !self.temperature.is_finite() || !(0.0..=2.0).contains(&self.temperature) {
+            return Err("temperature must be between 0 and 2".to_string());
+        }
+        if !self.top_p.is_finite() || !(0.0..=1.0).contains(&self.top_p) {
+            return Err("top_p must be between 0 and 1".to_string());
+        }
+        if !(1..=PROBE_REQUEST_TIMEOUT_MAX_SECS).contains(&self.timeout_secs) {
+            return Err(format!(
+                "timeout_secs must be between 1 and {PROBE_REQUEST_TIMEOUT_MAX_SECS}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Resolve the effective request protocol for a channel provider.
+    pub fn resolved_protocol(&self, provider_name: &str) -> ProbeProtocol {
+        match &self.protocol {
+            ProbeProtocol::Auto => {
+                if provider_name == "anthropic" {
+                    ProbeProtocol::AnthropicMessages
+                } else {
+                    ProbeProtocol::OpenaiChat
+                }
+            }
+            other => other.clone(),
+        }
+    }
+
+    /// Build the request body for a resolved protocol.
+    pub fn build_body(
+        &self,
+        upstream_name: &str,
+        protocol: &ProbeProtocol,
+        stream: bool,
+    ) -> serde_json::Value {
+        let role_user = serde_json::json!({"role": "user", "content": self.prompt});
+        match protocol {
+            ProbeProtocol::Responses => serde_json::json!({
+                "model": upstream_name,
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": self.prompt}]}],
+                "max_output_tokens": self.max_output_tokens,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "stream": stream,
+            }),
+            _ => serde_json::json!({
+                "model": upstream_name,
+                "messages": [role_user],
+                "max_tokens": self.max_output_tokens,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "stream": stream,
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ProbeTestResult {
+    pub success: bool,
+    pub model: String,
+    pub channel_id: String,
+    pub endpoint_id: Option<i64>,
+    pub endpoint_url: String,
+    pub upstream_model: String,
+    pub protocol: String,
+    pub latency_ms: u64,
+    pub ttft_ms: Option<u64>,
+    pub error_kind: Option<String>,
+    pub error_message: Option<String>,
+    pub prompt_tokens: Option<u64>,
+    pub completion_tokens: Option<u64>,
+}
 
 struct ProbeJob {
     binding_order: usize,
@@ -38,6 +166,8 @@ struct ProbeJob {
     upstream_model: String,
     endpoint: EndpointConfig,
     stream: bool,
+    /// Request template used to build the probe body and timeout.
+    config: ProbeRequestConfig,
     /// Whether this is an automatic recovery probe.
     automatic: bool,
     cache: Arc<crate::cache::RedisCache>,
@@ -86,6 +216,132 @@ impl HealthProbeService {
         }
     }
 
+    /// Load and validate the persisted request template. Invalid or missing
+    /// settings fail safe to the default minimal request.
+    async fn request_config(&self) -> ProbeRequestConfig {
+        let mut config = ProbeRequestConfig::default();
+        if let Ok(Some(value)) = self.db.get_setting("probe_request_config").await {
+            if let Ok(parsed) = serde_json::from_str::<ProbeRequestConfig>(&value) {
+                config = parsed;
+            }
+        }
+        if config.validate().is_err() {
+            ProbeRequestConfig::default()
+        } else {
+            config
+        }
+    }
+
+    /// Return the current request template for the admin preview.
+    pub async fn get_request_config(&self) -> ProbeRequestConfig {
+        self.request_config().await
+    }
+
+    pub async fn set_request_config(&self, config: ProbeRequestConfig) -> Result<(), String> {
+        config.validate()?;
+        let json = serde_json::to_string(&config).map_err(|e| e.to_string())?;
+        self.db
+            .set_setting("probe_request_config", &json)
+            .await
+            .map_err(|e| e.0)
+    }
+
+    /// Send a one-off probe request with the configured template. Unlike
+    /// scheduled probes this never claims a probe lease and never mutates the
+    /// circuit breaker — it is a pure connectivity/response test.
+    pub async fn test_probe(
+        &self,
+        model_id: &str,
+        channel_id: &str,
+        endpoint_id: Option<i64>,
+        protocol: Option<ProbeProtocol>,
+    ) -> Result<ProbeTestResult, String> {
+        let model = self
+            .db
+            .get_model(model_id)
+            .await
+            .map_err(|e| e.0)?
+            .ok_or_else(|| format!("Model '{model_id}' not found"))?;
+        let Some(binding) = model
+            .channels
+            .iter()
+            .find(|binding| binding.channel_id == channel_id)
+        else {
+            return Err("Model is not bound to the selected channel".to_string());
+        };
+        let Some(route) = self.routing.get_route(channel_id) else {
+            return Err("Channel route not available".to_string());
+        };
+        let Some(runtime) = self.routing.get_model_endpoint_runtime(model_id) else {
+            return Err("Model has no endpoint runtime".to_string());
+        };
+        let provider_name = route.0.clone();
+        let Some(adapter) = self.providers.get(&provider_name) else {
+            return Err("Provider adapter not found".to_string());
+        };
+        let Some((_, state)) = runtime.endpoints.iter().enumerate().find(|(_, state)| {
+            state.channel_id == channel_id
+                && state.endpoint.enabled
+                && (endpoint_id.is_none_or(|id| state.endpoint.id == Some(id)))
+        }) else {
+            return Err("No enabled endpoint matched the selection".to_string());
+        };
+        let endpoint = state.endpoint.clone();
+        let upstream_name = binding
+            .upstream_model
+            .clone()
+            .unwrap_or_else(|| model.name.clone());
+        let mut config = self.request_config().await;
+        if let Some(protocol) = protocol {
+            config.protocol = protocol;
+        }
+        let effective_protocol = config.resolved_protocol(&provider_name);
+
+        let start = Instant::now();
+        let result = tokio::time::timeout(
+            Duration::from_secs(config.timeout_secs.min(PROBE_REQUEST_TIMEOUT_MAX_SECS)),
+            Self::probe_endpoint(
+                &provider_name,
+                &adapter,
+                &endpoint,
+                &upstream_name,
+                &config,
+                false,
+            ),
+        )
+        .await;
+        let latency_ms = start.elapsed().as_millis() as u64;
+        let (success, error_kind, error_message) = match result {
+            Ok(Ok(())) => (true, None, None),
+            Ok(Err(error)) => (
+                false,
+                Some(format!("{:?}", error.kind()).to_lowercase()),
+                Some(error.0),
+            ),
+            Err(_) => (
+                false,
+                Some("timeout".to_string()),
+                Some("Probe request timed out".to_string()),
+            ),
+        };
+
+        Ok(ProbeTestResult {
+            success,
+            model: model.name,
+            channel_id: channel_id.to_string(),
+            endpoint_id: endpoint.id,
+            endpoint_url: endpoint.url,
+            upstream_model: upstream_name,
+            protocol: effective_protocol.as_str().to_string(),
+            latency_ms,
+            ttft_ms: None,
+            error_kind,
+            error_message,
+            prompt_tokens: None,
+            completion_tokens: None,
+        })
+    }
+
     /// Probe every endpoint under the selected channel bindings of a model and
     /// return per-endpoint probe results.
     pub async fn probe_model(
@@ -112,6 +368,7 @@ impl HealthProbeService {
         // has a channel-priority ordering.
         let mut ordered_results = Vec::new();
         let mut jobs = Vec::new();
+        let config = self.request_config().await;
 
         let Some(runtime) = self.routing.get_model_endpoint_runtime(model_id) else {
             return Err(format!("Model '{}' has no endpoint runtime", model_id));
@@ -199,6 +456,7 @@ impl HealthProbeService {
                     routing: Some(self.routing.clone()),
                     endpoint,
                     stream,
+                    config: config.clone(),
                     automatic: false,
                     cache: self.cache.clone(),
                     instance_id: self.instance_id.clone(),
@@ -252,6 +510,7 @@ impl HealthProbeService {
     async fn probe_bindings(&self, recovering_only: bool) -> Result<Vec<ProbeResultRow>, String> {
         let models = self.db.list_models().await.map_err(|e| e.0)?;
         let mut jobs = Vec::new();
+        let config = self.request_config().await;
 
         for model in &models {
             for binding in &model.channels {
@@ -285,6 +544,12 @@ impl HealthProbeService {
                     if recovering_only && state.breaker.is_healthy() {
                         continue;
                     }
+                    if !recovering_only && !state.breaker.is_healthy() {
+                        // Recovery probes exclusively own Open/HalfOpen endpoints.
+                        // Keeping them out of the periodic cycle ensures the
+                        // long-unavailable interval cannot be bypassed.
+                        continue;
+                    }
                     jobs.push(ProbeJob {
                         binding_order: jobs.len(),
                         endpoint_order: endpoint_idx,
@@ -299,6 +564,7 @@ impl HealthProbeService {
                         routing: None,
                         endpoint: state.endpoint.clone(),
                         stream: false,
+                        config: config.clone(),
                         automatic: true,
                         cache: self.cache.clone(),
                         instance_id: self.instance_id.clone(),
@@ -350,6 +616,7 @@ impl HealthProbeService {
             routing,
             endpoint,
             stream,
+            config,
             automatic,
             cache,
             instance_id,
@@ -418,8 +685,15 @@ impl HealthProbeService {
         };
         let result = if automatic {
             match tokio::time::timeout(
-                Duration::from_secs(PROBE_LEASE_TTL_SECS.saturating_sub(1)),
-                Self::probe_endpoint(&provider_name, &adapter, &endpoint, &upstream_name, stream),
+                Duration::from_secs(config.timeout_secs.min(PROBE_REQUEST_TIMEOUT_MAX_SECS)),
+                Self::probe_endpoint(
+                    &provider_name,
+                    &adapter,
+                    &endpoint,
+                    &upstream_name,
+                    &config,
+                    stream,
+                ),
             )
             .await
             {
@@ -430,7 +704,15 @@ impl HealthProbeService {
                 )),
             }
         } else {
-            Self::probe_endpoint(&provider_name, &adapter, &endpoint, &upstream_name, stream).await
+            Self::probe_endpoint(
+                &provider_name,
+                &adapter,
+                &endpoint,
+                &upstream_name,
+                &config,
+                stream,
+            )
+            .await
         };
         let latency_ms = start.elapsed().as_millis() as u64;
 
@@ -524,49 +806,46 @@ impl HealthProbeService {
         adapter: &Arc<dyn ProviderAdapter>,
         endpoint: &EndpointConfig,
         upstream_name: &str,
+        config: &ProbeRequestConfig,
         stream: bool,
     ) -> Result<(), ProviderError> {
-        let test_body = serde_json::json!({
-            "model": upstream_name,
-            "messages": [{"role": "user", "content": "hi"}],
-            "temperature": 0.01,
-            "max_tokens": 1,
-            "top_p": 0.01,
-            "stream": stream,
-        });
-
-        if provider_name == "anthropic" {
-            let body = serde_json::json!({
-                "model": upstream_name,
-                "messages": [{"role": "user", "content": "hi"}],
-                "max_tokens": 1,
-                "stream": stream,
-            });
-            if stream {
-                match adapter.messages_stream(endpoint, body).await {
-                    Ok(mut response) => response.next().await.map(|_| ()).ok_or_else(|| {
-                        ProviderError::new(
-                            "Upstream returned an empty stream",
-                            crate::provider::ErrorKind::Other,
-                        )
-                    }),
-                    Err(error) => Err(error),
+        let protocol = config.resolved_protocol(provider_name);
+        let body = config.build_body(upstream_name, &protocol, stream);
+        match protocol {
+            ProbeProtocol::AnthropicMessages => {
+                if stream {
+                    match adapter.messages_stream(endpoint, body).await {
+                        Ok(mut response) => response.next().await.map(|_| ()).ok_or_else(|| {
+                            ProviderError::new(
+                                "Upstream returned an empty stream",
+                                ErrorKind::Other,
+                            )
+                        }),
+                        Err(error) => Err(error),
+                    }
+                } else {
+                    adapter.messages(endpoint, body).await.map(|_| ())
                 }
-            } else {
-                adapter.messages(endpoint, body).await.map(|_| ())
             }
-        } else if stream {
-            match adapter.chat_complete_stream(endpoint, test_body).await {
-                Ok(mut response) => response.next().await.map(|_| ()).ok_or_else(|| {
-                    ProviderError::new(
-                        "Upstream returned an empty stream",
-                        crate::provider::ErrorKind::Other,
-                    )
-                }),
-                Err(error) => Err(error),
+            ProbeProtocol::Responses => adapter
+                .relay(endpoint, "/v1/responses", body)
+                .await
+                .map(|_| ()),
+            ProbeProtocol::OpenaiChat | ProbeProtocol::Auto => {
+                if stream {
+                    match adapter.chat_complete_stream(endpoint, body).await {
+                        Ok(mut response) => response.next().await.map(|_| ()).ok_or_else(|| {
+                            ProviderError::new(
+                                "Upstream returned an empty stream",
+                                ErrorKind::Other,
+                            )
+                        }),
+                        Err(error) => Err(error),
+                    }
+                } else {
+                    adapter.chat_complete(endpoint, body).await.map(|_| ())
+                }
             }
-        } else {
-            adapter.chat_complete(endpoint, test_body).await.map(|_| ())
         }
     }
 

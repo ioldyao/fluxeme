@@ -1124,6 +1124,14 @@ pub fn admin_routes() -> Router<Arc<crate::server::AppState>> {
             axum::routing::get(settings::get_breaker_params).put(settings::set_breaker_params),
         )
         .route(
+            "/api/settings/probe-request",
+            axum::routing::get(settings::get_probe_request).put(settings::set_probe_request),
+        )
+        .route(
+            "/api/settings/probe-request/test",
+            axum::routing::post(settings::test_probe_request),
+        )
+        .route(
             "/api/gateway/config",
             axum::routing::get(settings::get_gateway_config_handler)
                 .put(settings::set_gateway_config_handler),

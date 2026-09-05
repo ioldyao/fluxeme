@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use crate::config::types::GatewayRuntimeConfig;
 use crate::server::AppState;
+use crate::service::health_probe::ProbeRequestConfig;
 
 use super::*;
 
@@ -357,6 +358,101 @@ pub(crate) async fn set_breaker_params(
         "long_fail_threshold": long_fail,
         "long_probe_interval_secs": long_interval,
     })))
+}
+
+// ── Probe request template ─────────────────────────────────────────
+
+/// GET /api/settings/probe-request — current probe request template plus the
+/// exact bodies that will be sent under each supported protocol.
+pub(crate) async fn get_probe_request(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:settings").await?;
+    let config = state.health_probe.get_request_config().await;
+    let example_model = "gpt-4o-mini";
+    let preview = |protocol: crate::service::health_probe::ProbeProtocol| {
+        let body = config.build_body(example_model, &protocol, false);
+        serde_json::to_string_pretty(&body).unwrap_or_default()
+    };
+    Ok(Json(serde_json::json!({
+        "config": config,
+        "previews": {
+            "openai_chat": preview(crate::service::health_probe::ProbeProtocol::OpenaiChat),
+            "anthropic_messages": preview(crate::service::health_probe::ProbeProtocol::AnthropicMessages),
+            "responses": preview(crate::service::health_probe::ProbeProtocol::Responses),
+        },
+    })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ProbeRequestReq {
+    prompt: String,
+    max_output_tokens: u32,
+    temperature: f64,
+    top_p: f64,
+    timeout_secs: u64,
+    #[serde(default)]
+    protocol: crate::service::health_probe::ProbeProtocol,
+}
+
+/// PUT /api/settings/probe-request — persist and validate the probe template.
+pub(crate) async fn set_probe_request(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ProbeRequestReq>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:settings").await?;
+    let config = ProbeRequestConfig {
+        prompt: req.prompt,
+        max_output_tokens: req.max_output_tokens,
+        temperature: req.temperature,
+        top_p: req.top_p,
+        timeout_secs: req.timeout_secs,
+        protocol: req.protocol,
+    };
+    config.validate().map_err(AdminError::bad_request)?;
+    state
+        .health_probe
+        .set_request_config(config.clone())
+        .await
+        .map_err(AdminError::internal)?;
+    // The probe loop re-reads the template on every cycle, so no routing
+    // reload / cross-instance invalidation is required.
+    Ok(Json(serde_json::json!({ "config": config })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ProbeTestReq {
+    model_id: String,
+    channel_id: String,
+    endpoint_id: Option<i64>,
+    #[serde(default)]
+    protocol: Option<crate::service::health_probe::ProbeProtocol>,
+}
+
+/// POST /api/settings/probe-request/test — send a one-off probe using the
+/// current template. Never mutates circuit-breaker state.
+pub(crate) async fn test_probe_request(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ProbeTestReq>,
+) -> Result<Json<Value>, AdminError> {
+    let session = require_session(&state.admin, &headers).await?;
+    check_perm(&state.authz, &session, "admin:settings").await?;
+    let result = state
+        .health_probe
+        .test_probe(
+            &req.model_id,
+            &req.channel_id,
+            req.endpoint_id,
+            req.protocol,
+        )
+        .await
+        .map_err(AdminError::bad_request)?;
+    Ok(Json(serde_json::json!(result)))
 }
 
 // ── Gateway Config ──────────────────────────────────────────────────

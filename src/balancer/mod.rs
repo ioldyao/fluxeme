@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-const PROBE_LEASE_SECS: u64 = 120;
+const PROBE_LEASE_SECS: u64 = 180;
 
 use crate::config::types::EndpointConfig;
 
@@ -445,6 +445,11 @@ impl CircuitBreaker {
             };
             current.failure_count = old.failure_count;
             current.last_failure = old.last_failure;
+            // Reloading routing configuration must not turn a long-unavailable
+            // endpoint back into a fast-recovery endpoint.  These fields are
+            // runtime health state, not breaker configuration.
+            current.consecutive_probe_failures = old.consecutive_probe_failures;
+            current.long_unavailable = old.long_unavailable;
             current.half_open_in_flight = false;
             current.probe_lease = None;
         }

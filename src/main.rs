@@ -483,17 +483,24 @@ async fn main() {
         instance_id.clone(),
     ));
 
-    // Automatic model health probes: probe all channel endpoints of every
-    // model on an admin-configurable interval (default 60s, stored in
+    // Automatic model health probes: probe all *healthy* channel endpoints of
+    // every model on an admin-configurable interval (default 60s, stored in
     // balancer_settings key "probe_interval_secs", clamped 10..=3600).
-    // The interval is re-read each cycle so changes apply without a
-    // restart. Only Open binding endpoints are probed for recovery; healthy
-    // endpoints remain available to traffic without periodic synthetic calls.
+    // The interval is re-read each cycle so changes apply without a restart.
+    // Open/HalfOpen endpoints are owned by the fast recovery cycle below; the
+    // breaker gates them with the long-unavailable slow interval, so the
+    // periodic cycle never bypasses that backoff.
     {
         let db = db.clone();
         let health_probe = health_probe.clone();
         tokio::spawn(async move {
+            // Re-read the interval each cycle (self-paced) so a settings
+            // change takes effect within one tick.
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut last_probe = tokio::time::Instant::now();
             loop {
+                interval.tick().await;
                 let interval_secs = db
                     .get_setting("probe_interval_secs")
                     .await
@@ -502,7 +509,10 @@ async fn main() {
                     .and_then(|v| v.parse::<u64>().ok())
                     .unwrap_or(60)
                     .clamp(10, 3600);
-                tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+                if last_probe.elapsed() < Duration::from_secs(interval_secs) {
+                    continue;
+                }
+                last_probe = tokio::time::Instant::now();
                 if let Err(e) = health_probe.probe_open_bindings().await {
                     tracing::warn!("Auto probe failed: {}", e);
                 }
