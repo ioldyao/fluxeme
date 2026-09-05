@@ -885,6 +885,9 @@ impl CoreBackend for PgBackend {
             "ALTER TABLE token_settlement_receivables ADD COLUMN IF NOT EXISTS lease_until TEXT",
             "ALTER TABLE token_settlement_receivables ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE token_request_reservations ADD COLUMN IF NOT EXISTS settlement_state TEXT NOT NULL DEFAULT 'reserved'",
+            // Normalize reservations released before settlement_state was kept in
+            // sync. Released reservations are terminal and non-chargeable.
+            "UPDATE token_request_reservations SET settlement_state = 'released' WHERE state = 'released' AND settlement_state = 'reserved'",
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS settlement_state TEXT NOT NULL DEFAULT 'settled'",
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS settled_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
             "ALTER TABLE billing_events ADD COLUMN IF NOT EXISTS outstanding_amount DOUBLE PRECISION NOT NULL DEFAULT 0",

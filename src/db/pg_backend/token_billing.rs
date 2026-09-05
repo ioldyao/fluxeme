@@ -1334,7 +1334,7 @@ impl TokenBillingBackend for PgBackend {
             .bind(&grant_id)
             .execute(&mut *tx)
             .await?;
-        query("UPDATE token_request_reservations SET actual_prompt_tokens = $1, actual_completion_tokens = $2, actual_package_units = $3, state = 'settled', reason = 'client disconnected after partial output', settled_at = $4 WHERE id = $5 AND state = 'released'")
+        query("UPDATE token_request_reservations SET actual_prompt_tokens = $1, actual_completion_tokens = $2, actual_package_units = $3, state = 'settled', settlement_state = 'settled', reason = 'client disconnected after partial output', settled_at = $4 WHERE id = $5 AND state = 'released'")
             .bind(prompt_tokens as i64)
             .bind(completion_tokens as i64)
             .bind(consume)
@@ -1728,7 +1728,12 @@ impl TokenBillingBackend for PgBackend {
                     .await?;
             }
         }
-        query("UPDATE token_request_reservations SET state = 'released', reason = $1, settled_at = $2 WHERE id = $3")
+        // A released reservation is a terminal, non-chargeable state: the
+        // authorization hold is gone and no settlement will follow. Keep
+        // settlement_state consistent with state so billing checks and
+        // diagnostics never see a stale "pending" flag on an expired or
+        // released reservation.
+        query("UPDATE token_request_reservations SET state = 'released', settlement_state = 'released', reason = $1, settled_at = $2 WHERE id = $3")
             .bind(reason)
             .bind(chrono::Utc::now().to_rfc3339())
             .bind(reservation_id)

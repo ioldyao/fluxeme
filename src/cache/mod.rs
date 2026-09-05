@@ -705,11 +705,18 @@ pub async fn start_billing_backlog_drain(
             {
                 Ok(_) => processed.push(entry_id.clone()),
                 Err(e) => {
-                    tracing::warn!(
-                        request_id = record.request_id,
-                        error = %e.0,
-                        "Backlog drain retry failed — will retry next cycle"
-                    );
+                    if e.0 == "token settlement pending; retry usage billing" {
+                        tracing::debug!(
+                            request_id = record.request_id,
+                            "Backlog drain: settlement still pending — will retry next cycle"
+                        );
+                    } else {
+                        tracing::warn!(
+                            request_id = record.request_id,
+                            error = %e.0,
+                            "Backlog drain retry failed — will retry next cycle"
+                        );
+                    }
                 }
             }
         }

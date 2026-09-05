@@ -190,12 +190,21 @@ async fn billing_worker(
                 }
             }
             Err(error) => {
-                tracing::error!(
-                    worker = id,
-                    batch_size = batch.len(),
-                    error = %error.0,
-                    "Usage billing transaction failed — moving billing batch to Redis backlog"
-                );
+                let pending_settlement = error.0 == "token settlement pending; retry usage billing";
+                if pending_settlement {
+                    tracing::info!(
+                        worker = id,
+                        batch_size = batch.len(),
+                        "Usage billing deferred until token settlement completes"
+                    );
+                } else {
+                    tracing::error!(
+                        worker = id,
+                        batch_size = batch.len(),
+                        error = %error.0,
+                        "Usage billing transaction failed — moving billing batch to Redis backlog"
+                    );
+                }
                 for record in batch {
                     cache.backlog_billing_record_reliably(record).await;
                 }
