@@ -514,6 +514,7 @@ const zh: Record<string, string> = {
   'usage.personalKey': '个人 Key',
   'usage.teamKey': '团队 Key',
   'usage.apiFormat': '请求格式',
+  'usage.endpointPath': '请求端点',
   'usage.channelName': '渠道名称',
   'usage.channelId': '渠道ID',
   'usage.endpointId': '端点 ID',

@@ -514,6 +514,7 @@ const en: Record<string, string> = {
   'usage.personalKey': 'Personal Key',
   'usage.teamKey': 'Team Key',
   'usage.apiFormat': 'API Format',
+  'usage.endpointPath': 'Request endpoint',
   'usage.channelName': 'Channel Name',
   'usage.channelId': 'Channel ID',
   'usage.endpointId': 'Endpoint ID',

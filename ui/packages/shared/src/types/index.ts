@@ -206,6 +206,9 @@ export interface UsageRecord {
   cache_write_price?: number;
   original_model?: string;
   client_ip?: string | null;
+  /** HTTP method and user-requested endpoint path (e.g. /v1/messages). */
+  method?: string;
+  path?: string;
   /** Team scope. Null means the request used a personal API key. */
   team_id?: string | null;
   billing_payment_mode?: 'metered' | 'prepaid' | null;
