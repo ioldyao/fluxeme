@@ -350,7 +350,7 @@ export default function UsageLog() {
                   <table className="w-full min-w-[1720px] table-fixed border-collapse text-xs">
                     <colgroup>
                       <col className="w-[115px]" /><col className="w-[80px]" /><col className="w-[105px]" /><col className="w-[120px]" />
-                      <col className="w-[90px]" /><col className="w-[174px]" /><col className="w-[72px]" />
+                      <col className="w-[90px]" /><col className="w-[198px]" /><col className="w-[72px]" />
                       <col className="w-[95px]" /><col className="w-[78px]" /><col className="w-[62px]" />
                       <col className="w-[90px]" /><col className="w-[88px]" /><col className="w-[74px]" /><col className="w-[90px]" />
                       <col className="w-[88px]" /><col className="w-[102px]" /><col className="w-[88px]" /><col className="w-[95px]" />
