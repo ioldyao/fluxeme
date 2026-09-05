@@ -98,7 +98,8 @@ billing_payment_mode / wallet_amount
 
 - [x] Phase 1 观测基础设施：事件类型 + CH 三表 + Redis Stream + GatewayEventRecorder
       （提交 `11d3678`，旧 usage_events/billing 未动）
-- [ ] Phase 2 Request 生命周期：request_id 贯穿 + RequestLifecycle + handler/scheduler 早期错误
+- [x] Phase 2 Request 生命周期：request_id 贯穿 + RequestLifecycle + handler/scheduler 早期错误
+      （提交 `ec34c67`，133 测试通过；含 streaming EOF/disconnect、Drop 兜底、recorder 入 AppState）
 - [ ] Phase 3 Attempt 生命周期：AttemptLifecycle + retry/fallback/timeout
 - [ ] Phase 4 Streaming 生命周期
 - [ ] Phase 5 管理端 /admin/usage 切 Request Event + Attempts 时间线
