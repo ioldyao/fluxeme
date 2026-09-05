@@ -104,8 +104,18 @@ billing_payment_mode / wallet_amount
       （提交 `ccb50fd`，每次真实 upstream invocation 一条 Attempt Event）
 - [x] Phase 4 Streaming 生命周期
       （提交 `70c00da` + `c761894`，136 测试通过；含 responses 流式路径）
-- [ ] Phase 5 管理端 /admin/usage 切 Request Event + Attempts 时间线
+- [x] Phase 5 管理端 /admin/usage 切 Request Event + Attempts 时间线
+      （提交 `86040e2` + `a0b2e2b`：`/admin/usage/requests` 列表/详情/attempts 端点；
+      UsageLog 列表切 Request Log，状态徽章 + 错误类型 + attempt 数列；详情 Attempts 时间线；
+      图表 Tab 暂留 usage_events）
 - [ ] Phase 6 测试 + 迁移（exactly-once、retry/fallback、disconnect、旧链路兼容）
+
+## 迁移说明（待定）
+
+- 新表 `gateway_request_events` / `gateway_attempt_events` 从部署起开始写入；
+  旧的 `usage_events` 历史数据不会自动出现在新管理端列表中。
+- 如需历史连续性，可提供一次性 backfill SQL 把 `usage_events` 映射回填到
+  `gateway_request_events`（错误字段留空，status 由 status_code 推断）。是否回填待用户确认。
 
 ## 测试不变量
 
