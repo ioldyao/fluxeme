@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { useUsageDetail, useUsageRequestDetail, useUsageRequestAttempts } from '@fluxeme/shared/src/api/usage';
+import { useUsageDetail, useUsageRequestDetail, useUsageRequestAttempts, type UsageRequest } from '@fluxeme/shared/src/api/usage';
 import { useChannels } from '@fluxeme/shared/src/api/channels';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@fluxeme/shared/src/components/ui/dialog';
 import { parseTimestamp, formatTime } from '@fluxeme/shared/src/lib/date';
@@ -64,6 +64,7 @@ function formatDuration(ms: number) {
  *  actually hit, so a retried request shows each route it took. */
 function buildLifecycle(
   record: UsageRecord,
+  request: UsageRequest | null | undefined,
   t: TFunction,
   attempts: UsageRequestAttempt[] | undefined,
   channelNameById: Map<string, string>,
@@ -121,6 +122,10 @@ function buildLifecycle(
   // 3. Route resolved — the channel and endpoint this request was routed to.
   if (record.channel_id || record.endpoint_url) {
     push('ok', t('usage.lifecycleRouteResolved'), 50, routeDetail());
+  }
+
+  if (record.original_model && record.original_model !== record.model && request?.model_mapping_rule) {
+    push('ok', t('usage.lifecycleModelMapping'), 51, `${record.original_model}\n↓\n${record.model}\n${t('usage.lifecycleMatchedRule')}: ${request.model_mapping_rule}`);
   }
 
   // 4. Upstream attempts — each shows its own channel + endpoint + result.
@@ -369,7 +374,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
   const channelName = record ? (channelNameById.get(record.channel_id) ?? record.channel_id) : '—';
   const totalTokens = record ? record.prompt_tokens + record.cache_hit_input_tokens + record.completion_tokens : 0;
   const formattedTotalTokens = totalTokens.toLocaleString();
-  const lifecycleEvents = record ? buildLifecycle(record, t, attempts, channelNameById) : [];
+  const lifecycleEvents = record ? buildLifecycle(record, request, t, attempts, channelNameById) : [];
   const userMessages = record ? extractUserMessages(record.request_body) : [];
   const { thinking: respThinking, content: respContent } = record
     ? extractResponseParts(record.response_body)
@@ -407,7 +412,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                     </button>
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
-                    <span className="font-medium text-foreground">{record.model}</span><span>·</span><span>{record.api_format ?? '—'}</span><span>·</span><span>{record.user_name}</span><span>·</span><span>{record.api_key_name ?? '—'}</span>
+                    <span className="font-medium text-foreground">{record.original_model && record.original_model !== record.model ? `${record.original_model} → ${record.model}` : record.model}</span><span>·</span><span>{record.api_format ?? '—'}</span><span>·</span><span>{record.user_name}</span><span>·</span><span>{record.api_key_name ?? '—'}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 text-right">
@@ -450,7 +455,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                   {[[t('table.user'),record.user_name],[t('usage.apiKey'),record.api_key_name ?? '—'],[t('usage.keyScope'),record.team_id ? t('usage.teamKey') : t('usage.personalKey')],[t('usage.apiFormat'),record.api_format ?? '—'],[t('usage.endpointPath'),record.path ?? '—'],[t('usage.clientIp'),record.client_ip ?? '—']].map(([k,v]) => <div key={k} className="flex justify-between gap-3 border-b border-border/60 pb-2 last:border-0"><span className="text-muted-foreground">{k}</span><b className="max-w-[65%] break-all text-right">{v}</b></div>)}
                 </div></section>
                 <section className="rounded-xl border bg-card p-4"><h4 className="mb-3 text-sm font-semibold">{t('usage.routeInfo')}</h4><div className="space-y-2 text-xs">
-                  {[[t('table.model'),record.model],[t('usage.channel'),channelName],[t('usage.channelId'),record.channel_id ?? '—'],[t('usage.endpointId'),record.endpoint_id != null ? `#${record.endpoint_id}` : '—'],['Endpoint',record.endpoint_url ?? '—']].map(([k,v]) => <div key={k} className="flex justify-between gap-3 border-b border-border/60 pb-2 last:border-0"><span className="text-muted-foreground">{k}</span><b className="max-w-[65%] break-all text-right">{v}</b></div>)}
+                  {[[t('usage.requestedModel'),request?.requested_model ?? record.model],[t('usage.mappedModel'),record.model],...(request?.model_mapping_rule ? [[t('usage.mappingRule'), request.model_mapping_rule] as [string, string]] : []),[t('usage.channel'),channelName],[t('usage.channelId'),record.channel_id ?? '—'],[t('usage.endpointId'),record.endpoint_id != null ? `#${record.endpoint_id}` : '—'],['Endpoint',record.endpoint_url ?? '—']].map(([k,v]) => <div key={k} className="flex justify-between gap-3 border-b border-border/60 pb-2 last:border-0"><span className="text-muted-foreground">{k}</span><b className="max-w-[65%] break-all text-right">{v}</b></div>)}
                 </div></section>
                 <section className="rounded-xl border bg-card p-4"><h4 className="mb-3 text-sm font-semibold">{t('usage.billingMode')}</h4><div className="flex justify-between text-xs"><span className="text-muted-foreground">{t('usage.billingMode')}</span><b>{record.billing_payment_mode === 'prepaid' ? t('usage.prepaid') : t('usage.metered')}</b></div></section>
               </aside>

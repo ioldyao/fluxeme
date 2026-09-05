@@ -114,6 +114,7 @@ pub struct GatewayRequestEventRow {
     pub user_agent: Option<String>,
     pub requested_model: String,
     pub resolved_model: Option<String>,
+    pub model_mapping_rule: Option<String>,
     pub channel_id: Option<String>,
     pub endpoint_id: Option<i64>,
     pub endpoint_url: Option<String>,
@@ -208,6 +209,7 @@ impl From<crate::observability::gateway_events::GatewayRequestEvent> for Gateway
             user_agent: e.user_agent,
             requested_model: e.requested_model,
             resolved_model: e.resolved_model,
+            model_mapping_rule: e.model_mapping_rule,
             channel_id: e.channel_id,
             endpoint_id: e.endpoint_id,
             endpoint_url: e.endpoint_url,
@@ -627,6 +629,7 @@ impl ClickHouseBackend {
             api_format String DEFAULT 'unknown', stream UInt8 DEFAULT 0,\
             client_ip Nullable(String), user_agent Nullable(String),\
             requested_model String DEFAULT '', resolved_model Nullable(String),\
+            model_mapping_rule Nullable(String),\
             channel_id Nullable(String), endpoint_id Nullable(Int64),\
             endpoint_url Nullable(String), upstream_model Nullable(String),\
             provider Nullable(String),\
@@ -789,6 +792,7 @@ impl ClickHouseBackend {
             "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS user_agent Nullable(String)",
             "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS requested_model String DEFAULT ''",
             "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS resolved_model Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS model_mapping_rule Nullable(String)",
             "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS channel_id Nullable(String)",
             "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS endpoint_id Nullable(Int64)",
             "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS endpoint_url Nullable(String)",
@@ -1921,7 +1925,7 @@ impl ClickHouseBackend {
         } else {
             format!("WHERE {}", all_conditions.join(" AND "))
         };
-        let sql = format!("SELECT toUInt32(timestamp) AS timestamp, request_id, user_id, user_name, team_id, api_key_id, api_key_name, route_id, method, path, api_format, stream, client_ip, user_agent, requested_model, resolved_model, channel_id, endpoint_id, endpoint_url, upstream_model, provider, status, status_code, error_stage, error_kind, error_code, error_message, attempt_count, successful_attempt, prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens, total_tokens, total_latency_ms, ttft_ms, client_disconnected, termination_reason, billing_payment_mode, wallet_amount, bytes_in FROM gateway_request_events {} ORDER BY timestamp DESC LIMIT ? OFFSET ?", where_clause);
+        let sql = format!("SELECT toUInt32(timestamp) AS timestamp, request_id, user_id, user_name, team_id, api_key_id, api_key_name, route_id, method, path, api_format, stream, client_ip, user_agent, requested_model, resolved_model, model_mapping_rule, channel_id, endpoint_id, endpoint_url, upstream_model, provider, status, status_code, error_stage, error_kind, error_code, error_message, attempt_count, successful_attempt, prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens, total_tokens, total_latency_ms, ttft_ms, client_disconnected, termination_reason, billing_payment_mode, wallet_amount, bytes_in FROM gateway_request_events {} ORDER BY timestamp DESC LIMIT ? OFFSET ?", where_clause);
         let mut q = self.client.query(&sql);
         let mut all_binds = model_binds;
         all_binds.extend(binds);
@@ -2805,6 +2809,7 @@ mod tests {
             user_agent: None,
             requested_model: "gpt-4o".to_string(),
             resolved_model: Some("gpt-4o".to_string()),
+            model_mapping_rule: None,
             channel_id: Some("c1".to_string()),
             endpoint_id: Some(1),
             endpoint_url: Some("https://up.example".to_string()),

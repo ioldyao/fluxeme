@@ -93,6 +93,7 @@ impl RequestError {
 #[derive(Clone, Debug)]
 struct LifecycleDraft {
     resolved_model: Option<String>,
+    model_mapping_rule: Option<String>,
     channel_id: Option<String>,
     endpoint_id: Option<i64>,
     endpoint_url: Option<String>,
@@ -113,6 +114,7 @@ impl Default for LifecycleDraft {
     fn default() -> Self {
         Self {
             resolved_model: None,
+            model_mapping_rule: None,
             channel_id: None,
             endpoint_id: None,
             endpoint_url: None,
@@ -279,6 +281,10 @@ impl RequestLifecycle {
         self.finalized.load(Ordering::SeqCst)
     }
 
+    pub fn set_model_mapping_rule(&self, rule: Option<String>) {
+        self.draft.lock().unwrap().model_mapping_rule = rule;
+    }
+
     /// Record the resolved (post-routing) model, channel and endpoint.
     pub fn set_route(
         &self,
@@ -421,6 +427,7 @@ impl RequestLifecycle {
             user_agent: self.meta.user_agent.clone(),
             requested_model: self.identity.requested_model.clone(),
             resolved_model: draft.resolved_model.clone(),
+            model_mapping_rule: draft.model_mapping_rule.clone(),
             channel_id: draft.channel_id.clone(),
             endpoint_id: draft.endpoint_id,
             endpoint_url: draft.endpoint_url.clone(),

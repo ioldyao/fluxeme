@@ -35,10 +35,9 @@ pub struct RoutePlan {
 #[derive(Debug, Clone, Default)]
 pub struct RouteContext {
     pub resolved_model: String,
-    /// Upstream alias constraint from a system rule (None = unconstrained).
     pub upstream_model: Option<String>,
-    /// Channel pinned by a system rule (None = all bound endpoints eligible).
     pub channel_scope: Option<String>,
+    pub model_mapping_rule: Option<String>,
 }
 
 pub struct RoutingService {
@@ -674,6 +673,7 @@ impl RoutingService {
     ) -> Result<RouteContext, RouteError> {
         let _snapshot_guard = self.snapshot_lock.read().unwrap_or_else(|e| e.into_inner());
         let mut model_name = model.to_string();
+        let mut model_mapping_rule = None;
         let chs = self.channels.read().unwrap_or_else(|e| e.into_inner());
         let models = self.models.read().unwrap_or_else(|e| e.into_inner());
         let rules = self.rules.read().unwrap_or_else(|e| e.into_inner());
@@ -691,6 +691,7 @@ impl RoutingService {
                 && match_pattern(&model_name, &rule.source_model)
             {
                 model_name = rule.target_model.clone();
+                model_mapping_rule = Some(format!("{} → {}", rule.source_model, rule.target_model));
             }
         }
 
@@ -742,6 +743,15 @@ impl RoutingService {
             for rule in &matched_system {
                 if !rule.target_model.is_empty() {
                     model_name = rule.target_model.clone();
+                    model_mapping_rule = Some(format!(
+                        "{} → {}",
+                        if rule.source_model.is_empty() {
+                            "*"
+                        } else {
+                            &rule.source_model
+                        },
+                        rule.target_model
+                    ));
                     break;
                 }
             }
@@ -779,6 +789,7 @@ impl RoutingService {
             resolved_model: model_name,
             upstream_model,
             channel_scope,
+            model_mapping_rule,
         })
     }
 }

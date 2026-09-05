@@ -151,6 +151,7 @@ impl SchedulerService {
         };
         let resolved_model = route.resolved_model;
         let upstream_model = route.upstream_model;
+        let model_mapping_rule = route.model_mapping_rule;
         let channel_scope = route.channel_scope;
         helpers::authorize_effective_model(&auth, &resolved_model).map_err(|e| {
             let classified = helpers::ClassifiedError::from(e);
@@ -192,9 +193,7 @@ impl SchedulerService {
             }
         };
 
-        // Route facts for the request lifecycle (resolved model, channel,
-        // endpoint, provider). Set once the endpoint is selected; the request
-        // event carries these even when a later step fails.
+        lifecycle.set_model_mapping_rule(model_mapping_rule.clone());
         lifecycle.set_route(
             resolved_model.clone(),
             Some(dispatch.channel_id.clone()),
