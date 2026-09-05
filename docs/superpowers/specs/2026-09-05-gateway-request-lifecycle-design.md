@@ -78,10 +78,10 @@ billing_payment_mode / wallet_amount
 - 在 handler 认证成功后立即创建（早于 trim_model / 限流 / 路由）。
 - 持有 draft 事件 + `AtomicBool finalized` + 非阻塞 `GatewayEventRecorder`。
 - `finalize_*()` 方法（success / rejected / failed / cancelled）只能成功一次。
-- **Drop 兜底**：未 finalize 则生成 `failed / 500 / gateway / unfinalized_request`。
+- **Drop 兜底**：正常控制流中未 finalize 则生成 `failed / 500 / gateway / unfinalized_request`。
   Drop 只做 `try_send`（非阻塞）交给后台 EventWriter → Redis Stream → ClickHouse；
-  不把 Drop 当作 crash-safe 持久化（SIGKILL/断电仍可能丢进程内未投递事件，第一版
-  不引入 WAL）。
+  它不是 crash-safe durable guarantee：panic=abort、SIGKILL、进程崩溃、断电，或有界
+  队列已满时，事件仍可能丢失（第一版不引入 WAL）。
 
 ### AttemptLifecycle
 
