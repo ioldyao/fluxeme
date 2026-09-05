@@ -14,6 +14,7 @@ import {
 } from 'recharts';
 import { usePublicModels } from '@fluxeme/shared/src/api/models';
 import { useChannels } from '@fluxeme/shared/src/api/channels';
+import { DateRangePicker } from '@fluxeme/shared/src/components/ui/date-range-picker';
 import { fetchRoutingHistory } from '@fluxeme/shared/src/api/routing';
 import type {
   RoutingHistoryChannelSeries,
@@ -26,7 +27,7 @@ const CHANNEL_COLORS = [
   'var(--chart-5)', 'var(--sidebar-primary)', 'var(--destructive)',
 ];
 
-type Preset = '1h' | '24h' | '7d' | '30d' | 'custom';
+type Preset = 'today' | '7d' | '30d' | 'all';
 type ChartPoint = { bucket: string; label: string; [channelId: string]: string | number | null };
 
 function formatNumber(value: number | null | undefined, locale = 'zh-CN'): string {
@@ -47,11 +48,16 @@ function toApiDate(value: string): string {
   return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString();
 }
 
-function presetRange(preset: Exclude<Preset, 'custom'>): { start: string; end: string } {
+function presetRange(preset: Preset): { start: string; end: string } {
   const end = new Date();
-  const duration = { '1h': 3600000, '24h': 86400000, '7d': 7 * 86400000, '30d': 30 * 86400000 }[preset];
-  const start = new Date(end.getTime() - duration);
-  return { start: start.toISOString(), end: end.toISOString() };
+  if (preset === 'today') {
+    return {
+      start: new Date(end.getFullYear(), end.getMonth(), end.getDate()).toISOString(),
+      end: end.toISOString(),
+    };
+  }
+  const duration = preset === '7d' ? 7 : 30;
+  return { start: new Date(end.getTime() - duration * 86400000).toISOString(), end: end.toISOString() };
 }
 
 function formatBucket(bucket: string, unit: RoutingHistoryResponse['bucket_unit'], locale = 'zh-CN'): string {
@@ -115,11 +121,10 @@ export default function RoutingHistory() {
   const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US';
   const { data: models } = usePublicModels();
   const { data: channels } = useChannels();
-  const [preset, setPreset] = useState<Preset>('24h');
+  const [preset, setPreset] = useState<Preset>('7d');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [model, setModel] = useState('all');
-  const [appliedRange, setAppliedRange] = useState(() => presetRange('24h'));
   const [data, setData] = useState<RoutingHistoryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -140,43 +145,68 @@ export default function RoutingHistory() {
     }
   }, [model]);
 
-  useEffect(() => { void load(appliedRange); }, [appliedRange, load]);
+  // Chart time window — mirrors the usage-log chart selector (quick tabs +
+  // DateRangePicker). Presets are captured at selection time so the range
+  // stays fixed while the page polls; custom dates take precedence.
+  const range = useMemo<{ start: string; end: string }>(() => {
+    if (customStart || customEnd) {
+      return {
+        start: customStart ? new Date(customStart).toISOString() : presetRange('7d').start,
+        end: customEnd ? new Date(customEnd).toISOString() : new Date().toISOString(),
+      };
+    }
+    return presetRange(preset);
+  }, [preset, customStart, customEnd]);
 
-  const applyPreset = (next: Exclude<Preset, 'custom'>) => { setPreset(next); setAppliedRange(presetRange(next)); };
-  const applyCustom = () => {
-    if (!customStart || !customEnd || new Date(customStart) >= new Date(customEnd)) return;
-    setPreset('custom');
-    setAppliedRange({ start: customStart, end: customEnd });
-  };
+  useEffect(() => { void load(range); }, [range, load]);
+
+  const applyPreset = (key: Preset) => { setPreset(key); setCustomStart(''); setCustomEnd(''); };
 
   const volumeData = useMemo(() => data ? chartData(data, false, locale) : [], [data, locale]);
   const successData = useMemo(() => data ? chartData(data, true, locale) : [], [data, locale]);
   const channelIds = useMemo(() => data ? Object.keys(data.series).sort() : [], [data]);
   const total = data?.totals.requests ?? 0;
   const rows = useMemo(() => data ? [...data.summary].sort((a, b) => b.requests - a.requests) : [], [data]);
-  const presets: Array<{ key: Exclude<Preset, 'custom'>; label: string }> = [
-    { key: '1h', label: t('routingFlow.history1h') }, { key: '24h', label: t('routingFlow.history24h') },
-    { key: '7d', label: t('routingFlow.history7d') }, { key: '30d', label: t('routingFlow.history30d') },
-  ];
 
   return (
     <div className="space-y-5 animate-fade-in">
       <header><h1 className="text-2xl font-semibold tracking-tight">{t('routingHistory.title')}</h1><p className="mt-1 text-sm text-muted-foreground">{t('routingHistory.subtitle')}</p></header>
 
       <section className="rounded-xl border border-border bg-card p-4 shadow-sm" aria-label={t('routingHistory.filters')}>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex rounded-lg bg-muted p-1" role="group" aria-label={t('routingHistory.quickRanges')}>
-            {presets.map((item) => <button key={item.key} type="button" onClick={() => applyPreset(item.key)} className={`rounded-md px-3 py-1.5 text-xs transition ${preset === item.key ? 'bg-background font-semibold text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>{item.label}</button>)}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-1" role="group" aria-label={t('routingHistory.quickRanges')}>
+            {(['today', '7d', '30d', 'all'] as const).map((key) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => applyPreset(key)}
+                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                  (!customStart && !customEnd && preset === key)
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                }`}
+              >
+                {key === 'today' ? t('usage.dateToday') : key === '7d' ? t('usage.date7d') : key === '30d' ? t('usage.date30d') : t('usage.dateAll')}
+              </button>
+            ))}
           </div>
-          <label className="space-y-1 text-xs text-muted-foreground"><span>{t('routingHistory.startTimeHint')}</span><input aria-label={t('routingHistory.startTime')} type="datetime-local" value={customStart} onChange={(event) => setCustomStart(event.target.value)} className="block h-9 rounded-md border border-border bg-background px-2 text-xs text-foreground" /></label>
-          <label className="space-y-1 text-xs text-muted-foreground"><span>{t('routingHistory.endTime')}</span><input aria-label={t('routingHistory.endTime')} type="datetime-local" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} className="block h-9 rounded-md border border-border bg-background px-2 text-xs text-foreground" /></label>
-          <button type="button" onClick={applyCustom} disabled={!customStart || !customEnd} className="h-9 rounded-md bg-primary px-4 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">{t('routingHistory.apply')}</button>
-          <label className="ml-auto space-y-1 text-xs text-muted-foreground"><span>{t('routingHistory.model')}</span><select aria-label={t('routingHistory.modelFilter')} value={model} onChange={(event) => setModel(event.target.value)} className="block h-9 min-w-44 rounded-md border border-border bg-background px-2 text-xs text-foreground"><option value="all">{t('routingHistory.allPublishedModels')}</option>{(models ?? []).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label>
+          <div className="ml-auto flex w-full items-center sm:w-auto">
+            <DateRangePicker
+              start={customStart}
+              end={customEnd}
+              onStartChange={setCustomStart}
+              onEndChange={setCustomEnd}
+              startPlaceholder={t('usage.startTime')}
+              endPlaceholder={t('usage.endTime')}
+              className="w-full sm:w-auto"
+            />
+          </div>
+          <label className="space-y-1 text-xs text-muted-foreground"><span>{t('routingHistory.model')}</span><select aria-label={t('routingHistory.modelFilter')} value={model} onChange={(event) => setModel(event.target.value)} className="block h-9 min-w-44 rounded-md border border-border bg-background px-2 text-xs text-foreground"><option value="all">{t('routingHistory.allPublishedModels')}</option>{(models ?? []).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground"><span className="rounded-full bg-muted px-2.5 py-1">{t('routingHistory.dataSource')}</span><span className="rounded-full bg-muted px-2.5 py-1">{t('routingHistory.timezone')}</span>{data ? <span className="rounded-full bg-muted px-2.5 py-1">{t('routingHistory.granularity', { value: data.bucket_unit === 'day' ? t('routingHistory.byDay') : t('routingHistory.byHour') })}</span> : null}{loading && data ? <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-sidebar-primary"><span className="h-2.5 w-2.5 animate-spin rounded-full border border-sidebar-primary/30 border-t-sidebar-primary" />{t('routingHistory.updating')}</span> : null}{error && data ? <span className="rounded-full bg-destructive/10 px-2.5 py-1 text-destructive">{t('routingHistory.staleData')}</span> : null}</div>
       </section>
 
-      {!data || data.totals.requests === 0 ? (loading ? <div className="rounded-xl border border-dashed border-border p-12 text-center text-sm text-muted-foreground">{t('routingHistory.loading')}</div> : error ? <div className="rounded-xl border border-dashed border-destructive/50 bg-destructive/5 p-10 text-center"><p className="text-sm text-destructive">{t('routingHistory.queryFailed')}</p><button type="button" onClick={() => void load(appliedRange)} className="mt-3 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-muted">{t('routingHistory.retry')}</button></div> : <div className="rounded-xl border border-dashed border-border p-12 text-center text-sm text-muted-foreground">{t('routingHistory.noData')}</div>) : (
+      {!data || data.totals.requests === 0 ? (loading ? <div className="rounded-xl border border-dashed border-border p-12 text-center text-sm text-muted-foreground">{t('routingHistory.loading')}</div> : error ? <div className="rounded-xl border border-dashed border-destructive/50 bg-destructive/5 p-10 text-center"><p className="text-sm text-destructive">{t('routingHistory.queryFailed')}</p><button type="button" onClick={() => void load(range)} className="mt-3 rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-muted">{t('routingHistory.retry')}</button></div> : <div className="rounded-xl border border-dashed border-border p-12 text-center text-sm text-muted-foreground">{t('routingHistory.noData')}</div>) : (
         <>
           <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{[
             [t('routingHistory.totalRequests'), formatNumber(data.totals.requests), t('routingHistory.totalRequestsHint')], [t('routingHistory.successRate'), formatPercent(data.totals.success_rate_percent), t('routingHistory.successRateHint')],
