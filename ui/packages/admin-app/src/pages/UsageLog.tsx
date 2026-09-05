@@ -347,53 +347,52 @@ export default function UsageLog() {
                 </div>
               ) : records.length > 0 ? (
                 <div className="overflow-x-auto rounded-xl border border-border">
-                  <table className="w-full min-w-[1920px] table-fixed border-collapse text-sm">
+                  <table className="w-full min-w-[1760px] table-fixed border-collapse text-xs">
                     <colgroup>
-                      <col className="w-[130px]" /><col className="w-[90px]" /><col className="w-[160px]" /><col className="w-[160px]" />
-                      <col className="w-[110px]" /><col className="w-[230px]" /><col className="w-[90px]" />
-                      <col className="w-[120px]" /><col className="w-[100px]" /><col className="w-[90px]" />
-                      <col className="w-[100px]" /><col className="w-[100px]" />
-                      <col className="w-[90px]" /><col className="w-[100px]" /><col className="w-[130px]" />
-                      <col className="w-[140px]" /><col className="w-[110px]" /><col className="w-[110px]" />
-                      <col className="w-[150px]" /><col className="w-[90px]" />
+                      <col className="w-[120px]" /><col className="w-[82px]" /><col className="w-[125px]" /><col className="w-[125px]" />
+                      <col className="w-[95px]" /><col className="w-[180px]" /><col className="w-[78px]" />
+                      <col className="w-[105px]" /><col className="w-[85px]" /><col className="w-[75px]" />
+                      <col className="w-[90px]" /><col className="w-[90px]" /><col className="w-[75px]" /><col className="w-[90px]" />
+                      <col className="w-[90px]" /><col className="w-[105px]" /><col className="w-[90px]" /><col className="w-[100px]" />
+                      <col className="w-[125px]" /><col className="w-[75px]" />
                     </colgroup>
                     <thead>
                       <tr className="border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground">
-                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('table.time')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-center">{t('table.status')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('table.user')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('table.apiKey')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.billingMode')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('table.model')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.apiFormat')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.channelName')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.channelId')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.endpointId')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{t('usage.uncachedInput')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{t('usage.cachedInput')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{t('dash.completion')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{t('usage.totalTokens')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-right tabular-nums">资源包 units</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-right tabular-nums">钱包实扣</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{t('table.latency')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.clientIp')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.errorKind')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-right">{t('usage.attemptCount')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-left">{t('table.time')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-center">{t('table.status')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-left">{t('table.user')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-left">{t('table.apiKey')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-left">{t('usage.billingMode')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-left">{t('table.model')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-left">{t('usage.apiFormat')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-left">{t('usage.channelName')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-left">{t('usage.channelId')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-left">{t('usage.endpointId')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{t('usage.uncachedInput')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{t('usage.cachedInput')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{t('dash.completion')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{t('usage.totalTokens')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-right tabular-nums">资源包 units</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-right tabular-nums">钱包实扣</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{t('table.latency')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-left">{t('usage.clientIp')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-left">{t('usage.errorKind')}</th>
+                        <th className="whitespace-nowrap px-2 py-2 text-right">{t('usage.attemptCount')}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {records.map((r) => (
                         <tr key={r.request_id} className="border-b last:border-0 hover:bg-muted/50 cursor-pointer" onClick={() => setDetailId(r.request_id)}>
-                          <td className="whitespace-nowrap px-3 py-3 text-xs text-muted-foreground">
+                          <td className="whitespace-nowrap px-2 py-2 text-xs text-muted-foreground">
                             {formatTimestamp(r.timestamp)}
                           </td>
-                          <td className="whitespace-nowrap px-3 py-3 text-center" aria-label={r.status}>
+                          <td className="whitespace-nowrap px-2 py-2 text-center" aria-label={r.status}>
                             <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${statusBadgeClass(r.status)}`}>{r.status}</span>
                           </td>
-                          <td className="max-w-[160px] truncate whitespace-nowrap px-3 py-3" title={r.user_name ?? undefined}>{r.user_name}</td>
-                          <td className="max-w-[160px] truncate whitespace-nowrap px-3 py-3" title={r.api_key_name ?? undefined}>{r.api_key_name ?? '—'}</td>
-                          <td className="whitespace-nowrap px-3 py-3"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${r.billing_payment_mode === 'prepaid' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{r.billing_payment_mode === 'prepaid' ? t('usage.prepaid') : t('usage.metered')}</span></td>
-                          <td className="max-w-[230px] whitespace-nowrap px-3 py-3">
+                          <td className="max-w-[160px] truncate whitespace-nowrap px-2 py-2" title={r.user_name ?? undefined}>{r.user_name}</td>
+                          <td className="max-w-[160px] truncate whitespace-nowrap px-2 py-2" title={r.api_key_name ?? undefined}>{r.api_key_name ?? '—'}</td>
+                          <td className="whitespace-nowrap px-2 py-2"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${r.billing_payment_mode === 'prepaid' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{r.billing_payment_mode === 'prepaid' ? t('usage.prepaid') : t('usage.metered')}</span></td>
+                          <td className="max-w-[230px] whitespace-nowrap px-2 py-2">
                             <span className="inline-flex max-w-full min-w-0 items-center gap-1">
                               <span className="min-w-0 truncate" title={(r.resolved_model || r.requested_model)}>{(r.resolved_model || r.requested_model)}</span>
                               {r.stream ? (
@@ -407,29 +406,29 @@ export default function UsageLog() {
                               )}
                             </span>
                           </td>
-                          <td className="whitespace-nowrap px-3 py-3 font-mono text-xs">{r.api_format ?? '—'}</td>
-                          <td className="max-w-[120px] truncate whitespace-nowrap px-3 py-3" title={channelNameById.get(r.channel_id ?? '') ?? undefined}>
+                          <td className="whitespace-nowrap px-2 py-2 font-mono text-xs">{r.api_format ?? '—'}</td>
+                          <td className="max-w-[120px] truncate whitespace-nowrap px-2 py-2" title={channelNameById.get(r.channel_id ?? '') ?? undefined}>
                             {channelNameById.get(r.channel_id ?? '') ?? '—'}
                           </td>
-                          <td className="whitespace-nowrap px-3 py-3 font-mono text-xs">{r.channel_id ?? '—'}</td>
-                          <td className="whitespace-nowrap px-3 py-3 font-mono text-xs">{r.endpoint_id ?? '—'}</td>
-                          <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{r.prompt_tokens.toLocaleString()}</td>
-                          <td className="whitespace-nowrap px-3 py-3 text-right text-muted-foreground tabular-nums">{(r.cache_read_tokens ?? r.cache_hit_input_tokens ?? 0) > 0 ? (r.cache_read_tokens ?? r.cache_hit_input_tokens ?? 0).toLocaleString() : '—'}</td>
-                          <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{r.completion_tokens.toLocaleString()}</td>
-                          <td className="whitespace-nowrap px-3 py-3 text-right font-medium tabular-nums">{(r.prompt_tokens + (r.cache_read_tokens ?? r.cache_hit_input_tokens ?? 0) + r.completion_tokens).toLocaleString()}</td>
+                          <td className="whitespace-nowrap px-2 py-2 font-mono text-xs">{r.channel_id ?? '—'}</td>
+                          <td className="whitespace-nowrap px-2 py-2 font-mono text-xs">{r.endpoint_id ?? '—'}</td>
+                          <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{r.prompt_tokens.toLocaleString()}</td>
+                          <td className="whitespace-nowrap px-2 py-2 text-right text-muted-foreground tabular-nums">{(r.cache_read_tokens ?? r.cache_hit_input_tokens ?? 0) > 0 ? (r.cache_read_tokens ?? r.cache_hit_input_tokens ?? 0).toLocaleString() : '—'}</td>
+                          <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{r.completion_tokens.toLocaleString()}</td>
+                          <td className="whitespace-nowrap px-2 py-2 text-right font-medium tabular-nums">{(r.prompt_tokens + (r.cache_read_tokens ?? r.cache_hit_input_tokens ?? 0) + r.completion_tokens).toLocaleString()}</td>
                           {(() => {
                             const billing = billingByRequestId.get(r.request_id);
                             const wallet = currency === 'cny' ? '¥' : '$';
                             const walletAmount = Number(billing?.wallet_amount) || 0;
                             return <>
-                              <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{billing?.package_units?.toLocaleString() ?? '—'}</td>
-                              <td className="whitespace-nowrap px-3 py-3 text-right font-mono text-xs tabular-nums">{isBillingError || !billing || billing.wallet_debit_status === 'unavailable' ? '—' : billing.wallet_debit_status === 'pending' ? t('usage.settlementPending') : `${wallet}${walletAmount.toFixed(6)}`}</td>
+                              <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{billing?.package_units?.toLocaleString() ?? '—'}</td>
+                              <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-xs tabular-nums">{isBillingError || !billing || billing.wallet_debit_status === 'unavailable' ? '—' : billing.wallet_debit_status === 'pending' ? t('usage.settlementPending') : `${wallet}${walletAmount.toFixed(6)}`}</td>
                             </>;
                           })()}
-                          <td className="whitespace-nowrap px-3 py-3 text-right text-muted-foreground tabular-nums">{r.total_latency_ms.toLocaleString()}ms</td>
-                          <td className="max-w-[110px] truncate whitespace-nowrap px-3 py-3 text-xs font-mono text-muted-foreground" title={r.client_ip ?? undefined}>{r.client_ip ?? '—'}</td>
-                          <td className="max-w-[150px] truncate px-3 py-3 text-xs" title={r.error_kind ?? undefined}>{errorKindLabel(r.error_kind, t)}</td>
-                          <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{r.attempt_count}</td>
+                          <td className="whitespace-nowrap px-2 py-2 text-right text-muted-foreground tabular-nums">{r.total_latency_ms.toLocaleString()}ms</td>
+                          <td className="max-w-[110px] truncate whitespace-nowrap px-2 py-2 text-xs font-mono text-muted-foreground" title={r.client_ip ?? undefined}>{r.client_ip ?? '—'}</td>
+                          <td className="max-w-[150px] truncate px-2 py-2 text-xs" title={r.error_kind ?? undefined}>{errorKindLabel(r.error_kind, t)}</td>
+                          <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{r.attempt_count}</td>
                         </tr>
                       ))}
                     </tbody>
