@@ -19,7 +19,25 @@ pub async fn responses_input_tokens(
     let request_id = Uuid::new_v4().to_string();
 
     let user = state.auth.authenticate(&headers)?;
-    let model = trim_model(&mut body)?;
+    let lifecycle = new_lifecycle(
+        &state,
+        request_id.clone(),
+        "/responses/input_tokens",
+        "openai",
+        false,
+        &headers,
+        addr,
+        &user,
+        &body,
+    );
+    let model = match trim_model(&mut body) {
+        Ok(model) => model,
+        Err(e) => {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
+    };
 
     let request_span = tracing::info_span!(
         "responses_input_tokens",
@@ -32,11 +50,20 @@ pub async fn responses_input_tokens(
     tracing::info!(request_id, user = %user.user_id, model = %model, "Incoming responses input_tokens request");
 
     if let Some((rpm, tpm)) = user.rate_limits {
-        state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
-        state
+        if let Err(e) = state.rate_limiter.check_rpm(&user.user_id, rpm).await {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
+        if let Err(e) = state
             .rate_limiter
             .check_tpm(&user.user_id, tpm, estimate_tokens_responses(&body))
-            .await?;
+            .await
+        {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
     }
 
     let client_ip = extract_client_ip(&headers, addr);
@@ -52,6 +79,7 @@ pub async fn responses_input_tokens(
             start: Instant::now(),
             client_ip,
             format: DispatchFormat::ResponsesInputTokens,
+            lifecycle,
         })
         .await
 }

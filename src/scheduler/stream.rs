@@ -331,6 +331,11 @@ pub(crate) struct UsageTrackingStream<S> {
     pub(crate) runtime: Option<Arc<ModelEndpointRuntime>>,
     pub(crate) endpoint_idx: usize,
     pub(crate) reservation: Option<crate::service::token_reservation::ReservationFinalizer>,
+    /// Exactly-once request lifecycle finalizer. Finalized at EOF (succeeded
+    /// with accumulated tokens) or on premature drop (cancelled/499); if the
+    /// stream is abandoned before reaching this point, `RequestLifecycle`'s
+    /// own Drop emits the unfinalized fallback event.
+    pub(crate) lifecycle: Option<Arc<crate::observability::lifecycle::RequestLifecycle>>,
 }
 
 impl<S: Stream<Item = String> + Unpin> Stream for UsageTrackingStream<S> {
@@ -341,6 +346,9 @@ impl<S: Stream<Item = String> + Unpin> Stream for UsageTrackingStream<S> {
             Poll::Ready(Some(data)) => {
                 if self.ttft_ms.is_none() && !data.is_empty() {
                     self.ttft_ms = Some(self.upstream_started_at.elapsed().as_millis() as u64);
+                    if let Some(lifecycle) = self.lifecycle.as_ref() {
+                        lifecycle.set_ttft(self.ttft_ms.unwrap_or(0));
+                    }
                     self.usage.mark_first_byte(&self.request_id);
                 }
                 self.resp_buf.push_str(&data);
@@ -398,6 +406,26 @@ impl<S> UsageTrackingStream<S> {
                     p_tokens = (body.len() / 4).max(1) as u64;
                 }
                 c_tokens = (total_content / 3).max(1) as u64;
+            }
+        }
+
+        // Finalize the request lifecycle at stream end: clean EOF → succeeded
+        // with the accumulated tokens; premature end (client disconnect /
+        // abort) → cancelled/499.
+        if let Some(lifecycle) = self.lifecycle.as_ref() {
+            lifecycle.add_tokens(p_tokens, c_tokens, cache_hit, cache_write);
+            lifecycle.set_attempts(1, if completed { Some(1) } else { None });
+            if completed {
+                lifecycle.finalize_success();
+            } else {
+                lifecycle.mark_client_disconnected();
+                lifecycle.finalize_cancelled(
+                    499,
+                    crate::observability::lifecycle::RequestError::new(
+                        "response_stream",
+                        "client_disconnect",
+                    ),
+                );
             }
         }
 

@@ -26,6 +26,7 @@ use crate::domain::user::AuthResult;
 use crate::observability::event::RouteDecided;
 use crate::observability::event_bus::EventBus;
 use crate::observability::flow_tracker::FlowTracker;
+use crate::observability::lifecycle::RequestLifecycle;
 use crate::provider::ProviderRegistry;
 use crate::service::moderation::FilterOutcome;
 use crate::service::routing::RoutingService;
@@ -69,6 +70,8 @@ pub struct DispatchRequest {
     pub start: Instant,
     pub client_ip: String,
     pub format: DispatchFormat,
+    /// Exactly-once request lifecycle created by the authenticated handler.
+    pub lifecycle: Arc<RequestLifecycle>,
 }
 
 pub struct SchedulerService {
@@ -123,6 +126,7 @@ impl SchedulerService {
             start,
             client_ip,
             format,
+            lifecycle,
         } = req;
         let gw_cfg = self.gateway_config.read().unwrap().clone();
         let handler_timeout = Duration::from_secs(gw_cfg.handler_timeout_secs);
@@ -132,14 +136,27 @@ impl SchedulerService {
         );
 
         // ── 1. Route decision ──
-        let route = self
+        let route = match self
             .routing
             .route_public(&auth.user_id, &model, auth.team_id.as_deref())
-            .await?;
+            .await
+        {
+            Ok(route) => route,
+            Err(e) => {
+                let classified =
+                    crate::scheduler::helpers::ClassifiedError::from(GatewayError::from(e));
+                lifecycle.finalize_classified(&classified);
+                return Err(classified.into_gateway());
+            }
+        };
         let resolved_model = route.resolved_model;
         let upstream_model = route.upstream_model;
         let channel_scope = route.channel_scope;
-        helpers::authorize_effective_model(&auth, &resolved_model)?;
+        helpers::authorize_effective_model(&auth, &resolved_model).map_err(|e| {
+            let classified = helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            classified.into_gateway()
+        })?;
         let orig_model = if model != resolved_model {
             model.clone()
         } else {
@@ -161,12 +178,36 @@ impl SchedulerService {
         }
 
         // ── 3. Endpoint selection (flattened model endpoint pool) ──
-        let mut dispatch = dispatch::resolve_dispatch(
+        let mut dispatch = match dispatch::resolve_dispatch(
             self,
             &resolved_model,
             channel_scope.as_deref(),
             upstream_model.as_deref(),
-        )?;
+        ) {
+            Ok(dispatch) => dispatch,
+            Err(e) => {
+                let classified = helpers::ClassifiedError::from(e);
+                lifecycle.finalize_classified(&classified);
+                return Err(classified.into_gateway());
+            }
+        };
+
+        // Route facts for the request lifecycle (resolved model, channel,
+        // endpoint, provider). Set once the endpoint is selected; the request
+        // event carries these even when a later step fails.
+        lifecycle.set_route(
+            resolved_model.clone(),
+            Some(dispatch.channel_id.clone()),
+            dispatch.endpoint.id,
+            Some(dispatch.endpoint.url.clone()),
+            dispatch.upstream_model.clone(),
+            dispatch
+                .runtime
+                .endpoints
+                .get(dispatch.endpoint_idx)
+                .map(|state| state.provider.clone()),
+        );
+
         // The upstream alias travels with the selected endpoint (a model may
         // bind channels that expose different upstream names).
         if let Some(ref id) = dispatch.upstream_model {
@@ -217,18 +258,24 @@ impl SchedulerService {
             DispatchFormat::CountTokens => {
                 let channel = self.routing.get_channel(&dispatch.channel_id);
                 if !dispatch::count_tokens_supported_for_channel(channel.as_ref()) {
-                    return Err(GatewayError::BadRequest(
-                        "POST /v1/messages/count_tokens is not supported for anthropic_compat OpenAI channels yet"
-                            .into(),
+                    return Err(helpers::finalize_and_fail(
+                        &lifecycle,
+                        GatewayError::BadRequest(
+                            "POST /v1/messages/count_tokens is not supported for anthropic_compat OpenAI channels yet"
+                                .into(),
+                        ),
                     ));
                 }
             }
             DispatchFormat::ResponsesInputTokens => {
                 let channel = self.routing.get_channel(&dispatch.channel_id);
                 if !dispatch::responses_input_tokens_supported_for_channel(channel.as_ref()) {
-                    return Err(GatewayError::BadRequest(
-                        "POST /responses/input_tokens is only supported for OpenAI-compatible channels"
-                            .into(),
+                    return Err(helpers::finalize_and_fail(
+                        &lifecycle,
+                        GatewayError::BadRequest(
+                            "POST /responses/input_tokens is only supported for OpenAI-compatible channels"
+                                .into(),
+                        ),
                     ));
                 }
             }
@@ -245,10 +292,17 @@ impl SchedulerService {
                 FilterOutcome::Blocked(rule_name) => {
                     self.flow_tracker.mark_completed(&request_id);
                     tracing::warn!(request_id, rule = %rule_name, "Request blocked by content filter");
-                    return Err(GatewayError::BadRequest(format!(
-                        "Request blocked by content filter rule: {}",
-                        rule_name
-                    )));
+                    let classified = helpers::ClassifiedError::new(
+                        GatewayError::BadRequest(format!(
+                            "Request blocked by content filter rule: {}",
+                            rule_name
+                        )),
+                        400,
+                        "guardrail",
+                        "content_blocked",
+                    );
+                    lifecycle.finalize_classified(&classified);
+                    return Err(classified.into_gateway());
                 }
                 FilterOutcome::Masked(masked) => {
                     if let Ok(v) = serde_json::from_str(&masked) {
@@ -351,7 +405,10 @@ impl SchedulerService {
                 .await
                 .map_err(|e| {
                     self.flow_tracker.mark_completed(&request_id);
-                    GatewayError::PaymentRequired(e.0)
+                    let classified =
+                        helpers::ClassifiedError::from(GatewayError::PaymentRequired(e.0.clone()));
+                    lifecycle.finalize_classified(&classified);
+                    classified.into_gateway()
                 })?,
             )
         } else {
@@ -382,6 +439,7 @@ impl SchedulerService {
         };
         let rid = request_id.clone();
         let max_retries = gw_cfg.max_retries;
+        let lifecycle_cloned = lifecycle.clone();
         let result = tokio::time::timeout(handler_timeout, async move {
             match format {
                 DispatchFormat::OpenaiChat if stream => {
@@ -393,6 +451,7 @@ impl SchedulerService {
                         dispatch.endpoint_idx,
                         body,
                         reservation_finalizer,
+                        lifecycle_cloned.clone(),
                     )
                     .await
                 }
@@ -404,6 +463,7 @@ impl SchedulerService {
                         cache_key,
                         cached_response,
                         reservation_finalizer,
+                        &lifecycle_cloned,
                     )
                     .await
                 }
@@ -416,29 +476,56 @@ impl SchedulerService {
                         dispatch.endpoint_idx,
                         body,
                         reservation_finalizer,
+                        lifecycle_cloned.clone(),
                     )
                     .await
                 }
                 DispatchFormat::AnthropicMessages => {
-                    self.exec_messages_non_stream(ctx, &mut dispatch, body, reservation_finalizer)
-                        .await
+                    self.exec_messages_non_stream(
+                        ctx,
+                        &mut dispatch,
+                        body,
+                        reservation_finalizer,
+                        &lifecycle_cloned,
+                    )
+                    .await
                 }
                 DispatchFormat::Relay { path } => {
-                    self.exec_relay(ctx, &mut dispatch, body, &path, reservation_finalizer)
-                        .await
+                    self.exec_relay(
+                        ctx,
+                        &mut dispatch,
+                        body,
+                        &path,
+                        reservation_finalizer,
+                        &lifecycle_cloned,
+                    )
+                    .await
                 }
                 DispatchFormat::Responses if stream => {
-                    self.exec_responses_stream(ctx, &mut dispatch, body, reservation_finalizer)
-                        .await
+                    self.exec_responses_stream(
+                        ctx,
+                        &mut dispatch,
+                        body,
+                        reservation_finalizer,
+                        lifecycle_cloned.clone(),
+                    )
+                    .await
                 }
                 DispatchFormat::Responses => {
-                    self.exec_responses_non_stream(ctx, &mut dispatch, body, reservation_finalizer)
-                        .await
+                    self.exec_responses_non_stream(
+                        ctx,
+                        &mut dispatch,
+                        body,
+                        reservation_finalizer,
+                        &lifecycle_cloned,
+                    )
+                    .await
                 }
                 DispatchFormat::CountTokens => {
                     let value = self
                         .exec_count_tokens(&mut dispatch, body, &ctx.request_id, max_retries)
                         .await?;
+                    lifecycle_cloned.finalize_success();
                     Ok(axum::response::Json(value).into_response())
                 }
                 DispatchFormat::ResponsesInputTokens => {
@@ -450,6 +537,7 @@ impl SchedulerService {
                             max_retries,
                         )
                         .await?;
+                    lifecycle_cloned.finalize_success();
                     Ok(axum::response::Json(value).into_response())
                 }
             }
@@ -457,13 +545,22 @@ impl SchedulerService {
         .await;
 
         match result {
-            Ok(inner) => {
+            Ok(Ok(inner)) => {
                 // Token-counting endpoints don't record usage, so the flow
                 // lifecycle is closed explicitly here.
                 if token_format {
                     self.flow_tracker.mark_completed(&rid);
                 }
-                inner
+                Ok(inner)
+            }
+            Ok(Err(e)) => {
+                // Upstream / detected failure returned by an executor. Stream
+                // executors may already have finalized this exact outcome; the
+                // lifecycle's exactly-once guard makes a second finalize a
+                // no-op, so the centralized classification below is always safe.
+                let classified = helpers::ClassifiedError::from(e);
+                lifecycle.finalize_classified(&classified);
+                Err(classified.into_gateway())
             }
             Err(_) => {
                 if let Some(handle) = timeout_reservation {
@@ -475,7 +572,16 @@ impl SchedulerService {
                     handler_timeout_s = handler_timeout.as_secs(),
                     "Gateway handler timed out"
                 );
-                Err(GatewayError::Upstream("Request timed out".into()))
+                // Timeout is a gateway-level failure (504), distinct from an
+                // upstream error (502).
+                let classified = helpers::ClassifiedError::new(
+                    GatewayError::Upstream("Request timed out".into()),
+                    504,
+                    "gateway",
+                    "overall_timeout",
+                );
+                lifecycle.finalize_classified(&classified);
+                Err(classified.into_gateway())
             }
         }
     }

@@ -16,14 +16,41 @@ async fn relay_dispatch(
     let start = Instant::now();
 
     let user = state.auth.authenticate(headers)?;
-    let model = trim_model(&mut body)?;
+    let lifecycle = new_lifecycle(
+        state,
+        request_id.clone(),
+        path,
+        "relay",
+        false,
+        headers,
+        addr,
+        &user,
+        &body,
+    );
+    let model = match trim_model(&mut body) {
+        Ok(model) => model,
+        Err(e) => {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
+    };
 
     if let Some((rpm, tpm)) = user.rate_limits {
-        state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
-        state
+        if let Err(e) = state.rate_limiter.check_rpm(&user.user_id, rpm).await {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
+        if let Err(e) = state
             .rate_limiter
             .check_tpm(&user.user_id, tpm, estimate_tokens(&body))
-            .await?;
+            .await
+        {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
     }
 
     let client_ip = extract_client_ip(headers, addr);
@@ -41,6 +68,7 @@ async fn relay_dispatch(
             format: DispatchFormat::Relay {
                 path: path.to_string(),
             },
+            lifecycle,
         })
         .await
 }

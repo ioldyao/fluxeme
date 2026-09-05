@@ -12,20 +12,47 @@ pub async fn responses(
     let start = Instant::now();
 
     let user = state.auth.authenticate(&headers)?;
-    let model = trim_model(&mut body)?;
-
-    if let Some((rpm, tpm)) = user.rate_limits {
-        state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
-        state
-            .rate_limiter
-            .check_tpm(&user.user_id, tpm, estimate_tokens(&body))
-            .await?;
-    }
-
     let is_streaming = body
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let lifecycle = new_lifecycle(
+        &state,
+        request_id.clone(),
+        "/v1/responses",
+        "openai",
+        is_streaming,
+        &headers,
+        addr,
+        &user,
+        &body,
+    );
+    let model = match trim_model(&mut body) {
+        Ok(model) => model,
+        Err(e) => {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
+    };
+
+    if let Some((rpm, tpm)) = user.rate_limits {
+        if let Err(e) = state.rate_limiter.check_rpm(&user.user_id, rpm).await {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
+        if let Err(e) = state
+            .rate_limiter
+            .check_tpm(&user.user_id, tpm, estimate_tokens(&body))
+            .await
+        {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
+    }
+
     let client_ip = extract_client_ip(&headers, addr);
 
     state
@@ -39,6 +66,7 @@ pub async fn responses(
             start,
             client_ip,
             format: DispatchFormat::Responses,
+            lifecycle,
         })
         .await
 }

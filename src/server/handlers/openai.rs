@@ -18,7 +18,31 @@ pub async fn chat_completions(
         .unwrap_or("unknown");
 
     let user = state.auth.authenticate(&headers)?;
-    let model = trim_model(&mut body)?;
+    // Create the lifecycle right after authentication so every LLM-data-plane
+    // failure below (validation, rate limit, routing, upstream) yields exactly
+    // one gateway request event.
+    let lifecycle = new_lifecycle(
+        &state,
+        request_id.clone(),
+        "/v1/chat/completions",
+        "openai",
+        body
+            .get("stream")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        &headers,
+        addr,
+        &user,
+        &body,
+    );
+    let model = match trim_model(&mut body) {
+        Ok(model) => model,
+        Err(e) => {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
+    };
 
     let request_span = tracing::info_span!(
         "chat_completions",
@@ -31,11 +55,20 @@ pub async fn chat_completions(
     tracing::info!(request_id, user = %user.user_id, model = %model, content_length = %content_len, "Incoming request");
 
     if let Some((rpm, tpm)) = user.rate_limits {
-        state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
-        state
+        if let Err(e) = state.rate_limiter.check_rpm(&user.user_id, rpm).await {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
+        if let Err(e) = state
             .rate_limiter
             .check_tpm(&user.user_id, tpm, estimate_tokens(&body))
-            .await?;
+            .await
+        {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
     }
 
     let is_streaming = body
@@ -55,6 +88,7 @@ pub async fn chat_completions(
             start,
             client_ip,
             format: DispatchFormat::OpenaiChat,
+            lifecycle,
         })
         .await
 }

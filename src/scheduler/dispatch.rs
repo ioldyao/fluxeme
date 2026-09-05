@@ -22,6 +22,7 @@ use serde_json::Value;
 
 use crate::config::types::EndpointConfig;
 use crate::domain::usage::UsageRecord;
+use crate::observability::lifecycle::{RequestError, RequestLifecycle};
 use crate::provider::{
     is_retryable_error, ErrorKind, ProviderAdapter, ProviderError, ProviderRegistry,
 };
@@ -259,6 +260,7 @@ impl crate::scheduler::SchedulerService {
         endpoint_idx: usize,
         body: Value,
         reservation: Option<ReservationFinalizer>,
+        lifecycle: Arc<RequestLifecycle>,
     ) -> Result<Response, GatewayError> {
         let req_body = serde_json::to_string(&body).ok();
         self.flow_tracker
@@ -307,6 +309,7 @@ impl crate::scheduler::SchedulerService {
                     ttft_ms: None,
                     endpoint_idx,
                     reservation,
+                    lifecycle: Some(lifecycle),
                 };
 
                 let body_stream =
@@ -333,6 +336,10 @@ impl crate::scheduler::SchedulerService {
                     endpoint = %endpoint.url,
                     error = %e.0,
                     "Streaming upstream request failed",
+                );
+                lifecycle.finalize_failed(
+                    502,
+                    RequestError::new("upstream", "upstream_error").with_message(e.0.clone()),
                 );
                 let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
                 let latency_ms = ctx.start.elapsed().as_millis() as u64;
@@ -387,6 +394,7 @@ impl crate::scheduler::SchedulerService {
         cache_key: Option<String>,
         cached_response: Option<Value>,
         reservation: Option<ReservationFinalizer>,
+        lifecycle: &RequestLifecycle,
     ) -> Result<Response, GatewayError> {
         let req_body = serde_json::to_string(&body).ok();
         let mut cached_response = cached_response;
@@ -445,6 +453,9 @@ impl crate::scheduler::SchedulerService {
                     .map(|s| s.to_string());
 
                 let latency_ms = ctx.start.elapsed().as_millis() as u64;
+                lifecycle.add_tokens(prompt_tokens, completion_tokens, cache_hit, cache_write);
+                lifecycle.set_attempts(retry_count + 1, Some(retry_count + 1));
+                lifecycle.finalize_success();
                 if let Some(reservation) = &reservation {
                     reservation.settle_usage(
                         prompt_tokens,
@@ -601,6 +612,7 @@ impl crate::scheduler::SchedulerService {
         endpoint_idx: usize,
         body: Value,
         reservation: Option<ReservationFinalizer>,
+        lifecycle: Arc<RequestLifecycle>,
     ) -> Result<Response, GatewayError> {
         let req_body = serde_json::to_string(&body).ok();
         self.flow_tracker
@@ -648,6 +660,7 @@ impl crate::scheduler::SchedulerService {
                     ttft_ms: None,
                     endpoint_idx,
                     reservation,
+                    lifecycle: Some(lifecycle),
                 };
 
                 let body_stream =
@@ -674,6 +687,10 @@ impl crate::scheduler::SchedulerService {
                     endpoint = %endpoint.url,
                     error = %e.0,
                     "Messages streaming upstream request failed",
+                );
+                lifecycle.finalize_failed(
+                    502,
+                    RequestError::new("upstream", "upstream_error").with_message(e.0.clone()),
                 );
                 let err_body = serde_json::json!({"error": {"message": &e.0}}).to_string();
                 let latency_ms = ctx.start.elapsed().as_millis() as u64;
@@ -726,6 +743,7 @@ impl crate::scheduler::SchedulerService {
         dispatch: &mut Dispatch,
         body: Value,
         reservation: Option<ReservationFinalizer>,
+        lifecycle: &RequestLifecycle,
     ) -> Result<Response, GatewayError> {
         let req_body = serde_json::to_string(&body).ok();
         self.flow_tracker
@@ -783,6 +801,9 @@ impl crate::scheduler::SchedulerService {
                     });
 
                 let latency_ms = ctx.start.elapsed().as_millis() as u64;
+                lifecycle.add_tokens(prompt_tokens, completion_tokens, cache_hit, cache_write);
+                lifecycle.set_attempts(retry_count + 1, Some(retry_count + 1));
+                lifecycle.finalize_success();
                 if let Some(reservation) = &reservation {
                     reservation.settle_usage(
                         prompt_tokens,
@@ -913,6 +934,7 @@ impl crate::scheduler::SchedulerService {
         body: Value,
         upstream_path: &str,
         reservation: Option<ReservationFinalizer>,
+        lifecycle: &RequestLifecycle,
     ) -> Result<Response, GatewayError> {
         let req_body = Some(serde_json::to_string(&body).unwrap_or_default());
         self.flow_tracker
@@ -966,6 +988,9 @@ impl crate::scheduler::SchedulerService {
                     .map(|s| s.to_string());
 
                 let latency_ms = ctx.start.elapsed().as_millis() as u64;
+                lifecycle.add_tokens(prompt_tokens, completion_tokens, cache_hit, cache_write);
+                lifecycle.set_attempts(retry_count + 1, Some(retry_count + 1));
+                lifecycle.finalize_success();
                 if let Some(reservation) = &reservation {
                     reservation.settle_usage(
                         prompt_tokens,
@@ -1094,6 +1119,7 @@ impl crate::scheduler::SchedulerService {
         dispatch: &mut Dispatch,
         body: Value,
         reservation: Option<ReservationFinalizer>,
+        lifecycle: &RequestLifecycle,
     ) -> Result<Response, GatewayError> {
         let req_body = serde_json::to_string(&body).ok();
         self.flow_tracker
@@ -1138,6 +1164,9 @@ impl crate::scheduler::SchedulerService {
                 // Keep prompt_tokens consistent with the OpenAI chat path: it is
                 // the uncached input component, while cache tokens are reported separately.
                 let input_tokens = raw_input_tokens.saturating_sub(cache_hit + cache_write);
+                lifecycle.add_tokens(input_tokens, output_tokens, cache_hit, cache_write);
+                lifecycle.set_attempts(retries + 1, Some(retries + 1));
+                lifecycle.finalize_success();
                 if let Some(reservation) = &reservation {
                     reservation.settle_usage(
                         input_tokens,
@@ -1247,6 +1276,7 @@ impl crate::scheduler::SchedulerService {
         dispatch: &mut Dispatch,
         mut body: Value,
         reservation: Option<ReservationFinalizer>,
+        lifecycle: Arc<RequestLifecycle>,
     ) -> Result<Response, GatewayError> {
         // Inject stream_options so upstream returns usage in the final event
         match body.get_mut("stream_options") {
@@ -1307,6 +1337,7 @@ impl crate::scheduler::SchedulerService {
                 let eurl = dispatch.endpoint.url.clone();
                 let tid = ctx.team_id.clone();
                 let reservation_finalizer = reservation.clone();
+                let lifecycle_stream = lifecycle.clone();
                 let clean_eof2 = clean_eof.clone();
                 let buf2 = resp_buf.clone();
                 let rec2 = recorded.clone();
@@ -1336,6 +1367,24 @@ impl crate::scheduler::SchedulerService {
                     let (input_tokens, output_tokens, cache_hit, cache_write) =
                         parse_responses_sse_usage(&buf);
                     let completed = clean_eof2.load(std::sync::atomic::Ordering::Acquire);
+                    // Finalize the request lifecycle at stream end: clean EOF →
+                    // succeeded; premature end (client disconnect) → cancelled/499.
+                    lifecycle_stream.add_tokens(
+                        input_tokens,
+                        output_tokens,
+                        cache_hit,
+                        cache_write,
+                    );
+                    lifecycle_stream.set_attempts(1, if completed { Some(1) } else { None });
+                    if completed {
+                        lifecycle_stream.finalize_success();
+                    } else {
+                        lifecycle_stream.mark_client_disconnected();
+                        lifecycle_stream.finalize_cancelled(
+                            499,
+                            RequestError::new("response_stream", "client_disconnect"),
+                        );
+                    }
                     if let Some(reservation) = &reservation_finalizer {
                         if completed {
                             reservation.settle_usage(
@@ -1448,6 +1497,10 @@ impl crate::scheduler::SchedulerService {
                     endpoint = %dispatch.endpoint.url,
                     error = %e.0,
                     "Responses streaming upstream request failed",
+                );
+                lifecycle.finalize_failed(
+                    502,
+                    RequestError::new("upstream", "upstream_error").with_message(e.0.clone()),
                 );
                 if let Some(reservation) = &reservation {
                     reservation.release("responses stream upstream failed");

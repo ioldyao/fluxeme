@@ -18,7 +18,25 @@ pub async fn messages_count_tokens(
     let request_id = Uuid::new_v4().to_string();
 
     let user = state.auth.authenticate(&headers)?;
-    let model = trim_model(&mut body)?;
+    let lifecycle = new_lifecycle(
+        &state,
+        request_id.clone(),
+        "/v1/messages/count_tokens",
+        "anthropic",
+        false,
+        &headers,
+        addr,
+        &user,
+        &body,
+    );
+    let model = match trim_model(&mut body) {
+        Ok(model) => model,
+        Err(e) => {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
+    };
 
     let request_span = tracing::info_span!(
         "messages_count_tokens",
@@ -31,11 +49,20 @@ pub async fn messages_count_tokens(
     tracing::info!(request_id, user = %user.user_id, model = %model, "Incoming messages count_tokens request");
 
     if let Some((rpm, tpm)) = user.rate_limits {
-        state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
-        state
+        if let Err(e) = state.rate_limiter.check_rpm(&user.user_id, rpm).await {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
+        if let Err(e) = state
             .rate_limiter
             .check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body))
-            .await?;
+            .await
+        {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
     }
 
     let client_ip = extract_client_ip(&headers, addr);
@@ -51,6 +78,7 @@ pub async fn messages_count_tokens(
             start: Instant::now(),
             client_ip,
             format: DispatchFormat::CountTokens,
+            lifecycle,
         })
         .await
 }
@@ -66,7 +94,29 @@ pub async fn messages(
     let start = Instant::now();
 
     let user = state.auth.authenticate(&headers)?;
-    let model = trim_model(&mut body)?;
+    let is_streaming = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let lifecycle = new_lifecycle(
+        &state,
+        request_id.clone(),
+        "/v1/messages",
+        "anthropic",
+        is_streaming,
+        &headers,
+        addr,
+        &user,
+        &body,
+    );
+    let model = match trim_model(&mut body) {
+        Ok(model) => model,
+        Err(e) => {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
+    };
 
     let request_span = tracing::info_span!(
         "messages",
@@ -79,17 +129,22 @@ pub async fn messages(
     tracing::info!(request_id, user = %user.user_id, model = %model, "Incoming messages request");
 
     if let Some((rpm, tpm)) = user.rate_limits {
-        state.rate_limiter.check_rpm(&user.user_id, rpm).await?;
-        state
+        if let Err(e) = state.rate_limiter.check_rpm(&user.user_id, rpm).await {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
+        if let Err(e) = state
             .rate_limiter
             .check_tpm(&user.user_id, tpm, estimate_tokens_anthropic(&body))
-            .await?;
+            .await
+        {
+            let classified = crate::scheduler::helpers::ClassifiedError::from(e);
+            lifecycle.finalize_classified(&classified);
+            return Err(classified.into_gateway());
+        }
     }
 
-    let is_streaming = body
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
     let client_ip = extract_client_ip(&headers, addr);
 
     state
@@ -103,6 +158,7 @@ pub async fn messages(
             start,
             client_ip,
             format: DispatchFormat::AnthropicMessages,
+            lifecycle,
         })
         .await
 }

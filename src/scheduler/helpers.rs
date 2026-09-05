@@ -13,7 +13,7 @@ use rust_decimal::Decimal;
 // ── Error type ────────────────────────────────────────────────────
 
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum GatewayError {
     Auth(String),
     RateLimit(String),
@@ -42,7 +42,7 @@ impl GatewayError {
         }
     }
 
-    fn message(&self) -> &str {
+    pub(crate) fn message(&self) -> &str {
         match self {
             Self::Auth(m)
             | Self::RateLimit(m)
@@ -115,6 +115,148 @@ impl From<crate::service::moderation::FilterBlocked> for GatewayError {
     fn from(e: crate::service::moderation::FilterBlocked) -> Self {
         Self::BadRequest(e.0)
     }
+}
+
+// ── Request lifecycle classification ─────────────────────────────
+
+use crate::observability::lifecycle::{
+    LifecycleStatus, RequestIdentity, RequestLifecycle, RequestMeta,
+};
+
+/// Classification of a gateway error into the observability request-event
+/// vocabulary (status / error_stage / error_kind). `From<GatewayError>`
+/// provides the default mapping; callers override specific cases (e.g. a
+/// route with no available endpoints → failed/503) by building one directly.
+///
+/// The status code is the source of truth for the lifecycle status: 499 →
+/// cancelled, ≥500 → failed, else rejected. The error kind vocabulary
+/// mirrors the confirmed design (`docs/superpowers/specs/.../gateway-request-lifecycle-design.md`).
+#[derive(Clone, Debug)]
+pub struct ClassifiedError {
+    pub err: GatewayError,
+    pub status_code: u16,
+    pub stage: &'static str,
+    pub kind: &'static str,
+    pub message: Option<String>,
+}
+
+impl ClassifiedError {
+    pub fn new(
+        err: GatewayError,
+        status_code: u16,
+        stage: &'static str,
+        kind: &'static str,
+    ) -> Self {
+        Self {
+            err,
+            status_code,
+            stage,
+            kind,
+            message: None,
+        }
+    }
+
+    /// Convert into the gateway error returned to the client.
+    pub fn into_gateway(self) -> GatewayError {
+        self.err
+    }
+
+    /// Map the HTTP status into the lifecycle status vocabulary: 499 →
+    /// cancelled, >=500 → failed, else rejected.
+    pub(crate) fn status(&self) -> LifecycleStatus {
+        if self.status_code == 499 {
+            LifecycleStatus::Cancelled
+        } else if self.status_code >= 500 {
+            LifecycleStatus::Failed
+        } else {
+            LifecycleStatus::Rejected
+        }
+    }
+}
+
+impl From<GatewayError> for ClassifiedError {
+    fn from(err: GatewayError) -> Self {
+        let (status_code, stage, kind) = match &err {
+            // Auth after authentication = the key is valid but not allowed to
+            // use the resolved model (model-level authorization).
+            GatewayError::Auth(_) => (403, "authorization", "model_not_allowed"),
+            GatewayError::RateLimit(_) => (429, "rate_limit", "rate_limit_exceeded"),
+            GatewayError::Route(_) => (404, "routing", "model_not_found"),
+            // Client supplied a malformed body/model — validation, not a
+            // gateway conversion error (which is 500 / gateway / protocol_conversion_failed).
+            GatewayError::BadRequest(_) => (400, "validation", "invalid_request"),
+            GatewayError::Upstream(_) => (502, "upstream", "upstream_error"),
+            GatewayError::Internal(message) if message.starts_with("Response build error") => {
+                (500, "gateway", "protocol_conversion_failed")
+            }
+            GatewayError::Internal(_) => (500, "gateway", "internal_error"),
+            GatewayError::PaymentRequired(_) => (402, "billing", "insufficient_balance"),
+            // Model has no healthy endpoint — retryable 503, failed.
+            GatewayError::ServiceUnavailable(_) => (503, "routing", "no_available_endpoint"),
+        };
+        Self::new(err, status_code, stage, kind)
+    }
+}
+
+impl From<ClassifiedError> for GatewayError {
+    fn from(error: ClassifiedError) -> Self {
+        error.err
+    }
+}
+
+impl From<crate::ratelimit::RateLimitError> for ClassifiedError {
+    fn from(e: crate::ratelimit::RateLimitError) -> Self {
+        Self::from(GatewayError::from(e))
+    }
+}
+
+/// Build request metadata shared by every authenticated LLM lifecycle.
+pub(crate) fn lifecycle_meta(
+    request_id: String,
+    path: &str,
+    api_format: &str,
+    stream: bool,
+    headers: &HeaderMap,
+    addr: SocketAddr,
+) -> RequestMeta {
+    RequestMeta {
+        request_id,
+        method: "POST".to_string(),
+        path: path.to_string(),
+        api_format: api_format.to_string(),
+        stream,
+        client_ip: Some(extract_client_ip(headers, addr)),
+        user_agent: headers
+            .get("user-agent")
+            .and_then(|v| v.to_str().ok())
+            .map(String::from),
+    }
+}
+
+/// Build request identity from a resolved auth result.
+pub(crate) fn lifecycle_identity(
+    user: &crate::domain::user::AuthResult,
+    requested_model: &str,
+) -> RequestIdentity {
+    RequestIdentity {
+        user_id: user.user_id.clone(),
+        user_name: user.user_name.clone(),
+        team_id: user.team_id.clone(),
+        api_key_id: None,
+        api_key_name: user.api_key_name.clone(),
+        requested_model: requested_model.to_string(),
+        billing_payment_mode: Some(user.billing_payment_mode.as_str().to_string()),
+    }
+}
+
+/// Build a classified error and immediately finalize it on the request
+/// lifecycle, returning the gateway error to propagate to the client.
+/// Handlers/scheduler call this once per failure path; exactly-once is
+/// enforced by the lifecycle itself.
+pub(crate) fn finalize_and_fail(lifecycle: &RequestLifecycle, error: GatewayError) -> GatewayError {
+    let classified = ClassifiedError::from(error);
+    lifecycle.finalize_classified(&classified);
+    classified.into_gateway()
 }
 
 // ── Request helpers ───────────────────────────────────────────────

@@ -387,7 +387,6 @@ async fn main() {
     // in a later phase. The old usage_events/billing pipelines are untouched.
     let (gateway_event_recorder, gateway_writer_handle) =
         crate::observability::gateway_events::GatewayEventRecorder::new(cache.clone(), 8192);
-    let _gateway_event_recorder = gateway_event_recorder;
     let gateway_event_handles = vec![gateway_writer_handle];
     tokio::spawn(
         crate::observability::gateway_events::start_gateway_event_consumer(
@@ -572,6 +571,7 @@ async fn main() {
         event_bus: event_bus.clone(),
         flow_tracker,
         ch: Some(ch),
+        gateway_events: gateway_event_recorder,
         instance_id: instance_id.clone(),
     });
 

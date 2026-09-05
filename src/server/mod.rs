@@ -64,6 +64,8 @@ pub struct AppState {
     pub flow_tracker: crate::observability::flow_tracker::FlowTracker,
     /// ClickHouse backend for observability data. Required at startup.
     pub ch: Option<Arc<ClickHouseBackend>>,
+    /// Non-blocking typed gateway lifecycle event recorder.
+    pub gateway_events: crate::observability::gateway_events::GatewayEventRecorder,
     /// Unique identifier for this instance (INSTANCE_ID env or generated).
     /// Used in logs and health probe responses for multi-instance ops.
     pub instance_id: String,

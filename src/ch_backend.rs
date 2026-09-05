@@ -101,10 +101,43 @@ pub struct GatewayRequestEventRow {
     pub timestamp: u32,
     pub request_id: String,
     pub user_id: Option<String>,
+    pub user_name: Option<String>,
+    pub team_id: Option<String>,
     pub api_key_id: Option<String>,
+    pub api_key_name: Option<String>,
     pub route_id: String,
     pub method: String,
     pub path: String,
+    pub api_format: String,
+    pub stream: u8,
+    pub client_ip: Option<String>,
+    pub user_agent: Option<String>,
+    pub requested_model: String,
+    pub resolved_model: Option<String>,
+    pub channel_id: Option<String>,
+    pub endpoint_id: Option<i64>,
+    pub endpoint_url: Option<String>,
+    pub upstream_model: Option<String>,
+    pub provider: Option<String>,
+    pub status: String,
+    pub status_code: u16,
+    pub error_stage: Option<String>,
+    pub error_kind: Option<String>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub attempt_count: u32,
+    pub successful_attempt: Option<u32>,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub total_tokens: u64,
+    pub total_latency_ms: u64,
+    pub ttft_ms: Option<u64>,
+    pub client_disconnected: u8,
+    pub termination_reason: Option<String>,
+    pub billing_payment_mode: Option<String>,
+    pub wallet_amount: Option<f64>,
     pub bytes_in: u64,
 }
 
@@ -154,10 +187,43 @@ impl From<crate::observability::gateway_events::GatewayRequestEvent> for Gateway
             timestamp: parse_timestamp_secs(&e.timestamp),
             request_id: e.request_id,
             user_id: e.user_id,
+            user_name: e.user_name,
+            team_id: e.team_id,
             api_key_id: e.api_key_id,
+            api_key_name: e.api_key_name,
             route_id: e.route_id,
             method: e.method,
             path: e.path,
+            api_format: e.api_format,
+            stream: if e.stream { 1 } else { 0 },
+            client_ip: e.client_ip,
+            user_agent: e.user_agent,
+            requested_model: e.requested_model,
+            resolved_model: e.resolved_model,
+            channel_id: e.channel_id,
+            endpoint_id: e.endpoint_id,
+            endpoint_url: e.endpoint_url,
+            upstream_model: e.upstream_model,
+            provider: e.provider,
+            status: e.status,
+            status_code: e.status_code,
+            error_stage: e.error_stage,
+            error_kind: e.error_kind,
+            error_code: e.error_code,
+            error_message: e.error_message,
+            attempt_count: e.attempt_count,
+            successful_attempt: e.successful_attempt,
+            prompt_tokens: e.prompt_tokens,
+            completion_tokens: e.completion_tokens,
+            cache_read_tokens: e.cache_read_tokens,
+            cache_write_tokens: e.cache_write_tokens,
+            total_tokens: e.total_tokens,
+            total_latency_ms: e.total_latency_ms,
+            ttft_ms: e.ttft_ms,
+            client_disconnected: if e.client_disconnected { 1 } else { 0 },
+            termination_reason: e.termination_reason,
+            billing_payment_mode: e.billing_payment_mode,
+            wallet_amount: e.wallet_amount,
             bytes_in: e.bytes_in,
         }
     }
@@ -539,8 +605,25 @@ impl ClickHouseBackend {
     const CREATE_GATEWAY_REQUEST_EVENTS: &'static str = "\
         CREATE TABLE IF NOT EXISTS gateway_request_events (\
             timestamp DateTime, request_id String, user_id Nullable(String),\
-            api_key_id Nullable(String), route_id String, method String,\
-            path String, bytes_in UInt64\
+            user_name Nullable(String), team_id Nullable(String),\
+            api_key_id Nullable(String), api_key_name Nullable(String),\
+            route_id String, method String, path String,\
+            api_format String DEFAULT 'unknown', stream UInt8 DEFAULT 0,\
+            client_ip Nullable(String), user_agent Nullable(String),\
+            requested_model String DEFAULT '', resolved_model Nullable(String),\
+            channel_id Nullable(String), endpoint_id Nullable(Int64),\
+            endpoint_url Nullable(String), upstream_model Nullable(String),\
+            provider Nullable(String),\
+            status String DEFAULT 'succeeded', status_code UInt16 DEFAULT 200,\
+            error_stage Nullable(String), error_kind Nullable(String),\
+            error_code Nullable(String), error_message Nullable(String),\
+            attempt_count UInt32 DEFAULT 0, successful_attempt Nullable(UInt32),\
+            prompt_tokens UInt64 DEFAULT 0, completion_tokens UInt64 DEFAULT 0,\
+            cache_read_tokens UInt64 DEFAULT 0, cache_write_tokens UInt64 DEFAULT 0,\
+            total_tokens UInt64 DEFAULT 0, total_latency_ms UInt64 DEFAULT 0,\
+            ttft_ms Nullable(UInt64), client_disconnected UInt8 DEFAULT 0,\
+            termination_reason Nullable(String), billing_payment_mode Nullable(String),\
+            wallet_amount Nullable(Float64), bytes_in UInt64\
         ) ENGINE = MergeTree() PARTITION BY toYYYYMM(timestamp)\
         ORDER BY (route_id, timestamp) TTL toDateTime(timestamp) + INTERVAL 90 DAY\
     ";
@@ -630,12 +713,67 @@ impl ClickHouseBackend {
             .map_err(|e| format!("CH migration gateway_calls: {e}"))?;
 
         for (name, ddl) in [
-            ("gateway_request_events", Self::CREATE_GATEWAY_REQUEST_EVENTS),
-            ("gateway_attempt_events", Self::CREATE_GATEWAY_ATTEMPT_EVENTS),
+            (
+                "gateway_request_events",
+                Self::CREATE_GATEWAY_REQUEST_EVENTS,
+            ),
+            (
+                "gateway_attempt_events",
+                Self::CREATE_GATEWAY_ATTEMPT_EVENTS,
+            ),
             ("gateway_access_events", Self::CREATE_GATEWAY_ACCESS_EVENTS),
         ] {
-            self.client.query(ddl).execute().await
+            self.client
+                .query(ddl)
+                .execute()
+                .await
                 .map_err(|e| format!("CH migration {name}: {e}"))?;
+        }
+
+        // Phase 2: extend gateway_request_events with lifecycle columns. Every
+        // new column is ADD COLUMN IF NOT EXISTS with a default so existing
+        // Phase 1 tables migrate in place; readers keep working because the
+        // row mapping fills defaults for missing historical columns.
+        for alter in [
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS user_name Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS team_id Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS api_key_name Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS api_format String DEFAULT 'unknown'",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS stream UInt8 DEFAULT 0",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS client_ip Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS user_agent Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS requested_model String DEFAULT ''",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS resolved_model Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS channel_id Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS endpoint_id Nullable(Int64)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS endpoint_url Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS upstream_model Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS provider Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS status String DEFAULT 'succeeded'",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS status_code UInt16 DEFAULT 200",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS error_stage Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS error_kind Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS error_code Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS error_message Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS attempt_count UInt32 DEFAULT 0",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS successful_attempt Nullable(UInt32)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS prompt_tokens UInt64 DEFAULT 0",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS completion_tokens UInt64 DEFAULT 0",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS cache_read_tokens UInt64 DEFAULT 0",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS cache_write_tokens UInt64 DEFAULT 0",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS total_tokens UInt64 DEFAULT 0",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS total_latency_ms UInt64 DEFAULT 0",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS ttft_ms Nullable(UInt64)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS client_disconnected UInt8 DEFAULT 0",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS termination_reason Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS billing_payment_mode Nullable(String)",
+            "ALTER TABLE gateway_request_events ADD COLUMN IF NOT EXISTS wallet_amount Nullable(Float64)",
+        ] {
+            self.client
+                .query(alter)
+                .execute()
+                .await
+                .map_err(|e| format!("CH migration gateway_request_events alter: {e}"))?;
         }
 
         // Update TTL to match config
@@ -2462,16 +2600,52 @@ mod tests {
             timestamp: "1970-01-01T00:00:00Z".to_string(),
             request_id: "req-1".to_string(),
             user_id: Some("u1".to_string()),
+            user_name: Some("Alice".to_string()),
+            team_id: None,
             api_key_id: Some("k1".to_string()),
+            api_key_name: Some("key".to_string()),
             route_id: "r1".to_string(),
             method: "POST".to_string(),
             path: "/v1".to_string(),
+            api_format: "openai".to_string(),
+            stream: false,
+            client_ip: None,
+            user_agent: None,
+            requested_model: "gpt-4o".to_string(),
+            resolved_model: Some("gpt-4o".to_string()),
+            channel_id: Some("c1".to_string()),
+            endpoint_id: Some(1),
+            endpoint_url: Some("https://up.example".to_string()),
+            upstream_model: None,
+            provider: Some("openai".to_string()),
+            status: "succeeded".to_string(),
+            status_code: 200,
+            error_stage: None,
+            error_kind: None,
+            error_code: None,
+            error_message: None,
+            attempt_count: 1,
+            successful_attempt: Some(1),
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            total_tokens: 15,
+            total_latency_ms: 30,
+            ttft_ms: None,
+            client_disconnected: false,
+            termination_reason: Some("completed".to_string()),
+            billing_payment_mode: None,
+            wallet_amount: None,
             bytes_in: 42,
         });
         assert_eq!(row.timestamp, 0);
         assert_eq!(row.request_id, "req-1");
         assert_eq!(row.route_id, "r1");
         assert_eq!(row.bytes_in, 42);
+        assert_eq!(row.status, "succeeded");
+        assert_eq!(row.total_tokens, 15);
+        assert_eq!(row.stream, 0);
     }
 
     #[test]
