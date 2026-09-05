@@ -100,8 +100,10 @@ billing_payment_mode / wallet_amount
       （提交 `11d3678`，旧 usage_events/billing 未动）
 - [x] Phase 2 Request 生命周期：request_id 贯穿 + RequestLifecycle + handler/scheduler 早期错误
       （提交 `ec34c67`，133 测试通过；含 streaming EOF/disconnect、Drop 兜底、recorder 入 AppState）
-- [ ] Phase 3 Attempt 生命周期：AttemptLifecycle + retry/fallback/timeout
-- [ ] Phase 4 Streaming 生命周期
+- [x] Phase 3 Attempt 生命周期：AttemptLifecycle + retry/fallback/timeout
+      （提交 `ccb50fd`，每次真实 upstream invocation 一条 Attempt Event）
+- [x] Phase 4 Streaming 生命周期
+      （提交 `70c00da` + `c761894`，136 测试通过；含 responses 流式路径）
 - [ ] Phase 5 管理端 /admin/usage 切 Request Event + Attempts 时间线
 - [ ] Phase 6 测试 + 迁移（exactly-once、retry/fallback、disconnect、旧链路兼容）
 
