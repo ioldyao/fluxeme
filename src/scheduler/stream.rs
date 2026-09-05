@@ -269,6 +269,86 @@ impl StreamTerminationFlag {
     }
 }
 
+/// Terminal outcome of a streaming response. Derived purely from the two facts
+/// the stream layers know at end-of-life (`completed` and the shared
+/// `termination` flag), so the request-lifecycle finalize, the usage record,
+/// and the reservation settlement all agree on one classification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StreamOutcome {
+    /// Clean EOF — success.
+    Completed,
+    /// Idle timeout fired — failed/504.
+    IdleTimeout,
+    /// SSE buffer cap hit — failed/502.
+    BufferOverflow,
+    /// Stream dropped before a clean EOF without a non-clean termination flag
+    /// (client disconnect / mid-stream abort) — cancelled/499.
+    ClientDisconnect,
+}
+
+/// What the request lifecycle should record for a stream end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StreamLifecycleOutcome {
+    Succeeded,
+    Failed(u16, &'static str),
+    Cancelled,
+}
+
+impl StreamOutcome {
+    /// Classify the stream end. A completed stream is always a success; an EOF
+    /// produced by the idle-timeout/buffer-overflow layers is a synthetic
+    /// failure; anything else (premature drop) is a client disconnect.
+    pub(crate) fn classify(completed: bool, termination: Option<StreamTermination>) -> Self {
+        if completed {
+            return StreamOutcome::Completed;
+        }
+        match termination {
+            Some(StreamTermination::IdleTimeout) => StreamOutcome::IdleTimeout,
+            Some(StreamTermination::BufferOverflow) => StreamOutcome::BufferOverflow,
+            _ => StreamOutcome::ClientDisconnect,
+        }
+    }
+
+    pub(crate) fn is_success(self) -> bool {
+        matches!(self, StreamOutcome::Completed)
+    }
+
+    pub(crate) fn status_code(self) -> u16 {
+        match self {
+            StreamOutcome::Completed => 200,
+            StreamOutcome::IdleTimeout => 504,
+            StreamOutcome::BufferOverflow => 502,
+            StreamOutcome::ClientDisconnect => 499,
+        }
+    }
+
+    /// Reservation settlement reason (shares vocabulary with the request
+    /// lifecycle error kinds).
+    pub(crate) fn reservation_reason(self) -> &'static str {
+        match self {
+            StreamOutcome::Completed => "completed",
+            StreamOutcome::IdleTimeout => "stream idle timeout",
+            StreamOutcome::BufferOverflow => "stream buffer overflow",
+            StreamOutcome::ClientDisconnect => "client disconnected",
+        }
+    }
+
+    /// Lifecycle finalize decision: success vs the failed/cancelled outcomes
+    /// with the exact status code / error kind the event records.
+    pub(crate) fn lifecycle(self) -> StreamLifecycleOutcome {
+        match self {
+            StreamOutcome::Completed => StreamLifecycleOutcome::Succeeded,
+            StreamOutcome::IdleTimeout => {
+                StreamLifecycleOutcome::Failed(504, "stream_idle_timeout")
+            }
+            StreamOutcome::BufferOverflow => {
+                StreamLifecycleOutcome::Failed(502, "stream_buffer_overflow")
+            }
+            StreamOutcome::ClientDisconnect => StreamLifecycleOutcome::Cancelled,
+        }
+    }
+}
+
 // ── SSE buffering stream ────────────────────────────────────────────
 
 const MAX_SSE_BUF: usize = 1024 * 1024;
@@ -484,11 +564,12 @@ impl<S> UsageTrackingStream<S> {
             return;
         }
         self.recorded = true;
+        let outcome = StreamOutcome::classify(completed, termination);
 
         // Live-traffic breaker feedback: a clean stream completion means the
         // endpoint is healthy. Mid-stream drops (client disconnect) are not
         // recorded — see the `balancer` field docs.
-        if completed {
+        if outcome.is_success() {
             if let Some(runtime) = &self.runtime {
                 if let Some(state) = runtime.endpoints.get(self.endpoint_idx) {
                     state.breaker.record_success();
@@ -521,44 +602,31 @@ impl<S> UsageTrackingStream<S> {
         if let Some(lifecycle) = self.lifecycle.as_ref() {
             lifecycle.add_tokens(p_tokens, c_tokens, cache_hit, cache_write);
             lifecycle.set_attempts(1, if completed { Some(1) } else { None });
-            if completed {
-                lifecycle.finalize_success();
-            } else {
-                match termination {
-                    Some(StreamTermination::IdleTimeout) => {
-                        lifecycle.finalize_failed(
-                            504,
-                            crate::observability::lifecycle::RequestError::new(
-                                "response_stream",
-                                "stream_idle_timeout",
-                            ),
-                        );
-                    }
-                    Some(StreamTermination::BufferOverflow) => {
-                        lifecycle.finalize_failed(
-                            502,
-                            crate::observability::lifecycle::RequestError::new(
-                                "response_stream",
-                                "stream_buffer_overflow",
-                            ),
-                        );
-                    }
-                    _ => {
-                        lifecycle.mark_client_disconnected();
-                        lifecycle.finalize_cancelled(
-                            499,
-                            crate::observability::lifecycle::RequestError::new(
-                                "response_stream",
-                                "client_disconnect",
-                            ),
-                        );
-                    }
+            match outcome.lifecycle() {
+                StreamLifecycleOutcome::Succeeded => {
+                    lifecycle.finalize_success();
+                }
+                StreamLifecycleOutcome::Failed(status_code, kind) => {
+                    lifecycle.finalize_failed(
+                        status_code,
+                        crate::observability::lifecycle::RequestError::new("response_stream", kind),
+                    );
+                }
+                StreamLifecycleOutcome::Cancelled => {
+                    lifecycle.mark_client_disconnected();
+                    lifecycle.finalize_cancelled(
+                        499,
+                        crate::observability::lifecycle::RequestError::new(
+                            "response_stream",
+                            "client_disconnect",
+                        ),
+                    );
                 }
             }
         }
 
         if let Some(reservation) = &self.reservation {
-            if completed {
+            if outcome.is_success() {
                 reservation.settle_usage(
                     p_tokens,
                     c_tokens,
@@ -568,12 +636,13 @@ impl<S> UsageTrackingStream<S> {
                     "completed",
                 );
             } else {
-                let reason = match termination {
-                    Some(StreamTermination::IdleTimeout) => "stream idle timeout",
-                    Some(StreamTermination::BufferOverflow) => "stream buffer overflow",
-                    _ => "client disconnected",
-                };
-                reservation.release_partial(p_tokens, c_tokens, cache_hit, cache_write, reason);
+                reservation.release_partial(
+                    p_tokens,
+                    c_tokens,
+                    cache_hit,
+                    cache_write,
+                    outcome.reservation_reason(),
+                );
             }
         }
 
@@ -591,16 +660,8 @@ impl<S> UsageTrackingStream<S> {
                 cache_hit_input_tokens: cache_hit,
                 cache_write_tokens: cache_write,
                 latency_ms,
-                status_code: if completed {
-                    200
-                } else {
-                    match termination {
-                        Some(StreamTermination::IdleTimeout) => 504,
-                        Some(StreamTermination::BufferOverflow) => 502,
-                        _ => 499,
-                    }
-                },
-                success: completed,
+                status_code: outcome.status_code(),
+                success: outcome.is_success(),
                 request_body: self.req_body.clone(),
                 api_key_name: Some(self.api_key_name.clone()),
                 api_format: self.api_format.clone(),
@@ -792,5 +853,126 @@ mod tests {
         assert!(wrapped.next().await.unwrap().contains("buffer_overflow"));
         assert_eq!(flag.get(), StreamTermination::BufferOverflow);
         assert!(wrapped.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn buffer_clean_eof_forwards_valid_partial_tail() {
+        let flag = StreamTerminationFlag::new();
+        let inner = stream::iter(vec!["data: {\"choices\":[]}".to_string()]);
+        let mut wrapped = SseBuffer {
+            inner,
+            buf: String::new(),
+            overflow_error: None,
+            terminated: false,
+            termination: flag.clone(),
+        };
+        let output = wrapped.next().await.unwrap();
+        assert_eq!(output, "data: {\"choices\":[]}");
+        assert_eq!(flag.get(), StreamTermination::Clean);
+        assert!(wrapped.next().await.is_none());
+        assert_eq!(flag.get(), StreamTermination::Clean);
+    }
+
+    #[tokio::test]
+    async fn buffer_clean_eof_drops_invalid_partial_tail() {
+        let flag = StreamTerminationFlag::new();
+        let inner = stream::iter(vec!["data: {\"choices\":".to_string()]);
+        let mut wrapped = SseBuffer {
+            inner,
+            buf: String::new(),
+            overflow_error: None,
+            terminated: false,
+            termination: flag.clone(),
+        };
+        assert!(wrapped.next().await.is_none());
+        assert_eq!(flag.get(), StreamTermination::Clean);
+    }
+
+    #[test]
+    fn termination_unknown_values_are_clean() {
+        assert_eq!(StreamTermination::from_u8(99), StreamTermination::Clean);
+    }
+
+    #[test]
+    fn flag_reset_to_clean_and_non_clean_round_trip() {
+        let flag = StreamTerminationFlag::new();
+        assert_eq!(flag.get(), StreamTermination::Clean);
+        flag.set(StreamTermination::BufferOverflow);
+        assert_eq!(flag.get(), StreamTermination::BufferOverflow);
+        // Setting Clean explicitly resets the flag (the normal default state).
+        flag.set(StreamTermination::Clean);
+        assert_eq!(flag.get(), StreamTermination::Clean);
+        flag.set(StreamTermination::IdleTimeout);
+        assert_eq!(flag.get(), StreamTermination::IdleTimeout);
+    }
+
+    // ── StreamOutcome classification (clean / idle / overflow / drop) ──
+
+    #[test]
+    fn clean_eof_classifies_completed() {
+        let outcome = StreamOutcome::classify(true, None);
+        assert_eq!(outcome, StreamOutcome::Completed);
+        assert!(outcome.is_success());
+        assert_eq!(outcome.status_code(), 200);
+        assert_eq!(outcome.reservation_reason(), "completed");
+        assert_eq!(outcome.lifecycle(), StreamLifecycleOutcome::Succeeded);
+    }
+
+    #[test]
+    fn idle_timeout_classifies_failed_504() {
+        let outcome = StreamOutcome::classify(false, Some(StreamTermination::IdleTimeout));
+        assert_eq!(outcome, StreamOutcome::IdleTimeout);
+        assert!(!outcome.is_success());
+        assert_eq!(outcome.status_code(), 504);
+        assert_eq!(outcome.reservation_reason(), "stream idle timeout");
+        assert_eq!(
+            outcome.lifecycle(),
+            StreamLifecycleOutcome::Failed(504, "stream_idle_timeout")
+        );
+    }
+
+    #[test]
+    fn buffer_overflow_classifies_failed_502() {
+        let outcome = StreamOutcome::classify(false, Some(StreamTermination::BufferOverflow));
+        assert_eq!(outcome, StreamOutcome::BufferOverflow);
+        assert!(!outcome.is_success());
+        assert_eq!(outcome.status_code(), 502);
+        assert_eq!(outcome.reservation_reason(), "stream buffer overflow");
+        assert_eq!(
+            outcome.lifecycle(),
+            StreamLifecycleOutcome::Failed(502, "stream_buffer_overflow")
+        );
+    }
+
+    #[test]
+    fn premature_drop_classifies_client_disconnect_partial_usage() {
+        // The Drop path records partial usage as cancelled/499: a stream that
+        // ended without a clean EOF and without a non-clean termination flag.
+        let outcome = StreamOutcome::classify(false, None);
+        assert_eq!(outcome, StreamOutcome::ClientDisconnect);
+        assert!(!outcome.is_success());
+        assert_eq!(outcome.status_code(), 499);
+        assert_eq!(outcome.reservation_reason(), "client disconnected");
+        assert_eq!(outcome.lifecycle(), StreamLifecycleOutcome::Cancelled);
+    }
+
+    #[test]
+    fn drop_with_clean_flag_is_also_client_disconnect() {
+        // The Drop handler passes a `Clean` flag (default) with completed=false
+        // for premature drops; that must map to cancelled, not success.
+        let outcome = StreamOutcome::classify(false, Some(StreamTermination::Clean));
+        assert_eq!(outcome, StreamOutcome::ClientDisconnect);
+        assert_eq!(outcome.status_code(), 499);
+        assert_eq!(outcome.lifecycle(), StreamLifecycleOutcome::Cancelled);
+    }
+
+    #[test]
+    fn clean_eof_outranks_failure_flag_only_when_completed() {
+        // A completed stream is always a success even if a flag was latched
+        // (the flag is only ever set right before a synthetic EOF, so this
+        // combination cannot occur in practice — it is a defensive guarantee).
+        let outcome = StreamOutcome::classify(true, Some(StreamTermination::IdleTimeout));
+        assert_eq!(outcome, StreamOutcome::Completed);
+        assert!(outcome.is_success());
     }
 }

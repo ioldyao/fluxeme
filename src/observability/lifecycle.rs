@@ -622,4 +622,99 @@ mod tests {
         fn assert_not_clone<T: ?Sized>() {}
         assert_not_clone::<RequestLifecycle>();
     }
+
+    #[test]
+    fn concurrent_finalize_still_emits_one_request_event() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let (recorder, mut rx) = test_recorder(8);
+        let lifecycle = Arc::new(RequestLifecycle::new(&recorder, meta(), identity()));
+        let mut workers = Vec::new();
+        for _ in 0..8 {
+            let lifecycle = Arc::clone(&lifecycle);
+            workers.push(thread::spawn(move || lifecycle.finalize_success()));
+        }
+        let wins = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .filter(|won| *won)
+            .count();
+        assert_eq!(wins, 1, "exactly one finalizer may win");
+        let event = recv(&mut rx);
+        assert_eq!(event.status, "succeeded");
+        assert!(
+            rx.try_recv().is_err(),
+            "concurrent finalizers emit one event"
+        );
+    }
+
+    #[test]
+    fn retry_and_fallback_have_one_attempt_event_per_invocation() {
+        let (recorder, mut rx) = test_recorder(8);
+        let lifecycle = RequestLifecycle::new(&recorder, meta(), identity());
+
+        let first = lifecycle.begin_attempt(
+            1,
+            "route-a",
+            Some("ch-a".into()),
+            Some(1),
+            None,
+            Some("mock".into()),
+        );
+        assert!(first.finalize(false, Some(502), false, Some("upstream failed".into())));
+        assert!(!first.finalize(false, Some(502), false, Some("duplicate".into())));
+        drop(first);
+
+        let second = lifecycle.begin_attempt(
+            2,
+            "route-b",
+            Some("ch-b".into()),
+            Some(2),
+            None,
+            Some("mock".into()),
+        );
+        assert!(second.finalize(true, Some(200), false, None));
+        lifecycle.set_attempts(2, Some(2));
+        assert!(lifecycle.finalize_success());
+
+        match rx.try_recv().unwrap() {
+            GatewayEvent::Attempt(event) => {
+                assert_eq!(event.attempt_no, 1);
+                assert!(!event.success);
+            }
+            other => panic!("expected first attempt, got {other:?}"),
+        }
+        match rx.try_recv().unwrap() {
+            GatewayEvent::Attempt(event) => {
+                assert_eq!(event.attempt_no, 2);
+                assert!(event.success);
+            }
+            other => panic!("expected second attempt, got {other:?}"),
+        }
+        let request = recv(&mut rx);
+        assert_eq!(request.attempt_count, 2);
+        assert_eq!(request.successful_attempt, Some(2));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn dropping_active_attempt_records_one_failed_attempt() {
+        let (recorder, mut rx) = test_recorder(4);
+        let lifecycle = RequestLifecycle::new(&recorder, meta(), identity());
+        let attempt = lifecycle.begin_attempt(1, "route-a", None, None, None, None);
+        drop(attempt);
+        match rx.try_recv().unwrap() {
+            GatewayEvent::Attempt(event) => {
+                assert_eq!(event.attempt_no, 1);
+                assert!(!event.success);
+                assert_eq!(
+                    event.error.as_deref(),
+                    Some("attempt_dropped_without_finalize")
+                );
+            }
+            other => panic!("expected attempt event, got {other:?}"),
+        }
+        assert!(rx.try_recv().is_err());
+    }
 }

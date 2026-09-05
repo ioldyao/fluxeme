@@ -646,3 +646,220 @@ mod normalize_tests {
         assert_eq!(body["messages"][0]["role"], "user");
     }
 }
+
+#[cfg(test)]
+mod classify_tests {
+    use super::*;
+    use crate::observability::gateway_events::GatewayEvent;
+    use crate::observability::gateway_events::GatewayEventRecorder;
+    use crate::observability::lifecycle::{
+        RequestError, RequestIdentity, RequestLifecycle, RequestMeta,
+    };
+    use crate::scheduler::helpers::{ClassifiedError, GatewayError};
+    use tokio::sync::mpsc;
+
+    fn recorder(cap: usize) -> (GatewayEventRecorder, mpsc::Receiver<GatewayEvent>) {
+        GatewayEventRecorder::test_recorder(cap)
+    }
+
+    fn meta() -> RequestMeta {
+        RequestMeta {
+            request_id: "req-cls".to_string(),
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            api_format: "openai".to_string(),
+            stream: false,
+            client_ip: None,
+            user_agent: None,
+        }
+    }
+
+    fn identity() -> RequestIdentity {
+        RequestIdentity {
+            user_id: "user-1".to_string(),
+            user_name: "Alice".to_string(),
+            team_id: None,
+            api_key_id: None,
+            api_key_name: "my-key".to_string(),
+            requested_model: "gpt-4o".to_string(),
+            billing_payment_mode: None,
+        }
+    }
+
+    #[test]
+    fn model_not_found_classifies_rejected_404() {
+        let classified = ClassifiedError::from(GatewayError::Route("Model not found".into()));
+        assert_eq!(classified.status_code, 404);
+        assert_eq!(classified.stage, "routing");
+        assert_eq!(classified.kind, "model_not_found");
+    }
+
+    #[test]
+    fn no_available_endpoint_classifies_failed_503() {
+        let classified = ClassifiedError::from(GatewayError::ServiceUnavailable(
+            "No healthy endpoint".into(),
+        ));
+        assert_eq!(classified.status_code, 503);
+        assert_eq!(classified.stage, "routing");
+        assert_eq!(classified.kind, "no_available_endpoint");
+    }
+
+    #[test]
+    fn invalid_request_classifies_rejected_400_validation() {
+        let classified = ClassifiedError::from(GatewayError::BadRequest("Missing 'model'".into()));
+        assert_eq!(classified.status_code, 400);
+        assert_eq!(classified.stage, "validation");
+        assert_eq!(classified.kind, "invalid_request");
+    }
+
+    #[test]
+    fn protocol_conversion_classifies_failed_500_gateway() {
+        let classified = ClassifiedError::from(GatewayError::Internal(
+            "Response build error: cannot serialize".into(),
+        ));
+        assert_eq!(classified.status_code, 500);
+        assert_eq!(classified.stage, "gateway");
+        assert_eq!(classified.kind, "protocol_conversion_failed");
+    }
+
+    #[test]
+    fn internal_error_classifies_failed_500_internal() {
+        let classified = ClassifiedError::from(GatewayError::Internal("boom".into()));
+        assert_eq!(classified.status_code, 500);
+        assert_eq!(classified.stage, "gateway");
+        assert_eq!(classified.kind, "internal_error");
+    }
+
+    #[test]
+    fn upstream_error_classifies_failed_502_upstream() {
+        let classified = ClassifiedError::from(GatewayError::Upstream("upstream refused".into()));
+        assert_eq!(classified.status_code, 502);
+        assert_eq!(classified.stage, "upstream");
+        assert_eq!(classified.kind, "upstream_error");
+    }
+
+    #[test]
+    fn insufficient_balance_classifies_rejected_402_billing() {
+        let classified =
+            ClassifiedError::from(GatewayError::PaymentRequired("Insufficient balance".into()));
+        assert_eq!(classified.status_code, 402);
+        assert_eq!(classified.stage, "billing");
+        assert_eq!(classified.kind, "insufficient_balance");
+    }
+
+    #[test]
+    fn rate_limit_classifies_rejected_429() {
+        let classified = ClassifiedError::from(GatewayError::RateLimit("Too many".into()));
+        assert_eq!(classified.status_code, 429);
+        assert_eq!(classified.stage, "rate_limit");
+        assert_eq!(classified.kind, "rate_limit_exceeded");
+    }
+
+    #[test]
+    fn model_not_allowed_classifies_rejected_403_authorization() {
+        let classified = ClassifiedError::from(GatewayError::Auth("Not allowed".into()));
+        assert_eq!(classified.status_code, 403);
+        assert_eq!(classified.stage, "authorization");
+        assert_eq!(classified.kind, "model_not_allowed");
+    }
+
+    #[test]
+    fn classify_then_finalize_writes_status_kind_stage() {
+        let (r, mut rx) = recorder(4);
+        let lifecycle = RequestLifecycle::new(&r, meta(), identity());
+        let classified = ClassifiedError::from(GatewayError::Route("nope".into()));
+        assert!(lifecycle.finalize_classified(&classified));
+        let event = match rx.try_recv().unwrap() {
+            GatewayEvent::Request(event) => event,
+            other => panic!("expected request event, got {other:?}"),
+        };
+        assert_eq!(event.status, "rejected");
+        assert_eq!(event.status_code, 404);
+        assert_eq!(event.error_stage.as_deref(), Some("routing"));
+        assert_eq!(event.error_kind.as_deref(), Some("model_not_found"));
+        // request event keeps its identity
+        assert_eq!(event.request_id, "req-cls");
+        assert_eq!(event.requested_model, "gpt-4o");
+    }
+
+    #[test]
+    fn no_available_endpoint_finalizes_failed_not_rejected() {
+        let (r, mut rx) = recorder(4);
+        let lifecycle = RequestLifecycle::new(&r, meta(), identity());
+        let classified =
+            ClassifiedError::from(GatewayError::ServiceUnavailable("no endpoint".into()));
+        assert!(lifecycle.finalize_classified(&classified));
+        let event = match rx.try_recv().unwrap() {
+            GatewayEvent::Request(event) => event,
+            other => panic!("expected request event, got {other:?}"),
+        };
+        assert_eq!(event.status, "failed");
+        assert_eq!(event.status_code, 503);
+        assert_eq!(event.error_stage.as_deref(), Some("routing"));
+        assert_eq!(event.error_kind.as_deref(), Some("no_available_endpoint"));
+        assert_eq!(event.attempt_count, 0);
+    }
+
+    #[test]
+    fn protocol_conversion_finalizes_failed_500() {
+        let (r, mut rx) = recorder(4);
+        let lifecycle = RequestLifecycle::new(&r, meta(), identity());
+        let classified =
+            ClassifiedError::from(GatewayError::Internal("Response build error: boom".into()));
+        assert!(lifecycle.finalize_classified(&classified));
+        let event = match rx.try_recv().unwrap() {
+            GatewayEvent::Request(event) => event,
+            other => panic!("expected request event, got {other:?}"),
+        };
+        assert_eq!(event.status, "failed");
+        assert_eq!(event.status_code, 500);
+        assert_eq!(event.error_stage.as_deref(), Some("gateway"));
+        assert_eq!(
+            event.error_kind.as_deref(),
+            Some("protocol_conversion_failed")
+        );
+        assert_eq!(event.attempt_count, 0);
+    }
+
+    #[test]
+    fn custom_499_classification_maps_to_cancelled() {
+        let (r, mut rx) = recorder(4);
+        let lifecycle = RequestLifecycle::new(&r, meta(), identity());
+        let classified = ClassifiedError::new(
+            GatewayError::Upstream("client went away".into()),
+            499,
+            "response_stream",
+            "client_disconnect",
+        );
+        assert!(lifecycle.finalize_classified(&classified));
+        let event = match rx.try_recv().unwrap() {
+            GatewayEvent::Request(event) => event,
+            other => panic!("expected request event, got {other:?}"),
+        };
+        assert_eq!(event.status, "cancelled");
+        assert_eq!(event.status_code, 499);
+        assert_eq!(event.error_stage.as_deref(), Some("response_stream"));
+        assert_eq!(event.error_kind.as_deref(), Some("client_disconnect"));
+    }
+
+    #[test]
+    fn classified_error_round_trips_back_to_gateway_error() {
+        let classified = ClassifiedError::from(GatewayError::Route("nope".into()));
+        let err: GatewayError = classified.clone().into();
+        match err {
+            GatewayError::Route(message) => assert_eq!(message, "nope"),
+            other => panic!("expected Route error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lifecycle_error_request_builder_defaults() {
+        let error = RequestError::new("routing", "no_available_endpoint");
+        assert_eq!(error.stage, "routing");
+        assert_eq!(error.kind, "no_available_endpoint");
+        assert!(error.code.is_none());
+        assert!(error.message.is_none());
+        let with_message = error.with_message("no endpoint");
+        assert_eq!(with_message.message.as_deref(), Some("no endpoint"));
+    }
+}
