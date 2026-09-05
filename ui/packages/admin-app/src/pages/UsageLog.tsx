@@ -349,18 +349,18 @@ export default function UsageLog() {
                 <div className="overflow-x-auto rounded-xl border border-border">
                   <table className="w-full min-w-[1920px] table-fixed border-collapse text-sm">
                     <colgroup>
-                      <col className="w-[130px]" /><col className="w-[160px]" /><col className="w-[160px]" />
+                      <col className="w-[130px]" /><col className="w-[90px]" /><col className="w-[160px]" /><col className="w-[160px]" />
                       <col className="w-[110px]" /><col className="w-[230px]" /><col className="w-[90px]" />
                       <col className="w-[120px]" /><col className="w-[100px]" /><col className="w-[90px]" />
                       <col className="w-[100px]" /><col className="w-[100px]" />
-                      <col className="w-[90px]" />
-                      <col className="w-[100px]" /><col className="w-[130px]" /><col className="w-[140px]" />
-                      <col className="w-[110px]" /><col className="w-[110px]" /><col className="w-[90px]" />
+                      <col className="w-[90px]" /><col className="w-[100px]" /><col className="w-[130px]" />
+                      <col className="w-[140px]" /><col className="w-[110px]" /><col className="w-[110px]" />
                       <col className="w-[150px]" /><col className="w-[90px]" />
                     </colgroup>
                     <thead>
                       <tr className="border-b bg-muted/30 text-[11px] font-semibold text-muted-foreground">
                         <th className="whitespace-nowrap px-3 py-3 text-left">{t('table.time')}</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-center">{t('table.status')}</th>
                         <th className="whitespace-nowrap px-3 py-3 text-left">{t('table.user')}</th>
                         <th className="whitespace-nowrap px-3 py-3 text-left">{t('table.apiKey')}</th>
                         <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.billingMode')}</th>
@@ -377,7 +377,6 @@ export default function UsageLog() {
                         <th className="whitespace-nowrap px-3 py-3 text-right tabular-nums">钱包实扣</th>
                         <th className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{t('table.latency')}</th>
                         <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.clientIp')}</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-center">{t('table.status')}</th>
                         <th className="whitespace-nowrap px-3 py-3 text-left">{t('usage.errorKind')}</th>
                         <th className="whitespace-nowrap px-3 py-3 text-right">{t('usage.attemptCount')}</th>
                       </tr>
@@ -387,6 +386,9 @@ export default function UsageLog() {
                         <tr key={r.request_id} className="border-b last:border-0 hover:bg-muted/50 cursor-pointer" onClick={() => setDetailId(r.request_id)}>
                           <td className="whitespace-nowrap px-3 py-3 text-xs text-muted-foreground">
                             {formatTimestamp(r.timestamp)}
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-3 text-center" aria-label={r.status}>
+                            <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${statusBadgeClass(r.status)}`}>{r.status}</span>
                           </td>
                           <td className="max-w-[160px] truncate whitespace-nowrap px-3 py-3" title={r.user_name ?? undefined}>{r.user_name}</td>
                           <td className="max-w-[160px] truncate whitespace-nowrap px-3 py-3" title={r.api_key_name ?? undefined}>{r.api_key_name ?? '—'}</td>
@@ -426,9 +428,6 @@ export default function UsageLog() {
                           })()}
                           <td className="whitespace-nowrap px-3 py-3 text-right text-muted-foreground tabular-nums">{r.total_latency_ms.toLocaleString()}ms</td>
                           <td className="max-w-[110px] truncate whitespace-nowrap px-3 py-3 text-xs font-mono text-muted-foreground" title={r.client_ip ?? undefined}>{r.client_ip ?? '—'}</td>
-                          <td className="whitespace-nowrap px-3 py-3 text-center" aria-label={r.status}>
-                            <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${statusBadgeClass(r.status)}`}>{r.status}</span>
-                          </td>
                           <td className="max-w-[150px] truncate px-3 py-3 text-xs" title={r.error_kind ?? undefined}>{errorKindLabel(r.error_kind, t)}</td>
                           <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{r.attempt_count}</td>
                         </tr>
