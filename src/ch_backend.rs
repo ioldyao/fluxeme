@@ -1883,6 +1883,7 @@ impl ClickHouseBackend {
         }
         eq!(filter.endpoint_url, "endpoint_url");
         eq!(filter.client_ip, "client_ip");
+        eq!(filter.status, "status");
         if let Some(v) = filter.start_date.as_deref().filter(|v| !v.is_empty()) {
             conditions.push("timestamp >= parseDateTimeBestEffort(?)".to_string());
             binds.push(normalize_clickhouse_datetime(v)?);

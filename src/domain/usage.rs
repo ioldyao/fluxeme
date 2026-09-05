@@ -22,6 +22,8 @@ pub struct UsageFilter {
     pub endpoint_url: Option<String>,
     /// Client IP match (=).
     pub client_ip: Option<String>,
+    /// Terminal request status match (=): succeeded/rejected/failed/cancelled.
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

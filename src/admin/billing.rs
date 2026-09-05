@@ -374,6 +374,7 @@ pub(crate) async fn admin_billing_team_requests(
         endpoint_id: None,
         endpoint_url: None,
         client_ip: None,
+        status: None,
     };
 
     let ch = state
@@ -430,6 +431,7 @@ pub(crate) async fn admin_billing_team_user_api_keys(
         endpoint_id: None,
         endpoint_url: None,
         client_ip: None,
+        status: None,
     };
 
     let ch = state
@@ -1355,6 +1357,7 @@ pub(crate) async fn admin_billing_api_key_detail(
         endpoint_id: None,
         endpoint_url: None,
         client_ip: None,
+        status: None,
     };
 
     let ch = state
@@ -1513,6 +1516,7 @@ pub(crate) async fn admin_billing_api_key_detail_global(
         endpoint_id: None,
         endpoint_url: None,
         client_ip: None,
+        status: None,
     };
 
     let ch = state

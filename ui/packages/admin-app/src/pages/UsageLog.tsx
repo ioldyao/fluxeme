@@ -62,6 +62,7 @@ export default function UsageLog() {
   const [channelIdFilter, setChannelIdFilter] = useState('');
   const [endpointFilter, setEndpointFilter] = useState('');
   const [clientIpFilter, setClientIpFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [startDt, setStartDt] = useState('');
   const [endDt, setEndDt] = useState('');
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -108,7 +109,7 @@ export default function UsageLog() {
   const isCustomDate = dateFilter.length === 10 && dateFilter.includes('-');
 
   const filtersActive = !!userIdFilter || !!modelFilter || !!apiKeyFilter || !!apiFormatFilter
-    || !!requestIdFilter || !!channelNameFilter || !!channelIdFilter || !!endpointFilter || !!clientIpFilter
+    || !!requestIdFilter || !!channelNameFilter || !!channelIdFilter || !!endpointFilter || !!clientIpFilter || !!statusFilter
     || dateFilter !== 'all' || !!startDt || !!endDt;
   const params = {
     limit, offset,
@@ -121,6 +122,7 @@ export default function UsageLog() {
     ...(channelIdFilter ? { channel_id: channelIdFilter } : {}),
     ...(endpointFilter ? { endpoint_url: endpointFilter } : {}),
     ...(clientIpFilter ? { client_ip: clientIpFilter } : {}),
+    ...(statusFilter ? { status: statusFilter } : {}),
     ...dateParams,
   };
   const { data: usage, isLoading, isError, refetch } = useUsageRequests(params);
@@ -259,6 +261,16 @@ export default function UsageLog() {
                 placeholder={t('usage.filterApiKey')}
                 value={apiKeyFilter} onChange={(e) => { setApiKeyFilter(e.target.value); setOffset(0); }}
               />
+              <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setOffset(0); }}>
+                <SelectTrigger className="h-9"><SelectValue placeholder={t('usage.filterStatus')} /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('usage.statusAll')}</SelectItem>
+                  <SelectItem value="succeeded">{t('usage.success')}</SelectItem>
+                  <SelectItem value="failed">{t('usage.failure')}</SelectItem>
+                  <SelectItem value="rejected">{t('usage.statusRejected')}</SelectItem>
+                  <SelectItem value="cancelled">{t('usage.statusCancelled')}</SelectItem>
+                </SelectContent>
+              </Select>
               <Select value={apiFormatFilter} onValueChange={(v) => { setApiFormatFilter(v); setOffset(0); }}>
                 <SelectTrigger className="h-9">
                   <SelectValue placeholder={t('usage.filterApiFormat')} />
@@ -270,6 +282,7 @@ export default function UsageLog() {
                   <SelectItem value="relay">Relay</SelectItem>
                 </SelectContent>
               </Select>
+
               <Combobox
                 options={channelNameOptions}
                 placeholder={t('usage.filterChannelName')}

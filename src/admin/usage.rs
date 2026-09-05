@@ -86,6 +86,7 @@ fn build_usage_filter(
         endpoint_id,
         endpoint_url,
         client_ip: query.client_ip,
+        status: None,
     })
 }
 
@@ -274,6 +275,7 @@ pub(crate) struct GatewayUsageQuery {
     pub channel_id: Option<String>,
     pub endpoint_url: Option<String>,
     pub client_ip: Option<String>,
+    pub status: Option<String>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
 }
@@ -298,6 +300,12 @@ fn gateway_filter(q: GatewayUsageQuery) -> Result<UsageFilter, AdminError> {
         endpoint_id,
         endpoint_url,
         client_ip: q.client_ip,
+        status: q.status.filter(|v| {
+            matches!(
+                v.as_str(),
+                "succeeded" | "rejected" | "failed" | "cancelled"
+            )
+        }),
         start_date: validate_usage_datetime(q.start_date, "start_date")?,
         end_date: validate_usage_datetime(q.end_date, "end_date")?,
         ..Default::default()

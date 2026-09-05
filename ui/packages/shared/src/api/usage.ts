@@ -17,6 +17,7 @@ interface UsageParams {
   channel_id?: string;
   endpoint_url?: string;
   client_ip?: string;
+  status?: string;
 }
 
 interface UsageResponse {
@@ -98,6 +99,7 @@ function buildUsageSearchParams(params: UsageParams = {}) {
   if (params.channel_id) searchParams.set('channel_id', params.channel_id);
   if (params.endpoint_url) searchParams.set('endpoint_url', params.endpoint_url);
   if (params.client_ip) searchParams.set('client_ip', params.client_ip);
+  if (params.status) searchParams.set('status', params.status);
   return searchParams;
 }
 
