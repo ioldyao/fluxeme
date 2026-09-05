@@ -109,6 +109,10 @@ billing_payment_mode / wallet_amount
       UsageLog 列表切 Request Log，状态徽章 + 错误类型 + attempt 数列；详情 Attempts 时间线；
       图表 Tab 暂留 usage_events）
 - [ ] Phase 6 测试 + 迁移（exactly-once、retry/fallback、disconnect、旧链路兼容）
+      （测试部分已完成：`b5485e9`，164 passed / 3 ignored；
+       并发 exactly-once、attempt 一调用一事件、模型不存在/无端点/非法请求/
+       协议转换/上游/限流等分类、流式 clean/idle/overflow/disconnect 终态；
+       剩余：历史回填 backfill 是否执行待用户确认）
 
 ## 迁移说明（待定）
 
