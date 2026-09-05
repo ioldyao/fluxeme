@@ -192,7 +192,7 @@ export default function UsageLog() {
   } = useUsageAnalytics({ ...chartDateParams, enabled: chartTab === 'chart' });
 
   return (
-    <div className="animate-fade-in">
+    <div className="min-w-0 w-full animate-fade-in">
       <PageHeader
         title={t('usage.title')}
         description={t('usage.adminSubtitle')}
@@ -334,7 +334,7 @@ export default function UsageLog() {
             </div>
           )}
 
-          <Card>
+          <Card className="w-full min-w-0">
             <CardContent className="p-0">
               {isLoading ? (
                 <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>

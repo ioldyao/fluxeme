@@ -389,7 +389,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!max-w-[90vw] max-h-[85vh] overflow-y-auto">
+      <DialogContent className="!w-[calc(100vw-48px)] !max-w-[1500px] min-w-0 max-h-[85vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {t('usage.detailTitle')}
@@ -400,7 +400,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
         {isLoading ? (
           <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>
         ) : record ? (
-          <div className="mx-auto max-w-[1600px] space-y-5 min-w-0">
+          <div className="mx-auto w-full max-w-[1500px] min-w-0 space-y-5 overflow-hidden">
             {/* Request conclusion */}
             <div className="rounded-xl border bg-card px-5 py-4">
               <div className="flex flex-wrap items-start justify-between gap-4">
@@ -436,26 +436,26 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
             </div>
 
             {/* Trace + context */}
-            <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(280px,0.8fr)]">
-              <section className="rounded-xl border bg-card p-5">
+            <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(280px,0.8fr)]">
+              <section className="min-w-0 rounded-xl border bg-card p-5">
                 <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold"><Clock3 className="size-4" />{t('usage.requestLifecycle')}</h3>
                 <div className="relative pl-7">
                   <div className="absolute bottom-2 left-[7px] top-2 w-px bg-border" />
                   {lifecycleEvents.map((ev, i) => <div key={i} className="relative pb-5 last:pb-0">
                     <div className="absolute -left-[27px] top-1 size-3 rounded-full border-[3px] bg-card" style={{ borderColor: COLORS[ev.cls] || COLORS.ok }} />
                     <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1"><div className="text-sm font-semibold">{ev.title}</div><div className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground"><span>{ev.time}</span>{ev.durationMs != null && ev.durationMs > 0 && <span className="text-muted-foreground/70">+{formatDuration(ev.durationMs)}</span>}</div></div>
-                    <div className="mt-1 break-words text-xs text-muted-foreground">{ev.detail}</div>
+                    <div className="mt-1 min-w-0 whitespace-normal break-words [overflow-wrap:anywhere] text-xs text-muted-foreground">{ev.detail}</div>
                   </div>)}
                 </div>
                 {request && request.status !== 'succeeded' && (request.error_kind || request.error_stage || request.error_message) && <div className="mt-5 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs"><div className="font-semibold text-destructive">{request.status} · HTTP {request.status_code}</div>{request.error_stage && <div className="mt-1 text-muted-foreground">{t('usage.errorStage')} {request.error_stage}</div>}{request.error_kind && <div className="text-muted-foreground">{t('usage.errorKind')} {request.error_kind}</div>}{request.error_message && <div className="break-words text-muted-foreground">{t('usage.errorMessage')} {request.error_message}</div>}</div>}
               </section>
 
-              <aside className="space-y-4">
+              <aside className="min-w-0 space-y-4">
                 <section className="rounded-xl border bg-card p-4"><h4 className="mb-3 text-sm font-semibold">{t('usage.requestInfo')}</h4><div className="space-y-2 text-xs">
-                  {[[t('table.user'),record.user_name],[t('usage.apiKey'),record.api_key_name ?? '—'],[t('usage.keyScope'),record.team_id ? t('usage.teamKey') : t('usage.personalKey')],[t('usage.apiFormat'),record.api_format ?? '—'],[t('usage.endpointPath'),record.path ?? '—'],[t('usage.clientIp'),record.client_ip ?? '—']].map(([k,v]) => <div key={k} className="flex justify-between gap-3 border-b border-border/60 pb-2 last:border-0"><span className="text-muted-foreground">{k}</span><b className="max-w-[65%] break-all text-right">{v}</b></div>)}
+                  {[[t('table.user'),record.user_name],[t('usage.apiKey'),record.api_key_name ?? '—'],[t('usage.keyScope'),record.team_id ? t('usage.teamKey') : t('usage.personalKey')],[t('usage.apiFormat'),record.api_format ?? '—'],[t('usage.endpointPath'),record.path ?? '—'],[t('usage.clientIp'),record.client_ip ?? '—']].map(([k,v]) => <div key={k} className="flex justify-between gap-3 border-b border-border/60 pb-2 last:border-0"><span className="text-muted-foreground">{k}</span><b className="min-w-0 max-w-[65%] whitespace-normal break-words text-right [overflow-wrap:anywhere]">{v}</b></div>)}
                 </div></section>
                 <section className="rounded-xl border bg-card p-4"><h4 className="mb-3 text-sm font-semibold">{t('usage.routeInfo')}</h4><div className="space-y-2 text-xs">
-                  {[[t('usage.requestedModel'),request?.requested_model ?? record.model],[t('usage.mappedModel'),record.model],...(request?.model_mapping_rule ? [[t('usage.mappingRule'), request.model_mapping_rule] as [string, string]] : []),[t('usage.channel'),channelName],[t('usage.channelId'),record.channel_id ?? '—'],[t('usage.endpointId'),record.endpoint_id != null ? `#${record.endpoint_id}` : '—'],['Endpoint',record.endpoint_url ?? '—']].map(([k,v]) => <div key={k} className="flex justify-between gap-3 border-b border-border/60 pb-2 last:border-0"><span className="text-muted-foreground">{k}</span><b className="max-w-[65%] break-all text-right">{v}</b></div>)}
+                  {[[t('usage.requestedModel'),request?.requested_model ?? record.model],[t('usage.mappedModel'),record.model],...(request?.model_mapping_rule ? [[t('usage.mappingRule'), request.model_mapping_rule] as [string, string]] : []),[t('usage.channel'),channelName],[t('usage.channelId'),record.channel_id ?? '—'],[t('usage.endpointId'),record.endpoint_id != null ? `#${record.endpoint_id}` : '—'],['Endpoint',record.endpoint_url ?? '—']].map(([k,v]) => <div key={k} className="flex justify-between gap-3 border-b border-border/60 pb-2 last:border-0"><span className="text-muted-foreground">{k}</span><b className="min-w-0 max-w-[65%] whitespace-normal break-words text-right [overflow-wrap:anywhere]">{v}</b></div>)}
                 </div></section>
                 <section className="rounded-xl border bg-card p-4"><h4 className="mb-3 text-sm font-semibold">{t('usage.billingMode')}</h4><div className="flex justify-between text-xs"><span className="text-muted-foreground">{t('usage.billingMode')}</span><b>{record.billing_payment_mode === 'prepaid' ? t('usage.prepaid') : t('usage.metered')}</b></div></section>
               </aside>
@@ -464,7 +464,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
             <hr className="border-border" />
 
             {/* Request content (tabs) */}
-            <section className="rounded-xl border bg-card p-5">
+            <section className="min-w-0 rounded-xl border bg-card p-5">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold">{t('usage.requestContent')}</h3>
                 <div className="flex flex-wrap items-center gap-1 rounded-lg bg-muted p-0.5 text-xs">
@@ -475,13 +475,13 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
               {tab === 'request' && (
                 <div className="space-y-2">
                   {userMessages.length > 0 ? userMessages.map((text, i) => <div key={i} className="whitespace-pre-wrap break-words rounded-lg border bg-muted/40 p-3 text-xs">{text}</div>) : <div className="text-xs text-muted-foreground">{t('usage.noUserMessage')}</div>}
-                  {record.request_body && <details className="mt-2"><summary className="cursor-pointer select-none text-[11px] text-muted-foreground">{t('usage.requestRaw')}</summary><pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-3 text-xs">{formatJson(record.request_body)}</pre></details>}
+                  {record.request_body && <details className="mt-2"><summary className="cursor-pointer select-none text-[11px] text-muted-foreground">{t('usage.requestRaw')}</summary><pre className="mt-1 max-h-60 min-w-0 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-lg bg-muted p-3 text-xs">{formatJson(record.request_body)}</pre></details>}
                 </div>
               )}
               {tab === 'response' && (
                 <div className="space-y-2">
                   {replyText ? <div className="whitespace-pre-wrap break-words rounded-lg border bg-chart-2/5 p-3 text-xs">{replyText}</div> : <div className="text-xs text-muted-foreground">—</div>}
-                  {record.response_body && <details className="mt-2"><summary className="cursor-pointer select-none text-[11px] text-muted-foreground">{t('usage.responseRaw')}</summary><pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-3 text-xs">{formatJson(record.response_body)}</pre></details>}
+                  {record.response_body && <details className="mt-2"><summary className="cursor-pointer select-none text-[11px] text-muted-foreground">{t('usage.responseRaw')}</summary><pre className="mt-1 max-h-80 min-w-0 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-lg bg-muted p-3 text-xs">{formatJson(record.response_body)}</pre></details>}
                 </div>
               )}
               {tab === 'thinking' && (
@@ -489,7 +489,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
               )}
               {tab === 'raw' && (
                 <div className="space-y-2">
-                  {[[t('usage.requestRaw'), record.request_body],[t('usage.responseRaw'), record.response_body],[t('usage.reasoningRaw'), record.reasoning_body]].filter(([,v]) => v).map(([label, val]) => <div key={label as string}><div className="mb-1 text-[11px] font-medium text-muted-foreground">{label}</div><pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-3 text-xs">{formatJson(val as string | null | undefined)}</pre></div>)}
+                  {[[t('usage.requestRaw'), record.request_body],[t('usage.responseRaw'), record.response_body],[t('usage.reasoningRaw'), record.reasoning_body]].filter(([,v]) => v).map(([label, val]) => <div key={label as string}><div className="mb-1 text-[11px] font-medium text-muted-foreground">{label}</div><pre className="max-h-96 min-w-0 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-lg bg-muted p-3 text-xs">{formatJson(val as string | null | undefined)}</pre></div>)}
                 </div>
               )}
             </section>
