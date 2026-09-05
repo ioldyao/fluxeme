@@ -2386,14 +2386,14 @@ impl ClickHouseBackend {
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
              cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, cache_write_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, billing_group_id, billing_group_name, billing_payment_mode \
-             FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) AND user_id = ? ORDER BY timestamp ASC"
+             FROM usage_events AS usage_events WHERE usage_events.timestamp >= parseDateTimeBestEffort(?) AND usage_events.user_id = ? ORDER BY usage_events.timestamp ASC"
         } else {
             "SELECT \
              toString(timestamp) AS timestamp, request_id, user_id, user_name, channel_id, model, \
              prompt_tokens, completion_tokens, total_tokens, latency_ms, status_code, success, \
              api_key_name, api_format, stream, \
              cache_hit_input_tokens, cache_write_tokens, prompt_price, completion_price, cache_read_price, cache_write_price, client_ip, endpoint_id, endpoint_url, original_model, team_id, ttft_ms, billing_group_id, billing_group_name, billing_payment_mode \
-             FROM usage_events WHERE timestamp >= parseDateTimeBestEffort(?) ORDER BY timestamp ASC"
+             FROM usage_events AS usage_events WHERE usage_events.timestamp >= parseDateTimeBestEffort(?) ORDER BY usage_events.timestamp ASC"
         };
         let mut query = self.client.query(sql).bind(since);
         if let Some(uid) = user_id {
