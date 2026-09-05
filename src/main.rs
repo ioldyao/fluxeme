@@ -379,6 +379,23 @@ async fn main() {
         tokio::spawn(crate::cache::start_obs_consumer(Some(ch), cache, db));
     }
 
+    // Typed gateway observability events (Phase 1, infrastructure only):
+    // a non-blocking recorder queues events and a background writer pushes
+    // them to the gateway:events Redis Stream; the consumer drains that
+    // stream into the dedicated ClickHouse tables. Nothing in the request
+    // lifecycle publishes these events yet — lifecycle integration arrives
+    // in a later phase. The old usage_events/billing pipelines are untouched.
+    let (gateway_event_recorder, gateway_writer_handle) =
+        crate::observability::gateway_events::GatewayEventRecorder::new(cache.clone(), 8192);
+    let _gateway_event_recorder = gateway_event_recorder;
+    let gateway_event_handles = vec![gateway_writer_handle];
+    tokio::spawn(
+        crate::observability::gateway_events::start_gateway_event_consumer(
+            ch.clone(),
+            cache.clone(),
+        ),
+    );
+
     // Periodic inspection task: refresh Redis gate status from PostgreSQL.
     // Redis is mandatory, so no local gate cache is maintained.
     {
@@ -706,6 +723,9 @@ async fn main() {
     .expect("Server error");
 
     for h in usage_handles {
+        h.abort();
+    }
+    for h in gateway_event_handles {
         h.abort();
     }
 

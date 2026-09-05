@@ -95,8 +95,108 @@ pub struct GatewayCall {
     pub api_key_id: String,
 }
 
+/// Row type for the typed gateway observability tables.
+#[derive(Debug, Clone, Serialize, Row)]
+pub struct GatewayRequestEventRow {
+    pub timestamp: u32,
+    pub request_id: String,
+    pub user_id: Option<String>,
+    pub api_key_id: Option<String>,
+    pub route_id: String,
+    pub method: String,
+    pub path: String,
+    pub bytes_in: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Row)]
+pub struct GatewayAttemptEventRow {
+    pub timestamp: u32,
+    pub request_id: String,
+    pub attempt_id: String,
+    pub attempt_no: u32,
+    pub route_id: String,
+    pub endpoint_url: Option<String>,
+    pub status_code: Option<u16>,
+    pub success: u8,
+    pub latency_ms: u64,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Row)]
+pub struct GatewayAccessEventRow {
+    pub timestamp: u32,
+    pub request_id: String,
+    pub user_id: Option<String>,
+    pub api_key_id: Option<String>,
+    pub route_id: String,
+    pub method: String,
+    pub path: String,
+    pub status_code: u16,
+    pub success: u8,
+    pub latency_ms: u64,
+    pub bytes_in: u64,
+    pub bytes_out: u64,
+}
+
 pub struct ClickHouseBackend {
     client: Client,
+}
+
+fn parse_timestamp_secs(timestamp: &str) -> u32 {
+    chrono::DateTime::parse_from_rfc3339(timestamp)
+        .map(|dt| dt.timestamp() as u32)
+        .unwrap_or_else(|_| chrono::Utc::now().timestamp() as u32)
+}
+
+impl From<crate::observability::gateway_events::GatewayRequestEvent> for GatewayRequestEventRow {
+    fn from(e: crate::observability::gateway_events::GatewayRequestEvent) -> Self {
+        Self {
+            timestamp: parse_timestamp_secs(&e.timestamp),
+            request_id: e.request_id,
+            user_id: e.user_id,
+            api_key_id: e.api_key_id,
+            route_id: e.route_id,
+            method: e.method,
+            path: e.path,
+            bytes_in: e.bytes_in,
+        }
+    }
+}
+
+impl From<crate::observability::gateway_events::GatewayAttemptEvent> for GatewayAttemptEventRow {
+    fn from(e: crate::observability::gateway_events::GatewayAttemptEvent) -> Self {
+        Self {
+            timestamp: parse_timestamp_secs(&e.timestamp),
+            request_id: e.request_id,
+            attempt_id: e.attempt_id,
+            attempt_no: e.attempt_no,
+            route_id: e.route_id,
+            endpoint_url: e.endpoint_url,
+            status_code: e.status_code,
+            success: if e.success { 1 } else { 0 },
+            latency_ms: e.latency_ms,
+            error: e.error,
+        }
+    }
+}
+
+impl From<crate::observability::gateway_events::GatewayAccessEvent> for GatewayAccessEventRow {
+    fn from(e: crate::observability::gateway_events::GatewayAccessEvent) -> Self {
+        Self {
+            timestamp: parse_timestamp_secs(&e.timestamp),
+            request_id: e.request_id,
+            user_id: e.user_id,
+            api_key_id: e.api_key_id,
+            route_id: e.route_id,
+            method: e.method,
+            path: e.path,
+            status_code: e.status_code,
+            success: if e.success { 1 } else { 0 },
+            latency_ms: e.latency_ms,
+            bytes_in: e.bytes_in,
+            bytes_out: e.bytes_out,
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize, Row)]
@@ -426,22 +526,43 @@ impl ClickHouseBackend {
     /// API 网关数据面调用观测（纯 API 网关，非 AI 流量）。
     const CREATE_GATEWAY_CALLS: &'static str = "\
         CREATE TABLE IF NOT EXISTS gateway_calls (\
-            timestamp DateTime,\
-            request_id String,\
-            route_id String,\
-            method String,\
-            path String,\
-            status_code UInt16,\
-            latency_ms UInt64,\
-            bytes_in UInt64,\
-            bytes_out UInt64,\
-            user_id String,\
-            api_key_id String\
+            timestamp DateTime, request_id String, route_id String, method String, path String,\
+            status_code UInt16, latency_ms UInt64, bytes_in UInt64, bytes_out UInt64,\
+            user_id String, api_key_id String\
         ) ENGINE = MergeTree()\
         PARTITION BY toYYYYMM(timestamp)\
         ORDER BY (route_id, timestamp)\
         TTL toDateTime(timestamp) + INTERVAL 90 DAY \
         SETTINGS index_granularity = 8192\
+    ";
+
+    const CREATE_GATEWAY_REQUEST_EVENTS: &'static str = "\
+        CREATE TABLE IF NOT EXISTS gateway_request_events (\
+            timestamp DateTime, request_id String, user_id Nullable(String),\
+            api_key_id Nullable(String), route_id String, method String,\
+            path String, bytes_in UInt64\
+        ) ENGINE = MergeTree() PARTITION BY toYYYYMM(timestamp)\
+        ORDER BY (route_id, timestamp) TTL toDateTime(timestamp) + INTERVAL 90 DAY\
+    ";
+
+    const CREATE_GATEWAY_ATTEMPT_EVENTS: &'static str = "\
+        CREATE TABLE IF NOT EXISTS gateway_attempt_events (\
+            timestamp DateTime, request_id String, attempt_id String,\
+            attempt_no UInt32, route_id String, endpoint_url Nullable(String),\
+            status_code Nullable(UInt16), success UInt8, latency_ms UInt64,\
+            error Nullable(String)\
+        ) ENGINE = MergeTree() PARTITION BY toYYYYMM(timestamp)\
+        ORDER BY (route_id, timestamp) TTL toDateTime(timestamp) + INTERVAL 90 DAY\
+    ";
+
+    const CREATE_GATEWAY_ACCESS_EVENTS: &'static str = "\
+        CREATE TABLE IF NOT EXISTS gateway_access_events (\
+            timestamp DateTime, request_id String, user_id Nullable(String),\
+            api_key_id Nullable(String), route_id String, method String,\
+            path String, status_code UInt16, success UInt8, latency_ms UInt64,\
+            bytes_in UInt64, bytes_out UInt64\
+        ) ENGINE = MergeTree() PARTITION BY toYYYYMM(timestamp)\
+        ORDER BY (route_id, timestamp) TTL toDateTime(timestamp) + INTERVAL 7 DAY\
     ";
 
     pub async fn migrate(&self, retention_days: u32) -> Result<(), String> {
@@ -507,6 +628,15 @@ impl ClickHouseBackend {
             .execute()
             .await
             .map_err(|e| format!("CH migration gateway_calls: {e}"))?;
+
+        for (name, ddl) in [
+            ("gateway_request_events", Self::CREATE_GATEWAY_REQUEST_EVENTS),
+            ("gateway_attempt_events", Self::CREATE_GATEWAY_ATTEMPT_EVENTS),
+            ("gateway_access_events", Self::CREATE_GATEWAY_ACCESS_EVENTS),
+        ] {
+            self.client.query(ddl).execute().await
+                .map_err(|e| format!("CH migration {name}: {e}"))?;
+        }
 
         // Update TTL to match config
         let ttl_sql = format!(
@@ -740,6 +870,64 @@ impl ClickHouseBackend {
             .end()
             .await
             .map_err(|e| format!("CH insert batch end: {e}"))
+    }
+
+    /// Batch insert typed API-gateway observability events.
+    pub async fn insert_gateway_events(
+        &self,
+        requests: &[GatewayRequestEventRow],
+        attempts: &[GatewayAttemptEventRow],
+        accesses: &[GatewayAccessEventRow],
+    ) -> Result<(), String> {
+        if !requests.is_empty() {
+            let mut inserter = self
+                .client
+                .insert::<GatewayRequestEventRow>("gateway_request_events")
+                .map_err(|e| format!("CH gateway request inserter: {e}"))?;
+            for row in requests {
+                inserter
+                    .write(row)
+                    .await
+                    .map_err(|e| format!("CH gateway request row: {e}"))?;
+            }
+            inserter
+                .end()
+                .await
+                .map_err(|e| format!("CH gateway request batch end: {e}"))?;
+        }
+        if !attempts.is_empty() {
+            let mut inserter = self
+                .client
+                .insert::<GatewayAttemptEventRow>("gateway_attempt_events")
+                .map_err(|e| format!("CH gateway attempt inserter: {e}"))?;
+            for row in attempts {
+                inserter
+                    .write(row)
+                    .await
+                    .map_err(|e| format!("CH gateway attempt row: {e}"))?;
+            }
+            inserter
+                .end()
+                .await
+                .map_err(|e| format!("CH gateway attempt batch end: {e}"))?;
+        }
+        if !accesses.is_empty() {
+            let mut inserter = self
+                .client
+                .insert::<GatewayAccessEventRow>("gateway_access_events")
+                .map_err(|e| format!("CH gateway access inserter: {e}"))?;
+            for row in accesses {
+                inserter
+                    .write(row)
+                    .await
+                    .map_err(|e| format!("CH gateway access row: {e}"))?;
+            }
+            inserter
+                .end()
+                .await
+                .map_err(|e| format!("CH gateway access batch end: {e}"))?;
+        }
+        Ok(())
     }
 
     // ── Raw query access ─────────────────────────────────────────────
@@ -2255,6 +2443,78 @@ impl ClickHouseBackend {
 #[cfg(test)]
 mod tests {
     use super::normalize_clickhouse_datetime;
+    use super::{
+        parse_timestamp_secs, GatewayAccessEventRow, GatewayAttemptEventRow, GatewayRequestEventRow,
+    };
+    use crate::observability::gateway_events::{
+        GatewayAccessEvent, GatewayAttemptEvent, GatewayRequestEvent,
+    };
+
+    #[test]
+    fn parses_rfc3339_timestamp_to_seconds() {
+        assert_eq!(parse_timestamp_secs("1970-01-01T00:00:00Z"), 0);
+        assert_eq!(parse_timestamp_secs("1970-01-01T00:00:01Z"), 1);
+    }
+
+    #[test]
+    fn request_event_converts_to_ch_row() {
+        let row = GatewayRequestEventRow::from(GatewayRequestEvent {
+            timestamp: "1970-01-01T00:00:00Z".to_string(),
+            request_id: "req-1".to_string(),
+            user_id: Some("u1".to_string()),
+            api_key_id: Some("k1".to_string()),
+            route_id: "r1".to_string(),
+            method: "POST".to_string(),
+            path: "/v1".to_string(),
+            bytes_in: 42,
+        });
+        assert_eq!(row.timestamp, 0);
+        assert_eq!(row.request_id, "req-1");
+        assert_eq!(row.route_id, "r1");
+        assert_eq!(row.bytes_in, 42);
+    }
+
+    #[test]
+    fn attempt_event_converts_to_ch_row() {
+        let row = GatewayAttemptEventRow::from(GatewayAttemptEvent {
+            timestamp: "1970-01-01T00:00:00Z".to_string(),
+            request_id: "req-1".to_string(),
+            attempt_id: "att-1".to_string(),
+            attempt_no: 2,
+            route_id: "r1".to_string(),
+            endpoint_url: Some("https://upstream/v1".to_string()),
+            status_code: Some(502),
+            success: false,
+            latency_ms: 9,
+            error: Some("Upstream5xx".to_string()),
+        });
+        assert_eq!(row.attempt_no, 2);
+        assert_eq!(row.status_code, Some(502));
+        assert_eq!(row.success, 0);
+        assert_eq!(row.error.as_deref(), Some("Upstream5xx"));
+    }
+
+    #[test]
+    fn access_event_converts_to_ch_row() {
+        let row = GatewayAccessEventRow::from(GatewayAccessEvent {
+            timestamp: "1970-01-01T00:00:00Z".to_string(),
+            request_id: "req-1".to_string(),
+            user_id: Some("u1".to_string()),
+            api_key_id: None,
+            route_id: "r1".to_string(),
+            method: "POST".to_string(),
+            path: "/v1".to_string(),
+            status_code: 200,
+            success: true,
+            latency_ms: 5,
+            bytes_in: 3,
+            bytes_out: 7,
+        });
+        assert_eq!(row.status_code, 200);
+        assert_eq!(row.success, 1);
+        assert_eq!(row.bytes_out, 7);
+        assert!(row.api_key_id.is_none());
+    }
 
     #[test]
     fn preserves_rfc3339_datetime_for_clickhouse() {

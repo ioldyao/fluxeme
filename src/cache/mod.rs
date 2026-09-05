@@ -562,6 +562,112 @@ impl RedisCache {
         }
         Ok(())
     }
+
+    // ── Typed gateway observability event stream ───────────────────────
+
+    const GATEWAY_EVENTS_KEY: &'static str = "gateway:events";
+
+    pub async fn push_gateway_event(
+        &self,
+        event: crate::observability::gateway_events::GatewayEvent,
+    ) -> Result<(), String> {
+        let mut con = self.con.clone();
+        let json =
+            serde_json::to_string(&event).map_err(|e| format!("Gateway event serialize: {e}"))?;
+        redis::cmd("XADD")
+            .arg(Self::GATEWAY_EVENTS_KEY)
+            .arg("MAXLEN")
+            .arg("100000")
+            .arg("*")
+            .arg("event")
+            .arg(json)
+            .query_async::<String>(&mut con)
+            .await
+            .map_err(|e| format!("Redis XADD gateway event: {e}"))?;
+        Ok(())
+    }
+
+    pub async fn read_gateway_events(
+        &self,
+        count: usize,
+    ) -> Result<Vec<(String, crate::observability::gateway_events::GatewayEvent)>, String> {
+        let mut con = self.con.clone();
+        let raw: redis::Value = redis::cmd("XREAD")
+            .arg("COUNT")
+            .arg(count)
+            .arg("STREAMS")
+            .arg(Self::GATEWAY_EVENTS_KEY)
+            .arg("0")
+            .query_async(&mut con)
+            .await
+            .map_err(|e| format!("Redis XREAD gateway events: {e}"))?;
+        Ok(parse_gateway_stream_records(&raw))
+    }
+
+    pub async fn ack_gateway_events(&self, entry_ids: &[String]) -> Result<(), String> {
+        let mut con = self.con.clone();
+        for id in entry_ids {
+            redis::cmd("XDEL")
+                .arg(Self::GATEWAY_EVENTS_KEY)
+                .arg(id)
+                .query_async::<()>(&mut con)
+                .await
+                .map_err(|e| format!("Redis XDEL gateway event: {e}"))?;
+        }
+        Ok(())
+    }
+}
+
+fn parse_gateway_stream_records(
+    raw: &redis::Value,
+) -> Vec<(String, crate::observability::gateway_events::GatewayEvent)> {
+    fn text(value: &redis::Value) -> Option<String> {
+        match value {
+            redis::Value::BulkString(bytes) => Some(String::from_utf8_lossy(bytes).into()),
+            _ => None,
+        }
+    }
+    let mut records = Vec::new();
+    let redis::Value::Array(streams) = raw else {
+        return records;
+    };
+    for stream in streams {
+        let redis::Value::Array(parts) = stream else {
+            continue;
+        };
+        if parts.len() < 2 {
+            continue;
+        }
+        let redis::Value::Array(entries) = &parts[1] else {
+            continue;
+        };
+        for entry in entries {
+            let redis::Value::Array(parts) = entry else {
+                continue;
+            };
+            if parts.len() < 2 {
+                continue;
+            }
+            let Some(id) = text(&parts[0]) else { continue };
+            let redis::Value::Array(fields) = &parts[1] else {
+                continue;
+            };
+            for pair in fields.chunks(2) {
+                if pair.len() != 2 || text(&pair[0]).as_deref() != Some("event") {
+                    continue;
+                }
+                if let Some(json) = text(&pair[1]) {
+                    match serde_json::from_str(json.as_str()) {
+                        Ok(event) => records.push((id.clone(), event)),
+                        Err(error) => {
+                            tracing::warn!(%error, entry_id = %id, "gateway event JSON parse failed")
+                        }
+                    }
+                }
+            }
+        }
+    }
+    records
 }
 
 /// Background task: drains the billing backlog Redis Stream and retries
@@ -906,4 +1012,60 @@ fn parse_usage_stream_records(raw: &redis::Value, stream_name: &str) -> Vec<(Str
 fn build_redis_key(tenant_id: &str, cache_key: &str) -> String {
     let hash = hex::encode(Sha256::digest(cache_key.as_bytes()));
     format!("cache:exact:{}:{}", tenant_id, hash)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::observability::gateway_events::{GatewayAccessEvent, GatewayEvent};
+
+    fn sample_event() -> GatewayEvent {
+        GatewayEvent::Access(GatewayAccessEvent {
+            timestamp: "2026-09-05T12:00:02Z".to_string(),
+            request_id: "req-1".to_string(),
+            user_id: Some("user-1".to_string()),
+            api_key_id: Some("key-1".to_string()),
+            route_id: "route-1".to_string(),
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            status_code: 200,
+            success: true,
+            latency_ms: 250,
+            bytes_in: 1024,
+            bytes_out: 4096,
+        })
+    }
+
+    fn xread_reply(json: &str) -> redis::Value {
+        redis::Value::Array(vec![redis::Value::Array(vec![
+            redis::Value::BulkString(b"gateway:events".to_vec()),
+            redis::Value::Array(vec![redis::Value::Array(vec![
+                redis::Value::BulkString(b"1234-0".to_vec()),
+                redis::Value::Array(vec![
+                    redis::Value::BulkString(b"event".to_vec()),
+                    redis::Value::BulkString(json.as_bytes().to_vec()),
+                ]),
+            ])]),
+        ])])
+    }
+
+    #[test]
+    fn parses_gateway_stream_records_from_xread_reply() {
+        let json = serde_json::to_string(&sample_event()).unwrap();
+        let records = parse_gateway_stream_records(&xread_reply(&json));
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].0, "1234-0");
+        assert!(matches!(records[0].1, GatewayEvent::Access(_)));
+    }
+
+    #[test]
+    fn empty_xread_reply_yields_no_records() {
+        assert!(parse_gateway_stream_records(&redis::Value::Nil).is_empty());
+    }
+
+    #[test]
+    fn skips_malformed_gateway_stream_entries() {
+        let reply = xread_reply("not-json");
+        assert!(parse_gateway_stream_records(&reply).is_empty());
+    }
 }
