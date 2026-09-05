@@ -3,9 +3,9 @@ import type { TFunction } from 'i18next';
 import { useUsageDetail, useUsageRequestDetail, useUsageRequestAttempts } from '@fluxeme/shared/src/api/usage';
 import { useChannels } from '@fluxeme/shared/src/api/channels';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@fluxeme/shared/src/components/ui/dialog';
-import { useCurrency } from '@fluxeme/shared/src/store/currency';
 import { parseTimestamp, formatTime } from '@fluxeme/shared/src/lib/date';
-import { User, Brain, Reply } from 'lucide-react';
+import { useState } from 'react';
+import { Copy, Check, Clock3 } from 'lucide-react';
 import type { UsageRecord } from '@fluxeme/shared/src/types';
 import type { UsageRequestAttempt } from '@fluxeme/shared/src/api/usage';
 
@@ -358,10 +358,19 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
   const { data: attempts } = useUsageRequestAttempts(requestId);
   const { data: channels } = useChannels(undefined, { enabled: open });
   const channelNameById = new Map((channels ?? []).map(channel => [channel.id, channel.name]));
-  useCurrency();
-
-  const userMessages = record ? extractUserMessages(record.request_body) : [];
+  const [copied, setCopied] = useState(false);
+  const [tab, setTab] = useState<'request' | 'response' | 'thinking' | 'raw'>('request');
+  const copyRequestId = async () => {
+    if (!record) return;
+    await navigator.clipboard?.writeText(record.request_id);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+  const channelName = record ? (channelNameById.get(record.channel_id) ?? record.channel_id) : '—';
+  const totalTokens = record ? record.prompt_tokens + record.cache_hit_input_tokens + record.completion_tokens : 0;
+  const formattedTotalTokens = totalTokens.toLocaleString();
   const lifecycleEvents = record ? buildLifecycle(record, t, attempts, channelNameById) : [];
+  const userMessages = record ? extractUserMessages(record.request_body) : [];
   const { thinking: respThinking, content: respContent } = record
     ? extractResponseParts(record.response_body)
     : { thinking: '', content: '' };
@@ -386,161 +395,99 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
         {isLoading ? (
           <div className="p-8 text-center text-muted-foreground">{t('common.loading')}</div>
         ) : record ? (
-          <div className="space-y-5 min-w-0">
-
-            {/* Meta info row */}
-            <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
-              {[
-                { label: t('table.user'), value: record.user_name },
-                { label: t('table.model'), value: record.original_model ? `${record.original_model} → ${record.model}` : record.model },
-                { label: t('usage.apiKey'), value: record.api_key_name ?? '—' },
-                { label: t('usage.keyScope'), value: record.team_id ? t('usage.teamKey') : t('usage.personalKey') },
-                { label: t('usage.apiFormat'), value: record.api_format ?? '—' },
-                { label: t('usage.channel'), value: record.channel_id },
-                { label: t('usage.clientIp'), value: record.client_ip ?? '—' },
-              ].map(m => (
-                <div key={m.label} className="rounded-lg border bg-card p-3">
-                  <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">{m.label}</div>
-                  <div className="text-sm font-medium truncate">{m.value}</div>
+          <div className="mx-auto max-w-[1600px] space-y-5 min-w-0">
+            {/* Request conclusion */}
+            <div className="rounded-xl border bg-card px-5 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-lg font-semibold">{t('usage.detailTitle')}</h2>
+                    <button type="button" onClick={copyRequestId} className="inline-flex items-center gap-1 rounded-md border px-2 py-1 font-mono text-[11px] text-muted-foreground hover:bg-muted" title={record.request_id}>
+                      {record.request_id.substring(0, 18)}… {copied ? <Check className="size-3 text-chart-2" /> : <Copy className="size-3" />}
+                    </button>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+                    <span className="font-medium text-foreground">{record.model}</span><span>·</span><span>{record.api_format ?? '—'}</span><span>·</span><span>{record.user_name}</span><span>·</span><span>{record.api_key_name ?? '—'}</span>
+                  </div>
                 </div>
-              ))}
+                <div className="flex items-center gap-3 text-right">
+                  <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${record.success ? 'bg-chart-2/10 text-chart-2' : 'bg-destructive/10 text-destructive'}`}>
+                    <span className={`size-1.5 rounded-full ${record.success ? 'bg-chart-2' : 'bg-destructive'}`} />{record.success ? t('usage.success') : t('usage.failure')} {record.status_code}
+                  </span>
+                  <div><div className="font-mono text-lg font-semibold">{formatDuration(record.latency_ms)}</div><div className="text-[10px] text-muted-foreground">{t('table.latency')}</div></div>
+                </div>
+              </div>
             </div>
 
-            {/* Token facts row */}
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+            {/* KPI metrics */}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
               {[
+                { label: t('usage.totalTokens'), value: formattedTotalTokens },
                 { label: t('usage.uncachedInput'), value: record.prompt_tokens.toLocaleString() },
                 { label: t('usage.cachedInput'), value: record.cache_hit_input_tokens > 0 ? record.cache_hit_input_tokens.toLocaleString() : '—' },
                 { label: t('dash.completion'), value: record.completion_tokens.toLocaleString() },
-              ].map(m => (
-                <div key={m.label} className="rounded-lg border bg-card p-3">
-                  <div className="text-[10px] font-medium text-muted-foreground tracking-wider mb-1">{m.label}</div>
-                  <div className="text-sm font-semibold font-mono">{m.value}</div>
+                { label: t('usage.attemptCount'), value: String(request?.attempt_count ?? attempts?.length ?? 0) },
+              ].map(m => <div key={m.label} className="rounded-lg border bg-card px-4 py-3"><div className="text-[10px] font-medium tracking-wider text-muted-foreground">{m.label}</div><div className="mt-1 font-mono text-base font-semibold">{m.value}</div></div>)}
+            </div>
+
+            {/* Trace + context */}
+            <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(280px,0.8fr)]">
+              <section className="rounded-xl border bg-card p-5">
+                <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold"><Clock3 className="size-4" />{t('usage.requestLifecycle')}</h3>
+                <div className="relative pl-7">
+                  <div className="absolute bottom-2 left-[7px] top-2 w-px bg-border" />
+                  {lifecycleEvents.map((ev, i) => <div key={i} className="relative pb-5 last:pb-0">
+                    <div className="absolute -left-[27px] top-1 size-3 rounded-full border-[3px] bg-card" style={{ borderColor: COLORS[ev.cls] || COLORS.ok }} />
+                    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1"><div className="text-sm font-semibold">{ev.title}</div><div className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground"><span>{ev.time}</span>{ev.durationMs != null && ev.durationMs > 0 && <span className="text-muted-foreground/70">+{formatDuration(ev.durationMs)}</span>}</div></div>
+                    <div className="mt-1 break-words text-xs text-muted-foreground">{ev.detail}</div>
+                  </div>)}
                 </div>
-              ))}
+                {request && request.status !== 'succeeded' && (request.error_kind || request.error_stage || request.error_message) && <div className="mt-5 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs"><div className="font-semibold text-destructive">{request.status} · HTTP {request.status_code}</div>{request.error_stage && <div className="mt-1 text-muted-foreground">{t('usage.errorStage')} {request.error_stage}</div>}{request.error_kind && <div className="text-muted-foreground">{t('usage.errorKind')} {request.error_kind}</div>}{request.error_message && <div className="break-words text-muted-foreground">{t('usage.errorMessage')} {request.error_message}</div>}</div>}
+              </section>
+
+              <aside className="space-y-4">
+                <section className="rounded-xl border bg-card p-4"><h4 className="mb-3 text-sm font-semibold">{t('usage.requestInfo')}</h4><div className="space-y-2 text-xs">
+                  {[[t('table.user'),record.user_name],[t('usage.apiKey'),record.api_key_name ?? '—'],[t('usage.keyScope'),record.team_id ? t('usage.teamKey') : t('usage.personalKey')],[t('usage.apiFormat'),record.api_format ?? '—'],[t('usage.clientIp'),record.client_ip ?? '—']].map(([k,v]) => <div key={k} className="flex justify-between gap-3 border-b border-border/60 pb-2 last:border-0"><span className="text-muted-foreground">{k}</span><b className="max-w-[65%] break-all text-right">{v}</b></div>)}
+                </div></section>
+                <section className="rounded-xl border bg-card p-4"><h4 className="mb-3 text-sm font-semibold">{t('usage.routeInfo')}</h4><div className="space-y-2 text-xs">
+                  {[[t('table.model'),record.model],[t('usage.channel'),channelName],[t('usage.channelId'),record.channel_id ?? '—'],[t('usage.endpointId'),record.endpoint_id != null ? `#${record.endpoint_id}` : '—'],['Endpoint',record.endpoint_url ?? '—']].map(([k,v]) => <div key={k} className="flex justify-between gap-3 border-b border-border/60 pb-2 last:border-0"><span className="text-muted-foreground">{k}</span><b className="max-w-[65%] break-all text-right">{v}</b></div>)}
+                </div></section>
+                <section className="rounded-xl border bg-card p-4"><h4 className="mb-3 text-sm font-semibold">{t('usage.billingMode')}</h4><div className="flex justify-between text-xs"><span className="text-muted-foreground">{t('usage.billingMode')}</span><b>{record.billing_payment_mode === 'prepaid' ? t('usage.prepaid') : t('usage.metered')}</b></div></section>
+              </aside>
             </div>
 
             <hr className="border-border" />
 
-            {/* Request Lifecycle Timeline */}
-            <div>
-              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                {t('usage.requestLifecycle')}
-              </h3>
-              <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.65fr] gap-4">
-                {/* Timeline */}
-                <div className="relative pl-[34px]">
-                  <div className="absolute left-[10px] top-[8px] bottom-[8px] w-[2px] bg-border" />
-                  {lifecycleEvents.map((ev, i) => (
-                    <div key={i} className="relative pb-4 last:pb-0">
-                      <div className="absolute left-[-29px] top-[3px] w-[12px] h-[12px] rounded-full bg-card border-[3px]" style={{ borderColor: COLORS[ev.cls] || COLORS.ok }} />
-                      <div className="flex justify-between gap-3">
-                        <div className="font-semibold text-sm">{ev.title}</div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-[11px] font-mono text-muted-foreground">{ev.time}</span>
-                          {ev.durationMs != null && ev.durationMs > 0 && (
-                            <span className="text-[10px] text-muted-foreground/60 font-mono">
-                              {t('usage.lifecycleStageDuration', { duration: formatDuration(ev.durationMs) })}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground break-words">{ev.detail}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Inspector panel */}
-                <div className="rounded-lg border bg-card p-4">
-                  <h4 className="text-sm font-semibold mb-2">{t('usage.detailTitle')}</h4>
-                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${record.success ? 'bg-chart-2/10 text-chart-2' : 'bg-destructive/10 text-destructive'}`}>
-                    <span className={`size-1.5 rounded-full ${record.success ? 'bg-chart-2' : 'bg-destructive'}`} />
-                    {record.success ? t('usage.success') : t('usage.failure')} · HTTP {record.status_code}
-                  </span>
-                  {request && request.status !== 'succeeded' && (request.error_kind || request.error_stage || request.error_message) && (
-                    <div className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 space-y-1">
-                      <div className="flex items-center gap-2 text-xs font-semibold text-destructive">
-                        <span className="uppercase tracking-wide">{request.status}</span>
-                        {request.status_code > 0 && <span>· HTTP {request.status_code}</span>}
-                      </div>
-                      {request.error_stage && <div className="text-xs text-muted-foreground"><span className="font-medium">{t('usage.errorStage')}</span> {request.error_stage}</div>}
-                      {request.error_kind && <div className="text-xs text-muted-foreground"><span className="font-medium">{t('usage.errorKind')}</span> {request.error_kind}</div>}
-                      {request.error_message && <div className="text-xs text-muted-foreground break-words"><span className="font-medium">{t('usage.errorMessage')}</span> {request.error_message}</div>}
-                    </div>
-                  )}
-                  <div className="mt-3 space-y-0">
-                    {[
-                      [t('table.status'), `${record.success ? t('usage.success') : t('usage.failure')}`],
-                      [t('table.requestId'), record.request_id],
-                      [t('table.latency'), `${record.latency_ms}ms`],
-                      [t('usage.totalTokens'), (record.prompt_tokens + record.cache_hit_input_tokens + record.completion_tokens).toLocaleString()],
-                    ].map((r, i) => (
-                      <div key={i} className="flex justify-between gap-3 py-2 border-t border-border/60 first:border-0">
-                        <span className="text-xs text-muted-foreground">{r[0]}</span>
-                        <b className="text-xs text-right break-all max-w-[200px]">{r[1]}</b>
-                      </div>
-                    ))}
-                  </div>
+            {/* Request content (tabs) */}
+            <section className="rounded-xl border bg-card p-5">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold">{t('usage.requestContent')}</h3>
+                <div className="flex flex-wrap items-center gap-1 rounded-lg bg-muted p-0.5 text-xs">
+                  {([['request', t('usage.requestContentRequest')], ['response', t('usage.requestContentResponse')], ['thinking', t('usage.thinking')], ['raw', t('usage.requestContentRaw')]] as const).map(([key, label]) => <button key={key} type="button" onClick={() => setTab(key)} className={`rounded-md px-2.5 py-1 transition-colors ${tab === key ? 'bg-card font-medium shadow-sm' : 'text-muted-foreground'}`}>{label}</button>)}
                 </div>
               </div>
-            </div>
 
-            <hr className="border-border" />
-
-            {/* Conversation: User Request → Thinking → Reply */}
-            <div className="space-y-4">
-              {/* User request */}
-              <div>
-                <h4 className="text-sm font-medium mb-2 flex items-center gap-1.5">
-                  <User className="size-4 text-muted-foreground" />{t('usage.userRequest')}
-                </h4>
-                {userMessages.length > 0 ? (
-                  <div className="space-y-2">
-                    {userMessages.map((text, i) => (
-                      <div key={i} className="rounded-lg border bg-muted/40 p-3 text-xs whitespace-pre-wrap break-words">{text}</div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-xs text-muted-foreground">{t('usage.noUserMessage')}</div>
-                )}
-                {record.request_body && (
-                  <details className="mt-2">
-                    <summary className="text-[11px] text-muted-foreground cursor-pointer select-none">{t('usage.requestRaw')}</summary>
-                    <pre className="rounded-lg bg-muted p-3 text-xs overflow-x-auto max-h-60 overflow-y-auto whitespace-pre-wrap break-all mt-1">{formatJson(record.request_body)}</pre>
-                  </details>
-                )}
-              </div>
-
-              {/* Thinking */}
-              {thinkingText && (
-                <div>
-                  <h4 className="text-sm font-medium mb-2 flex items-center gap-1.5">
-                    <Brain className="size-4 text-muted-foreground" />{t('usage.thinking')}
-                  </h4>
-                  <div className="rounded-lg border bg-muted/30 p-3 text-xs italic text-muted-foreground whitespace-pre-wrap break-words">{thinkingText}</div>
+              {tab === 'request' && (
+                <div className="space-y-2">
+                  {userMessages.length > 0 ? userMessages.map((text, i) => <div key={i} className="whitespace-pre-wrap break-words rounded-lg border bg-muted/40 p-3 text-xs">{text}</div>) : <div className="text-xs text-muted-foreground">{t('usage.noUserMessage')}</div>}
+                  {record.request_body && <details className="mt-2"><summary className="cursor-pointer select-none text-[11px] text-muted-foreground">{t('usage.requestRaw')}</summary><pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-3 text-xs">{formatJson(record.request_body)}</pre></details>}
                 </div>
               )}
-
-              {/* Reply */}
-              <div>
-                <h4 className="text-sm font-medium mb-2 flex items-center gap-1.5">
-                  <Reply className="size-4 text-muted-foreground" />{t('usage.reply')}
-                </h4>
-                {replyText ? (
-                  <div className="rounded-lg border bg-chart-2/5 p-3 text-xs whitespace-pre-wrap break-words">{replyText}</div>
-                ) : (
-                  <div className="text-xs text-muted-foreground">—</div>
-                )}
-                {record.response_body && (
-                  <details className="mt-2">
-                    <summary className="text-[11px] text-muted-foreground cursor-pointer select-none">{t('usage.responseRaw')}</summary>
-                    <pre className="rounded-lg bg-muted p-3 text-xs overflow-x-auto max-h-80 overflow-y-auto whitespace-pre-wrap break-all mt-1">{formatJson(record.response_body)}</pre>
-                  </details>
-                )}
-              </div>
-            </div>
-
+              {tab === 'response' && (
+                <div className="space-y-2">
+                  {replyText ? <div className="whitespace-pre-wrap break-words rounded-lg border bg-chart-2/5 p-3 text-xs">{replyText}</div> : <div className="text-xs text-muted-foreground">—</div>}
+                  {record.response_body && <details className="mt-2"><summary className="cursor-pointer select-none text-[11px] text-muted-foreground">{t('usage.responseRaw')}</summary><pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-3 text-xs">{formatJson(record.response_body)}</pre></details>}
+                </div>
+              )}
+              {tab === 'thinking' && (
+                thinkingText ? <div className="whitespace-pre-wrap break-words rounded-lg border bg-muted/30 p-3 text-xs italic text-muted-foreground">{thinkingText}</div> : <div className="text-xs text-muted-foreground">—</div>
+              )}
+              {tab === 'raw' && (
+                <div className="space-y-2">
+                  {[[t('usage.requestRaw'), record.request_body],[t('usage.responseRaw'), record.response_body],[t('usage.reasoningRaw'), record.reasoning_body]].filter(([,v]) => v).map(([label, val]) => <div key={label as string}><div className="mb-1 text-[11px] font-medium text-muted-foreground">{label}</div><pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted p-3 text-xs">{formatJson(val as string | null | undefined)}</pre></div>)}
+                </div>
+              )}
+            </section>
           </div>
         ) : error ? (
           <div className="p-8 text-center text-destructive">{error.message}</div>
