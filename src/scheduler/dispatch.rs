@@ -28,7 +28,8 @@ use crate::provider::{
 };
 use crate::scheduler::helpers::{normalize_reasoning_inner, normalize_sse_reasoning, GatewayError};
 use crate::scheduler::stream::{
-    parse_sse_usage, IdleTimeoutStream, SseBuffer, StreamTerminationFlag, UsageTrackingStream,
+    parse_sse_usage, IdleTimeoutStream, SseBuffer, StreamTermination, StreamTerminationFlag,
+    UsageTrackingStream,
 };
 use crate::service::routing::RoutingService;
 use crate::service::token_reservation::ReservationFinalizer;
@@ -1503,6 +1504,28 @@ impl crate::scheduler::SchedulerService {
             Ok(stream) => {
                 dispatch.report_success();
 
+                let (first_byte_timeout, idle_timeout) = {
+                    let gw = self.gateway_config.read().unwrap();
+                    (
+                        Duration::from_secs(gw.stream_first_byte_timeout_secs),
+                        Duration::from_secs(gw.stream_idle_timeout_secs),
+                    )
+                };
+                let termination = StreamTerminationFlag::new();
+                let stream = IdleTimeoutStream::with_termination(
+                    stream,
+                    first_byte_timeout,
+                    idle_timeout,
+                    termination.clone(),
+                );
+                let stream = SseBuffer {
+                    inner: stream,
+                    buf: String::new(),
+                    overflow_error: None,
+                    terminated: false,
+                    termination: termination.clone(),
+                };
+
                 // Wrap the stream to capture response.completed usage
                 let resp_buf = Arc::new(std::sync::Mutex::new(String::new()));
                 let recorded = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1525,6 +1548,7 @@ impl crate::scheduler::SchedulerService {
                 let lifecycle_stream = lifecycle.clone();
                 let attempts_used = retries + 1;
                 let clean_eof2 = clean_eof.clone();
+                let termination2 = termination.clone();
                 let buf2 = resp_buf.clone();
                 let rec2 = recorded.clone();
                 let flow_tracker = self.flow_tracker.clone();
@@ -1552,9 +1576,18 @@ impl crate::scheduler::SchedulerService {
                     let buf = resp_buf.lock().unwrap().clone();
                     let (input_tokens, output_tokens, cache_hit, cache_write) =
                         parse_responses_sse_usage(&buf);
-                    let completed = clean_eof2.load(std::sync::atomic::Ordering::Acquire);
-                    // Finalize the request lifecycle at stream end: clean EOF →
-                    // succeeded; premature end (client disconnect) → cancelled/499.
+                    let eof_reached = clean_eof2.load(std::sync::atomic::Ordering::Acquire);
+                    let termination_kind = termination2.get();
+                    // Classify the stream end exactly like the chat-completions
+                    // path: a clean EOF is a success; an EOF produced by the
+                    // idle-timeout or buffer-overflow layers is a synthetic
+                    // failure; anything dropped mid-stream is cancelled/499.
+                    let (status_code, success) = match (eof_reached, termination_kind) {
+                        (true, StreamTermination::Clean) => (200, true),
+                        (_, StreamTermination::IdleTimeout) => (504, false),
+                        (_, StreamTermination::BufferOverflow) => (502, false),
+                        _ => (499, false),
+                    };
                     lifecycle_stream.add_tokens(
                         input_tokens,
                         output_tokens,
@@ -1563,19 +1596,35 @@ impl crate::scheduler::SchedulerService {
                     );
                     lifecycle_stream.set_attempts(
                         attempts_used,
-                        if completed { Some(attempts_used) } else { None },
+                        if success { Some(attempts_used) } else { None },
                     );
-                    if completed {
+                    if success {
                         lifecycle_stream.finalize_success();
                     } else {
-                        lifecycle_stream.mark_client_disconnected();
-                        lifecycle_stream.finalize_cancelled(
-                            499,
-                            RequestError::new("response_stream", "client_disconnect"),
-                        );
+                        match termination_kind {
+                            StreamTermination::IdleTimeout => {
+                                lifecycle_stream.finalize_failed(
+                                    504,
+                                    RequestError::new("response_stream", "stream_idle_timeout"),
+                                );
+                            }
+                            StreamTermination::BufferOverflow => {
+                                lifecycle_stream.finalize_failed(
+                                    502,
+                                    RequestError::new("response_stream", "stream_buffer_overflow"),
+                                );
+                            }
+                            _ => {
+                                lifecycle_stream.mark_client_disconnected();
+                                lifecycle_stream.finalize_cancelled(
+                                    499,
+                                    RequestError::new("response_stream", "client_disconnect"),
+                                );
+                            }
+                        }
                     }
                     if let Some(reservation) = &reservation_finalizer {
-                        if completed {
+                        if success {
                             reservation.settle_usage(
                                 input_tokens,
                                 output_tokens,
@@ -1585,12 +1634,17 @@ impl crate::scheduler::SchedulerService {
                                 "completed",
                             );
                         } else {
+                            let reason = match termination_kind {
+                                StreamTermination::IdleTimeout => "stream idle timeout",
+                                StreamTermination::BufferOverflow => "stream buffer overflow",
+                                _ => "responses stream dropped",
+                            };
                             reservation.release_partial(
                                 input_tokens,
                                 output_tokens,
                                 cache_hit,
                                 cache_write,
-                                "responses stream dropped",
+                                reason,
                             );
                         }
                     }
@@ -1607,8 +1661,8 @@ impl crate::scheduler::SchedulerService {
                         cache_hit_input_tokens: cache_hit,
                         cache_write_tokens: cache_write,
                         latency_ms,
-                        status_code: if completed { 200 } else { 499 },
-                        success: completed,
+                        status_code,
+                        success,
                         request_body: rbody,
                         response_body: None,
                         reasoning_body: None,
