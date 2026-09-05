@@ -211,6 +211,8 @@ export interface UsageRecord {
   billing_payment_mode?: 'metered' | 'prepaid' | null;
   /** Endpoint that served the request. Null when no endpoint matched. */
   endpoint_id?: number | null;
+  /** Endpoint URL that served the request. */
+  endpoint_url?: string | null;
   /** Time to first upstream response data for streaming requests. */
   ttft_ms?: number | null;
 }

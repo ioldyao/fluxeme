@@ -458,6 +458,8 @@ const zh: Record<string, string> = {
   'usage.requestLifecycle': '请求生命周期',
   'usage.lifecycleAccepted': '网关接收请求',
   'usage.lifecycleAuthRoute': '鉴权与路由',
+  'usage.lifecycleRouteResolved': '路由完成',
+  'usage.lifecycleAttempt': '上游尝试 #{{n}}',
   'usage.lifecycleTtft': '首 Token 到达 (TTFT)',
   'usage.lifecycleStreamingStarted': '开始流式输出',
   'usage.lifecycleProviderProcessing': '上游模型处理',

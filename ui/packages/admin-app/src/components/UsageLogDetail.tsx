@@ -1,11 +1,13 @@
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { useUsageDetail, useUsageRequestDetail, useUsageRequestAttempts } from '@fluxeme/shared/src/api/usage';
+import { useChannels } from '@fluxeme/shared/src/api/channels';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@fluxeme/shared/src/components/ui/dialog';
 import { useCurrency } from '@fluxeme/shared/src/store/currency';
 import { parseTimestamp, formatTime } from '@fluxeme/shared/src/lib/date';
 import { User, Brain, Reply } from 'lucide-react';
 import type { UsageRecord } from '@fluxeme/shared/src/types';
+import type { UsageRequestAttempt } from '@fluxeme/shared/src/api/usage';
 
 interface Props {
   requestId: string | null;
@@ -19,6 +21,27 @@ interface LifecycleEvent {
   time: string;
   detail: string;
   durationMs?: number;
+  /** Anchor absolute epoch ms (for sorting/relative durations). */
+  anchorMs: number;
+}
+
+/** Real, persisted attempt start times keyed by attempt number, when the
+ *  attempt event carries a valid timestamp. Falls back to a request-time
+ *  offset so legacy data still renders in order. */
+function attemptStartMs(attempts: UsageRequestAttempt[] | undefined, requestTsMs: number, fallbackBaseMs: number): Map<number, number> {
+  const map = new Map<number, number>();
+  if (!attempts || attempts.length === 0) return map;
+  let fallback = fallbackBaseMs;
+  for (const a of attempts) {
+    const completed = a.timestamp ? parseTimestamp(a.timestamp) : null;
+    const completedMs = completed && !isNaN(completed.getTime()) ? completed.getTime() : fallback;
+    // Attempt events persist their terminal timestamp; subtracting the
+    // measured duration reconstructs the real upstream start boundary.
+    const ms = Math.max(requestTsMs, completedMs - Math.max(0, a.latency_ms || 0));
+    map.set(a.attempt_no, ms);
+    fallback = completedMs + Math.max(1, a.latency_ms || 1);
+  }
+  return map;
 }
 
 const COLORS: Record<string, string> = {
@@ -34,68 +57,135 @@ function formatDuration(ms: number) {
   return `${ms}ms`;
 }
 
-function estimateEvents(record: UsageRecord, t: TFunction): LifecycleEvent[] {
-  const ts = parseTimestamp(record.timestamp);
+/** Build the full request lifecycle timeline from the request fact, its
+ *  upstream attempts, and the channel name map. Absolute times are used when
+ *  the attempt events carry them; otherwise a request-relative estimate keeps
+ *  legacy data readable. Every attempt surfaces the channel and endpoint it
+ *  actually hit, so a retried request shows each route it took. */
+function buildLifecycle(
+  record: UsageRecord,
+  t: TFunction,
+  attempts: UsageRequestAttempt[] | undefined,
+  channelNameById: Map<string, string>,
+): LifecycleEvent[] {
+  const terminalTs = parseTimestamp(record.timestamp);
+  // Gateway request events persist their terminal timestamp. Reconstruct the
+  // request start boundary from the measured total latency.
+  const ts = new Date(terminalTs.getTime() - Math.max(0, record.latency_ms || 0));
   const events: LifecycleEvent[] = [];
-  let prevOffset = 0;
+  let prev = 0;
 
-  const push = (cls: string, title: string, offsetMs: number, detail: string, showDuration = true) => {
+  const push = (
+    cls: string,
+    title: string,
+    offsetMs: number,
+    detail: string,
+    explicitDurationMs?: number,
+  ) => {
     const ms = Math.max(0, Math.floor(offsetMs));
+    const durationMs = explicitDurationMs != null ? explicitDurationMs : ms - prev;
     events.push({
       cls,
       title,
       time: formatTime(new Date(ts.getTime() + ms)),
       detail,
-      ...(showDuration ? { durationMs: ms - prevOffset } : {}),
+      ...(durationMs > 0 ? { durationMs } : {}),
+      anchorMs: ms,
     });
-    prevOffset = ms;
+    prev = ms;
+  };
+
+  const channelLabel = (id?: string | null) => {
+    if (!id) return '—';
+    const name = channelNameById.get(id);
+    return name && name !== id ? `${name} (${id})` : id;
+  };
+  const routeDetail = (a?: UsageRequestAttempt) => {
+    const parts = [a ? channelLabel(a.channel_id) : channelLabel(record.channel_id)];
+    const ep = a ? a.endpoint_url : record.endpoint_url;
+    const endpointId = a ? a.endpoint_id : record.endpoint_id;
+    if (ep) parts.push(`${ep}${endpointId != null ? ` (#${endpointId})` : ''}`);
+    else if (endpointId != null) parts.push(`endpoint #${endpointId}`);
+    return parts.filter(Boolean).join(' · ');
   };
 
   // 1. Gateway Accepted
-  push('ok', t('usage.lifecycleAccepted'), 0, t('usage.lifecycleAcceptedDetail'), false);
+  push('ok', t('usage.lifecycleAccepted'), 0, t('usage.lifecycleAcceptedDetail'));
 
   const total = record.latency_ms;
-  if (total > 0) {
-    // 2. Auth & Route (estimated ~50ms)
-    push('ok', t('usage.lifecycleAuthRoute'), 50, `${record.api_format ?? 'openai'} · ${record.channel_id}`);
+  if (total <= 0) return events;
 
-    // 3. TTFT — real data from upstream, if available
-    const ttft = record.ttft_ms && record.ttft_ms > 0 ? Math.floor(record.ttft_ms) : null;
-    let startMs: number;
+  // 2. Auth & Route (estimated ~50ms)
+  push('ok', t('usage.lifecycleAuthRoute'), 50, `${record.api_format ?? 'openai'} · ${record.channel_id ?? '—'}`);
 
-    if (ttft != null) {
-      startMs = ttft;
-      push('pending', t('usage.lifecycleTtft'), ttft, t('usage.lifecycleTtftDetail', { ms: ttft.toLocaleString() }));
-    } else {
-      startMs = Math.floor(total * 0.3);
-    }
+  // 3. Route resolved — the channel and endpoint this request was routed to.
+  if (record.channel_id || record.endpoint_url) {
+    push('ok', t('usage.lifecycleRouteResolved'), 50, routeDetail());
+  }
 
-    if (record.success) {
-      const tokenTotal = (record.prompt_tokens + record.cache_hit_input_tokens + record.completion_tokens).toLocaleString();
-
-      // 4. Streaming Started / Provider Processing
+  // 4. Upstream attempts — each shows its own channel + endpoint + result.
+  const attemptBaseMs = attemptStartMs(attempts, ts.getTime(), ts.getTime() + 50);
+  const hasAttempts = attempts && attempts.length > 0;
+  if (hasAttempts) {
+    for (const a of attempts!) {
+    const startOffset = Math.max(50, attemptStartMsOf(a, attemptBaseMs, ts.getTime()) - ts.getTime());
+    const statusText = a.success ? 'HTTP ' + (a.status_code ?? 200) : (a.error || 'failed');
       push(
-        record.stream ? 'streaming' : 'ok',
-        record.stream ? t('usage.lifecycleStreamingStarted') : t('usage.lifecycleProviderProcessing'),
-        startMs,
-        record.stream
-          ? t('usage.lifecycleStreamingDetail', { n: record.completion_tokens.toLocaleString() })
-          : t('usage.lifecycleProcessingDetail', { n: tokenTotal }),
+        a.success ? 'ok' : 'fail',
+        t('usage.lifecycleAttempt', { n: a.attempt_no }),
+        startOffset,
+        `${routeDetail(a)} · ${statusText}`,
+        Math.max(0, a.latency_ms || 0),
       );
-
-      // 5. Completed / Response Received
-      push(
-        'ok',
-        record.stream ? t('usage.lifecycleCompleted') : t('usage.lifecycleResponseReceived'),
-        total,
-        t('usage.lifecycleStatusDetail', { code: String(record.status_code), ms: total.toLocaleString() }),
-      );
-    } else {
-      push('fail', t('usage.lifecycleFailed'), total, t('usage.lifecycleStatusDetail', { code: String(record.status_code), ms: total.toLocaleString() }));
     }
   }
 
+  // 5. TTFT — real data from upstream, if available
+  const ttft = record.ttft_ms && record.ttft_ms > 0 ? Math.floor(record.ttft_ms) : null;
+  const hasAttemptsOrStream = true;
+  void hasAttemptsOrStream;
+  let outputMs: number;
+
+  if (ttft != null) {
+    outputMs = Math.max(prev, ttft);
+    push('pending', t('usage.lifecycleTtft'), outputMs, t('usage.lifecycleTtftDetail', { ms: ttft.toLocaleString() }));
+  } else {
+    // Estimate streaming start after the last attempt (or 30% of total when
+    // no attempt timing exists).
+    outputMs = hasAttempts ? Math.max(prev, Math.floor(total * 0.3)) : Math.floor(total * 0.3);
+  }
+
+  if (record.success) {
+    const tokenTotal = (record.prompt_tokens + record.cache_hit_input_tokens + record.completion_tokens).toLocaleString();
+
+    // 6. Streaming Started / Provider Processing
+    push(
+      record.stream ? 'streaming' : 'ok',
+      record.stream ? t('usage.lifecycleStreamingStarted') : t('usage.lifecycleProviderProcessing'),
+      outputMs,
+      record.stream
+        ? t('usage.lifecycleStreamingDetail', { n: record.completion_tokens.toLocaleString() })
+        : t('usage.lifecycleProcessingDetail', { n: tokenTotal }),
+    );
+
+    // 7. Completed / Response Received
+    push(
+      'ok',
+      record.stream ? t('usage.lifecycleCompleted') : t('usage.lifecycleResponseReceived'),
+      total,
+      t('usage.lifecycleStatusDetail', { code: String(record.status_code), ms: total.toLocaleString() }),
+    );
+  } else {
+    push('fail', t('usage.lifecycleFailed'), total, t('usage.lifecycleStatusDetail', { code: String(record.status_code), ms: total.toLocaleString() }));
+  }
+
   return events;
+}
+
+function attemptStartMsOf(a: UsageRequestAttempt, base: Map<number, number>, requestTsMs: number): number {
+  const v = base.get(a.attempt_no);
+  if (v != null) return v;
+  return requestTsMs + 50;
 }
 
 function formatJson(val: string | null | undefined) {
@@ -266,9 +356,12 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
     cache_write_price: legacyRecord?.cache_write_price ?? 0,
   } as UsageRecord : null;
   const { data: attempts } = useUsageRequestAttempts(requestId);
+  const { data: channels } = useChannels(undefined, { enabled: open });
+  const channelNameById = new Map((channels ?? []).map(channel => [channel.id, channel.name]));
   useCurrency();
 
   const userMessages = record ? extractUserMessages(record.request_body) : [];
+  const lifecycleEvents = record ? buildLifecycle(record, t, attempts, channelNameById) : [];
   const { thinking: respThinking, content: respContent } = record
     ? extractResponseParts(record.response_body)
     : { thinking: '', content: '' };
@@ -339,7 +432,7 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                 {/* Timeline */}
                 <div className="relative pl-[34px]">
                   <div className="absolute left-[10px] top-[8px] bottom-[8px] w-[2px] bg-border" />
-                  {estimateEvents(record, t).map((ev, i) => (
+                  {lifecycleEvents.map((ev, i) => (
                     <div key={i} className="relative pb-4 last:pb-0">
                       <div className="absolute left-[-29px] top-[3px] w-[12px] h-[12px] rounded-full bg-card border-[3px]" style={{ borderColor: COLORS[ev.cls] || COLORS.ok }} />
                       <div className="flex justify-between gap-3">
@@ -353,22 +446,10 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                           )}
                         </div>
                       </div>
-                      <div className="mt-1 text-xs text-muted-foreground">{ev.detail}</div>
+                      <div className="mt-1 text-xs text-muted-foreground break-words">{ev.detail}</div>
                     </div>
                   ))}
                 </div>
-
-                  {attempts && attempts.length > 0 && (
-                    <div className="mt-4 rounded-lg border bg-card p-3">
-                      <h4 className="text-sm font-semibold mb-2">Attempts</h4>
-                      <div className="space-y-2">{attempts.map((a) => (
-                        <div key={a.attempt_no} className="flex items-center gap-2 text-xs border-b last:border-0 pb-2">
-                          <span className="font-mono font-semibold">#{a.attempt_no}</span><span>{a.provider || '—'}</span><span className="truncate">{a.endpoint_url || a.channel_id || '—'}</span><span className={a.success ? 'text-chart-2' : 'text-destructive'}>{a.success ? 'success' : (a.error || 'failed')}</span><span className="ml-auto font-mono">{a.latency_ms}ms</span>
-                        </div>
-                      ))}</div>
-                    </div>
-                  )}
-
 
                 {/* Inspector panel */}
                 <div className="rounded-lg border bg-card p-4">

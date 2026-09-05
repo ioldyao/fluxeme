@@ -458,6 +458,8 @@ const en: Record<string, string> = {
   'usage.requestLifecycle': 'Request Lifecycle',
   'usage.lifecycleAccepted': 'Gateway Accepted',
   'usage.lifecycleAuthRoute': 'Auth & Route',
+  'usage.lifecycleRouteResolved': 'Route resolved',
+  'usage.lifecycleAttempt': 'Upstream attempt #{{n}}',
   'usage.lifecycleTtft': 'First Token (TTFT)',
   'usage.lifecycleStreamingStarted': 'Streaming Started',
   'usage.lifecycleProviderProcessing': 'Provider Processing',
