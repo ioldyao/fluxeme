@@ -279,7 +279,10 @@ pub(crate) async fn self_dashboard_aggregations(
         .db
         .get_user_timezone(&session.user_id)
         .await
-        .map_err(db_err)?;
+        .map_err(|e| {
+            tracing::error!(user_id = %session.user_id, error = %e.0, "Dashboard self: timezone lookup failed");
+            db_err(e)
+        })?;
     let offset = tz_offset_seconds(Some(&tz));
     let since_24h = since_local_days_ago(1, offset);
     let user_filter: Option<&str> = Some(&session.user_id);
@@ -288,7 +291,10 @@ pub(crate) async fn self_dashboard_aggregations(
         .db
         .period_summary_for_user(&session.user_id)
         .await
-        .map_err(db_err)?;
+        .map_err(|e| {
+            tracing::error!(user_id = %session.user_id, error = %e.0, "Dashboard self: billing summary failed");
+            db_err(e)
+        })?;
     let total_requests = billing_months
         .iter()
         .map(|(_, _, requests, _)| *requests)
@@ -305,7 +311,10 @@ pub(crate) async fn self_dashboard_aggregations(
     let (requests_24h, success_count, total_latency, total_tokens_24h) = ch
         .query_usage_stats_since(&since_24h, user_filter)
         .await
-        .map_err(AdminError::internal)?;
+        .map_err(|e| {
+            tracing::error!(user_id = %session.user_id, since = %since_24h, error = %e, "Dashboard self: 24h usage stats failed");
+            AdminError::internal(e)
+        })?;
 
     if requests_24h == 0 {
         return Ok(Json(DashboardAggregations {
@@ -324,11 +333,17 @@ pub(crate) async fn self_dashboard_aggregations(
         .db
         .period_summary_since(&since_24h, user_filter)
         .await
-        .map_err(db_err)?;
+        .map_err(|e| {
+            tracing::error!(user_id = %session.user_id, since = %since_24h, error = %e.0, "Dashboard self: 24h billing summary failed");
+            db_err(e)
+        })?;
     let records = ch
         .query_usage_since(&since_24h, user_filter)
         .await
-        .map_err(AdminError::internal)?;
+        .map_err(|e| {
+            tracing::error!(user_id = %session.user_id, since = %since_24h, error = %e, "Dashboard self: 24h usage rows failed");
+            AdminError::internal(e)
+        })?;
     let mut model_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for r in &records {
         *model_counts.entry(r.model.clone()).or_default() += 1;
