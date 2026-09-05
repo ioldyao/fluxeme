@@ -28,7 +28,7 @@ use crate::provider::{
 };
 use crate::scheduler::helpers::{normalize_reasoning_inner, normalize_sse_reasoning, GatewayError};
 use crate::scheduler::stream::{
-    parse_sse_usage, IdleTimeoutStream, SseBuffer, UsageTrackingStream,
+    parse_sse_usage, IdleTimeoutStream, SseBuffer, StreamTerminationFlag, UsageTrackingStream,
 };
 use crate::service::routing::RoutingService;
 use crate::service::token_reservation::ReservationFinalizer;
@@ -316,11 +316,19 @@ impl crate::scheduler::SchedulerService {
                         Duration::from_secs(gw.stream_idle_timeout_secs),
                     )
                 };
-                let stream = IdleTimeoutStream::new(stream, first_byte_timeout, idle_timeout);
+                let termination = StreamTerminationFlag::new();
+                let stream = IdleTimeoutStream::with_termination(
+                    stream,
+                    first_byte_timeout,
+                    idle_timeout,
+                    termination.clone(),
+                );
                 let stream = SseBuffer {
                     inner: stream,
                     buf: String::new(),
                     overflow_error: None,
+                    terminated: false,
+                    termination: termination.clone(),
                 }
                 .map(|data| normalize_sse_reasoning(&data));
                 let usage_stream = UsageTrackingStream {
@@ -348,6 +356,7 @@ impl crate::scheduler::SchedulerService {
                     endpoint_idx,
                     reservation,
                     lifecycle: Some(lifecycle),
+                    termination,
                 };
 
                 let body_stream =
@@ -695,11 +704,19 @@ impl crate::scheduler::SchedulerService {
                         Duration::from_secs(gw.stream_idle_timeout_secs),
                     )
                 };
-                let stream = IdleTimeoutStream::new(stream, first_byte_timeout, idle_timeout);
+                let termination = StreamTerminationFlag::new();
+                let stream = IdleTimeoutStream::with_termination(
+                    stream,
+                    first_byte_timeout,
+                    idle_timeout,
+                    termination.clone(),
+                );
                 let stream = SseBuffer {
                     inner: stream,
                     buf: String::new(),
                     overflow_error: None,
+                    terminated: false,
+                    termination: termination.clone(),
                 };
                 let usage_stream = UsageTrackingStream {
                     inner: stream,
@@ -726,6 +743,7 @@ impl crate::scheduler::SchedulerService {
                     endpoint_idx,
                     reservation,
                     lifecycle: Some(lifecycle),
+                    termination,
                 };
 
                 let body_stream =

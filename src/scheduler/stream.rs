@@ -1,7 +1,10 @@
 // ── Streaming helpers (moved from server/handlers/stream.rs) ──
 
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU8, Ordering},
+    Arc,
+};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
@@ -201,6 +204,71 @@ pub(crate) fn parse_sse_usage(data: &str) -> (u64, u64, u64, u64) {
     (p_tokens, c_tokens, cache_hit, cache_write)
 }
 
+// ── Stream termination classification ─────────────────────────────
+
+/// Shared termination flag threaded from the terminating stream layers into
+/// `UsageTrackingStream`.
+///
+/// Values:
+/// - `0` = clean EOF (`StreamTermination::Clean`) — the inner stream ended normally.
+/// - `1` = `IdleTimeoutStream` fired and emitted its error SSE event.
+/// - `2` = `SseBuffer` hit the buffer cap and emitted its overflow error event.
+///
+/// Any non-clean value means `UsageTrackingStream`'s EOF was synthetic and must
+/// be finalised as a failure (not a success); when the stream is dropped early
+/// on a non-clean flag, that failure outranks the default cancelled/499.
+///
+/// A small enum (`StreamTermination`) provides the ergonomic classification
+/// while the shared flag stays an `Arc<AtomicU8>` so `IdleTimeoutStream` and
+/// `SseBuffer` can poke it without trait plumbing or `Unpin` complications.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StreamTermination {
+    /// Inner stream reached a natural end.
+    Clean,
+    /// `IdleTimeoutStream`'s idle timeout fired.
+    IdleTimeout,
+    /// `SseBuffer` hit the 1 MB cap.
+    BufferOverflow,
+}
+
+impl StreamTermination {
+    pub(crate) const fn as_u8(self) -> u8 {
+        match self {
+            StreamTermination::Clean => 0,
+            StreamTermination::IdleTimeout => 1,
+            StreamTermination::BufferOverflow => 2,
+        }
+    }
+
+    pub(crate) fn from_u8(value: u8) -> StreamTermination {
+        match value {
+            1 => StreamTermination::IdleTimeout,
+            2 => StreamTermination::BufferOverflow,
+            _ => StreamTermination::Clean,
+        }
+    }
+}
+
+/// Shared `Arc<AtomicU8>` termination flag. Cloning hands out another handle
+/// to the same flag.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct StreamTerminationFlag(Arc<AtomicU8>);
+
+impl StreamTerminationFlag {
+    pub(crate) fn new() -> Self {
+        Self(Arc::new(AtomicU8::new(0)))
+    }
+
+    pub(crate) fn set(&self, termination: StreamTermination) {
+        // Precedence-safe: only ever raise to non-clean.
+        self.0.store(termination.as_u8(), Ordering::SeqCst);
+    }
+
+    pub(crate) fn get(&self) -> StreamTermination {
+        StreamTermination::from_u8(self.0.load(Ordering::SeqCst))
+    }
+}
+
 // ── SSE buffering stream ────────────────────────────────────────────
 
 const MAX_SSE_BUF: usize = 1024 * 1024;
@@ -236,15 +304,24 @@ pub(crate) struct SseBuffer<S> {
     pub(crate) inner: S,
     pub(crate) buf: String,
     pub(crate) overflow_error: Option<String>,
+    pub(crate) terminated: bool,
+    pub(crate) termination: StreamTerminationFlag,
 }
 
 impl<S: Stream<Item = String> + Unpin> Stream for SseBuffer<S> {
     type Item = String;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // 1) Deliver a pending overflow error event first
+        // 1) If the overflow error event was queued but not yet delivered
+        //    (the overflow poll returned a buffered complete event first),
+        //    deliver it now.
         if let Some(err) = self.overflow_error.take() {
             return Poll::Ready(Some(err));
+        }
+        // The overflow error was already delivered: the following EOF is
+        // synthetic and classified as overflow.
+        if self.terminated {
+            return Poll::Ready(None);
         }
 
         // 2) Yield complete events from the existing buffer
@@ -257,7 +334,7 @@ impl<S: Stream<Item = String> + Unpin> Stream for SseBuffer<S> {
         loop {
             match Pin::new(&mut self.inner).poll_next(cx) {
                 Poll::Ready(Some(data)) => {
-                    // 3) Buffer-overflow protection
+                    // 2) Buffer-overflow protection
                     if self.buf.len() + data.len() > MAX_SSE_BUF {
                         tracing::warn!(
                             buf_len = self.buf.len(),
@@ -268,9 +345,13 @@ impl<S: Stream<Item = String> + Unpin> Stream for SseBuffer<S> {
                             "data: {\"error\":\"buffer_overflow\",\"message\":\"SSE buffer exceeded 1MB limit\"}\n\n"
                                 .to_string(),
                         );
-                        // Discard accumulated data and signal overflow
-                        // on the next poll
-                        return Poll::Ready(None);
+                        // Classify the upcoming (synthetic) EOF as overflow so
+                        // UsageTrackingStream does not record a false success.
+                        self.termination.set(StreamTermination::BufferOverflow);
+                        self.terminated = true;
+                        // Emit the error event now; the following poll returns
+                        // the synthetic EOF classified above.
+                        return Poll::Ready(Some(self.overflow_error.take().unwrap()));
                     }
 
                     self.buf.push_str(&data);
@@ -336,6 +417,10 @@ pub(crate) struct UsageTrackingStream<S> {
     /// stream is abandoned before reaching this point, `RequestLifecycle`'s
     /// own Drop emits the unfinalized fallback event.
     pub(crate) lifecycle: Option<Arc<crate::observability::lifecycle::RequestLifecycle>>,
+    /// Shared termination classification. `IdleTimeoutStream` and `SseBuffer`
+    /// set a non-clean value before yielding their synthetic EOF so this layer
+    /// finalizes the failure instead of a false success.
+    pub(crate) termination: StreamTerminationFlag,
 }
 
 impl<S: Stream<Item = String> + Unpin> Stream for UsageTrackingStream<S> {
@@ -355,10 +440,17 @@ impl<S: Stream<Item = String> + Unpin> Stream for UsageTrackingStream<S> {
                 Poll::Ready(Some(data))
             }
             Poll::Ready(None) => {
-                // A clean EOF is only successful when the stream was not
-                // terminated by the timeout wrapper. Timeout/overflow paths
-                // are represented by Drop and therefore partial-settle.
-                self.record_usage(true);
+                // Classify EOF: a clean EOF is a success; an EOF produced by the
+                // idle-timeout or buffer-overflow layers is a synthetic failure.
+                match self.termination.get() {
+                    StreamTermination::Clean => self.record_usage(true, None),
+                    StreamTermination::IdleTimeout => {
+                        self.record_usage(false, Some(StreamTermination::IdleTimeout))
+                    }
+                    StreamTermination::BufferOverflow => {
+                        self.record_usage(false, Some(StreamTermination::BufferOverflow))
+                    }
+                }
                 Poll::Ready(None)
             }
             Poll::Pending => Poll::Pending,
@@ -368,14 +460,26 @@ impl<S: Stream<Item = String> + Unpin> Stream for UsageTrackingStream<S> {
 
 impl<S> Drop for UsageTrackingStream<S> {
     fn drop(&mut self) {
-        if !self.recorded {
-            self.record_usage(false);
+        if self.recorded {
+            return;
+        }
+        // Precedence: a non-clean termination flag marks an upstream-side
+        // failure (idle timeout / buffer overflow) that outranks the default
+        // cancelled/499 client-disconnect classification.
+        match self.termination.get() {
+            StreamTermination::Clean => self.record_usage(false, None),
+            StreamTermination::IdleTimeout => {
+                self.record_usage(false, Some(StreamTermination::IdleTimeout))
+            }
+            StreamTermination::BufferOverflow => {
+                self.record_usage(false, Some(StreamTermination::BufferOverflow))
+            }
         }
     }
 }
 
 impl<S> UsageTrackingStream<S> {
-    fn record_usage(&mut self, completed: bool) {
+    fn record_usage(&mut self, completed: bool, termination: Option<StreamTermination>) {
         if self.recorded {
             return;
         }
@@ -409,23 +513,47 @@ impl<S> UsageTrackingStream<S> {
             }
         }
 
-        // Finalize the request lifecycle at stream end: clean EOF → succeeded
-        // with the accumulated tokens; premature end (client disconnect /
-        // abort) → cancelled/499.
+        // Finalize the request lifecycle at stream end:
+        // - clean EOF → succeeded with the accumulated tokens;
+        // - idle timeout → failed/504 response_stream/stream_idle_timeout;
+        // - buffer overflow → failed/502 response_stream/stream_buffer_overflow;
+        // - premature end (client disconnect / abort) → cancelled/499.
         if let Some(lifecycle) = self.lifecycle.as_ref() {
             lifecycle.add_tokens(p_tokens, c_tokens, cache_hit, cache_write);
             lifecycle.set_attempts(1, if completed { Some(1) } else { None });
             if completed {
                 lifecycle.finalize_success();
             } else {
-                lifecycle.mark_client_disconnected();
-                lifecycle.finalize_cancelled(
-                    499,
-                    crate::observability::lifecycle::RequestError::new(
-                        "response_stream",
-                        "client_disconnect",
-                    ),
-                );
+                match termination {
+                    Some(StreamTermination::IdleTimeout) => {
+                        lifecycle.finalize_failed(
+                            504,
+                            crate::observability::lifecycle::RequestError::new(
+                                "response_stream",
+                                "stream_idle_timeout",
+                            ),
+                        );
+                    }
+                    Some(StreamTermination::BufferOverflow) => {
+                        lifecycle.finalize_failed(
+                            502,
+                            crate::observability::lifecycle::RequestError::new(
+                                "response_stream",
+                                "stream_buffer_overflow",
+                            ),
+                        );
+                    }
+                    _ => {
+                        lifecycle.mark_client_disconnected();
+                        lifecycle.finalize_cancelled(
+                            499,
+                            crate::observability::lifecycle::RequestError::new(
+                                "response_stream",
+                                "client_disconnect",
+                            ),
+                        );
+                    }
+                }
             }
         }
 
@@ -440,13 +568,12 @@ impl<S> UsageTrackingStream<S> {
                     "completed",
                 );
             } else {
-                reservation.release_partial(
-                    p_tokens,
-                    c_tokens,
-                    cache_hit,
-                    cache_write,
-                    "client disconnected",
-                );
+                let reason = match termination {
+                    Some(StreamTermination::IdleTimeout) => "stream idle timeout",
+                    Some(StreamTermination::BufferOverflow) => "stream buffer overflow",
+                    _ => "client disconnected",
+                };
+                reservation.release_partial(p_tokens, c_tokens, cache_hit, cache_write, reason);
             }
         }
 
@@ -464,7 +591,15 @@ impl<S> UsageTrackingStream<S> {
                 cache_hit_input_tokens: cache_hit,
                 cache_write_tokens: cache_write,
                 latency_ms,
-                status_code: if completed { 200 } else { 499 },
+                status_code: if completed {
+                    200
+                } else {
+                    match termination {
+                        Some(StreamTermination::IdleTimeout) => 504,
+                        Some(StreamTermination::BufferOverflow) => 502,
+                        _ => 499,
+                    }
+                },
                 success: completed,
                 request_body: self.req_body.clone(),
                 api_key_name: Some(self.api_key_name.clone()),
@@ -532,6 +667,7 @@ pub(crate) struct IdleTimeoutStream {
     sleep: Pin<Box<tokio::time::Sleep>>,
     has_received_data: bool,
     timed_out: bool,
+    pub(crate) termination: StreamTerminationFlag,
 }
 
 impl IdleTimeoutStream {
@@ -540,6 +676,20 @@ impl IdleTimeoutStream {
         first_byte_timeout: Duration,
         idle_timeout: Duration,
     ) -> Self {
+        Self::with_termination(
+            inner,
+            first_byte_timeout,
+            idle_timeout,
+            StreamTerminationFlag::new(),
+        )
+    }
+
+    pub(crate) fn with_termination(
+        inner: Pin<Box<dyn Stream<Item = String> + Send>>,
+        first_byte_timeout: Duration,
+        idle_timeout: Duration,
+        termination: StreamTerminationFlag,
+    ) -> Self {
         Self {
             inner,
             first_byte_timeout,
@@ -547,6 +697,7 @@ impl IdleTimeoutStream {
             sleep: Box::pin(tokio::time::sleep(first_byte_timeout)),
             has_received_data: false,
             timed_out: false,
+            termination,
         }
     }
 }
@@ -579,6 +730,9 @@ impl Stream for IdleTimeoutStream {
                         "Stream idle timeout reached"
                     );
                     this.timed_out = true;
+                    // Classify the upcoming EOF as idle-timeout so the
+                    // UsageTrackingStream layer finalizes failure, not success.
+                    this.termination.set(StreamTermination::IdleTimeout);
                     Poll::Ready(Some(
                         "data: {\"error\":\"idle_timeout\",\"message\":\"Stream idle timeout\"}\n\n"
                             .to_string(),
@@ -588,5 +742,55 @@ impl Stream for IdleTimeoutStream {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::{stream, StreamExt};
+
+    #[test]
+    fn termination_flag_classifies_clean_idle_and_overflow_eof() {
+        let flag = StreamTerminationFlag::new();
+        assert_eq!(flag.get(), StreamTermination::Clean);
+        flag.set(StreamTermination::IdleTimeout);
+        assert_eq!(flag.get(), StreamTermination::IdleTimeout);
+        flag.set(StreamTermination::BufferOverflow);
+        assert_eq!(flag.get(), StreamTermination::BufferOverflow);
+    }
+
+    #[tokio::test]
+    async fn idle_timeout_sets_flag_before_error_and_eof() {
+        let flag = StreamTerminationFlag::new();
+        let inner = Box::pin(stream::pending::<String>());
+        let mut wrapped = IdleTimeoutStream::with_termination(
+            inner,
+            Duration::from_millis(1),
+            Duration::from_millis(1),
+            flag.clone(),
+        );
+        // Let the (real) 1ms idle timer expire before the first poll, so the
+        // first `next()` yields the idle-timeout error event deterministically.
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(wrapped.next().await.unwrap().contains("idle_timeout"));
+        assert_eq!(flag.get(), StreamTermination::IdleTimeout);
+        assert!(wrapped.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn buffer_overflow_sets_flag_before_error_and_eof() {
+        let flag = StreamTerminationFlag::new();
+        let inner = stream::iter(vec!["x".repeat(MAX_SSE_BUF + 1)]);
+        let mut wrapped = SseBuffer {
+            inner,
+            buf: String::new(),
+            overflow_error: None,
+            terminated: false,
+            termination: flag.clone(),
+        };
+        assert!(wrapped.next().await.unwrap().contains("buffer_overflow"));
+        assert_eq!(flag.get(), StreamTermination::BufferOverflow);
+        assert!(wrapped.next().await.is_none());
     }
 }
