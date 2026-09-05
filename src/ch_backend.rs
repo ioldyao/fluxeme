@@ -165,9 +165,13 @@ pub struct GatewayAccessEventRow {
     pub request_id: String,
     pub user_id: Option<String>,
     pub api_key_id: Option<String>,
+    pub credential_fingerprint: Option<String>,
     pub route_id: String,
     pub method: String,
     pub path: String,
+    pub client_ip: Option<String>,
+    pub auth_result: String,
+    pub error_kind: Option<String>,
     pub status_code: u16,
     pub success: u8,
     pub latency_ms: u64,
@@ -261,9 +265,13 @@ impl From<crate::observability::gateway_events::GatewayAccessEvent> for GatewayA
             request_id: e.request_id,
             user_id: e.user_id,
             api_key_id: e.api_key_id,
+            credential_fingerprint: e.credential_fingerprint,
             route_id: e.route_id,
             method: e.method,
             path: e.path,
+            client_ip: e.client_ip,
+            auth_result: e.auth_result,
+            error_kind: e.error_kind,
             status_code: e.status_code,
             success: if e.success { 1 } else { 0 },
             latency_ms: e.latency_ms,
@@ -650,9 +658,11 @@ impl ClickHouseBackend {
     const CREATE_GATEWAY_ACCESS_EVENTS: &'static str = "\
         CREATE TABLE IF NOT EXISTS gateway_access_events (\
             timestamp DateTime, request_id String, user_id Nullable(String),\
-            api_key_id Nullable(String), route_id String, method String,\
-            path String, status_code UInt16, success UInt8, latency_ms UInt64,\
-            bytes_in UInt64, bytes_out UInt64\
+            api_key_id Nullable(String), credential_fingerprint Nullable(String),\
+            route_id String, method String, path String,\
+            client_ip Nullable(String), auth_result String,\
+            error_kind Nullable(String), status_code UInt16, success UInt8,\
+            latency_ms UInt64, bytes_in UInt64, bytes_out UInt64\
         ) ENGINE = MergeTree() PARTITION BY toYYYYMM(timestamp)\
         ORDER BY (route_id, timestamp) TTL toDateTime(timestamp) + INTERVAL 7 DAY\
     ";
@@ -737,6 +747,19 @@ impl ClickHouseBackend {
                 .execute()
                 .await
                 .map_err(|e| format!("CH migration {name}: {e}"))?;
+        }
+
+        for alter in [
+            "ALTER TABLE gateway_access_events ADD COLUMN IF NOT EXISTS credential_fingerprint Nullable(String)",
+            "ALTER TABLE gateway_access_events ADD COLUMN IF NOT EXISTS client_ip Nullable(String)",
+            "ALTER TABLE gateway_access_events ADD COLUMN IF NOT EXISTS auth_result String DEFAULT 'unknown'",
+            "ALTER TABLE gateway_access_events ADD COLUMN IF NOT EXISTS error_kind Nullable(String)",
+        ] {
+            self.client
+                .query(alter)
+                .execute()
+                .await
+                .map_err(|e| format!("CH migration gateway_access_events alter: {e}"))?;
         }
 
         for alter in [
@@ -2848,9 +2871,13 @@ mod tests {
             request_id: "req-1".to_string(),
             user_id: Some("u1".to_string()),
             api_key_id: None,
+            credential_fingerprint: Some("ab12cd34".to_string()),
             route_id: "r1".to_string(),
             method: "POST".to_string(),
             path: "/v1".to_string(),
+            client_ip: Some("1.2.3.4".to_string()),
+            auth_result: "success".to_string(),
+            error_kind: None,
             status_code: 200,
             success: true,
             latency_ms: 5,
@@ -2860,6 +2887,9 @@ mod tests {
         assert_eq!(row.status_code, 200);
         assert_eq!(row.success, 1);
         assert_eq!(row.bytes_out, 7);
+        assert_eq!(row.auth_result, "success");
+        assert_eq!(row.credential_fingerprint.as_deref(), Some("ab12cd34"));
+        assert_eq!(row.client_ip.as_deref(), Some("1.2.3.4"));
         assert!(row.api_key_id.is_none());
     }
 

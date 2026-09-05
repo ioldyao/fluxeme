@@ -91,16 +91,25 @@ pub struct GatewayAttemptEvent {
     pub error: Option<String>,
 }
 
-/// The client-visible result of a gateway request.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+/// The client-visible result of a gateway access, emitted at the entry
+/// security layer for requests that never reach the LLM data plane (pre-auth
+/// failures and non-inference APIs). Never contains a raw credential or
+/// request body — only a one-way credential fingerprint.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct GatewayAccessEvent {
     pub timestamp: String,
     pub request_id: String,
     pub user_id: Option<String>,
     pub api_key_id: Option<String>,
+    /// A one-way fingerprint of the presented credential; never the raw key.
+    pub credential_fingerprint: Option<String>,
     pub route_id: String,
     pub method: String,
     pub path: String,
+    pub client_ip: Option<String>,
+    pub auth_result: String,
+    pub error_kind: Option<String>,
     pub status_code: u16,
     pub success: bool,
     pub latency_ms: u64,
@@ -385,9 +394,13 @@ mod tests {
             request_id: "req-1".to_string(),
             user_id: Some("user-1".to_string()),
             api_key_id: Some("key-1".to_string()),
+            credential_fingerprint: Some("ab12cd34".to_string()),
             route_id: "route-1".to_string(),
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
+            client_ip: Some("1.2.3.4".to_string()),
+            auth_result: "success".to_string(),
+            error_kind: None,
             status_code: 200,
             success: true,
             latency_ms: 250,
@@ -446,9 +459,13 @@ mod tests {
             request_id: "r".into(),
             user_id: None,
             api_key_id: None,
+            credential_fingerprint: None,
             route_id: "rt".into(),
             method: "GET".into(),
             path: "/p".into(),
+            client_ip: None,
+            auth_result: "failure".into(),
+            error_kind: Some("invalid_key".into()),
             status_code: 404,
             success: false,
             latency_ms: 5,

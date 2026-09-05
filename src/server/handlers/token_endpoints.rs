@@ -18,7 +18,13 @@ pub async fn responses_input_tokens(
     let mut body = body.0;
     let request_id = Uuid::new_v4().to_string();
 
-    let user = state.auth.authenticate(&headers)?;
+    let user = authenticate_inference(
+        &state,
+        &headers,
+        addr,
+        &request_id,
+        "/responses/input_tokens",
+    )?;
     let lifecycle = new_lifecycle(
         &state,
         request_id.clone(),

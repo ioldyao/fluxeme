@@ -17,7 +17,13 @@ pub async fn messages_count_tokens(
     let mut body = body.0;
     let request_id = Uuid::new_v4().to_string();
 
-    let user = state.auth.authenticate(&headers)?;
+    let user = authenticate_inference(
+        &state,
+        &headers,
+        addr,
+        &request_id,
+        "/v1/messages/count_tokens",
+    )?;
     let lifecycle = new_lifecycle(
         &state,
         request_id.clone(),
@@ -93,7 +99,13 @@ pub async fn messages(
     let request_id = Uuid::new_v4().to_string();
     let start = Instant::now();
 
-    let user = state.auth.authenticate(&headers)?;
+    let user = authenticate_inference(
+        &state,
+        &headers,
+        addr,
+        &request_id,
+        "/v1/messages",
+    )?;
     let is_streaming = body
         .get("stream")
         .and_then(|v| v.as_bool())

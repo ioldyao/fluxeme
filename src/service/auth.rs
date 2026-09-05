@@ -233,8 +233,160 @@ impl AuthService {
 #[derive(Debug)]
 pub struct AuthError(pub String);
 
+impl AuthError {
+    /// Classify this auth failure into a stable, machine-readable kind used
+    /// by the gateway access-event security log. Classification is driven by
+    /// the message produced at the rejection site so the public `AuthError`
+    /// shape stays unchanged (backward compatible).
+    pub fn kind(&self) -> AuthErrorKind {
+        let m = self.0.as_str();
+        if m.starts_with("Missing") {
+            AuthErrorKind::MissingAuthorization
+        } else if m.contains("Management") {
+            AuthErrorKind::ManagementKeyDenied
+        } else if m.contains("expired") {
+            AuthErrorKind::ExpiredKey
+        } else if m.starts_with("Unknown or disabled") {
+            AuthErrorKind::InvalidKey
+        } else if m.contains("disabled") {
+            AuthErrorKind::DisabledKey
+        } else if m.contains("suspended") {
+            AuthErrorKind::SuspendedUser
+        } else if m.contains("no gateway account") {
+            AuthErrorKind::UnrecognizedSubject
+        } else {
+            AuthErrorKind::InvalidKey
+        }
+    }
+}
+
+/// Stable classification of a gateway data-plane auth failure, for the
+/// security access-event log. Distinct from the human-readable `AuthError`
+/// message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthErrorKind {
+    /// No `Authorization: Bearer` header and no `x-api-key` header.
+    MissingAuthorization,
+    /// A credential was presented but does not resolve to a usable key or
+    /// OIDC subject (unknown key, malformed bearer, invalid expiration).
+    InvalidKey,
+    /// A known key that is explicitly disabled.
+    DisabledKey,
+    /// A known key whose `expires_at` is in the past.
+    ExpiredKey,
+    /// A `mk-*` management key presented to the data plane.
+    ManagementKeyDenied,
+    /// A valid key whose owning user account is suspended.
+    SuspendedUser,
+    /// A valid OIDC token whose `sub` has no gateway SSO account.
+    UnrecognizedSubject,
+}
+
+impl AuthErrorKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::MissingAuthorization => "missing_authorization",
+            Self::InvalidKey => "invalid_key",
+            Self::DisabledKey => "disabled_key",
+            Self::ExpiredKey => "expired_key",
+            Self::ManagementKeyDenied => "management_key_denied",
+            Self::SuspendedUser => "suspended_user",
+            Self::UnrecognizedSubject => "unrecognized_subject",
+        }
+    }
+}
+
+/// One-way fingerprint of a presented credential for the security access log.
+/// The raw key is never stored; only a short SHA-256 hex prefix is kept so
+/// the same key can be correlated across events without leaking it.
+pub fn credential_fingerprint(credential: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(credential.as_bytes());
+    hex::encode(&digest[..8])
+}
+
 impl std::fmt::Display for AuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Authentication failed: {}", self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_error_kind_classifies_each_rejection_site() {
+        assert_eq!(
+            AuthError("Missing or invalid API key".into()).kind(),
+            AuthErrorKind::MissingAuthorization
+        );
+        assert_eq!(
+            AuthError("Unknown or disabled API key".into()).kind(),
+            AuthErrorKind::InvalidKey
+        );
+        assert_eq!(
+            AuthError("API key has an invalid expiration".into()).kind(),
+            AuthErrorKind::InvalidKey
+        );
+        assert_eq!(
+            AuthError("API key is disabled".into()).kind(),
+            AuthErrorKind::DisabledKey
+        );
+        assert_eq!(
+            AuthError("API key has expired".into()).kind(),
+            AuthErrorKind::ExpiredKey
+        );
+        assert_eq!(
+            AuthError("Management API key is not valid for data-plane APIs".into()).kind(),
+            AuthErrorKind::ManagementKeyDenied
+        );
+        assert_eq!(
+            AuthError("User account is suspended".into()).kind(),
+            AuthErrorKind::SuspendedUser
+        );
+        assert_eq!(
+            AuthError("OIDC identity has no gateway account; sign in via SSO first".into()).kind(),
+            AuthErrorKind::UnrecognizedSubject
+        );
+    }
+
+    #[test]
+    fn auth_error_kind_has_stable_snake_case_labels() {
+        assert_eq!(
+            AuthErrorKind::MissingAuthorization.as_str(),
+            "missing_authorization"
+        );
+        assert_eq!(AuthErrorKind::InvalidKey.as_str(), "invalid_key");
+        assert_eq!(AuthErrorKind::DisabledKey.as_str(), "disabled_key");
+        assert_eq!(AuthErrorKind::ExpiredKey.as_str(), "expired_key");
+        assert_eq!(
+            AuthErrorKind::ManagementKeyDenied.as_str(),
+            "management_key_denied"
+        );
+        assert_eq!(AuthErrorKind::SuspendedUser.as_str(), "suspended_user");
+        assert_eq!(
+            AuthErrorKind::UnrecognizedSubject.as_str(),
+            "unrecognized_subject"
+        );
+    }
+
+    #[test]
+    fn credential_fingerprint_is_deterministic_and_hides_the_raw_key() {
+        let key = "sk-a-very-long-secret-api-key-123456";
+        let first = credential_fingerprint(key);
+        let second = credential_fingerprint(key);
+        assert_eq!(first, second, "fingerprint must be deterministic");
+        assert_ne!(first, key, "fingerprint must never equal the raw key");
+        assert!(
+            !key.contains(&first),
+            "raw key must not embed the fingerprint"
+        );
+        assert_eq!(first.len(), 16, "fingerprint is 8 bytes hex-encoded");
+        // A different key must produce a different fingerprint.
+        assert_ne!(
+            first,
+            credential_fingerprint("sk-a-different-secret-api-key-654321")
+        );
     }
 }

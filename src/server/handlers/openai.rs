@@ -17,7 +17,13 @@ pub async fn chat_completions(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("unknown");
 
-    let user = state.auth.authenticate(&headers)?;
+    let user = authenticate_inference(
+        &state,
+        &headers,
+        addr,
+        &request_id,
+        "/v1/chat/completions",
+    )?;
     // Create the lifecycle right after authentication so every LLM-data-plane
     // failure below (validation, rate limit, routing, upstream) yields exactly
     // one gateway request event.

@@ -1,7 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use super::estimate_tokens_responses;
+    use super::{estimate_tokens_responses, record_auth_failure};
+    use crate::observability::gateway_events::{GatewayEvent, GatewayEventRecorder};
     use crate::domain::channel::Channel;
+    use crate::service::auth::AuthError;
     use crate::scheduler::dispatch::{
         count_tokens_supported_for_channel, parse_responses_sse_usage,
         responses_input_tokens_supported_for_channel,
@@ -27,6 +29,55 @@ mod tests {
             billing_group_id: "default".to_string(),
             billing_payment_mode: crate::domain::billing_group::BillingPaymentMode::Metered,
         }
+    }
+
+    #[test]
+    fn auth_failure_records_security_event_without_raw_credential() {
+        let (recorder, mut rx) = GatewayEventRecorder::test_recorder(2);
+        record_auth_failure(
+            &recorder,
+            "127.0.0.1".parse().unwrap(),
+            "request-123",
+            "/v1/chat/completions",
+            &AuthError("Unknown or disabled API key".into()),
+            Some(crate::service::auth::credential_fingerprint(
+                "sk-super-secret-value",
+            )),
+            4,
+        );
+        match rx.try_recv().expect("access event") {
+            GatewayEvent::Access(event) => {
+                assert_eq!(event.request_id, "request-123");
+                assert_eq!(event.path, "/v1/chat/completions");
+                assert_eq!(event.method, "POST");
+                assert_eq!(event.client_ip.as_deref(), Some("127.0.0.1"));
+                assert_eq!(event.auth_result, "failure");
+                assert_eq!(event.error_kind.as_deref(), Some("invalid_key"));
+                assert_eq!(event.status_code, 401);
+                assert!(!event.success);
+                assert_eq!(event.latency_ms, 4);
+                assert!(!serde_json::to_string(&event)
+                    .unwrap()
+                    .contains("sk-super-secret-value"));
+            }
+            other => panic!("expected access event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn auth_failure_event_contains_no_usage_request_or_billing_event() {
+        let (recorder, mut rx) = GatewayEventRecorder::test_recorder(2);
+        record_auth_failure(
+            &recorder,
+            "10.0.0.4".parse().unwrap(),
+            "request-unauthorized",
+            "/v1/messages",
+            &AuthError("Missing or invalid API key".into()),
+            None,
+            1,
+        );
+        assert!(matches!(rx.try_recv(), Ok(GatewayEvent::Access(_))));
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]

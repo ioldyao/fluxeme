@@ -11,7 +11,13 @@ pub async fn responses(
     let request_id = Uuid::new_v4().to_string();
     let start = Instant::now();
 
-    let user = state.auth.authenticate(&headers)?;
+    let user = authenticate_inference(
+        &state,
+        &headers,
+        addr,
+        &request_id,
+        "/v1/responses",
+    )?;
     let is_streaming = body
         .get("stream")
         .and_then(|v| v.as_bool())
