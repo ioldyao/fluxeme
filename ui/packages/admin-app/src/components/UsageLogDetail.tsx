@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { useUsageDetail, useUsageRequestAttempts } from '@fluxeme/shared/src/api/usage';
+import { useUsageRequestDetail, useUsageRequestAttempts } from '@fluxeme/shared/src/api/usage';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@fluxeme/shared/src/components/ui/dialog';
 import { useCurrency } from '@fluxeme/shared/src/store/currency';
 import { parseTimestamp, formatTime } from '@fluxeme/shared/src/lib/date';
@@ -234,7 +234,33 @@ function extractSseParts(data: string): { thinking: string; content: string } {
 
 export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
   const { t } = useTranslation();
-  const { data: record, isLoading, error } = useUsageDetail(requestId);
+  const { data: request, isLoading, error } = useUsageRequestDetail(requestId);
+  const record: UsageRecord | null = request ? {
+    ...request,
+    model: request.resolved_model || request.requested_model,
+    original_model: request.resolved_model && request.resolved_model !== request.requested_model ? request.requested_model : '',
+    stream: request.stream !== 0,
+    success: request.status === 'succeeded',
+    latency_ms: request.total_latency_ms,
+    cache_hit_input_tokens: request.cache_read_tokens,
+    request_body: null,
+    response_body: null,
+    reasoning_body: null,
+    api_key_name: request.api_key_name ?? null,
+    client_ip: request.client_ip ?? null,
+    endpoint_id: request.endpoint_id ?? null,
+    endpoint_url: request.endpoint_url ?? null,
+    team_id: request.team_id ?? null,
+    ttft_ms: request.ttft_ms ?? null,
+    billing_group_id: null,
+    billing_group_name: null,
+    billing_payment_mode: request.billing_payment_mode ?? null,
+    account_type: null,
+    prompt_price: 0,
+    completion_price: 0,
+    cache_read_price: 0,
+    cache_write_price: 0,
+  } as UsageRecord : null;
   const { data: attempts } = useUsageRequestAttempts(requestId);
   useCurrency();
 
@@ -347,6 +373,17 @@ export function UsageLogDetail({ requestId, open, onOpenChange }: Props) {
                     <span className={`size-1.5 rounded-full ${record.success ? 'bg-chart-2' : 'bg-destructive'}`} />
                     {record.success ? t('usage.success') : t('usage.failure')} · HTTP {record.status_code}
                   </span>
+                  {request && request.status !== 'succeeded' && (request.error_kind || request.error_stage || request.error_message) && (
+                    <div className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 space-y-1">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-destructive">
+                        <span className="uppercase tracking-wide">{request.status}</span>
+                        {request.status_code > 0 && <span>· HTTP {request.status_code}</span>}
+                      </div>
+                      {request.error_stage && <div className="text-xs text-muted-foreground"><span className="font-medium">{t('usage.errorStage')}</span> {request.error_stage}</div>}
+                      {request.error_kind && <div className="text-xs text-muted-foreground"><span className="font-medium">{t('usage.errorKind')}</span> {request.error_kind}</div>}
+                      {request.error_message && <div className="text-xs text-muted-foreground break-words"><span className="font-medium">{t('usage.errorMessage')}</span> {request.error_message}</div>}
+                    </div>
+                  )}
                   <div className="mt-3 space-y-0">
                     {[
                       [t('table.status'), `${record.success ? t('usage.success') : t('usage.failure')}`],

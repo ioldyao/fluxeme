@@ -7,8 +7,15 @@ import { useAuth } from '../store/auth';
  *  `new Date(...)` would treat that as browser-local time, so normalize it
  *  to an explicit UTC instant. `formatDateTime` already emits an ISO string
  *  with a Z suffix, which parses correctly as UTC on its own.
+ *
+ *  Some endpoints (gateway request lifecycle) return the raw epoch **seconds**
+ *  (`toUInt32(timestamp)`). Treat a numeric input as epoch seconds so the
+ *  display does not fall back to 1970.
  */
-export function parseTimestamp(ts: string): Date {
+export function parseTimestamp(ts: string | number): Date {
+  if (typeof ts === 'number') {
+    return new Date(ts * 1000);
+  }
   const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(ts)
     ? `${ts.replace(' ', 'T')}Z`
     : ts;
@@ -33,7 +40,7 @@ function formatInTimezone(date: Date, opts: Intl.DateTimeFormatOptions): string 
 }
 
 /** Full datetime, e.g. "8/4/2026, 3:15:30 PM", in the user's timezone. */
-export function formatTimestamp(ts: string): string {
+export function formatTimestamp(ts: string | number): string {
   return formatInTimezone(parseTimestamp(ts), {
     year: 'numeric',
     month: 'numeric',
