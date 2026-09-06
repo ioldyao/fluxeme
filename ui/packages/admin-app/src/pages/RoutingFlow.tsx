@@ -12,6 +12,9 @@ const C = {
   textMuted: 'var(--muted-foreground)', nodeBg: 'var(--muted)', barTrack: 'var(--secondary)',
   green: 'var(--chart-2)', low: 'var(--chart-1)', mid: 'var(--sidebar-primary)', high: 'var(--destructive)',
 };
+// Circuit-open (熔断) endpoint cards use a black border to make their
+// out-of-service state distinct while preserving the normal card surface.
+const BROKEN = { border: '#000000' };
 const HEAT_COLOR: Record<string, string> = { low: C.low, mid: C.mid, high: C.high };
 const FONT_FAMILY = '-apple-system, PingFang SC, Microsoft YaHei, Segoe UI, sans-serif';
 
@@ -169,12 +172,12 @@ function formatLatency(ms: number): string {
 // ── FlowNode ────────────────────────────────────────────────────────
 function FlowNode({
   nodeRef, title, subtitle, count, heat, skeleton,
-  pinged, showBar = true, barPct, tags, onClick, selected = false, pulseKey,
+  pinged, showBar = true, barPct, tags, onClick, selected = false, pulseKey, broken = false,
 }: {
   nodeRef?: React.RefObject<HTMLDivElement | null>; title: string; subtitle?: string;
   count: number; heat?: 'low' | 'mid' | 'high' | null; skeleton?: boolean;
   pinged?: boolean; showBar?: boolean; barPct?: number; tags?: EndpointTag[];
-  onClick?: () => void; selected?: boolean; pulseKey?: string | null;
+  onClick?: () => void; selected?: boolean; pulseKey?: string | null; broken?: boolean;
 }) {
   const color = heat ? HEAT_COLOR[heat] : null;
   const width = barPct != null ? barPct : heat === 'high' ? 100 : heat === 'mid' ? 60 : 25;
@@ -182,7 +185,7 @@ function FlowNode({
   return (
     <div ref={nodeRef} role="button" tabIndex={onClick ? 0 : undefined} onClick={onClick} onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined} aria-pressed={selected} style={{
       borderRadius: 8,
-      border: `2px solid ${selected ? 'var(--chart-1)' : (color || C.border)}`,
+      border: `2px solid ${selected ? 'var(--chart-1)' : broken ? BROKEN.border : (color || C.border)}`,
       background: selected
         ? 'color-mix(in oklab, var(--card) 90%, var(--chart-1))'
         : C.nodeBg,
@@ -762,6 +765,7 @@ export default function RoutingFlow({ embedded = false, modelName, edgeHighlight
                             count={cnt}
                             heat={cls}
                             tags={tags}
+                            broken={breakerState === 'open'}
                             pinged={pinged[`e:${ek}`]}
                             showBar={false}
                             selected={activeSelectedNode?.model === m.model && activeSelectedNode.channelId === c.id && activeSelectedNode.endpointKey === e.key}
