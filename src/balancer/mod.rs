@@ -95,6 +95,9 @@ struct BreakerInner {
     status: BreakerStatus,
     failure_count: u32,
     last_failure: Option<Instant>,
+    /// Last successful business or probe request. Lets the periodic probe
+    /// cycle skip endpoints that are already proven alive by real traffic.
+    last_success_at: Option<Instant>,
     half_open_in_flight: bool,
     probe_lease: Option<ProbeLease>,
     /// Consecutive failed recovery probes. Reaches `long_fail_threshold` →
@@ -121,6 +124,9 @@ pub struct BreakerSnapshot {
     pub failure_count: u32,
     /// Seconds elapsed since the last failure (None = never failed).
     pub last_failure_age_secs: Option<u64>,
+    /// Seconds elapsed since the last success (None = no success recorded).
+    #[serde(default)]
+    pub last_success_age_secs: Option<u64>,
     pub consecutive_probe_failures: u32,
     pub long_unavailable: bool,
 }
@@ -160,6 +166,7 @@ impl CircuitBreaker {
                 status: BreakerStatus::Closed,
                 failure_count: 0,
                 last_failure: None,
+                last_success_at: None,
                 half_open_in_flight: false,
                 probe_lease: None,
                 consecutive_probe_failures: 0,
@@ -186,6 +193,7 @@ impl CircuitBreaker {
             .to_string(),
             failure_count: inner.failure_count,
             last_failure_age_secs: inner.last_failure.map(|i| i.elapsed().as_secs()),
+            last_success_age_secs: inner.last_success_at.map(|i| i.elapsed().as_secs()),
             consecutive_probe_failures: inner.consecutive_probe_failures,
             long_unavailable: inner.long_unavailable,
         }
@@ -205,6 +213,9 @@ impl CircuitBreaker {
         inner.last_failure = snap
             .last_failure_age_secs
             .map(|age| Instant::now() - Duration::from_secs(age));
+        inner.last_success_at = snap
+            .last_success_age_secs
+            .map(|age| Instant::now() - Duration::from_secs(age));
         inner.half_open_in_flight = false;
         inner.probe_lease = None;
         inner.consecutive_probe_failures = snap.consecutive_probe_failures;
@@ -223,6 +234,17 @@ impl CircuitBreaker {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .consecutive_probe_failures
+    }
+
+    /// Whether this endpoint had a successful business/probe request within the
+    /// given window. Used by the periodic probe cycle to skip endpoints that
+    /// real traffic has already proven alive.
+    pub fn recent_success_within(&self, window: Duration) -> bool {
+        self.inner
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .last_success_at
+            .is_some_and(|at| at.elapsed() < window)
     }
 
     /// Whether this endpoint can receive business traffic.
@@ -255,6 +277,7 @@ impl CircuitBreaker {
             inner.status = BreakerStatus::Closed;
             inner.failure_count = 0;
             inner.last_failure = None;
+            inner.last_success_at = None;
             inner.half_open_in_flight = false;
             inner.probe_lease = None;
             inner.consecutive_probe_failures = 0;
@@ -275,6 +298,7 @@ impl CircuitBreaker {
         inner.half_open_in_flight = false;
         inner.consecutive_probe_failures = 0;
         inner.long_unavailable = false;
+        inner.last_success_at = Some(Instant::now());
     }
 
     pub fn record_failure(&self) {
@@ -394,6 +418,7 @@ impl CircuitBreaker {
             inner.status = BreakerStatus::Closed;
             inner.consecutive_probe_failures = 0;
             inner.long_unavailable = false;
+            inner.last_success_at = Some(Instant::now());
         } else {
             inner.last_failure = Some(Instant::now());
             inner.status = BreakerStatus::Open;
@@ -445,6 +470,7 @@ impl CircuitBreaker {
             };
             current.failure_count = old.failure_count;
             current.last_failure = old.last_failure;
+            current.last_success_at = old.last_success_at;
             // Reloading routing configuration must not turn a long-unavailable
             // endpoint back into a fast-recovery endpoint.  These fields are
             // runtime health state, not breaker configuration.
@@ -825,5 +851,23 @@ mod tests {
 
         assert_eq!(breaker.status(), BreakerStatus::Closed);
         assert!(breaker.is_available());
+    }
+
+    #[test]
+    fn recent_success_within_tracks_business_and_probe_success() {
+        let breaker = CircuitBreaker::with_params(true, 1, 0, 10, 1800);
+        assert!(!breaker.recent_success_within(Duration::from_secs(300)));
+
+        breaker.record_success();
+        assert!(breaker.recent_success_within(Duration::from_secs(300)));
+
+        // A probe recovery also counts as liveness.
+        breaker.record_failure();
+        let token = breaker
+            .begin_probe()
+            .expect("open endpoint may be probed after cooldown")
+            .expect("open endpoint gets a token");
+        assert!(breaker.probe_success(token));
+        assert!(breaker.recent_success_within(Duration::from_secs(300)));
     }
 }

@@ -16,6 +16,9 @@ use crate::service::routing::RoutingService;
 const MAX_CONCURRENT_ENDPOINT_PROBES: usize = 8;
 const PROBE_LEASE_TTL_SECS: u64 = 180;
 const PROBE_REQUEST_TIMEOUT_MAX_SECS: u64 = PROBE_LEASE_TTL_SECS - 1;
+/// Healthy endpoints with a recent successful business/probe request do not
+/// need another synthetic request in the periodic cycle.
+const PROBE_SKIP_RECENT_SUCCESS_SECS: u64 = 300;
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -296,50 +299,88 @@ impl HealthProbeService {
             config.protocol = protocol;
         }
         let effective_protocol = config.resolved_protocol(&provider_name);
+        let body = config.build_body(&upstream_name, &effective_protocol, false);
 
         let start = Instant::now();
-        let result = tokio::time::timeout(
+        let response = tokio::time::timeout(
             Duration::from_secs(config.timeout_secs.min(PROBE_REQUEST_TIMEOUT_MAX_SECS)),
-            Self::probe_endpoint(
-                &provider_name,
-                &adapter,
-                &endpoint,
-                &upstream_name,
-                &config,
-                false,
-            ),
+            async {
+                match &effective_protocol {
+                    ProbeProtocol::AnthropicMessages => adapter.messages(&endpoint, body).await,
+                    ProbeProtocol::Responses => {
+                        adapter.relay(&endpoint, "/v1/responses", body).await
+                    }
+                    ProbeProtocol::OpenaiChat | ProbeProtocol::Auto => {
+                        adapter.chat_complete(&endpoint, body).await
+                    }
+                }
+            },
         )
         .await;
         let latency_ms = start.elapsed().as_millis() as u64;
-        let (success, error_kind, error_message) = match result {
-            Ok(Ok(())) => (true, None, None),
-            Ok(Err(error)) => (
-                false,
-                Some(format!("{:?}", error.kind()).to_lowercase()),
-                Some(error.0),
-            ),
-            Err(_) => (
-                false,
-                Some("timeout".to_string()),
-                Some("Probe request timed out".to_string()),
-            ),
-        };
+        // For a unary (non-stream) request the whole response arrives in one
+        // round trip, so time-to-first-byte equals the request latency.
+        let ttft_ms = Some(latency_ms);
 
-        Ok(ProbeTestResult {
-            success,
-            model: model.name,
-            channel_id: channel_id.to_string(),
-            endpoint_id: endpoint.id,
-            endpoint_url: endpoint.url,
-            upstream_model: upstream_name,
-            protocol: effective_protocol.as_str().to_string(),
-            latency_ms,
-            ttft_ms: None,
-            error_kind,
-            error_message,
-            prompt_tokens: None,
-            completion_tokens: None,
-        })
+        match response {
+            Ok(Ok(value)) => {
+                let (prompt_tokens, completion_tokens) = match &effective_protocol {
+                    ProbeProtocol::AnthropicMessages | ProbeProtocol::Responses => (
+                        value["usage"]["input_tokens"].as_u64(),
+                        value["usage"]["output_tokens"].as_u64(),
+                    ),
+                    _ => (
+                        value["usage"]["prompt_tokens"].as_u64(),
+                        value["usage"]["completion_tokens"].as_u64(),
+                    ),
+                };
+                Ok(ProbeTestResult {
+                    success: true,
+                    model: model.name,
+                    channel_id: channel_id.to_string(),
+                    endpoint_id: endpoint.id,
+                    endpoint_url: endpoint.url,
+                    upstream_model: upstream_name,
+                    protocol: effective_protocol.as_str().to_string(),
+                    latency_ms,
+                    ttft_ms,
+                    error_kind: None,
+                    error_message: None,
+                    prompt_tokens,
+                    completion_tokens,
+                })
+            }
+            Ok(Err(error)) => Ok(ProbeTestResult {
+                success: false,
+                model: model.name,
+                channel_id: channel_id.to_string(),
+                endpoint_id: endpoint.id,
+                endpoint_url: endpoint.url,
+                upstream_model: upstream_name,
+                protocol: effective_protocol.as_str().to_string(),
+                latency_ms,
+                ttft_ms,
+                error_kind: Some(format!("{:?}", error.kind()).to_lowercase()),
+                error_message: Some(error.0),
+                prompt_tokens: None,
+                completion_tokens: None,
+            }),
+            Err(_) => Ok(ProbeTestResult {
+                success: false,
+                model: model.name,
+                channel_id: channel_id.to_string(),
+                endpoint_id: endpoint.id,
+                endpoint_url: endpoint.url,
+                upstream_model: upstream_name,
+                protocol: effective_protocol.as_str().to_string(),
+                latency_ms,
+                ttft_ms: None,
+                error_kind: Some("timeout".to_string()),
+                error_message: Some("Probe request timed out".to_string()),
+                prompt_tokens: None,
+                completion_tokens: None,
+            }),
+        }
     }
 
     /// Probe every endpoint under the selected channel bindings of a model and
@@ -496,18 +537,25 @@ impl HealthProbeService {
     /// Probe binding endpoints through the same model-aware provider operation
     /// used by business traffic. A probe claim is separate from business
     /// traffic, so a recovering endpoint cannot re-enter routing until success.
+    ///
+    /// Healthy endpoints that real traffic has already proven alive within the
+    /// skip window are not probed again in the periodic cycle.
     pub async fn probe_open_bindings(&self) -> Result<Vec<ProbeResultRow>, String> {
-        self.probe_bindings(false).await
+        self.probe_bindings(false, true).await
     }
 
     /// Fast recovery cycle — probe every enabled endpoint that is currently
     /// Open (after cooldown) so recovery doesn't wait for the next slow cycle.
     pub async fn probe_recovering_bindings(&self) -> Result<Vec<ProbeResultRow>, String> {
-        let rows = self.probe_bindings(true).await?;
+        let rows = self.probe_bindings(true, false).await?;
         Ok(rows)
     }
 
-    async fn probe_bindings(&self, recovering_only: bool) -> Result<Vec<ProbeResultRow>, String> {
+    async fn probe_bindings(
+        &self,
+        recovering_only: bool,
+        skip_recently_active: bool,
+    ) -> Result<Vec<ProbeResultRow>, String> {
         let models = self.db.list_models().await.map_err(|e| e.0)?;
         let mut jobs = Vec::new();
         let config = self.request_config().await;
@@ -548,6 +596,17 @@ impl HealthProbeService {
                         // Recovery probes exclusively own Open/HalfOpen endpoints.
                         // Keeping them out of the periodic cycle ensures the
                         // long-unavailable interval cannot be bypassed.
+                        continue;
+                    }
+                    if skip_recently_active
+                        && state
+                            .breaker
+                            .recent_success_within(std::time::Duration::from_secs(
+                                crate::service::health_probe::PROBE_SKIP_RECENT_SUCCESS_SECS,
+                            ))
+                    {
+                        // Real business traffic already proved this endpoint
+                        // alive recently — no synthetic probe needed this cycle.
                         continue;
                     }
                     jobs.push(ProbeJob {

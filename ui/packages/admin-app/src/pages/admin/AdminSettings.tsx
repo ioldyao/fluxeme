@@ -871,6 +871,7 @@ function ProbeTestRunner() {
             <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
               <div className="flex justify-between gap-3"><span className="text-muted-foreground">{t('settings.probeTestEndpointUrl')}</span><span className="max-w-[60%] truncate font-mono text-foreground">{result.endpoint_url}</span></div>
               <div className="flex justify-between gap-3"><span className="text-muted-foreground">{t('settings.probeTestLatency')}</span><span className="font-mono text-foreground">{result.latency_ms} ms</span></div>
+              <div className="flex justify-between gap-3"><span className="text-muted-foreground">TTFT</span><span className="font-mono text-foreground">{result.ttft_ms == null ? '—' : `${result.ttft_ms} ms`}</span></div>
               <div className="flex justify-between gap-3"><span className="text-muted-foreground">Upstream</span><span className="font-mono text-foreground">{result.upstream_model}</span></div>
               <div className="flex justify-between gap-3"><span className="text-muted-foreground">{t('settings.probeTestTokens')}</span><span className="font-mono text-foreground">{result.prompt_tokens ?? '—'} / {result.completion_tokens ?? '—'}</span></div>
             </div>
