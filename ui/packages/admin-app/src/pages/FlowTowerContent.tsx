@@ -13,9 +13,12 @@ import { useFlowMetrics } from '@fluxeme/shared';
 import { usePublicModels } from '@fluxeme/shared/src/api/models';
 import { useChannels } from '@fluxeme/shared/src/api/channels';
 import { useProbeResults } from '@fluxeme/shared/src/api/probe';
-import { useRoutingHealth, useEndpointsLiveHealth } from '@fluxeme/shared/src/api/routing';
-import type { RoutingHealthModel, EndpointLiveHealth } from '@fluxeme/shared/src/api/routing';
+import { useRoutingHealth } from '@fluxeme/shared/src/api/routing';
+import type { RoutingHealthModel } from '@fluxeme/shared/src/api/routing';
+import { useSchedulerTopology, type SchedulerEndpointTopology, type SchedulerTopologyResponse } from '@fluxeme/shared/src/api/scheduler';
+import { bindingKey } from './routingFlowTopology';
 import RoutingFlow from './RoutingFlow';
+import type { RoutingFlowEndpointMeta, RoutingFlowNodeSelection } from './RoutingFlow';
 import type { Channel, FlowMetricsClientIp, FlowMetricsModelShare, FlowMetricsPercentiles, Model, ProbeResult } from '@fluxeme/shared/src/types';
 
 type RangeKey = '5m' | '15m' | '1h' | '6h' | '24h';
@@ -58,6 +61,15 @@ type EndpointStatusRow = {
   channelP95Latency24h?: number;
   circuitEnabled: boolean;
   circuitOk: boolean;
+  circuitState: string;
+};
+
+type RecentDecision = {
+  id: string;
+  timestamp: string;
+  model: string;
+  channelId: string;
+  endpointId: number | null;
 };
 
 type CompareRow = {
@@ -204,19 +216,12 @@ function deriveCatalogModel(
   channelById: Map<string, Channel>,
   channelConfigReady: boolean,
   health?: RoutingHealthModel,
-  liveByEndpoint?: Map<number, EndpointLiveHealth>,
 ): CatalogModel {
   const healthChannels = health?.channels ?? [];
   const channels = healthChannels.filter((channel) => channel.enabled);
   const endpointAvailability = new Map(
     channels.flatMap((channel) => channel.endpoints.map((endpoint) => [endpoint.endpoint_id, endpoint.available])),
   );
-  // Prefer live binding-pool availability when present.
-  if (liveByEndpoint) {
-    for (const [endpointId, live] of liveByEndpoint) {
-      endpointAvailability.set(endpointId, live.available);
-    }
-  }
   const configuredEndpoints = config.channels.flatMap((binding) => {
     const channel = channelById.get(binding.channel_id);
     if (!channel?.enabled) return [];
@@ -233,7 +238,7 @@ function deriveCatalogModel(
     ? healthChannels.reduce((sum, channel) => sum + channel.requests * channel.avg_latency_ms, 0) / totalRequests
     : undefined;
   const p95Values = healthChannels.filter((channel) => channel.requests > 0).map((channel) => channel.p95_latency_ms);
-  const brokenCircuitChannels = channels.filter((channel) => channel.requests > 0 && channel.circuit_enabled && !channel.circuit_ok).length;
+  const brokenCircuitChannels = channels.filter((channel) => channel.circuit_enabled && !channel.circuit_ok).length;
 
   const status: ModelHealthStatus = !channelConfigReady
     ? 'unknown'
@@ -425,6 +430,208 @@ function MetricList({ rows }: { rows: MetricRow[] }) {
   );
 }
 
+// ── Scheduler policy overview ───────────────────────────────────────
+// This is a read-only view of configured/eligible weights and observed traffic.
+// Shares are neutral distribution metrics; they do not indicate health.
+
+type TopoDecided = {
+  model: string;
+  channel_id: string;
+  endpoint_id?: number | null;
+};
+
+function resolveTopoEvent(
+  topology: SchedulerTopologyResponse | undefined,
+  ev: { model: string; channel_id: string; endpoint_id?: number | null },
+): TopoDecided {
+  const channel = topology?.bindings.find((binding) => binding.channel_id === ev.channel_id);
+  if (!channel) return { model: ev.model, channel_id: ev.channel_id, endpoint_id: ev.endpoint_id };
+  const endpoint = channel.endpoints.find((ep) => ep.endpoint_id === ev.endpoint_id);
+  return {
+    model: ev.model,
+    channel_id: channel.channel_name || ev.channel_id,
+    endpoint_id: endpoint ? endpoint.endpoint_id : ev.endpoint_id,
+  };
+}
+
+function useRecentDecisions(modelId: string, modelName?: string) {
+  const [events, setEvents] = useState<RecentDecision[]>([]);
+  const [live, setLive] = useState(false);
+  const modelIdRef = useRef(modelId);
+  const modelNameRef = useRef(modelName);
+  modelIdRef.current = modelId;
+  modelNameRef.current = modelName;
+
+  useEffect(() => {
+    setEvents([]);
+    setLive(false);
+    let socket: WebSocket | null = null;
+    let closed = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+
+    function connect() {
+      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      socket = new WebSocket(`${proto}://${window.location.host}/api/health/ws`);
+
+      socket.onopen = () => setLive(true);
+      socket.onmessage = (message) => {
+        if (closed) return;
+        let event: { type?: string; model?: string; request_id?: string; channel_id?: string; endpoint_id?: number | null; timestamp?: string };
+        try {
+          event = JSON.parse(message.data as string);
+        } catch {
+          return;
+        }
+        if (event.type !== 'route_decided') return;
+        if (!event || typeof event.model !== 'string' || typeof event.channel_id !== 'string') return;
+        // WebSocket events use the model name; the selected model control uses
+        // its id. Match only when the parent has resolved the name.
+        if (modelIdRef.current !== 'all' && (!modelNameRef.current || event.model !== modelNameRef.current)) return;
+        const model = event.model;
+        const channelId = event.channel_id;
+        const endpointId = event.endpoint_id ?? null;
+        const timestamp = event.timestamp ?? new Date().toISOString();
+        const requestId = event.request_id ?? `${timestamp}-${Math.random().toString(36).slice(2)}`;
+        setEvents((prev) => [
+          // Phase 1 identity: request_id + timestamp + endpoint_id. Phase 2
+          // adds attempt once per-attempt events exist.
+          { id: `${requestId}:${timestamp}:${endpointId ?? 'none'}`, timestamp, model, channelId, endpointId },
+          ...prev,
+        ].slice(0, 12));
+      };
+      socket.onclose = () => {
+        setLive(false);
+        if (!closed) retry = setTimeout(connect, 3000);
+      };
+      socket.onerror = () => {
+        try {
+          socket?.close();
+        } catch {
+          /* noop */
+        }
+      };
+    }
+
+    connect();
+    return () => {
+      closed = true;
+      if (retry) clearTimeout(retry);
+      try {
+        socket?.close();
+      } catch {
+        /* noop */
+      }
+    };
+  }, [modelId]);
+
+  return { events, live };
+}
+
+function SchedulingPolicyCard({
+  label,
+  share,
+  requests24h,
+  observedShare24h,
+  status,
+  statusTone,
+  statusDetail,
+  footer,
+}: {
+  label: string;
+  share: number | null;
+  requests24h: number;
+  observedShare24h: number | null;
+  status: string;
+  statusTone: 'healthy' | 'degraded' | 'open' | 'disabled';
+  statusDetail?: string;
+  footer?: ReactNode;
+}) {
+  const pctLabel = share == null ? '—' : `${(share * 100).toFixed(1)}%`;
+  const pctWidth = share == null ? 0 : Math.min(100, share * 100);
+  const gapLabel = share != null && observedShare24h != null
+    ? `${share >= observedShare24h ? '+' : ''}${(share * 100 - observedShare24h * 100).toFixed(1)}%`
+    : '—';
+  const gapTone = 'text-muted-foreground';
+  const dotClass = statusTone === 'healthy'
+    ? 'bg-emerald-500'
+    : statusTone === 'degraded'
+      ? 'bg-amber-500'
+      : statusTone === 'open'
+        ? 'bg-red-500'
+        : 'bg-muted-foreground/40';
+  const toneLabel = 'text-muted-foreground';
+
+  return (
+    <div className="rounded-xl border border-secondary bg-card p-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-[10.5px] font-semibold text-muted-foreground">{label}</span>
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
+          <i aria-hidden="true" className={`h-2 w-2 rounded-full ${dotClass}`} />
+          {status}
+        </span>
+      </div>
+      <div className="mt-2.5 flex items-baseline gap-1.5">
+        <span className={`text-2xl font-semibold tracking-[-0.04em] tabular-nums ${toneLabel}`}>{pctLabel}</span>
+        <span className="text-[10px] text-muted-foreground">/ {formatNumber(requests24h)} req 24h</span>
+      </div>
+      <div className="mt-2.5 flex items-center gap-2">
+        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
+          <div className="h-full rounded-full bg-muted-foreground/35" style={{ width: `${pctWidth}%` }} />
+        </div>
+        <span className={`text-[10px] tabular-nums ${gapTone}`}>{gapLabel}</span>
+      </div>
+      {statusDetail ? (
+        <p className="mt-2 text-[10px] leading-4 text-muted-foreground">{statusDetail}</p>
+      ) : null}
+      {footer ? <div className="mt-3 border-t border-secondary pt-2">{footer}</div> : null}
+    </div>
+  );
+}
+
+function RecentDecisionCard({
+  decision,
+  topology,
+  locale,
+  onHover,
+  onClick,
+}: {
+  decision: RecentDecision;
+  topology: SchedulerTopologyResponse | undefined;
+  locale: string;
+  onHover?: (node: string | null) => void;
+  onClick?: () => void;
+}) {
+  const resolved = resolveTopoEvent(topology, {
+    model: decision.model,
+    channel_id: decision.channelId,
+    endpoint_id: decision.endpointId,
+  });
+  const label = resolved.endpoint_id != null
+    ? `${resolved.channel_id} · #${resolved.endpoint_id}`
+    : resolved.channel_id;
+  const [hover, setHover] = useState(false);
+
+  return (
+    <button
+      type="button"
+      onMouseEnter={() => { setHover(true); onHover?.(decision.channelId); }}
+      onMouseLeave={() => { setHover(false); onHover?.(null); }}
+      onFocus={() => onHover?.(decision.channelId)}
+      onBlur={() => onHover?.(null)}
+      onClick={onClick}
+      className={`w-full rounded-lg border px-3 py-2 text-left transition ${
+        hover ? 'border-accent bg-accent/60' : 'border-transparent hover:bg-muted'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-[10.5px] font-medium text-foreground">{label}</span>
+        <span className="text-[9.5px] text-muted-foreground">{formatDateTime(decision.timestamp, locale)}</span>
+      </div>
+      <div className="mt-0.5 truncate font-mono text-[9.5px] text-muted-foreground">{decision.model}</div>
+    </button>
+  );
+}
+
 export default function FlowTowerContent() {
   const { t, i18n } = useTranslation();
   const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US';
@@ -440,21 +647,16 @@ export default function FlowTowerContent() {
   const modelsQuery = usePublicModels();
   const channelsQuery = useChannels();
   const routingHealthQuery = useRoutingHealth();
-  const endpointsLiveQuery = useEndpointsLiveHealth();
   const probeResultsQuery = useProbeResults({
     enabled: selectedModelId !== 'all',
     modelId: selectedModelId !== 'all' ? selectedModelId : undefined,
   });
-  const endpointLiveByModel = useMemo(() => {
-    // endpoint_id -> live health. A binding-level endpoint is "available" if
-    // at least one published model binding is healthy; unavailable+long
-    // means circuit-broken in the long-unavailable state.
-    const map = new Map<number, EndpointLiveHealth>();
-    for (const ep of endpointsLiveQuery.data?.endpoints ?? []) {
-      map.set(ep.endpoint_id, ep);
-    }
-    return map;
-  }, [endpointsLiveQuery.data]);
+
+  // Scheduler policy topology (read-only here) — same data SchedulerControl
+  // renders for editing; this panel only visualizes configured vs observed share.
+  const topologyQuery = useSchedulerTopology(selectedModelId === 'all' ? '' : selectedModelId);
+  const [hoveredTopoNode, setHoveredTopoNode] = useState<string | null>(null);
+  const [selectedTopoNode, setSelectedTopoNode] = useState<RoutingFlowNodeSelection | null>(null);
   const channelById = useMemo(
     () => new Map((channelsQuery.data ?? []).map((channel) => [channel.id, channel])),
     [channelsQuery.data],
@@ -465,14 +667,45 @@ export default function FlowTowerContent() {
   );
   const catalogModels = useMemo(
     () => (modelsQuery.data ?? [])
-      .map((model) => deriveCatalogModel(model, channelById, !channelsQuery.isLoading && !channelsQuery.isError, healthByModelId.get(model.id), endpointLiveByModel))
+      .map((model) => deriveCatalogModel(model, channelById, !channelsQuery.isLoading && !channelsQuery.isError, healthByModelId.get(model.id)))
       .sort((left, right) => left.config.name.localeCompare(right.config.name) || left.config.id.localeCompare(right.config.id)),
-    [channelById, channelsQuery.isLoading, endpointLiveByModel, healthByModelId, modelsQuery.data],
+    [channelById, channelsQuery.isLoading, healthByModelId, modelsQuery.data],
   );
   const selectedCatalogModel = selectedModelId === 'all'
     ? undefined
     : catalogModels.find((model) => model.config.id === selectedModelId);
   const modelParam = selectedCatalogModel?.config.name;
+  const { events: recentDecisions, live: recentDecisionsLive } = useRecentDecisions(selectedModelId, modelParam);
+  // Binding-level scheduling fields for the topology endpoint cards, keyed by
+  // the topology node key (`<channelId>:id:<endpoint_id>`) so the same physical
+  // endpoint bound to different channels never shares scheduling metadata.
+  // P95 is channel-level (endpoint percentiles do not exist in the current
+  // aggregation) and labeled as such.
+  const endpointMeta = useMemo(() => {
+    const meta: Record<string, RoutingFlowEndpointMeta> = {};
+    const topo = topologyQuery.data;
+    if (!topo) return meta;
+    const modelHealth = selectedCatalogModel
+      ? healthByModelId.get(selectedCatalogModel.config.id)
+      : undefined;
+    const channelP95 = new Map(
+      (modelHealth?.channels ?? []).map((ch) => [ch.channel_id, ch.p95_latency_ms]),
+    );
+    for (const binding of topo.bindings) {
+      const p95 = channelP95.get(binding.channel_id) ?? null;
+      for (const ep of binding.endpoints) {
+        meta[`${binding.channel_id}:id:${ep.endpoint_id}`] = {
+          weight: ep.weight,
+          timeoutSecs: ep.timeout_secs,
+          maxTokens: ep.max_tokens,
+          p95Ms: p95,
+          routeEligible: ep.routing_available,
+          breakerState: ep.circuit_state,
+        };
+      }
+    }
+    return meta;
+  }, [healthByModelId, selectedCatalogModel, topologyQuery.data]);
   const flowMetrics = useFlowMetrics(
     {
       start: rangeBounds.start,
@@ -584,6 +817,15 @@ export default function FlowTowerContent() {
 
     const healthChannels = new Map((selectedCatalogModel.health?.channels ?? []).map((channel) => [channel.channel_id, channel]));
     const probeRows = (probeResultsQuery.data ?? []).filter((row) => row.model_id === selectedCatalogModel.config.id);
+    // Binding-level eligibility for the selected model comes from the scheduler
+    // topology (routing_available / circuit_state), never from endpoint_id-only
+    // aggregates. Build a (channel_id, endpoint_id) lookup.
+    const topoByBinding = new Map<string, SchedulerEndpointTopology>();
+    for (const binding of topologyQuery.data?.bindings ?? []) {
+      for (const ep of binding.endpoints) {
+        topoByBinding.set(bindingKey(binding.channel_id, ep.endpoint_id), ep);
+      }
+    }
 
     return selectedCatalogModel.config.channels.flatMap((binding) => {
       const channel = channelById.get(binding.channel_id);
@@ -593,8 +835,9 @@ export default function FlowTowerContent() {
         .filter((endpoint) => endpoint.enabled !== false)
         .map((endpoint) => {
           const endpointHealth = channelHealth?.endpoints.find((item) => item.endpoint_id === endpoint.id);
-          const live = endpoint.id != null ? endpointLiveByModel.get(endpoint.id) : undefined;
+          const topo = endpoint.id != null ? topoByBinding.get(bindingKey(binding.channel_id, endpoint.id)) : undefined;
           const probe = probeRows.find((row) => row.channel_id === binding.channel_id && row.endpoint_url === endpoint.url) ?? null;
+          const circuitState = topo?.circuit_state ?? 'unknown';
           return {
             channelId: binding.channel_id,
             channelName: channel.name || binding.channel_id,
@@ -602,19 +845,23 @@ export default function FlowTowerContent() {
             endpointId: endpoint.id ?? null,
             endpointUrl: endpoint.url,
             endpointEnabled: endpoint.enabled !== false,
-            routingObserved: live ? true : Boolean(endpointHealth),
-            // Prefer live binding-pool state over 24h aggregates.
-            routingAvailable: live ? live.available : (endpointHealth?.available ?? false),
+            // Binding-level availability: topology routing_available is the
+            // selected model's real eligibility; routing_health is channel-level.
+            routingObserved: topo != null || Boolean(endpointHealth),
+            routingAvailable: topo != null ? topo.routing_available : (endpointHealth?.available ?? false),
             probe,
             channelRequests24h: channelHealth?.requests ?? 0,
             channelSuccessRate24h: channelHealth?.requests ? channelHealth.success_rate * 100 : undefined,
             channelP95Latency24h: channelHealth?.requests ? channelHealth.p95_latency_ms : undefined,
-            circuitEnabled: live ? live.enabled : (channelHealth?.circuit_enabled ?? false),
-            circuitOk: live ? live.available : (channelHealth?.circuit_ok ?? false),
+            // Circuit comes from real circuit_state (topology) when available,
+            // falling back to channel-level circuit info from routing_health.
+            circuitState,
+            circuitEnabled: topo != null ? circuitState !== 'disabled' : (channelHealth?.circuit_enabled ?? false),
+            circuitOk: topo != null ? circuitState === 'closed' : (channelHealth?.circuit_ok ?? false),
           } satisfies EndpointStatusRow;
         });
     });
-  }, [channelById, endpointLiveByModel, probeResultsQuery.data, selectedCatalogModel]);
+  }, [channelById, probeResultsQuery.data, selectedCatalogModel, topologyQuery.data]);
 
   const endpointSummaryRows: MetricRow[] = useMemo(() => {
     const enabled = endpointRows.length;
@@ -1052,7 +1299,13 @@ export default function FlowTowerContent() {
                       description={t('flowControl.selectModelFlowDesc')}
                     />
                   ) : (
-                    <RoutingFlow embedded modelName={selectedCatalogModel.config.name} />
+                    <RoutingFlow
+                      embedded
+                      modelName={selectedCatalogModel.config.name}
+                      endpointMeta={endpointMeta}
+                      onSelectNode={setSelectedTopoNode}
+                      selectedNode={selectedTopoNode}
+                    />
                   )}
                 </div>
               ) : null}
@@ -1110,9 +1363,9 @@ export default function FlowTowerContent() {
                               <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.routingStatus')}</th>
                               <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.latestProbe')}</th>
                               <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.latestProbeTime')}</th>
-                              <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.requests24h')}</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">{t('routingFlow.channelRequests24h')}</th>
                               <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.successRate24h')}</th>
-                              <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">24h P95</th>
+                              <th className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] font-semibold text-muted-foreground">{t('routingFlow.channelP9524h')}</th>
                               <th className="border-b border-secondary px-3 py-2.5 text-left text-[10.5px] font-semibold text-muted-foreground">{t('flowControl.circuit')}</th>
                             </tr>
                           </thead>
@@ -1136,7 +1389,7 @@ export default function FlowTowerContent() {
                                 <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{formatNumber(row.channelRequests24h)}</td>
                                 <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{formatPercent(row.channelSuccessRate24h)}</td>
                                 <td className="border-b border-secondary px-3 py-2.5 text-right text-[10.5px] text-muted-foreground">{row.channelP95Latency24h == null ? '—' : `${formatNumber(Math.round(row.channelP95Latency24h))} ms`}</td>
-                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground">{row.circuitEnabled ? (row.circuitOk ? t('flowControl.normal') : t('flowControl.circuitOpen')) : t('flowControl.notEnabled')}</td>
+                                <td className="border-b border-secondary px-3 py-2.5 text-[10.5px] text-muted-foreground font-mono uppercase">{row.circuitState}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1258,9 +1511,59 @@ export default function FlowTowerContent() {
                       </div>
                     </div>
 
+                    {selectedTopoNode?.channelId ? (() => {
+                      const binding = topologyQuery.data?.bindings.find((b) => b.channel_id === selectedTopoNode.channelId);
+                      const channelHealth = selectedCatalogModel.health?.channels.find((c) => c.channel_id === selectedTopoNode.channelId);
+                      const channelP95 = channelHealth && channelHealth.requests > 0
+                        ? `${formatNumber(Math.round(channelHealth.p95_latency_ms))} ms`
+                        : '—';
+                      const nodeRows: MetricRow[] = [];
+                      let nodeTitle = selectedTopoNode.channelId;
+                      if (selectedTopoNode.endpointKey != null && binding) {
+                        const ep = binding.endpoints.find((e) => e.endpoint_id === selectedTopoNode.endpointId);
+                        nodeTitle = ep?.url ?? `${selectedTopoNode.channelId} · #${selectedTopoNode.endpointId}`;
+                        const probe = ep
+                          ? probeResultsQuery.data?.find((p) => p.channel_id === selectedTopoNode.channelId && p.endpoint_url === ep.url)
+                          : undefined;
+                        if (ep) {
+                          nodeRows.push({ label: t('routingFlow.endpointBreaker'), value: ep.circuit_state.toUpperCase() });
+                          nodeRows.push({ label: t('flowControl.routingStatus'), value: ep.routing_available ? t('flowControl.routable') : t('flowControl.notRoutable') });
+                          nodeRows.push({ label: t('routingFlow.endpointWeight'), value: String(ep.weight) });
+                          nodeRows.push({ label: t('routingFlow.endpointTimeout'), value: ep.timeout_secs != null ? `${ep.timeout_secs}s` : '—' });
+                          nodeRows.push({ label: t('routingFlow.endpointMaxTokens'), value: ep.max_tokens != null ? String(ep.max_tokens) : '—' });
+                          nodeRows.push({ label: t('flowControl.latestProbe'), value: probe ? (probe.success ? t('flowControl.success') : t('flowControl.failed')) : t('flowControl.unprobed') });
+                          nodeRows.push({ label: t('routingFlow.endpointChannelP95Short'), value: channelP95 });
+                        }
+                      } else if (binding) {
+                        const eligible = binding.endpoints.filter((ep) => ep.routing_available).length;
+                        nodeRows.push({ label: t('flowControl.requests24h'), value: formatNumber(binding.request_count_24h) });
+                        nodeRows.push({ label: t('flowControl.requestShare'), value: binding.observed_model_share_24h == null ? '—' : formatPercent(binding.observed_model_share_24h * 100) });
+                        nodeRows.push({ label: t('flowControl.availableEndpoint'), value: `${eligible} / ${binding.endpoints.length}` });
+                        nodeRows.push({ label: t('flowControl.routingStatus'), value: binding.routing_state === 'available' ? t('flowControl.routable') : t('flowControl.notRoutable') });
+                        nodeRows.push({ label: t('routingFlow.routingReason'), value: binding.routing_reason || '—' });
+                        nodeRows.push({ label: t('routingFlow.endpointChannelP95Short'), value: channelP95 });
+                      }
+                      return (
+                        <div className="rounded-xl border border-accent bg-card p-4">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <div className="text-[11px] font-semibold text-foreground">{t('routingFlow.inspectorSelectedNode')}</div>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedTopoNode(null)}
+                              className="rounded px-1.5 text-[10px] text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                              aria-label={t('flowControl.refresh')}
+                            >×</button>
+                          </div>
+                          <div className="mb-3 truncate font-mono text-[10.5px] text-foreground" title={nodeTitle}>{nodeTitle}</div>
+                          {nodeRows.length > 0 ? <MetricList rows={nodeRows} /> : null}
+                          <p className="mt-3 border-t border-secondary pt-2 text-[10px] leading-4 text-muted-foreground">{t('routingFlow.inspectorDecisionPlaceholder')}</p>
+                        </div>
+                      );
+                    })() : null}
+
                     <div className="rounded-xl border border-secondary bg-card p-4">
                       <div className="mb-3 flex items-center justify-between gap-2">
-                        <div className="text-[11px] font-semibold text-muted-foreground">{t('flowControl.health24h')}</div>
+                        <div className="text-[11px] font-semibold text-muted-foreground">{t('flowControl.modelStatus')}</div>
                         {routingHealthQuery.isFetching ? <span className="text-[10px] text-muted-foreground">{t('flowControl.updating')}</span> : null}
                       </div>
                       {routingHealthQuery.isError ? (
@@ -1304,6 +1607,127 @@ export default function FlowTowerContent() {
                   <p className="rounded-xl border border-dashed border-border bg-muted px-4 py-3 text-[10.5px] leading-5 text-muted-foreground">{t('flowControl.selectModelHint')}</p>
                 </div>
               )}
+
+              <div className="mt-4 border-t border-border pt-4">
+                <div className="mb-3 text-[11px] font-semibold text-muted-foreground">{t('routingFlow.routingExplanation')}</div>
+                <PlaceholderCard
+                  title={t('routingFlow.inspectorDecisionPlaceholder')}
+                  description={t('routingFlow.candidateUnavailable')}
+                />
+              </div>
+
+              <div className="mt-4 border-t border-border pt-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="text-[11px] font-semibold text-muted-foreground">{t('routingFlow.inspectorDecision')}</div>
+                  {topologyQuery.isFetching ? <span className="text-[10px] text-muted-foreground">{t('flowControl.updating')}</span> : null}
+                </div>
+                {topologyQuery.isError ? (
+                  <button
+                    type="button"
+                    onClick={() => void topologyQuery.refetch()}
+                    className="mb-3 w-full rounded-lg border border-dashed border-border px-3 py-2 text-[10px] text-muted-foreground hover:bg-muted"
+                  >
+                    {t('flowControl.retryRouting')}
+                  </button>
+                ) : topologyQuery.data ? (
+                  (() => {
+                    const topology = topologyQuery.data;
+                    const eligibleTotal = topology.eligible_total_weight;
+                    return (
+                      <div className="space-y-2.5">
+                        {topology.bindings.map((binding) => {
+                          const share = eligibleTotal > 0 ? binding.eligible_total_weight / eligibleTotal : null;
+                          const liveEndpoints = binding.endpoints.filter((ep) => ep.routing_available);
+                          let statusTone: 'healthy' | 'degraded' | 'open' | 'disabled' = 'disabled';
+                          let status = t('flowControl.disabled');
+                          if (binding.channel_enabled) {
+                            // Routing state comes from the backend routing_state —
+                            // never inferred as "circuit open" from a zero weight.
+                            if (binding.routing_state === 'available') {
+                              statusTone = 'healthy';
+                              status = t('flowControl.routable');
+                            } else {
+                              statusTone = 'open';
+                              status = t('flowControl.notRoutable');
+                            }
+                          }
+                          const statusDetail = binding.routing_reason || (
+                            liveEndpoints.length === 0
+                              ? t('flowControl.noRoutingData')
+                              : `${liveEndpoints.length}/${binding.endpoints.length} endpoints eligible`
+                          );
+                          const endpointFooter = (
+                            <div className="space-y-1">
+                              {binding.endpoints.map((ep) => (
+                                <div key={ep.endpoint_id} className="flex items-center justify-between gap-2 text-[9.5px] text-muted-foreground">
+                                  <span
+                                    className={`truncate font-mono ${hoveredTopoNode === binding.channel_id ? 'text-foreground' : ''}`}
+                                    title={ep.url}
+                                  >
+                                    {ep.url || `#${ep.endpoint_id}`}
+                                  </span>
+                                  <span className="flex shrink-0 items-center gap-2">
+                                    <span className={ep.routing_available ? 'text-chart-2' : 'text-destructive'}>
+                                      {ep.routing_available ? t('flowControl.routable') : t('flowControl.notRoutable')}
+                                    </span>
+                                    <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[9px] uppercase">
+                                      {ep.circuit_state}
+                                    </span>
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                          return (
+                            <SchedulingPolicyCard
+                              key={binding.channel_id}
+                              label={binding.channel_name || binding.channel_id}
+                              share={share}
+                              requests24h={binding.request_count_24h}
+                              observedShare24h={binding.observed_model_share_24h}
+                              status={status}
+                              statusTone={statusTone}
+                              statusDetail={statusDetail}
+                              footer={endpointFooter}
+                            />
+                          );
+                        })}
+                      </div>
+                    );
+                  })()
+                ) : (
+                  <p className="text-[10.5px] leading-5 text-muted-foreground">{t('flowControl.selectModelHint')}</p>
+                )}
+              </div>
+
+              <div className="mt-4 border-t border-border pt-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="text-[11px] font-semibold text-muted-foreground">{t('routingFlow.recentEvents')}</div>
+                  <span className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                    <i aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${recentDecisionsLive ? 'bg-chart-2' : 'bg-muted-foreground/40'}`} />
+                    {recentDecisionsLive ? 'LIVE' : '—'}
+                  </span>
+                </div>
+                {recentDecisions.length > 0 ? (
+                  <div className="flex flex-col gap-1">
+                    {recentDecisions.map((decision) => (
+                      <RecentDecisionCard
+                        key={decision.id}
+                        decision={decision}
+                        topology={topologyQuery.data}
+                        locale={locale}
+                        onHover={setHoveredTopoNode}
+                        onClick={() => setSelectedTopoNode({ model: decision.model, channelId: decision.channelId, endpointId: decision.endpointId, endpointKey: decision.endpointId != null ? `id:${decision.endpointId}` : undefined })}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <PlaceholderCard
+                    title={t('routingFlow.recentEventsEmpty')}
+                    description={t('routingFlow.inspectorDecisionPlaceholder')}
+                  />
+                )}
+              </div>
 
               <div className="mt-4 border-t border-border pt-4">
                 <PlaceholderCard
