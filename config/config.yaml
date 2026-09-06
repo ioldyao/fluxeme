@@ -21,5 +21,5 @@ previous_encryption_key: ${GATEWAY_PREVIOUS_ENCRYPTION_KEY}
 # Redis (cache, gate status, billing backlog, obs event stream)
 redis:
   enabled: true
-  url: "redis://:${REDIS_PASSWORD}@127.0.0.1:16379"
+  url: "redis://:${REDIS_PASSWORD}@${REDIS_URL}:16379"
 
